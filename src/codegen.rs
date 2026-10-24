@@ -546,6 +546,24 @@ impl<'p> Gen<'p> {
     /// Points FSR0 at the byte an indirect place names: `base + off (+ idx)`, where the base is
     /// an array or the address held by a `ByRef` parameter. Clobbers `__A`.
     fn point_fsr0(&mut self, p: &Place) {
+        self.point_fsr(0, p);
+    }
+
+    /// Points FSR`n` at the first byte of any RAM place (direct, indexed or through a `ByRef`
+    /// parameter). Clobbers `__A` and, when the index needs code, may use FSR0.
+    fn point_fsr(&mut self, n: u8, p: &Place) {
+        if !p.indirect() {
+            match &p.base {
+                Base::Var(v) => {
+                    self.uses[*v] += weight(self.depth);
+                    let sym = self.p.vars[*v].asm.clone();
+                    let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
+                    self.ins(format!("lfsr {n}, {at}"));
+                }
+                _ => self.err("internal: a block operation on a device register"),
+            }
+            return;
+        }
         let (a0, a1) = (self.a(0), self.a(1));
         let ptr = match &p.base {
             Base::Ptr(v) => {
@@ -590,9 +608,47 @@ impl<'p> Gen<'p> {
             }
             _ => self.err("internal: an indirect place on a device register"),
         }
-        let (f0l, f0h) = (self.sfr_mem("FSR0L"), self.sfr_mem("FSR0H"));
-        self.movff(&f0l, &a0);
-        self.movff(&f0h, &a1);
+        let (fl, fh) = (self.sfr_mem(&format!("FSR{n}L")), self.sfr_mem(&format!("FSR{n}H")));
+        self.movff(&fl, &a0);
+        self.movff(&fh, &a1);
+    }
+
+    /// Zeroes `bytes` bytes of a structure or array.
+    fn clear_mem(&mut self, p: &Place, bytes: u32) {
+        if !p.indirect() && bytes <= 6 {
+            let m = self.place_mem(p, true);
+            for i in 0..bytes {
+                self.fo("clrf", &m.at(i));
+            }
+            return;
+        }
+        self.point_fsr(0, p);
+        self.ins(format!("movlw {bytes}"));
+        let l = self.fresh();
+        self.label(&l);
+        self.ins("clrf POSTINC0, c");
+        self.ins("decfsz WREG, f, c");
+        self.br(Cc::Always, &l);
+    }
+
+    /// `dst = src` for `bytes` bytes. FSR1 is pointed at the source first: the destination's index
+    /// may read an array element (FSR0), but nothing that is an index uses FSR1.
+    fn copy_mem(&mut self, dst: &Place, src: &Place, bytes: u32) {
+        if !dst.indirect() && !src.indirect() && bytes <= 5 {
+            let (d, s) = (self.place_mem(dst, true), self.place_mem(src, false));
+            for i in 0..bytes {
+                self.movff(&d.at(i), &s.at(i));
+            }
+            return;
+        }
+        self.point_fsr(1, src);
+        self.point_fsr(0, dst);
+        self.ins(format!("movlw {bytes}"));
+        let l = self.fresh();
+        self.label(&l);
+        self.ins("movff POSTINC1, POSTINC0");
+        self.ins("decfsz WREG, f, c");
+        self.br(Cc::Always, &l);
     }
 
     /// Points FSR`fsr` at the first byte of a RAM string (a variable or a `ByRef` parameter).
@@ -605,13 +661,19 @@ impl<'p> Gen<'p> {
                 self.ins(format!("lfsr {fsr}, {at}"));
             }
             Base::Ptr(v) => {
-                if p.off != 0 {
-                    self.err("internal: an offset into a ByRef string");
-                }
                 let m = self.mem_obj(*v, self.p.vars[*v].asm.clone());
                 let (l, h) = (self.sfr_mem(&format!("FSR{fsr}L")), self.sfr_mem(&format!("FSR{fsr}H")));
                 self.movff(&l, &m);
                 self.movff(&h, &m.at(1));
+                if p.off != 0 {
+                    // A String field of a structure passed ByRef.
+                    self.ins(format!("movlw 0x{:02X}", p.off & 0xFF));
+                    let fl = self.sfr_mem(&format!("FSR{fsr}L"));
+                    self.fop("addwf", &fl, "f");
+                    self.ins(format!("movlw 0x{:02X}", (p.off >> 8) & 0xFF));
+                    let fh = self.sfr_mem(&format!("FSR{fsr}H"));
+                    self.fop("addwfc", &fh, "f");
+                }
             }
             Base::Abs { .. } => self.err("internal: a string in a device register"),
         }
@@ -1824,6 +1886,8 @@ impl<'p> Gen<'p> {
                     }
                 }
             }
+            St::ClearMem(p, n) => self.clear_mem(p, *n),
+            St::Copy { dst, src, bytes } => self.copy_mem(dst, src, *bytes),
             St::Direction { place, output } => self.direction(place, *output),
             St::Call(f, args) => self.do_call(*f, args),
             St::If(arms, otherwise) => {

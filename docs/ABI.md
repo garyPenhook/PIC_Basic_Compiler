@@ -52,6 +52,12 @@ convention. Measured against the cost model (open question 3) in M5.
   (second operand), `__C` (remainder, and the product accumulator of multiplies) and `__D` (loop
   and shift counters) belong to the multiply/divide/shift helpers and to delay loops. All are Access Bank bytes, allocated only up to
   the highest byte actually used.
+* **Structures**: stored field after field in declaration order, no padding or alignment; a union
+  member shares the bytes of the field it names. An array of structures is its elements back to
+  back. A `ByRef` structure parameter holds the 16-bit address of the argument and fields are
+  reached through FSR0 at a constant offset. Block `Clear` and `a = b` (1 to 255 bytes) are unrolled
+  `CLRF`/`MOVFF` when small, otherwise an FSR0 (destination) / FSR1 (source) loop using `WREG` as
+  the counter.
 * **Temporaries** (partial results saved while a second operand is evaluated) live in the
   routine's own frame, symbol `<ROUTINE>__TMP`, sized to the deepest use. A callee therefore cannot
   clobber its caller's temporaries.

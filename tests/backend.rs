@@ -37,7 +37,7 @@ fn bas_files(dir: &Path) -> Vec<PathBuf> {
 /// `E-BACKEND` and nothing else. Anything not listed here must build.
 const DEFERRED: &[&str] = &[
     "arrays_and_strings", "bit_array_warning", "byref_parameters", "conversions",
-    "disable_frees_priority", "events", "float_math", "interrupts", "modifiers", "single_interrupt", "structures_and_unions",
+    "disable_frees_priority", "events", "float_math", "interrupts", "modifiers", "single_interrupt",
 ];
 
 #[test]
@@ -85,6 +85,19 @@ fn unsupported_features_are_reported_not_miscompiled() {
     let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
+}
+
+#[test]
+fn structure_fields_picked_at_run_time_are_reported_not_miscompiled() {
+    let out = scratch("structidx");
+    let src = out.join("s.bas");
+    let prog = "Program T\nDevice = 18F27Q10\nStructure TS\n Tag As String(4)\n V As Byte\n F As V.0\nEnd Structure\nDim a(3) As TS\nDim i As Byte\nDim s As String(8)\ni = 1\n";
+    for stmt in ["a(i).Tag = \"x\"", "s = a(i).Tag + \"!\"", "a(i).F = 1"] {
+        std::fs::write(&src, format!("{prog}{stmt}\n")).unwrap();
+        let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
+        assert!(!r.status.success(), "{stmt} should be rejected");
+        assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"), "{stmt}");
+    }
 }
 
 #[test]

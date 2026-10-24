@@ -6,7 +6,10 @@
 //! bits, routines with by-value parameters, and the structured statements. One-dimensional
 //! arrays of integers and Char (no initialisers yet) are indexed through `Place::idx`. Strings
 //! are Null-terminated RAM objects handled by `St::StrSet` and `ExK::StrEq`; literals live in
-//! program memory. Structures, floats and interrupts report `E-BACKEND` (M5/M6).
+//! program memory. Structures are laid out field after field (`layout`); a field is a byte
+//! offset into the variable, so member access is the same `Place` arithmetic as arrays, and
+//! whole structures are cleared and copied with `St::ClearMem`/`St::Copy`. Floats and
+//! interrupts report `E-BACKEND` (M5/M6).
 
 use crate::ast::*;
 use crate::diag::{Diagnostics, Span};
@@ -15,6 +18,7 @@ use crate::project::Project;
 use crate::sema::{Analysis, Res, SymKind};
 use crate::types::*;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// Width and signedness of a scalar type, or None for types the back end cannot hold yet.
 fn nat(t: &Ty) -> Option<(u8, bool)> {
@@ -60,6 +64,14 @@ pub fn conv(ex: Ex, w: u8, signed: bool) -> Ex {
     Ex::new(ExK::Conv(Box::new(ex)), w, signed)
 }
 
+/// Where one field of a structure sits: `off` bytes from its start, or bit `bit` of that byte.
+struct FieldLay {
+    name: String,
+    off: u32,
+    bit: Option<u8>,
+    ty: Ty,
+}
+
 struct FuncInfo {
     id: FuncId,
     asm: String,
@@ -81,6 +93,8 @@ pub struct Lowerer<'a> {
     unsupported: HashMap<usize, String>,
     unit_syms: HashMap<(usize, String), usize>,
     routines: HashMap<usize, &'a Routine>,
+    struct_decls: HashMap<usize, &'a StructDecl>,
+    layouts: HashMap<usize, Rc<Vec<FieldLay>>>,
     queue: Vec<usize>,
     asm_names: HashSet<String>,
     cur_func: Option<FuncId>,
@@ -110,6 +124,8 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         unsupported: HashMap::new(),
         unit_syms: HashMap::new(),
         routines: HashMap::new(),
+        struct_decls: HashMap::new(),
+        layouts: HashMap::new(),
         queue: Vec::new(),
         asm_names: HashSet::new(),
         cur_func: None,
@@ -132,6 +148,11 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
                 && let Some(&sym) = a.decl_syms.get(&r.name.span)
             {
                 lw.routines.insert(sym, r);
+            }
+            if let DeclKind::Structure(sd) = &d.kind
+                && let Some(&sym) = a.decl_syms.get(&sd.name.span)
+            {
+                lw.struct_decls.insert(sym, sd);
             }
         }
     }
@@ -217,8 +238,48 @@ impl<'a> Lowerer<'a> {
         n
     }
 
+    /// Size in bytes of a type, structures included.
+    fn size_of(&self, ty: &Ty) -> u32 {
+        let a = self.a;
+        ty.size_bytes(&|s| match &a.symbols[s].kind {
+            SymKind::Struct { size, .. } => *size,
+            _ => 0,
+        })
+    }
+
+    /// The fields of a structure with their offsets. Fields follow one another; an alias field
+    /// (a union member such as `Flag As Val.0`) is placed by following its designator from the
+    /// field it names.
+    fn layout(&mut self, sid: usize) -> Option<Rc<Vec<FieldLay>>> {
+        if let Some(l) = self.layouts.get(&sid) {
+            return Some(l.clone());
+        }
+        let SymKind::Struct { fields, .. } = &self.a.symbols[sid].kind else { return None };
+        let sd = *self.struct_decls.get(&sid)?;
+        let mut lay: Vec<FieldLay> = Vec::new();
+        let mut off = 0;
+        for f in fields {
+            let key = f.name.to_ascii_lowercase();
+            if !f.alias {
+                lay.push(FieldLay { name: key, off, bit: None, ty: f.ty.clone() });
+                off += self.size_of(&f.ty);
+                continue;
+            }
+            let ast = sd.fields.iter().find(|x| x.name.key() == key)?;
+            let AsClause::Designator(d) = &ast.as_clause else { return None };
+            let head = lay.iter().find(|x| x.name == d.head.key())?;
+            // Followed on a stand-in place; only the offset, bit and type it ends on are used.
+            let start = Place { base: Base::Abs { addr: 0, name: String::new() }, off: head.off, bit: head.bit, idx: None, ty: head.ty.clone() };
+            let end = self.apply_parts(start, &d.parts, 0, d.span)?;
+            lay.push(FieldLay { name: key, off: end.off, bit: end.bit, ty: end.ty });
+        }
+        let lay = Rc::new(lay);
+        self.layouts.insert(sid, lay.clone());
+        Some(lay)
+    }
+
     fn new_var(&mut self, asm: String, name: &str, ty: Ty, kind: VarKind, init: Option<u32>) -> VarId {
-        let bytes = ty.size_bytes(&|_| 0);
+        let bytes = self.size_of(&ty);
         let asm = self.unique(asm);
         self.vars.push(Var { asm, name: name.to_string(), ty, bytes, kind, owner: self.cur_func, init, by_ref: false });
         self.vars.len() - 1
@@ -260,7 +321,7 @@ impl<'a> Lowerer<'a> {
                 SymKind::Var { ty } => {
                     let array = match &ty {
                         Ty::Array(elem, _) => {
-                            if matches!(**elem, Ty::Bit | Ty::Bool) || nat(elem).is_none() {
+                            if matches!(**elem, Ty::Bit | Ty::Bool) || (nat(elem).is_none() && !matches!(**elem, Ty::Struct(_))) {
                                 self.unsupported_sym(sym, &format!("an array of {elem}"));
                                 continue;
                             }
@@ -273,7 +334,8 @@ impl<'a> Lowerer<'a> {
                         _ => false,
                     };
                     let string = matches!(ty, Ty::Str(_));
-                    if !array && !string && nat(&ty).is_none() {
+                    let record = matches!(ty, Ty::Struct(_));
+                    if !array && !string && !record && nat(&ty).is_none() {
                         self.unsupported_sym(sym, &format!("a variable of type {ty}"));
                         continue;
                     }
@@ -291,7 +353,7 @@ impl<'a> Lowerer<'a> {
                         let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
                         self.str_assign(dst, *cap, e, it.name.span, inits);
                     }
-                    if local && !array && let Some(i) = init {
+                    if local && !array && !record && let Some(i) = init {
                         inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
                     }
                 }
@@ -344,7 +406,7 @@ impl<'a> Lowerer<'a> {
             };
             let supported = match info.mode {
                 ParamMode::ByVal => nat(&info.ty).is_some(),
-                ParamMode::ByRef => matches!(info.ty, Ty::Str(_)) || (nat(pointee).is_some() && !matches!(pointee, Ty::Bit) && !(matches!(info.ty, Ty::Array(..)) && *pointee == Ty::Bool)),
+                ParamMode::ByRef => matches!(info.ty, Ty::Str(_)) || matches!(pointee, Ty::Struct(_)) || (nat(pointee).is_some() && !matches!(pointee, Ty::Bit) && !(matches!(info.ty, Ty::Array(..)) && *pointee == Ty::Bool)),
                 ParamMode::ByRefConst => matches!(info.ty, Ty::Str(_)),
             };
             if !supported {
@@ -479,7 +541,7 @@ impl<'a> Lowerer<'a> {
 
     fn place_inner(&mut self, d: &'a Designator) -> Option<Place> {
         let mut i = 0;
-        let mut place = match self.a.resolved.get(&d.id).cloned() {
+        let place = match self.a.resolved.get(&d.id).cloned() {
             Some(Res::Sym(id)) => self.var_place(id, d.head.span)?,
             Some(Res::Register(name)) => self.reg_place(&name, d.head.span)?,
             Some(Res::Module(u)) => {
@@ -502,11 +564,16 @@ impl<'a> Lowerer<'a> {
                 Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() }
             }
         };
-        while i < d.parts.len() {
-            match &d.parts[i] {
+        self.apply_parts(place, &d.parts, i, d.span)
+    }
+
+    /// Follows `parts[i..]` (members, bit numbers, indices) from `place`.
+    fn apply_parts(&mut self, mut place: Place, parts: &'a [Part], mut i: usize, span: Span) -> Option<Place> {
+        while i < parts.len() {
+            match &parts[i] {
                 Part::BitIndex(n, _) => {
                     if place.idx.is_some() {
-                        self.unsupported(d.span, "a bit of an array element");
+                        self.unsupported(span, "a bit of an array element");
                         return None;
                     }
                     place.off += (*n / 8) as u32;
@@ -515,6 +582,23 @@ impl<'a> Lowerer<'a> {
                 }
                 Part::Member(n) => {
                     let key = n.key();
+                    if let Ty::Struct(sid) = place.ty {
+                        let Some(lay) = self.layout(sid) else {
+                            self.unsupported(n.span, &format!("the structure layout needed for `{}`", n.name));
+                            return None;
+                        };
+                        let Some(f) = lay.iter().find(|f| f.name == key) else {
+                            self.unsupported(n.span, &format!("the member `{}`", n.name));
+                            return None;
+                        };
+                        place.off += f.off;
+                        place.ty = f.ty.clone();
+                        if f.bit.is_some() {
+                            place.bit = f.bit;
+                        }
+                        i += 1;
+                        continue;
+                    }
                     // A named bit field of a device register.
                     if let Base::Abs { name, .. } = &place.base
                         && place.off == 0
@@ -540,7 +624,7 @@ impl<'a> Lowerer<'a> {
                     } else {
                         match key.as_str() {
                             "bytes" | "words" | "bits" | "booleans" => {
-                                let Some(Part::Args(args, _)) = d.parts.get(i + 1) else { return None };
+                                let Some(Part::Args(args, _)) = parts.get(i + 1) else { return None };
                                 let Some(CVal::Int(c)) = args.first().and_then(|e| self.a.consts.get(&e.id)) else { return None };
                                 let c = *c as u32;
                                 i += 1;
@@ -583,11 +667,11 @@ impl<'a> Lowerer<'a> {
                             return None;
                         }
                     };
-                    if place.bit.is_some() || place.idx.is_some() || args.len() != 1 {
+                    if place.bit.is_some() || args.len() != 1 {
                         self.unsupported(*sp, "this array access");
                         return None;
                     }
-                    let size = elem.size_bytes(&|_| 0);
+                    let size = self.size_of(&elem);
                     if let Some(CVal::Int(c)) = self.a.consts.get(&args[0].id) {
                         if *c < 0 || (n > 0 && *c >= n as i128) {
                             self.err("E-BOUNDS", args[0].span, format!("index {c} is outside the array (0 to {})", n.saturating_sub(1)));
@@ -602,7 +686,11 @@ impl<'a> Lowerer<'a> {
                             s if s.is_power_of_two() => Ex::new(ExK::Bin(BinKind::Shl, Box::new(ix), Box::new(Ex::konst(s.trailing_zeros(), 8, false))), 16, false),
                             s => Ex::new(ExK::Bin(BinKind::Mul, Box::new(ix), Box::new(Ex::konst(s, 16, false))), 16, false),
                         };
-                        place.idx = Some(Box::new(off));
+                        // A second run-time index (a field array of an array element) adds up.
+                        place.idx = Some(Box::new(match place.idx.take() {
+                            Some(prev) => Ex::new(ExK::Bin(BinKind::Add, prev, Box::new(off)), 16, false),
+                            None => off,
+                        }));
                     }
                     place.ty = *elem;
                 }
@@ -923,7 +1011,43 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Size of a whole structure or array that is cleared or copied, if the back end can do it.
+    fn block_bytes(&mut self, p: &Place, span: Span, what: &str) -> Option<u32> {
+        let bytes = self.size_of(&p.ty);
+        if bytes == 0 || bytes > 255 {
+            self.unsupported(span, &format!("{what} of a {bytes}-byte {} (1 to 255 bytes are handled)", p.ty));
+            return None;
+        }
+        if p.bit.is_some() || p.idx.as_ref().is_some_and(|i| i.has_call()) {
+            self.unsupported(span, &format!("{what} of this place"));
+            return None;
+        }
+        Some(bytes)
+    }
+
+    /// `a = b` for two structures (or two arrays) of one type: a block copy.
+    fn copy_assign(&mut self, dst: Place, value: &'a Expr, span: Span, out: &mut Vec<S>) {
+        let ExprKind::Designator(d) = &value.kind else {
+            self.unsupported(span, "this structure or array value");
+            return;
+        };
+        let Some(src) = self.place_idx_of(d) else { return };
+        let Some(bytes) = self.block_bytes(&dst, span, "assigning") else { return };
+        if self.size_of(&dst.ty) != self.size_of(&src.ty) {
+            self.unsupported(span, "assigning between arrays of different sizes");
+            return;
+        }
+        if self.block_bytes(&src, span, "assigning").is_none() {
+            return;
+        }
+        Self::push(out, St::Copy { dst, src, bytes }, span);
+    }
+
     fn str_assign(&mut self, dst: Place, cap: u32, value: &'a Expr, span: Span, out: &mut Vec<S>) {
+        if dst.idx.is_some() {
+            self.unsupported(span, "assigning to a String field of an array element picked at run time");
+            return;
+        }
         let mut parts = Vec::new();
         if self.str_parts(value, &mut parts).is_none() {
             return;
@@ -1018,6 +1142,10 @@ impl<'a> Lowerer<'a> {
                 let Some(p) = self.place_idx_of(target) else { return };
                 if let Ty::Str(cap) = p.ty {
                     self.str_assign(p, cap, value, span, out);
+                    return;
+                }
+                if matches!(p.ty, Ty::Struct(_) | Ty::Array(..)) {
+                    self.copy_assign(p, value, span, out);
                     return;
                 }
                 let Some(v) = self.expr(value) else { return };
@@ -1131,6 +1259,10 @@ impl<'a> Lowerer<'a> {
                     }
                     Some((w, sg)) if p.indirect() => Self::push(out, St::Assign(p, Ex::konst(0, w, sg)), span),
                     Some(_) => Self::push(out, St::Clear(p), span),
+                    None if matches!(p.ty, Ty::Struct(_) | Ty::Array(..)) => {
+                        let Some(bytes) = self.block_bytes(&p, span, "Clear") else { return };
+                        Self::push(out, St::ClearMem(p, bytes), span);
+                    }
                     None => self.unsupported(span, &format!("Clear of a {}", p.ty)),
                 }
             }

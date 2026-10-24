@@ -9,10 +9,10 @@ First target: **PIC18F27Q10**. Other microcontrollers will be added slowly, one 
 * Plan and status: `PLAN.md`, `docs/PROGRESS.md`. Decisions: `docs/DECISIONS.md`.
 * Language: `docs/LANGUAGE.md`, `docs/GRAMMAR.md`. Calling convention: `docs/ABI.md`. Benchmarks: `docs/BENCHMARKS.md`.
 
-Status: M5 in progress (back end done in M4; arrays, by-reference parameters and strings added). `basicc prog.bas`
+Status: M5 in progress (back end done in M4; arrays, by-reference parameters, strings, structures and hardware multiply added). `basicc prog.bas`
 compiles programs to `prog.hex` (plus `prog.S`, `prog.map`) through pic-as; `--report` prints sizes, `-S` stops at the
-assembly, `--check` stops after the front end. Structures, floats and interrupts (and a few remaining array,
-string and by-reference forms) are rejected with `E-BACKEND` until M5/M6.
+assembly, `--check` stops after the front end. Floats and interrupts (and a few remaining array, string,
+structure and by-reference forms) are rejected with `E-BACKEND` until M5/M6.
 
 * Tests: `cargo test`; simulator tests with `BASICC_MDB=1 cargo test --test backend` (needs MPLAB X `mdb`).
 * Benchmarks against XC8: `scripts/bench.py`, results in `docs/BENCHMARKS.md`.

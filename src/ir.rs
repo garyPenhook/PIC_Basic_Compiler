@@ -222,6 +222,10 @@ pub enum St {
     SetBit(Place, bool),
     ToggleBit(Place),
     Clear(Place),
+    /// Zero `n` bytes (1 to 255) of a structure or array.
+    ClearMem(Place, u32),
+    /// Copy `bytes` bytes (1 to 255) from `src` to `dst`, two places of one structure or array type.
+    Copy { dst: Place, src: Place, bytes: u32 },
     /// `dst = parts[0] + parts[1] + …`, cut off after `cap` characters and Null-terminated. When
     /// `keep` is set `parts[0]` is `dst` itself and is not copied. Only `parts[0]` may be `dst`.
     StrSet { dst: Place, cap: u32, parts: Vec<StrSrc>, keep: bool },

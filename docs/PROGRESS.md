@@ -135,7 +135,21 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   7437. A constant factor that is zero (after masking to the width) still evaluates a call in the other
   operand. Tests: `tests/exec/arith_mulconst.bas` (generated; constants at 16/24/32 bits including
   negative and top-bit-set ones, Word×Byte), `tests/exec/mulzero.bas`.
-- Next in M5: structures, `DECFSZ` loops, frame overlay, peephole.
+- Structures (done): a field is a byte offset into the variable (`layout` in `lower.rs`, fields in
+  declaration order, no padding), so `p.X`, `p.Inner.B`, `pts(i).Hist(j)` and `p.Tag` are ordinary
+  `Place` arithmetic; a second run-time index adds to the first. Union members (`En As Val.0`,
+  `W As Val.word0`) are placed by following their designator from the field they name. Supported:
+  global/local structure variables, nesting, array and `String` fields, arrays of structures,
+  `Clear(x)` and `a = b` for whole structures and arrays (1 to 255 bytes; `St::ClearMem`/`St::Copy`,
+  unrolled when small, else an FSR0 (destination)/FSR1 (source) loop, source pointed first), and
+  `ByRef` structure parameters (pointer plus field offset). Not yet: structure-valued function
+  results, structure initialisers, `ByRefConst` structures (the language reserves it for constant
+  arrays and strings), assigning a `String` field of an array element picked at run time (the other
+  string forms on such fields are fine), whole-array or whole-structure copies over 255 bytes, a bit
+  of an element picked at run time. All of the run-time-index forms report `E-BACKEND` (pinned by a
+  test in `tests/backend.rs`). Local structures are static and zeroed once at start-up, like every
+  local. Test: `tests/exec/structs.bas`.
+- Next in M5: `DECFSZ` loops, frame overlay, peephole.
 
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
