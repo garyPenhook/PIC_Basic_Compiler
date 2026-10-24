@@ -70,3 +70,9 @@ recommendation shown; any item can be reopened.
 | D43 | `Save … Restore` | Copies the listed variables, routine frames (and everything those call) and, for `0`, all compiler registers into a private area before the block and back after it, also on `Exit`/`Break`/`Continue`. Inside a handler every routine called in the block has its frame and registers saved even if not listed. `Goto` and labels inside `Save` are `E-BACKEND` | A callee's frame may overlay main-line storage (D37); saving whole address ranges makes that safe whichever routines share them. A jump out would skip the restore. |
 | D44 | Handler frames | A handler is never independent of any routine in the overlay analysis, so its locals and temporaries never share an address; they are zero on every entry like any local | The handler can run at any moment. |
 | D45 | Atomicity | None is provided. Reading or writing a variable wider than a byte that a handler also uses can see a half-updated value; the program must disable the interrupt around such accesses | Matches the reference language; an `Atomic` form can come later. |
+
+## Decisions made in M7 (Route B evaluation)
+
+| ID | Decision | Choice | Reason |
+|----|----------|--------|--------|
+| D46 | Route B (recovered LLVM backend) | **Drop for now; Route A is the only back end.** The prebuilt `pic-llc` is kept as a reference only | The recovered tree does not build (see PROGRESS.md M7): the target `CMakeLists.txt` is a 15-line stub, `PICFrameLowering.cpp` was never recovered, `tools/pic-llc/pic-llc.cpp` is a 33-line stub. Rebuilding is a rewrite of unknown size, and `basicc` has no LLVM IR emitter to feed it. Reversible: reopen if the backend is rebuilt from `docs/BACKEND_DESIGN.md`. |

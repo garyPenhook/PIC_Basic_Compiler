@@ -229,3 +229,21 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
 reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,
 FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/benchmarks).
+
+## M7 — Route B evaluation (done 2026-10-24: decision D46, drop for now)
+- The LLVM tree's three PIC symlinks (`llvm/lib/Target/PIC`, `tools/pic-llc`, `tools/pic-mc` under
+  `~/.local/src/llvm-pic`) pointed at the deleted `~/Documents/PIC_Compiler`. They now point at
+  `~/Documents/PIC_Compiler_recovered`. The original binaries are copied to
+  `~/.local/build/llvm-pic-orig-bin/`.
+- `ninja pic-llc pic-mc` fails at configure: `Target PIC is not in the set of libraries`. Causes found:
+  `lib/Target/PIC/CMakeLists.txt` has only the TableGen rules and `TargetInfo` (no `add_llvm_target`,
+  no source list, no `MCTargetDesc`, `GISel`, `AsmParser`, `Disassembler` subdirectories);
+  `PICFrameLowering.cpp` does not exist (only the header); `tools/pic-llc/pic-llc.cpp` is 33 lines.
+  So the recovered tests could not be run.
+- Only data point: the prebuilt (2026-10-14) `pic-llc -march=pic18 -O2` on `pic-test/examples/sum.ll`
+  gives 53 lines of assembly with visible waste (an `i8` index sign-extended to 16 bits, byte pairs
+  copied through `WREG` several times). No quantitative comparison with Route A was made: `basicc` has
+  no LLVM IR output, so the same program cannot be fed to both.
+- Decision D46: drop Route B for now. Route A stays the single back end. Not changed: the symlinks
+  stay on the recovered tree, so the LLVM build directory cannot reconfigure until the backend is
+  rebuilt or the links are removed.
