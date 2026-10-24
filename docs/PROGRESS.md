@@ -212,13 +212,13 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   31. An unknown raw-`Asm` call counts as one level. Test: `hardware_stack_depth_is_checked`.
 - Not yet: `Event` handlers; the `gpio`, `delay`, `timer`, `serial` library; hardware runs
   (D6 still open). Large frames named in `Save` are copied byte by byte, which is long for big arrays.
-- Library (done, `lib/`, `docs/LIBRARY.md`): `gpio`, `delay`, `timer` (Timer0), `serial` (EUSART1).
+- Library (done, `lib/`, `docs/LIBRARY.md`): `gpio`, `delay`, `timer` (Timer0/1/2), `serial` (EUSART1).
   Register values were taken from the data sheet through the pic-docs server. Tests:
-  `tests/exec/lib_serial.bas`, `lib_timer.bas` (simulator, optimised and `-O0`) and
+  `tests/exec/lib_serial.bas`, `lib_timer.bas`, `lib_timer12.bas` (simulator, optimised and `-O0`) and
   `tests/programs/library_all.bas`. Fixed on the way: a module-qualified call used as a statement
   (`Serial.SerialInit(...)`) was rejected by the back end (`callee_of` in `lower.rs`). The MDB
   simulator models TXIF/TRMT timing but gives no way to see the bytes sent, so serial output is
-  not checked, only its set-up and handshake. Not yet: hardware runs (D6), EUSART2, Timer1/2.
+  not checked, only its set-up and handshake. Not yet: hardware runs (D6), EUSART2, Timer1 gate/external clock, Timer2 hardware-limit modes.
 - Known limits: a `Save` block inside a routine that both main and a handler call shares one static
   save area; each `Exit`/`Break`/`Continue` inside `Save` repeats the restore code instead of
   jumping to one copy; `Save` bodies are scanned for callees by a separate IR walker

@@ -23,7 +23,7 @@ flags; the program writes its own handler.
 | `DelaySeconds(s)` | `s` x `DelayMs(1000)` |
 | `DelayNop()` | one instruction cycle |
 
-## timer (Timer0, FOSC/4 clock)
+## timer (Timer0, Timer1, Timer2; FOSC/4 clock)
 | Routine | Effect |
 |---|---|
 | `Timer0Start(prescale, period)` | 8-bit timer; one overflow per `(period+1) * 2^prescale` instruction cycles (`prescale` 0..15) |
@@ -33,6 +33,13 @@ flags; the program writes its own handler.
 | `Timer0Ack()` | clear the flag (call from your handler) |
 | `Timer0EnableInterrupt()` / `Timer0DisableInterrupt()` | `PIE0.TMR0IE`; also `Enable(handler)` and, with priorities, clear `IPR0.TMR0IP` for a low handler |
 | `Timer0Stop()` | |
+| `Timer1Start(prescale)` | 16-bit free-running Timer1 (`prescale` 0..3 = 1:1..1:8); overflows every `65536 * 2^prescale` cycles |
+| `Timer1Read()`, `Timer1Expired()`, `Timer1Ack()`, `Timer1Stop()` | as for Timer0 (`PIR4.TMR1IF`) |
+| `Timer1EnableInterrupt()` / `Timer1DisableInterrupt()` | `PIE4.TMR1IE` |
+| `Timer2Start(prescale, postscale, period)` | 8-bit Timer2, free-running period mode; flag every `(period+1) * 2^prescale * (postscale+1)` cycles (`prescale` 0..7 = 1:1..1:128, `postscale` 0..15 = 1:1..1:16) |
+| `Timer2Read()` | `T2TMR` |
+| `Timer2Expired()`, `Timer2Ack()`, `Timer2Stop()` | as for Timer0 (`PIR4.TMR2IF`) |
+| `Timer2EnableInterrupt()` / `Timer2DisableInterrupt()` | `PIE4.TMR2IE` |
 
 ## serial (EUSART1, 8N1, TX on RC6, RX on RC7)
 | Routine | Effect |
@@ -47,5 +54,5 @@ flags; the program writes its own handler.
 with voltage and temperature (data sheet 29.1.3), so use a crystal for anything beyond casual use.
 
 ## Tests
-`tests/exec/lib_serial.bas` and `lib_timer.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_timer.bas` and `lib_timer12.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).
