@@ -260,3 +260,33 @@ fn exec_programs_in_simulator() {
         assert!(r.status.success(), "flags `{flags}`:\n{text}");
     }
 }
+
+/// A chain of `n` nested subroutines called from the main program, plus an interrupt handler when
+/// `isr` is set (its entry takes one more level of the 31-level hardware stack).
+fn chain_program(n: u32, isr: bool) -> String {
+    let mut s = String::from("Program T\nDevice = 18F27Q10\nDim g As Byte\n");
+    for i in (1..=n).rev() {
+        s += &format!("Sub S{i}()\n");
+        s += &if i < n { format!(" S{}()\n", i + 1) } else { " g = g + 1\n".to_string() };
+        s += "End Sub\n";
+    }
+    if isr {
+        s += "Interrupt H()\n g = g + 1\nEnd Interrupt\nEnable(H)\n";
+    }
+    s + "S1()\n"
+}
+
+#[test]
+fn hardware_stack_depth_is_checked() {
+    let out = scratch("stackdepth");
+    let src = out.join("s.bas");
+    for (n, isr, ok) in [(31, false, true), (32, false, false), (30, true, true), (31, true, false)] {
+        std::fs::write(&src, chain_program(n, isr)).unwrap();
+        let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
+        let err = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert_eq!(r.status.success(), ok, "chain {n}, isr {isr}: {err}");
+        if !ok {
+            assert!(err.contains("E-STACK"), "{err}");
+        }
+    }
+}

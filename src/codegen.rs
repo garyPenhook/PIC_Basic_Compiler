@@ -2973,8 +2973,82 @@ fn sign_ext(v: u32, w: u8) -> i64 {
 
 // ---- driver -----------------------------------------------------------------------------
 
+/// Levels of the 31-level hardware return stack.
+pub const HW_STACK_LEVELS: u32 = 31;
+
+/// The most hardware-stack levels the program can use at once: the deepest chain of calls from
+/// the main program (helpers included), plus one level for each interrupt priority that can be
+/// taken on top of it, plus that handler's own deepest chain. A `call`/`rcall` in a raw `Asm`
+/// block to a label the compiler does not know counts as one level with nothing below it.
+fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
+    fn raw_target(line: &str) -> Option<String> {
+        let t = line.split(';').next().unwrap_or("").trim();
+        let t = t.rsplit_once(':').map_or(t, |x| x.1).trim();
+        let mut w = t.split_whitespace();
+        let m = w.next()?.to_ascii_lowercase();
+        if m != "call" && m != "rcall" {
+            return None;
+        }
+        Some(w.next()?.trim_end_matches(',').to_string())
+    }
+    fn callees(items: &[Item], s: usize, e: usize) -> Vec<String> {
+        let mut v = Vec::new();
+        for it in &items[s..e] {
+            match it {
+                Item::Call(t) => v.push(t.clone()),
+                Item::Raw(t) => v.extend(t.lines().filter_map(raw_target)),
+                _ => {}
+            }
+        }
+        v
+    }
+    let mut bodies: HashMap<String, (usize, usize)> = HashMap::new();
+    for (f, s, e) in &g.ranges {
+        if !g.p.isrs.iter().any(|x| x.0 == *f) {
+            bodies.insert(g.p.funcs[*f].asm.clone(), (*s, *e));
+        }
+    }
+    for (h, s, e) in &g.hranges {
+        bodies.insert(h.clone(), (*s, *e));
+    }
+    fn depth(name: &str, items: &[Item], bodies: &HashMap<String, (usize, usize)>, memo: &mut HashMap<String, u32>, active: &mut Vec<String>) -> u32 {
+        if let Some(&d) = memo.get(name) {
+            return d;
+        }
+        let Some(&(s, e)) = bodies.get(name) else { return 0 };
+        if active.iter().any(|a| a == name) {
+            return 0;
+        }
+        active.push(name.to_string());
+        let d = callees(items, s, e).iter().map(|c| 1 + depth(c, items, bodies, memo, active)).max().unwrap_or(0);
+        active.pop();
+        memo.insert(name.to_string(), d);
+        d
+    }
+    let mut memo = HashMap::new();
+    let pos = |l: &str| items.iter().position(|i| matches!(i, Item::Label(x) if x == l));
+    let main = match (pos("__reset"), pos("__halt")) {
+        (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0),
+        _ => 0,
+    };
+    // One entry level per priority (a high handler can interrupt a low one, which can interrupt
+    // the main program); the deepest handler at a priority is the one to count.
+    let mut high = None;
+    let mut low = None;
+    for (f, s, e) in &g.ranges {
+        if let Some(&(_, level)) = g.p.isrs.iter().find(|x| x.0 == *f) {
+            let d = 1 + callees(items, *s, *e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0);
+            let slot = if level == Level::Low { &mut low } else { &mut high };
+            *slot = Some(slot.map_or(d, |x: u32| x.max(d)));
+        }
+    }
+    main + high.unwrap_or(0) + low.unwrap_or(0)
+}
+
 pub struct Generated {
     pub out: Output,
+    /// Most hardware-stack levels the program can use at once (see `stack_depth`).
+    pub stack_levels: u32,
     pub objs: Vec<Obj>,
     pub layout: Layout,
     pub errors: Vec<(Span, String)>,
@@ -3218,15 +3292,16 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         }
         errors.extend(g2.errors.iter().cloned());
         let helpers: Vec<String> = g2.helpers.iter().cloned().collect();
-        result = Some((objs, layout, items, helpers));
+        let levels = stack_depth(&g2, &items);
+        result = Some((objs, layout, items, helpers, levels));
         break;
     }
     if errors.is_empty() && result.is_none() {
         errors = pass1_errors;
     }
-    let Some((objs, layout, items, helpers)) = result else {
+    let Some((objs, layout, items, helpers, stack_levels)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
-        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, objs: vec![], layout: Layout::default(), errors };
+        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors };
     };
     let items = if tgt.opt {
         let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
@@ -3299,5 +3374,5 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         let end = starts.get(i + 1).map(|s| s.1).unwrap_or(asmd.words);
         func_words.push((n.clone(), end - a));
     }
-    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, objs, layout, errors }
+    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors }
 }

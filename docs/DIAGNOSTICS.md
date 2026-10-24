@@ -27,6 +27,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-VIS, E-NESTED | `Public`/`Private` on a local; routine or type declared inside a routine |
 | E-RAM | Global variables exceed the device's usable RAM |
 | E-RECURSION | Call cycle without `Reentrant` (D13) |
+| E-STACK | The hardware return stack can need more than 31 levels: deepest call chain of the main program (library helpers included) plus one level per interrupt priority and that handler's own chain |
 
 ## Types and expressions
 | Code | Meaning |

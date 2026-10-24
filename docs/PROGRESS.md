@@ -206,8 +206,11 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   shadow registers while both priorities exist does **not** make `isr_dual` fail: the MDB
   simulator does not reproduce the hardware overwrite of the shadow copy, so that rule rests on the
   data sheet (`p.112`) and awaits hardware.
-- Not yet: `Event` handlers; the stack-depth check (the PLAN §5.3 31-level proof) that should count
-  one entry per interrupt level; the `gpio`, `delay`, `timer`, `serial` library; hardware runs
+- Stack depth (done, `stack_depth` in `codegen.rs`, `E-STACK`): the deepest call chain of the main
+  program through the final item stream (routines, shared helpers, `call`/`rcall` in raw `Asm`),
+  plus one level for each interrupt priority and that handler's own deepest chain, must not exceed
+  31. An unknown raw-`Asm` call counts as one level. Test: `hardware_stack_depth_is_checked`.
+- Not yet: `Event` handlers; the `gpio`, `delay`, `timer`, `serial` library; hardware runs
   (D6 still open). Large frames named in `Save` are copied byte by byte, which is long for big arrays.
 - Library (done, `lib/`, `docs/LIBRARY.md`): `gpio`, `delay`, `timer` (Timer0), `serial` (EUSART1).
   Register values were taken from the data sheet through the pic-docs server. Tests:
