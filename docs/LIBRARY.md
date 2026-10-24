@@ -60,6 +60,13 @@ flags; the program writes its own handler.
 `Clock` must be FOSC in MHz. Baud accuracy follows the oscillator; the internal oscillator drifts
 with voltage and temperature (data sheet 29.1.3), so use a crystal for anything beyond casual use.
 
+## serial2 (EUSART2, 8N1, TX on RB6, RX on RB7)
+Same routines as `serial` with the prefix `Serial2` (`Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
+`Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`, `Serial2Flush`).
+`RB6PPS = 0x0B` (EUSART2 TX/CK, Table 18-2), `RX2PPS = 0x0F` (RB7, Table 18-1), flags `TX2IF`/`RC2IF` are
+`PIR3` bits 6 and 7, registers `SP2BRG`, `TX2STA`, `RC2STA`, `BAUD2CON`. RB6/RB7 are also the ICSP pins, so
+disconnect the programmer while using them. Both modules can be included and run together.
+
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

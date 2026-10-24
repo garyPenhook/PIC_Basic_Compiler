@@ -7,6 +7,7 @@ Include "gpio"
 Include "delay"
 Include "timer"
 Include "serial"
+Include "serial2"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -25,3 +26,10 @@ Serial.SerialWriteHex(171)
 Serial.SerialNewLine()
 Serial.SerialFlush()
 r = Serial.SerialRead()
+Serial2.Serial2Init(115200)
+Serial2.Serial2Write("hello")
+Serial2.Serial2WriteWord(1234)
+Serial2.Serial2WriteHex(171)
+Serial2.Serial2NewLine()
+Serial2.Serial2Flush()
+r = Serial2.Serial2Read()

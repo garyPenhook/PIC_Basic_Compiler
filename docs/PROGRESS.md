@@ -218,7 +218,7 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   `tests/programs/library_all.bas`. Fixed on the way: a module-qualified call used as a statement
   (`Serial.SerialInit(...)`) was rejected by the back end (`callee_of` in `lower.rs`). The MDB
   simulator models TXIF/TRMT timing but gives no way to see the bytes sent, so serial output is
-  not checked, only its set-up and handshake. Not yet: hardware runs (D6), EUSART2.
+  not checked, only its set-up and handshake. Not yet: hardware runs (D6). EUSART2: see below.
 - Known limits: a `Save` block inside a routine that both main and a handler call shares one static
   save area; each `Exit`/`Break`/`Continue` inside `Save` repeats the restore code instead of
   jumping to one copy; `Save` bodies are scanned for callees by a separate IR walker
@@ -275,3 +275,10 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Tests: `tests/exec/events.bas` (simulator, optimised and `-O0`: reassignment, unassigned call, two
   variables, locals zeroed per call, handler calling a routine), `tests/negative/event_in_isr.bas`,
   `tests/valid/event_in_isr_save.bas`.
+
+## M6 — EUSART2 (done 2026-10-24)
+- `lib/serial2.bas` (module `Serial2`): `serial` on EUSART2, TX on RB6 (`RB6PPS = 0x0B`), RX on RB7
+  (`RX2PPS = 0x0F`, its reset default), flags `PIR3` bits 6/7. Values from DS40002043F Tables 18-1, 18-2, 15.13.5.
+- Test `tests/exec/lib_serial2.bas` (optimised and `-O0`) checks the register values only: the MDB simulator never
+  sets TX2IF (PIR3 reads 0x10, only TX1IF), so a send would hang there. Transmit/receive on EUSART2 is unverified
+  until hardware (D6). `tests/programs/library_all.bas` includes the module.

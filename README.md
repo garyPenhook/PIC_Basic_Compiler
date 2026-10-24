@@ -12,7 +12,7 @@ First target: **PIC18F27Q10**. Other microcontrollers will be added slowly, one 
 Status: M5 in progress (back end done in M4; arrays, by-reference parameters, strings, structures, hardware multiply and `DECFSZ` counted loops added). `basicc prog.bas`
 compiles programs to `prog.hex` (plus `prog.S`, `prog.map`) through pic-as; `--report` prints sizes, `-S` stops at the
 assembly, `--check` stops after the front end. Floats and events (and a few remaining array, string,
-structure and by-reference forms) are rejected with `E-BACKEND` until a later milestone. Interrupt handlers and the `gpio`, `delay`, `timer` and `serial` library (`docs/LIBRARY.md`) work (M6).
+structure and by-reference forms) are rejected with `E-BACKEND` until a later milestone. Interrupt handlers and the `gpio`, `delay`, `timer`, `serial` and `serial2` library (`docs/LIBRARY.md`) work (M6).
 
 * Tests: `cargo test`; simulator tests with `BASICC_MDB=1 cargo test --test backend` (needs MPLAB X `mdb`).
 * Benchmarks against XC8: `scripts/bench.py`, results in `docs/BENCHMARKS.md`.
