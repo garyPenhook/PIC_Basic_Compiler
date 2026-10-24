@@ -327,6 +327,23 @@ layout and library, so they are interchangeable behind the driver.
   changes the Access Bank: file addresses ≤ `5Fh` become FSR2-indexed `[p.119, p.123]`, so the
   code generator must know which mode it is in and use bank-select addressing for ordinary
   variables when `XINST = 1`.
+* **Extended instruction set and Indexed Literal Offset — to be implemented (M9, with reentrant
+  functions).** The extended set is off by default (`XINST = 0`) and is aimed at compiler-generated
+  reentrant code, so it is not for hand-written assembly `[DS40002043F ch.38.2]`. Work items:
+  1. Assembler/size table (`src/asm.rs`): all eight extended instructions with correct word counts
+     and operand ranges (`ADDFSR/SUBFSR f,k`, `ADDULNK/SUBULNK k` = FSR2 form with automatic return,
+     `PUSHL k`, `CALLW`, `MOVSF zs,fd`, `MOVSS zs,zd`); today only `movsf`/`movss` sizes exist.
+  2. Code generator: a per-build `XINST` mode flag. In `XINST = 1`, Access Bank accesses to ≤ `5Fh`
+     become FSR2 + literal-offset, so ordinary variables use bank-select (`a = 1`) addressing and
+     reentrant locals/parameters use `[FSR2 + k]` frame addressing.
+  3. Reentrant frames: allocate/free software-stack space with `ADDFSR`/`SUBFSR`, return with
+     `ADDULNK`/`SUBULNK 2`, push literals with `PUSHL`, move between frame slots with `MOVSF`/`MOVSS`.
+  4. Function pointers: indirect call through `CALLW`.
+  5. Lift the `E-BACKEND` rejection of `Reentrant` routines once 1-4 pass.
+  6. Simulator + tests: extend `tests/` simulator with the eight instructions and ILO addressing;
+     execution tests for recursion and a mixed reentrant/static program; add a benchmark pair vs XC8
+     with the extended set enabled. Confirm instruction encodings and ILO behaviour from the datasheet
+     at implementation time (M9 start) rather than from this note.
 * Parameters and return values: first byte(s) via WREG/fixed registers, rest in the callee's
   frame; exact layout written in `docs/ABI.md` in M4.
 * Interrupts: separate frame region for ISR locals so the ISR never overwrites main-line

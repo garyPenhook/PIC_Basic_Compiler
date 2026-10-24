@@ -99,3 +99,8 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 ## Next: M5 — Language breadth + first optimisations
 Arrays, strings, structures, ByRef, 16×16 hardware multiply and multiply-by-constant, `DECFSZ` loops,
 frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.md`.
+
+## Backlog: extended instruction set (XINST = 1)
+Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
+reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,
+FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/benchmarks).
