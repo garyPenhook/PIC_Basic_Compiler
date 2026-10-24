@@ -10,6 +10,7 @@ Include "serial"
 Include "serial2"
 Include "adc"
 Include "eeprom"
+Include "pwm"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -46,3 +47,13 @@ r = Eeprom.EepromRead(0)
 r = Eeprom.EepromWrite(0, r)
 x = Eeprom.EepromReadWord(2)
 r = Eeprom.EepromWriteWord(2, x)
+r = Pwm.PwmInit(5000)
+r = Pwm.PwmStart(1, 18, 100)
+r = Pwm.PwmStart(3, 0, 200)
+r = Pwm.PwmInvert(3, True)
+Pwm.PwmDuty(1, 300)
+Pwm.PwmPercent(3, 25)
+x = Word(Pwm.PwmFrequency())
+x = Pwm.PwmSteps()
+Pwm.PwmStop(1)
+Pwm.PwmStop(3)

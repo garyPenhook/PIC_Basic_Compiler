@@ -298,3 +298,15 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Test `tests/exec/lib_eeprom.bas` (optimised and `-O0`): the MDB simulator does not model DFM reads (a read leaves
   NVMDATL unchanged), so stored values are not checked; it checks the address registers, NVMEN cleared, GIE restored
   (and left off when it was off), invalid addresses and that a write completes. Nothing runs on hardware (D6).
+
+## M8 — pwm (done 2026-10-24)
+- `lib/pwm.bas` (module `Pwm`): see `docs/LIBRARY.md`. CCP1/CCP2 in PWM mode (DS40002043F §22.4, CCPxCON, CCPRx with
+  FMT = 1) and PWM3/PWM4 (§23, PWMxCON, PWMxDC), all on Timer2 (CCPTMRS = 01); output routing RxyPPS = 5..8 and the
+  allowed ports from Table 18-2 (28-pin columns). Start order follows §22.4.2 / §23.9. The errata sheet (DS80000832G)
+  has no CCP/PWM entry.
+- Test `tests/exec/lib_pwm.bas` (optimised and `-O0`): register values, pin routing, refusals, stop and restart of
+  Timer2, and that the first-overflow wait completes in the simulator. The simulator does not show the pin waveform, so
+  frequency and duty on the pin are not measured; nothing runs on hardware (D6).
+- Not specified by the data sheet and therefore documented, not relied on: whether a CCP duty of exactly `PwmSteps`
+  holds the pin high (PWM3/PWM4 text says "greater than or equal"); with `T2PR` = 255 100 % is unreachable.
+
