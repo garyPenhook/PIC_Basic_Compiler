@@ -1,0 +1,10 @@
+[workspace]
+members = [".", "crates/devdesc", "tools/devgen"]
+
+[package]
+name = "basicc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+devdesc = { path = "crates/devdesc" }

@@ -1,0 +1,8 @@
+/target
+# vendor manuals are for personal reference only and must never be committed or redistributed
+/reference/
+*.hex
+*.map
+*.elf
+# vendor manuals are for personal reference only: never commit them
+*.pdf
