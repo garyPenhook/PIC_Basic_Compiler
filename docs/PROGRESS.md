@@ -188,6 +188,33 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
 - Remaining for the M5 exit: golden-assembly tests, zero-init elimination of globals, single-call
   inlining.
 
+## M6 progress
+- Interrupts (done, `ir.rs` `St::Int`/`St::Save`, `lower.rs` `lower_interrupt`, `codegen.rs`
+  `gen_isr`/`save_block`/`int_control`): D40–D45. A handler is a routine nobody calls with its own
+  never-overlaid frame; the vectors, `IPEN`, `Enable`/`Disable`, shadow or software context save
+  and `Save … Restore` are generated as described in ABI.md §2, §5. The first pass records which
+  compiler registers each routine touches (`Facts`), later passes use that to size each handler's
+  save area; `generate` repeats until the save areas settle like the temporaries do.
+  Tests: `tests/exec/isr_single.bas` (one handler, free-running Timer0 whose period the handler
+  varies, so interrupts land all over the main program; a call inside `Save`) and
+  `tests/exec/isr_dual.bas` (two priorities, the high handler kicked from inside the low one after
+  a varying delay and re-arming itself); both run optimised and `-O0`. `tests/backend.rs` pins the
+  vector addresses, `IPEN`, the single `RETFIE, FAST`, and that a handler's frame is never shared
+  with a sibling routine's.
+- Checked by breaking the compiler on purpose: dropping the per-handler register saves makes
+  `isr_single` fail, so that test does detect lost context. Forcing the low handler to use the
+  shadow registers while both priorities exist does **not** make `isr_dual` fail: the MDB
+  simulator does not reproduce the hardware overwrite of the shadow copy, so that rule rests on the
+  data sheet (`p.112`) and awaits hardware.
+- Not yet: `Event` handlers; the stack-depth check (the PLAN §5.3 31-level proof) that should count
+  one entry per interrupt level; the `gpio`, `delay`, `timer`, `serial` library; hardware runs
+  (D6 still open). Large frames named in `Save` are copied byte by byte, which is long for big arrays.
+- Known limits: a `Save` block inside a routine that both main and a handler call shares one static
+  save area; each `Exit`/`Break`/`Continue` inside `Save` repeats the restore code instead of
+  jumping to one copy; `Save` bodies are scanned for callees by a separate IR walker
+  (`stmt_calls`) that must follow new statement kinds. The register facts are recomputed from the
+  final pass and the layout repeats until they agree.
+
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
 reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,

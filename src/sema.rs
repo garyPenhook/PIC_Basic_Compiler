@@ -123,6 +123,8 @@ pub struct Analysis {
     /// The symbol declared at the position of a declared name; the back end uses it to walk the
     /// tree and find the symbol each declaration created.
     pub decl_syms: HashMap<Span, SymId>,
+    /// The `Interrupt` each `Enable`/`Disable` names, keyed by the span of the name.
+    pub enables: HashMap<Span, SymId>,
 }
 
 /// Parsed device descriptions by path. The 18F27Q10 file is large, and tests and tools analyse
@@ -1140,6 +1142,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.diags.error("E-ENABLE", n.span, format!("`{}` is not an Interrupt", n.name));
             return;
         };
+        self.a.enables.insert(n.span, id);
         if !enabling {
             if self.enabled.get(&priority) == Some(&id) {
                 self.enabled.remove(&priority);

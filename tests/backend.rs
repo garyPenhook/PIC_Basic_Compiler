@@ -37,7 +37,7 @@ fn bas_files(dir: &Path) -> Vec<PathBuf> {
 /// `E-BACKEND` and nothing else. Anything not listed here must build.
 const DEFERRED: &[&str] = &[
     "arrays_and_strings", "bit_array_warning", "byref_parameters", "conversions",
-    "disable_frees_priority", "events", "float_math", "interrupts", "modifiers", "single_interrupt",
+    "events", "float_math", "modifiers",
 ];
 
 #[test]
@@ -98,6 +98,71 @@ fn structure_fields_picked_at_run_time_are_reported_not_miscompiled() {
         assert!(!r.status.success(), "{stmt} should be rejected");
         assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"), "{stmt}");
     }
+}
+
+/// Word addresses of the `;SYM name 0xADDR` lines (byte addresses) in generated assembly.
+fn sym_addrs(asm: &str) -> std::collections::HashMap<String, u32> {
+    asm.lines()
+        .filter_map(|l| {
+            let mut w = l.strip_prefix(";SYM ")?.split_whitespace();
+            Some((w.next()?.to_string(), u32::from_str_radix(w.next()?.strip_prefix("0x")?, 16).ok()?))
+        })
+        .collect()
+}
+
+#[test]
+fn interrupt_vectors_are_pinned_and_frames_never_overlay_a_handler() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("vectors");
+    // One handler: it sits right at the high vector, nothing at the low one.
+    let one = root().join("tests/valid/single_interrupt.bas");
+    let r = Command::new(basicc()).arg(&one).arg("-o").arg(out.join("one.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("one.S")).unwrap();
+    assert_eq!(sym_addrs(&asm)["__ISR_H"], 0x08);
+    assert!(!asm.contains("__v_lo"));
+    assert!(asm.contains("bsf INTCON, 7") && !asm.contains("bsf INTCON, 5"), "IPEN stays off with one unprioritised handler");
+    // Two priorities: both vectors jump, IPEN is switched on, only the high handler may use the
+    // hardware shadow registers.
+    let two = root().join("tests/valid/interrupts.bas");
+    let r = Command::new(basicc()).arg(&two).arg("-o").arg(out.join("two.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("two.S")).unwrap();
+    let a = sym_addrs(&asm);
+    assert_eq!((a["__v_hi"], a["__v_lo"]), (0x08, 0x18));
+    assert!(asm.contains("bsf INTCON, 5"), "IPEN");
+    assert_eq!(asm.matches("retfie f").count(), 1);
+    assert!(asm.contains("movff BSR, __ISV"), "the low handler saves BSR in software");
+}
+
+#[test]
+fn handler_frames_are_never_shared() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("isrframes");
+    let src = out.join("h.bas");
+    // The handler's local and the sibling routines' locals must not overlay: the handler can run
+    // at any time. (A and B are siblings and may share; H may not share with either.)
+    let prog = "Program T\nDevice = 18F27Q10\nDim g As Byte\nSub A()\n Dim x As Byte\n x = 1\n g = x\nEnd Sub\nSub B()\n Dim y As Byte\n y = 2\n g = y\nEnd Sub\nInterrupt H()\n Dim z As Byte\n z = 3\n g = z\nEnd Interrupt\nA()\nB()\nEnable(H)\n";
+    std::fs::write(&src, prog).unwrap();
+    let r = Command::new(basicc()).arg(&src).arg("-o").arg(out.join("h.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let a = data_addrs(&std::fs::read_to_string(out.join("h.S")).unwrap());
+    assert_eq!(a["T_A__X"], a["T_B__Y"], "siblings should still overlay");
+    assert_ne!(a["T_H__Z"], a["T_A__X"], "a handler frame overlays main-line storage");
+}
+
+#[test]
+fn jumps_into_or_out_of_save_are_reported() {
+    let out = scratch("savegoto");
+    let src = out.join("g.bas");
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim g As Byte\nInterrupt H()\n Save(0)\n Goto done\n Restore\n done:\nEnd Interrupt\nEnable(H)\n").unwrap();
+    let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
 }
 
 #[test]

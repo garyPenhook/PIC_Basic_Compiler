@@ -28,11 +28,16 @@ on an 8-bit PIC18 (PLAN §7A), not compatibility with any other compiler.
 | `PRODH:PRODL` | Hardware-multiplier result; treated as scratch across calls |
 | `TBLPTR`, `TABLAT` | Table reads; treated as scratch across calls |
 
-Interrupts (verified M1, `docs/FACTS-18F27Q10.md` §4): `WREG`, `STATUS` and `BSR` are saved on
-entry in a one-level fast register stack; with both priorities in use the low-priority handler
-saves them in software. Everything else a handler touches (`PRODH:PRODL`, `FSRn`, `TBLPTR`,
-`TABLAT`, compiler scratch) is saved by the handler. `MOVFF` is never used to write interrupt
-control registers while any interrupt is enabled (`[DS40002043F p.194]`).
+Interrupts (verified M1, `docs/FACTS-18F27Q10.md` §4; implemented M6, D40–D45): `WREG`, `STATUS`
+and `BSR` are saved on entry in a one-level fast register stack and the handler returns with
+`RETFIE, FAST`; with both priorities in use the low-priority handler saves them in software
+(`movff WREG/STATUS/BSR` into its save area, restored `BSR`, `STATUS`, `WREG` last, plain `RETFIE`).
+Everything else a handler touches (`PRODH:PRODL`, `FSR0..2`, `TBLPTR`, `TABLAT`, the used bytes of
+`__A`..`__D`) is saved by the handler: the code generator scans the handler's emitted code (and the
+shared helpers it calls) for those registers and copies exactly those with `MOVFF` into
+`__ISV<n>`, a static area that is never overlaid. `MOVFF` is never used to write interrupt
+control registers while any interrupt is enabled (`[DS40002043F p.194]`); nothing here does. The
+save and restore code is fenced from the peephole pass (`Keep`).
 
 ## 3. Calling convention (as implemented in M4)
 
@@ -94,6 +99,12 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
   `[DS40002043F p.108]`. In testing, a vector psect without an absolute/linker position was
   placed by pic-as at the *end* of flash; the code generator therefore emits absolute positions
   and the driver checks the map file.
+* **Vectors** (only when the program has a handler): `0x0000` is `bra __reset`. One unprioritised
+  handler (IPEN = 0) is placed at `0x0008`. With priorities (IPEN = 1) `0x0008` and `0x0018` each
+  hold a branch to `__ISR_H` / `__ISR_L`, or spin when that level has no handler; the handlers
+  follow, then the start-up code. Start-up sets IPEN before anything runs.
+* **`Save … Restore`**: byte-for-byte `MOVFF` copies into `__SAV<n>`; addresses are deduplicated so
+  overlaid frames are copied once.
 * **Start-up**: without interrupts the program begins at address 0 (no reset `goto`). The
   clock comes from the `Config` block alone; start-up clears every allocated global, local and
   `Result` byte (a loop through `FSR0` for runs over four bytes), stores initial values, runs module
@@ -109,7 +120,7 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
   otherwise warns about a missing start record). Branches are relaxed to `bra`/`rcall`/short
   conditional forms when in range, else `goto`/`call` (inverted skip for conditionals).
 * **Label table**: the generated file ends with `;SYM name 0xADDR` lines (byte addresses) for tools.
-* **Interrupt entry**: priority and context-save code per LANGUAGE.md §8 and the M1 facts.
+* **Interrupt entry**: see the vector and context-save notes above.
 
 ## 6. Open questions for M1/M4
 

@@ -67,6 +67,8 @@ Date verified: 2026-10-23.
 | ✔ Control registers: `INTCON`, `PIRx` (flags), `PIEx` (enables), `IPRx` (priority). There are **8** each of `PIR`, `PIE`, `IPR` | DS p.193, p.195 |
 | ✔ `IPEN` = 0 (default): compatibility mode — all interrupts go to `0008h`; `GIE/GIEH` is the global enable and `PEIE/GIEL` enables peripherals | DS p.193 |
 | ✔ `IPEN` = 1: priority mode — `GIEH` enables high-priority, `GIEL` enables low-priority; high vector `0008h`, low vector `0018h`; a high-priority interrupt can interrupt a low-priority one, never the reverse | DS p.193 |
+| ✔ `INTCON` (0xFF2): bit 7 `GIE/GIEH`, bit 6 `PEIE/GIEL`, bit 5 `IPEN`. With `IPEN = 1`, `GIEH = 0` disables **all** interrupts and `GIEL = 0` the low-priority ones; `GIEH` is cleared by hardware for a high-priority interrupt, `GIEL` for a low-priority one | DS p.198 |
+| ✔ `IPRx` bits reset to `1` (high priority); `PIE0` enables are not gated by `PEIE`; flags (`PIR0.TMR0IF` ...) are cleared by software | DS p.198–199, p.207, p.215–217 |
 | ✔ Fixed vectors only. This part has **no vectored-interrupt table or base register** (none exists in the data sheet) | DS p.193 (and a full-text search of the data sheet) |
 | ✔ On acknowledge: the global enable is cleared and the return address is pushed. `RETFIE` sets it again | DS p.193–194 |
 | ✔ Flags are set whether or not enabled; flags must be cleared **by software** before re-enabling | DS p.194 |

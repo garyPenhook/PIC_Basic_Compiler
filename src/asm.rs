@@ -69,6 +69,9 @@ pub enum Item {
     Keep(bool),
     /// Constant bytes in program memory (an even number of them).
     Data(Vec<u8>),
+    /// Continue at this word address (the interrupt vectors sit at fixed places). It must not be
+    /// behind the current position.
+    Org(u32),
 }
 
 /// Words an instruction occupies, from its mnemonic.
@@ -107,6 +110,7 @@ fn size_of(it: &Item, f: Form) -> u32 {
         Item::Br(_, _) => if f == Form::Short { 1 } else { 3 },
         Item::Call(_) => if f == Form::Short { 1 } else { 2 },
         Item::Data(b) => b.len().div_ceil(2) as u32,
+        Item::Org(_) => 0,
     }
 }
 
@@ -119,6 +123,10 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
         let mut pc = start;
         let mut at = vec![0u32; items.len()];
         for (i, it) in items.iter().enumerate() {
+            if let Item::Org(w) = it {
+                assert!(pc <= *w, "code runs past the fixed address 0x{:04X}", w * 2);
+                pc = *w;
+            }
             at[i] = pc;
             match it {
                 Item::Label(l) => {
@@ -163,6 +171,7 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
                     Item::Raw(t) => lines.push(format!("    {t}")),
                     Item::Comment(t) => lines.push(format!("    ; {t}")),
                     Item::Fence | Item::Keep(_) => {}
+                    Item::Org(w) => lines.push(format!("    ORG 0x{:04X}", w * 2)),
                     Item::Data(b) => {
                         let text: Vec<String> = b.iter().map(|x| format!("0x{x:02X}")).collect();
                         lines.push(format!("    db {}", text.join(", ")));

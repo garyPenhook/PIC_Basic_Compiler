@@ -34,8 +34,11 @@ pub struct Target {
 
 #[derive(Clone, Debug, Default)]
 pub struct Layout {
-    /// Address of each object (user variables, then scratch, then temporary areas).
+    /// Address of each object (user variables, then scratch, then temporary areas, then the
+    /// context save areas).
     pub addr: Vec<Option<u32>>,
+    /// Bytes allocated to each object.
+    pub size: Vec<u32>,
 }
 
 /// An allocatable object.
@@ -58,7 +61,9 @@ const SCRATCH: [&str; 4] = ["A", "B", "C", "D"];
 /// Which pairs of routines can never be live at once: neither one can reach the other through
 /// the call graph (`calls[f]` lists the routines `f` calls directly; the last entry is the main
 /// program). Indexed `[f][g]`.
-pub fn independent(calls: &[BTreeSet<FuncId>]) -> Vec<Vec<bool>> {
+///
+/// An interrupt handler (`isr[f]`) can run at any moment, so it is independent of nothing.
+pub fn independent(calls: &[BTreeSet<FuncId>], isr: &[bool]) -> Vec<Vec<bool>> {
     let n = calls.len();
     let mut reach = vec![vec![false; n]; n];
     for f in 0..n {
@@ -70,7 +75,7 @@ pub fn independent(calls: &[BTreeSet<FuncId>]) -> Vec<Vec<bool>> {
             }
         }
     }
-    (0..n).map(|f| (0..n).map(|g| f != g && !reach[f][g] && !reach[g][f]).collect()).collect()
+    (0..n).map(|f| (0..n).map(|g| f != g && !reach[f][g] && !reach[g][f] && !isr[f] && !isr[g]).collect()).collect()
 }
 
 /// A run of RAM being filled by `plan_layout`.
@@ -147,7 +152,252 @@ pub fn plan_layout(objs: &[Obj], tgt: &Target, indep: &[Vec<bool>]) -> Result<La
             return Err(format!("out of data RAM placing `{}` ({} bytes)", o.name, o.bytes));
         }
     }
-    Ok(Layout { addr })
+    Ok(Layout { addr, size: objs.iter().map(|o| o.bytes).collect() })
+}
+
+// ---- context saving ------------------------------------------------------------------------
+
+/// The registers the compiler uses behind the program's back. An interrupt handler saves the ones
+/// its code touches; `Save(0)` saves them all.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Regs {
+    /// Bit n: FSRn.
+    fsr: u8,
+    tbl: bool,
+    tablat: bool,
+    /// Bit 0: PRODL, bit 1: PRODH.
+    prod: u8,
+    /// Bytes used of `__A`..`__D`.
+    scr: [u32; 4],
+}
+
+impl Regs {
+    fn full(scr: [u32; 4]) -> Regs {
+        Regs { fsr: 0b11, tbl: true, tablat: true, prod: 3, scr }
+    }
+
+    fn merge(&mut self, o: &Regs) {
+        self.fsr |= o.fsr;
+        self.tbl |= o.tbl;
+        self.tablat |= o.tablat;
+        self.prod |= o.prod;
+        for r in 0..4 {
+            self.scr[r] = self.scr[r].max(o.scr[r]);
+        }
+    }
+
+    /// Notes the registers one assembly line mentions.
+    fn scan(&mut self, text: &str) {
+        let toks: Vec<String> = text.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()).map(|t| t.to_ascii_uppercase()).collect();
+        for (i, t) in toks.iter().enumerate() {
+            let t = t.as_str();
+            if let Some(rest) = t.strip_prefix("__")
+                && let Some(r) = rest.chars().next().and_then(|c| "ABCD".find(c))
+            {
+                let (num, off) = rest[1..].split_once('+').unwrap_or((&rest[1..], "0"));
+                if let (Ok(n), Ok(o)) = (num.parse::<u32>(), off.parse::<u32>()) {
+                    self.scr[r] = self.scr[r].max(n + o + 1);
+                }
+                continue;
+            }
+            match t {
+                "FSR0L" | "FSR0H" | "INDF0" | "POSTINC0" | "POSTDEC0" | "PREINC0" | "PLUSW0" => self.fsr |= 1,
+                "FSR1L" | "FSR1H" | "INDF1" | "POSTINC1" | "POSTDEC1" | "PREINC1" | "PLUSW1" => self.fsr |= 2,
+                "FSR2L" | "FSR2H" | "INDF2" | "POSTINC2" | "POSTDEC2" | "PREINC2" | "PLUSW2" => self.fsr |= 4,
+                "LFSR" => match toks.get(i + 1).map(|x| x.as_str()) {
+                    Some("0") => self.fsr |= 1,
+                    Some("1") => self.fsr |= 2,
+                    Some("2") => self.fsr |= 4,
+                    _ => self.fsr |= 7,
+                },
+                "TABLAT" => self.tablat = true,
+                "PRODL" => self.prod |= 1,
+                "PRODH" => self.prod |= 2,
+                "MULWF" | "MULLW" => self.prod = 3,
+                _ if t.starts_with("TBLPTR") => self.tbl = true,
+                _ if t.starts_with("TBLRD") || t.starts_with("TBLWT") => {
+                    self.tbl = true;
+                    self.tablat = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The register symbols to copy, one byte each.
+    fn syms(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        for n in 0..3 {
+            if self.fsr & (1 << n) != 0 {
+                v.push(format!("FSR{n}L"));
+                v.push(format!("FSR{n}H"));
+            }
+        }
+        if self.tbl {
+            v.extend(["TBLPTRL", "TBLPTRH", "TBLPTRU"].map(String::from));
+        }
+        if self.tablat {
+            v.push("TABLAT".into());
+        }
+        if self.prod & 1 != 0 {
+            v.push("PRODL".into());
+        }
+        if self.prod & 2 != 0 {
+            v.push("PRODH".into());
+        }
+        for r in 0..4 {
+            for i in 0..self.scr[r] {
+                v.push(format!("__{}{}", SCRATCH[r], i));
+            }
+        }
+        v
+    }
+}
+
+/// What the first pass learned about the whole program, for the passes that emit final code.
+#[derive(Default)]
+#[derive(Clone)]
+struct Facts {
+    /// Registers each routine's code uses, including the shared helpers it calls (but not the
+    /// routines it calls).
+    regs: Vec<Regs>,
+    /// The call graph (the last entry is the main program).
+    calls: Vec<BTreeSet<FuncId>>,
+}
+
+const CTX_BEGIN: &str = "<ctx";
+const CTX_END: &str = "ctx>";
+
+/// Registers used by `items[s..e]` and the labels it calls; context save/restore code is skipped.
+fn scan_range(items: &[Item], s: usize, e: usize) -> (Regs, Vec<String>) {
+    let mut r = Regs::default();
+    let mut calls = Vec::new();
+    let mut skip = false;
+    for it in &items[s..e] {
+        match it {
+            Item::Comment(t) if t == CTX_BEGIN => skip = true,
+            Item::Comment(t) if t == CTX_END => skip = false,
+            _ if skip => {}
+            Item::Ins(t) | Item::Raw(t) => r.scan(t),
+            Item::Call(t) => calls.push(t.clone()),
+            _ => {}
+        }
+    }
+    (r, calls)
+}
+
+fn compute_facts(g: &Gen, items: &[Item]) -> Facts {
+    let mut helpers: HashMap<String, (Regs, Vec<String>)> = HashMap::new();
+    for (name, s, e) in &g.hranges {
+        helpers.insert(name.clone(), scan_range(items, *s, *e));
+    }
+    let mut regs = vec![Regs::default(); g.p.funcs.len() + 1];
+    for (f, s, e) in &g.ranges {
+        let (mut r, calls) = scan_range(items, *s, *e);
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut stack: Vec<String> = calls.into_iter().filter(|c| helpers.contains_key(c)).collect();
+        while let Some(h) = stack.pop() {
+            if seen.insert(h.clone()) {
+                let (hr, hc) = &helpers[&h];
+                r.merge(hr);
+                stack.extend(hc.iter().filter(|c| helpers.contains_key(*c)).cloned());
+            }
+        }
+        regs[*f] = r;
+    }
+    Facts { regs, calls: g.calls.clone() }
+}
+
+// Routines called anywhere in a statement list.
+fn place_calls(p: &Place, out: &mut BTreeSet<FuncId>) {
+    if let Some(i) = &p.idx {
+        ex_calls(i, out);
+    }
+}
+
+fn src_calls(s: &StrSrc, out: &mut BTreeSet<FuncId>) {
+    match s {
+        StrSrc::Ram(p) => place_calls(p, out),
+        StrSrc::Lit(_) => {}
+        StrSrc::Char(e) => ex_calls(e, out),
+    }
+}
+
+fn ex_calls(e: &Ex, out: &mut BTreeSet<FuncId>) {
+    match &e.k {
+        ExK::Const(_) => {}
+        ExK::Load(p) | ExK::Addr(p) => place_calls(p, out),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => ex_calls(x, out),
+        ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
+            ex_calls(a, out);
+            ex_calls(b, out);
+        }
+        ExK::Call(f, args) => {
+            out.insert(*f);
+            for (p, a) in args {
+                place_calls(p, out);
+                ex_calls(a, out);
+            }
+        }
+        ExK::StrEq(a, b) => {
+            src_calls(a, out);
+            src_calls(b, out);
+        }
+    }
+}
+
+fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
+    for s in ss {
+        match &s.st {
+            St::Assign(p, e) => {
+                place_calls(p, out);
+                ex_calls(e, out);
+            }
+            St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::Clear(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => place_calls(p, out),
+            St::Copy { dst, src, .. } => {
+                place_calls(dst, out);
+                place_calls(src, out);
+            }
+            St::StrSet { dst, parts, .. } => {
+                place_calls(dst, out);
+                parts.iter().for_each(|p| src_calls(p, out));
+            }
+            St::Call(f, args) => {
+                out.insert(*f);
+                for (p, a) in args {
+                    place_calls(p, out);
+                    ex_calls(a, out);
+                }
+            }
+            St::If(arms, other) => {
+                for (c, b) in arms {
+                    ex_calls(c, out);
+                    stmt_calls(b, out);
+                }
+                stmt_calls(other, out);
+            }
+            St::While(c, b) | St::Repeat(b, c) => {
+                ex_calls(c, out);
+                stmt_calls(b, out);
+            }
+            St::For { var, from, limit, body, .. } => {
+                place_calls(var, out);
+                ex_calls(from, out);
+                ex_calls(limit, out);
+                stmt_calls(body, out);
+            }
+            St::Count { counter, body, step, .. } => {
+                place_calls(counter, out);
+                if let Some((p, _)) = step {
+                    place_calls(p, out);
+                }
+                stmt_calls(body, out);
+            }
+            St::DelayUs(e) | St::DelayMs(e) => ex_calls(e, out),
+            St::Save { body, .. } => stmt_calls(body, out),
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+        }
+    }
 }
 
 // ---- operands ------------------------------------------------------------------------------
@@ -242,6 +492,17 @@ struct Gen<'p> {
     errors: Vec<(Span, String)>,
     span: Span,
     nvars: usize,
+    /// What the first pass found out (none during the first pass itself).
+    facts: Option<&'p Facts>,
+    /// Item ranges of each routine and each helper, for `compute_facts`.
+    ranges: Vec<(FuncId, usize, usize)>,
+    hranges: Vec<(String, usize, usize)>,
+    /// Bytes each context save area needed: `Save` blocks first, then one per handler.
+    save_max: Vec<u32>,
+    /// While generating a handler: the label of its return sequence.
+    isr_end: Option<String>,
+    /// `Save` blocks being generated: loop depth at entry and the code that restores them.
+    save_stack: Vec<(usize, Vec<String>)>,
 }
 
 /// The second factor of a partial product in `mul_partials`: a literal byte or byte `j` of `__B`.
@@ -255,9 +516,9 @@ fn weight(depth: u32) -> u64 {
 }
 
 impl<'p> Gen<'p> {
-    fn new(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> Gen<'p> {
+    fn new(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, facts: Option<&'p Facts>) -> Gen<'p> {
         let nvars = p.vars.len();
-        let nobj = nvars + 4 + p.funcs.len() + 1;
+        let nobj = nvars + 4 + p.funcs.len() + 1 + p.n_saves + p.isrs.len();
         Gen {
             p,
             tgt,
@@ -280,6 +541,12 @@ impl<'p> Gen<'p> {
             errors: Vec::new(),
             span: Span::default(),
             nvars,
+            facts,
+            ranges: Vec::new(),
+            hranges: Vec::new(),
+            save_max: vec![0; p.n_saves + p.isrs.len()],
+            isr_end: None,
+            save_stack: Vec::new(),
         }
     }
 
@@ -2055,15 +2322,25 @@ impl<'p> Gen<'p> {
             }
             St::Break => {
                 if let Some((_, end)) = self.loops.last().cloned() {
+                    self.unwind_saves(self.loops.len());
                     self.br(Cc::Always, &end);
                 }
             }
             St::Continue => {
                 if let Some((cont, _)) = self.loops.last().cloned() {
+                    self.unwind_saves(self.loops.len());
                     self.br(Cc::Always, &cont);
                 }
             }
-            St::Return => self.ins("return"),
+            St::Return => {
+                self.unwind_saves(0);
+                match self.isr_end.clone() {
+                    Some(end) => self.br(Cc::Always, &end),
+                    None => self.ins("return"),
+                }
+            }
+            St::Int { level, on } => self.int_control(*level, *on),
+            St::Save { id, items, body } => self.save_block(*id, items, body),
             St::Goto(l) => {
                 let name = self.p.label_names[*l].clone();
                 self.br(Cc::Always, &name);
@@ -2094,6 +2371,183 @@ impl<'p> Gen<'p> {
                 self.br(Cc::Always, &l);
             }
         }
+    }
+
+    // ---- interrupts -----------------------------------------------------------------------
+
+    /// `Enable`/`Disable`. With priorities (IPEN = 1) GIEH (INTCON bit 7) gates every interrupt
+    /// and GIEL (bit 6) the low-priority ones; without, bit 7 is GIE and bit 6 PEIE
+    /// `[DS40002043F p.198]`. Clearing the global bit is retried until it reads back clear, since an
+    /// interrupt taken just then would return with it set again.
+    fn int_control(&mut self, level: Level, on: bool) {
+        let m = self.sfr_mem("INTCON");
+        self.items.push(Item::Keep(true));
+        match (on, level) {
+            (true, Level::High) => self.fbit("bsf", &m, 7),
+            (true, _) => {
+                self.fbit("bsf", &m, 6);
+                self.fbit("bsf", &m, 7);
+            }
+            (false, Level::Low) => self.fbit("bcf", &m, 6),
+            (false, _) => {
+                let l = self.fresh();
+                self.label(&l);
+                self.fbit("bcf", &m, 7);
+                self.fbit("btfsc", &m, 7);
+                self.br(Cc::Always, &l);
+            }
+        }
+        self.items.push(Item::Keep(false));
+    }
+
+    fn save_sym(&self, k: usize) -> String {
+        if k < self.p.n_saves { format!("__SAV{k}") } else { format!("__ISV{}", k - self.p.n_saves) }
+    }
+
+    /// The code that copies `syms` into save area `k` and back (in reverse order).
+    fn ctx_lists(&mut self, k: usize, syms: &[String]) -> (Vec<String>, Vec<String>) {
+        if self.layout.is_some() {
+            self.save_max[k] = self.save_max[k].max(syms.len() as u32);
+        }
+        let area = self.save_sym(k);
+        let at = |i: usize| if i == 0 { area.clone() } else { format!("{area}+{i}") };
+        let save = syms.iter().enumerate().map(|(i, s)| format!("movff {s}, {}", at(i))).collect();
+        let restore = syms.iter().enumerate().rev().map(|(i, s)| format!("movff {}, {s}", at(i))).collect();
+        (save, restore)
+    }
+
+    /// Emits context save or restore code, which no pass may touch.
+    fn emit_ctx(&mut self, code: &[String]) {
+        if code.is_empty() {
+            return;
+        }
+        self.items.push(Item::Comment(CTX_BEGIN.into()));
+        self.items.push(Item::Keep(true));
+        for c in code {
+            self.ins(c.clone());
+        }
+        self.items.push(Item::Keep(false));
+        self.items.push(Item::Comment(CTX_END.into()));
+    }
+
+    /// Restores the `Save` blocks a jump leaves: those opened at loop depth `min_loops` or deeper.
+    fn unwind_saves(&mut self, min_loops: usize) {
+        let lists: Vec<Vec<String>> = self.save_stack.iter().rev().filter(|(l, _)| *l >= min_loops).map(|(_, r)| r.clone()).collect();
+        for r in lists {
+            self.emit_ctx(&r);
+        }
+    }
+
+    /// `Save(items) … Restore`. Inside a handler the frames (and working registers) of every
+    /// routine the block calls are saved as well, whether or not they are listed: a routine's
+    /// frame may share addresses with main-line storage.
+    fn save_block(&mut self, id: usize, items: &[SaveIt], body: &[S]) {
+        let mut syms: Vec<String> = Vec::new();
+        if let (Some(layout), Some(facts)) = (self.layout, self.facts) {
+            let in_isr = self.isr_end.is_some();
+            let mut callees = BTreeSet::new();
+            stmt_calls(body, &mut callees);
+            let closure = |roots: &BTreeSet<FuncId>| {
+                let mut all: BTreeSet<FuncId> = BTreeSet::new();
+                let mut stack: Vec<FuncId> = roots.iter().copied().collect();
+                while let Some(f) = stack.pop() {
+                    if all.insert(f) {
+                        stack.extend(facts.calls[f].iter().copied());
+                    }
+                }
+                all
+            };
+            let mut roots: BTreeSet<FuncId> = if in_isr { callees.clone() } else { BTreeSet::new() };
+            for it in items {
+                if let SaveIt::Func(f) = it {
+                    roots.insert(*f);
+                }
+            }
+            let mut regs = Regs::default();
+            if items.contains(&SaveIt::Regs) {
+                let scr = [0, 1, 2, 3].map(|r| layout.size[self.obj_scratch(r)]);
+                regs = Regs::full(scr);
+            } else if in_isr {
+                for f in closure(&callees) {
+                    regs.merge(&facts.regs[f]);
+                }
+            }
+            syms.extend(regs.syms());
+            // Memory, by address so that overlaid frames are copied once.
+            let mut bytes: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+            let mut add = |sym: &str, addr: Option<u32>, n: u32| {
+                if let Some(a) = addr {
+                    for b in 0..n {
+                        bytes.entry(a + b).or_insert_with(|| if b == 0 { sym.to_string() } else { format!("{sym}+{b}") });
+                    }
+                }
+            };
+            for it in items {
+                if let SaveIt::Var(v) = it {
+                    add(&self.p.vars[*v].asm, layout.addr[*v], layout.size[*v]);
+                }
+            }
+            for f in closure(&roots) {
+                for (i, v) in self.p.vars.iter().enumerate() {
+                    if v.owner == Some(f) {
+                        add(&v.asm, layout.addr[i], layout.size[i]);
+                    }
+                }
+                let t = self.obj_temp(f);
+                add(&format!("{}__TMP", self.p.funcs[f].asm), layout.addr[t], layout.size[t]);
+            }
+            syms.extend(bytes.into_values());
+        }
+        let (save, restore) = self.ctx_lists(id, &syms);
+        self.emit_ctx(&save);
+        self.save_stack.push((self.loops.len(), restore.clone()));
+        self.block(body);
+        self.save_stack.pop();
+        self.emit_ctx(&restore);
+        self.bsr = None;
+    }
+
+    /// Whether the handler at `level` may return with `RETFIE, FAST` (the hardware shadow copy of
+    /// `WREG`, `STATUS` and `BSR`). With two priorities a high-priority interrupt overwrites the
+    /// copy a low-priority handler relies on, so that one saves them in software
+    /// `[DS40002043F p.112]`.
+    fn isr_shadow(&self, level: Level) -> bool {
+        let dual = self.p.isrs.iter().any(|x| x.1 == Level::High) && self.p.isrs.iter().any(|x| x.1 == Level::Low);
+        self.p.isr_shadow && !(level == Level::Low && dual)
+    }
+
+    /// One interrupt handler: entry label, context save, body, context restore, `RETFIE`.
+    fn gen_isr(&mut self, j: usize) {
+        let p = self.p;
+        let (f, level) = p.isrs[j];
+        let func = &p.funcs[f];
+        self.cur = f;
+        self.cur_asm = func.asm.clone();
+        self.temp_cur = 0;
+        self.depth = 0;
+        self.bsr = None;
+        let start = self.items.len();
+        self.items.push(Item::Comment(format!("Interrupt {}", func.name)));
+        self.label(if level == Level::Low { "__ISR_L" } else { "__ISR_H" });
+        self.label(&func.asm);
+        let shadow = self.isr_shadow(level);
+        let mut syms: Vec<String> = Vec::new();
+        if !shadow {
+            syms.extend(["WREG", "STATUS", "BSR"].map(String::from));
+        }
+        if let Some(facts) = self.facts {
+            syms.extend(facts.regs[f].syms());
+        }
+        let (save, restore) = self.ctx_lists(p.n_saves + j, &syms);
+        self.emit_ctx(&save);
+        let end = format!("__isr_end{j}");
+        self.isr_end = Some(end.clone());
+        self.block(&func.body);
+        self.isr_end = None;
+        self.label(&end);
+        self.emit_ctx(&restore);
+        self.ins(if shadow { "retfie f" } else { "retfie" });
+        self.ranges.push((f, start, self.items.len()));
     }
 
     fn direction(&mut self, p: &Place, output: bool) {
@@ -2527,12 +2981,38 @@ pub struct Generated {
 }
 
 /// Runs one generation pass over the whole program.
-fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> (Gen<'p>, Vec<Item>) {
+fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, facts: Option<&'p Facts>) -> (Gen<'p>, Vec<Item>) {
     // Safety: the generator borrows `p`, `tgt` and `layout` for the same lifetime.
-    let mut g = Gen::new(p, tgt, layout);
+    let mut g = Gen::new(p, tgt, layout, facts);
+    // Vectors. Reset jumps over them; with one handler (IPEN = 0) it sits right at 0x08, with two
+    // priorities each vector jumps to its handler, and an unserved vector spins.
+    if !p.isrs.is_empty() {
+        g.items.push(Item::Br(Cc::Always, "__reset".into()));
+        let hi = p.isrs.iter().position(|x| x.1 != Level::Low);
+        let lo = p.isrs.iter().position(|x| x.1 == Level::Low);
+        if p.isrs.iter().any(|x| x.1 != Level::Single) {
+            for (vec, at, label, h) in [("__v_hi", 4, "__ISR_H", hi), ("__v_lo", 12, "__ISR_L", lo)] {
+                g.items.push(Item::Org(at));
+                g.items.push(Item::Label(vec.into()));
+                match h {
+                    Some(_) => g.items.push(Item::Br(Cc::Always, label.into())),
+                    None => g.items.push(Item::Br(Cc::Always, vec.into())),
+                }
+            }
+            for j in [hi, lo].into_iter().flatten() {
+                g.gen_isr(j);
+            }
+        } else if let Some(j) = hi {
+            g.items.push(Item::Org(4));
+            g.gen_isr(j);
+        }
+        g.bsr = Some(0);
+    }
     // Start-up.
     g.cur = p.funcs.len();
     g.cur_asm = p.main.asm.clone();
+    g.temp_cur = 0;
+    g.depth = 0;
     g.items.push(Item::Label("__reset".into()));
     g.startup();
     g.block(&p.main.body);
@@ -2554,8 +3034,10 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> 
         g.depth = 0;
         g.bsr = None;
         g.items.push(Item::Comment(format!("Sub/Function {}", func.name)));
+        let start = g.items.len();
         g.label(&func.asm);
         g.block(&func.body);
+        g.ranges.push((f, start, g.items.len()));
     }
     // Helpers (which may call others).
     let mut emitted: BTreeSet<String> = BTreeSet::new();
@@ -2564,7 +3046,9 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> 
         let Some(h) = next else { break };
         emitted.insert(h.clone());
         g.items.push(Item::Comment(format!("helper {h}")));
+        let start = g.items.len();
         g.emit_helper(&h);
+        g.hranges.push((format!("__{h}"), start, g.items.len()));
     }
     // String literals follow the code, each Null-terminated and padded to a whole word.
     let lits = g.lits.clone();
@@ -2584,6 +3068,11 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> 
 impl<'p> Gen<'p> {
     /// Zeroing of variables and initial values, then the body.
     fn startup(&mut self) {
+        // Priority levels are switched on before anything can be enabled (IPEN, INTCON bit 5).
+        if self.p.isrs.iter().any(|x| x.1 != Level::Single) {
+            let m = self.sfr_mem("INTCON");
+            self.fbit("bsf", &m, 5);
+        }
         let Some(layout) = self.layout else { return };
         // Zero ranges: all allocated user variables, merged.
         let mut ranges: Vec<(u32, u32)> = Vec::new();
@@ -2665,17 +3154,23 @@ impl<'p> Gen<'p> {
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
     // Pass 1 sizes the objects; later passes emit code against the layout and repeat with the
     // sizes they actually needed until the two agree.
-    let (g1, _) = run_pass(p, tgt, None);
+    let (g1, items1) = run_pass(p, tgt, None, None);
+    let mut facts = compute_facts(&g1, &items1);
     let mut uses = g1.uses.clone();
     let mut scratch = g1.scratch_max;
     let mut temps = g1.temp_max.clone();
     let mut errors: Vec<(Span, String)> = Vec::new();
     let pass1_errors = g1.errors.clone();
-    let indep = independent(&g1.calls);
+    let mut isr_mask = vec![false; p.funcs.len() + 1];
+    for &(f, _) in &p.isrs {
+        isr_mask[f] = true;
+    }
+    let indep = independent(&g1.calls, &isr_mask);
     let nvars = p.vars.len();
+    let mut save_bytes = vec![0u32; p.n_saves + p.isrs.len()];
     drop(g1);
     let mut result = None;
-    for _round in 0..4 {
+    for _round in 0..6 {
         let mut objs: Vec<Obj> = Vec::new();
         for (i, v) in p.vars.iter().enumerate() {
             objs.push(Obj { name: v.asm.clone(), bytes: if uses[i] > 0 { v.bytes } else { 0 }, weight: uses[i], force_access: false, zero: true, owner: v.owner });
@@ -2687,16 +3182,23 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
             let asm = if f < p.funcs.len() { p.funcs[f].asm.clone() } else { p.main.asm.clone() };
             objs.push(Obj { name: format!("{asm}__TMP"), bytes: temps[f], weight: uses[nvars + 4 + f], force_access: false, zero: false, owner: if f < p.funcs.len() { Some(f) } else { None } });
         }
+        for (k, &n) in save_bytes.iter().enumerate() {
+            let name = if k < p.n_saves { format!("__SAV{k}") } else { format!("__ISV{}", k - p.n_saves) };
+            objs.push(Obj { name, bytes: n, weight: 0, force_access: false, zero: false, owner: None });
+        }
         let layout = match plan_layout(&objs, tgt, &indep) {
             Ok(l) => l,
             Err(e) => {
                 errors.push((Span::default(), e));
-                Layout { addr: vec![None; objs.len()] }
+                Layout { addr: vec![None; objs.len()], size: vec![0; objs.len()] }
             }
         };
-        let (g2, items) = run_pass(p, tgt, Some(&layout));
-        let grew = (0..4).any(|r| g2.scratch_max[r] > scratch[r]) || (0..temps.len()).any(|f| g2.temp_max[f] > temps[f]) || (0..nvars).any(|i| g2.uses[i] > 0 && uses[i] == 0);
+        let (g2, items) = run_pass(p, tgt, Some(&layout), Some(&facts));
+        let grew = (0..4).any(|r| g2.scratch_max[r] > scratch[r]) || (0..temps.len()).any(|f| g2.temp_max[f] > temps[f]) || (0..nvars).any(|i| g2.uses[i] > 0 && uses[i] == 0) || (0..save_bytes.len()).any(|k| g2.save_max[k] > save_bytes[k]);
         if grew {
+            for k in 0..save_bytes.len() {
+                save_bytes[k] = save_bytes[k].max(g2.save_max[k]);
+            }
             for r in 0..4 {
                 scratch[r] = scratch[r].max(g2.scratch_max[r]);
             }
@@ -2706,6 +3208,12 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
             for i in 0..uses.len() {
                 uses[i] = uses[i].max(g2.uses[i]);
             }
+            continue;
+        }
+        // The register facts came from a pass without a layout; they must hold for the final code.
+        let now = compute_facts(&g2, &items);
+        if now.regs != facts.regs {
+            facts = now;
             continue;
         }
         errors.extend(g2.errors.iter().cloned());

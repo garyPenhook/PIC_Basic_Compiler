@@ -8,8 +8,9 @@
 //! are Null-terminated RAM objects handled by `St::StrSet` and `ExK::StrEq`; literals live in
 //! program memory. Structures are laid out field after field (`layout`); a field is a byte
 //! offset into the variable, so member access is the same `Place` arithmetic as arrays, and
-//! whole structures are cleared and copied with `St::ClearMem`/`St::Copy`. Floats and
-//! interrupts report `E-BACKEND` (M5/M6).
+//! whole structures are cleared and copied with `St::ClearMem`/`St::Copy`. Interrupt handlers are
+//! routines nobody calls (`Program::isrs`); `Save` and `Enable`/`Disable` become `St::Save`/`St::Int`. Floats and
+//! events report `E-BACKEND`.
 
 use crate::ast::*;
 use crate::diag::{Diagnostics, Span};
@@ -106,6 +107,10 @@ pub struct Lowerer<'a> {
     lits: HashMap<Vec<u8>, VarId>,
     /// Statements that run before the program body (they fill those buffers).
     startup: Vec<S>,
+    isrs: Vec<(FuncId, Level)>,
+    n_saves: usize,
+    /// Nesting depth of `Save` blocks being lowered.
+    in_save: u32,
     failed: bool,
 }
 
@@ -135,6 +140,9 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         hidden: 0,
         lits: HashMap::new(),
         startup: Vec::new(),
+        isrs: Vec::new(),
+        n_saves: 0,
+        in_save: 0,
         failed: false,
     };
     for (id, s) in a.symbols.iter().enumerate() {
@@ -206,7 +214,19 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         device: device.device.name.clone(),
         clock_mhz: a.clock_mhz.unwrap_or(0.0),
         config,
+        isrs: lw.isrs,
+        n_saves: lw.n_saves,
+        isr_shadow: a.options.isr_shadow,
     })
+}
+
+/// The vector a handler with this priority (`ipLow` = 1, `ipHigh` = 2) serves.
+fn level_of(priority: &Option<i64>) -> Level {
+    match priority {
+        None => Level::Single,
+        Some(2) => Level::High,
+        Some(_) => Level::Low,
+    }
 }
 
 fn unit_prefix(proj: &Project, ui: usize) -> String {
@@ -225,7 +245,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn unsupported(&mut self, span: Span, what: &str) {
-        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (structures, floats, and some array and by-reference forms are not implemented yet; interrupts arrive in M6)"));
+        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (structures, floats, and some array and by-reference forms are not implemented yet)"));
     }
 
     fn unique(&mut self, base: String) -> String {
@@ -308,10 +328,39 @@ impl<'a> Lowerer<'a> {
                     self.sym_alias.insert(sym, p);
                 }
             }
-            DeclKind::Interrupt(i) => self.unsupported(i.name.span, "an Interrupt"),
+            DeclKind::Interrupt(i) => self.lower_interrupt(i, ui),
             DeclKind::Event(e) => self.unsupported(e.name.span, "an Event"),
             DeclKind::Const(_) | DeclKind::Structure(_) | DeclKind::EventType(_) | DeclKind::Routine(_) => {}
         }
+    }
+
+    /// An interrupt handler is a routine nobody calls: its own frame (never overlaid, see
+    /// `codegen::independent`), no parameters and no result.
+    fn lower_interrupt(&mut self, i: &'a InterruptDecl, ui: usize) {
+        let Some(&sym) = self.a.decl_syms.get(&i.name.span) else { return };
+        let SymKind::Interrupt { priority } = &self.a.symbols[sym].kind else { return };
+        let level = level_of(priority);
+        let id = self.funcs.len();
+        self.funcs.push(None);
+        let asm = self.unique(format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&i.name.name)));
+        self.asm_names.insert(format!("{asm}__TMP"));
+        let saved = (self.cur_func, std::mem::take(&mut self.cur_asm), std::mem::take(&mut self.labels), self.cur_result.take());
+        self.cur_func = Some(id);
+        self.cur_asm = asm.clone();
+        let mut body = Vec::new();
+        for d in &i.body.decls {
+            self.decl(d, ui, &mut body);
+        }
+        let mut rest = self.block(&i.body.stmts, ui);
+        body.append(&mut rest);
+        let mut entry = self.entry_clears(id, &body, i.name.span);
+        entry.append(&mut body);
+        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span });
+        self.isrs.push((id, level));
+        self.cur_func = saved.0;
+        self.cur_asm = saved.1;
+        self.labels = saved.2;
+        self.cur_result = saved.3;
     }
 
     fn dim(&mut self, dim: &'a DimDecl, ui: usize, inits: &mut Vec<S>) {
@@ -1224,6 +1273,8 @@ impl<'a> Lowerer<'a> {
             StmtKind::Break => Self::push(out, St::Break, span),
             StmtKind::Continue => Self::push(out, St::Continue, span),
             StmtKind::Exit => Self::push(out, St::Return, span),
+            StmtKind::GoTo(l) if self.in_save > 0 => self.unsupported(l.span, "Goto inside Save"),
+            StmtKind::Label(l) if self.in_save > 0 => self.unsupported(l.span, "a label inside Save"),
             StmtKind::GoTo(l) => {
                 let id = self.label_id(l);
                 Self::push(out, St::Goto(id), span);
@@ -1232,12 +1283,40 @@ impl<'a> Lowerer<'a> {
                 let id = self.label_id(l);
                 Self::push(out, St::Label(id), span);
             }
-            StmtKind::Save { body, .. } => {
+            StmtKind::Save { items, body } => {
+                let mut its = Vec::new();
+                for it in items {
+                    match it {
+                        SaveItem::Int(..) => its.push(SaveIt::Regs),
+                        SaveItem::Designator(d) => {
+                            if let Some((sym, _, sp)) = self.callee_of(d) {
+                                if let Some(f) = self.func_of(sym, sp) {
+                                    its.push(SaveIt::Func(f));
+                                }
+                            } else if let Some(p) = self.place_of(d) {
+                                match p.base {
+                                    Base::Var(v) if !p.indirect() => its.push(SaveIt::Var(v)),
+                                    _ => self.unsupported(d.span, "this item in Save (only variables, routines and 0)"),
+                                }
+                            }
+                        }
+                    }
+                }
+                let id = self.n_saves;
+                self.n_saves += 1;
+                self.in_save += 1;
                 let b = self.block(body, ui);
-                out.extend(b);
+                self.in_save -= 1;
+                Self::push(out, St::Save { id, items: its, body: b }, span);
             }
             StmtKind::Asm { lines, .. } => Self::push(out, St::Asm(lines.clone()), span),
-            StmtKind::Enable(n) | StmtKind::Disable(n) => self.unsupported(n.span, "Enable/Disable"),
+            StmtKind::Enable(n) | StmtKind::Disable(n) => {
+                let on = matches!(s.kind, StmtKind::Enable(_));
+                match self.a.enables.get(&n.span).map(|&sym| &self.a.symbols[sym].kind) {
+                    Some(SymKind::Interrupt { priority }) => Self::push(out, St::Int { level: level_of(priority), on }, span),
+                    _ => self.err("E-ENABLE", n.span, format!("`{}` does not name an Interrupt", n.name)),
+                }
+            }
         }
     }
 

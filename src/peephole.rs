@@ -21,8 +21,11 @@
 //! that sets flags is only deleted when nothing can read them before they are overwritten.
 //!
 //! Registers whose reads may have side effects (device registers) are never reasoned about: only
-//! symbols in [`Env::plain`] (compiler-placed RAM) are. There are no interrupt handlers yet; once
-//! there are, variables a handler writes must be left out of `Env::plain`.
+//! symbols in [`Env::plain`] (compiler-placed RAM) are. A variable an interrupt handler writes may
+//! change between two instructions of a run, so a value kept in `WREG` can be one load stale; that
+//! is a legal ordering of the handler and the main program (nothing here is `volatile`), and every
+//! loop that polls such a variable starts with a label, which ends the run. The scratch registers
+//! the pass deletes stores to are saved by every handler that uses them.
 
 use crate::asm::Item;
 use std::collections::HashMap;
@@ -339,7 +342,7 @@ fn flags_live(items: &[Item], i: usize, mut needed: u8) -> bool {
                     }
                 }
             },
-            Item::Label(_) | Item::Raw(_) | Item::Data(_) | Item::Keep(_) => return true,
+            Item::Label(_) | Item::Raw(_) | Item::Data(_) | Item::Keep(_) | Item::Org(_) => return true,
         }
     }
     true

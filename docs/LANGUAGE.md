@@ -296,7 +296,17 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
   frame**, callable only through a variable of an event type (`Type TEvent = Event()`), which is
   how a module lets user code plug into its interrupt safely.
 * `Save(item {, item}) … Restore`: preserves the named variables, routines' frames, or the
-  compiler's working registers (`0`) around the block.
+  compiler's working registers (`0`) around the block. A routine item covers the frames of
+  everything it calls. Inside a handler the compiler adds the frame and registers of every routine
+  the block calls, so a call can never corrupt main-line storage. `Exit`, `Break` and `Continue`
+  inside the block restore first; `Goto` and labels inside it are not supported.
+* **What `Enable`/`Disable` do (M6).** They set or clear the global interrupt bits only
+  (`GIE/GIEH`, `PEIE/GIEL`). Enabling a particular source is the program's job: set its `PIEx`
+  bit, clear its flag in the handler (flags are not cleared by hardware), and, with two
+  priorities, set its `IPRx` bit (they reset to *high*). Clearing the global bit inside a handler
+  is undone by the return. Wide variables shared with a handler are not accessed atomically.
+  Cycle-counted delays (`DelayUs`/`DelayMs`) run longer when interrupted.
+* **Not built yet:** `Event` handlers (`E-BACKEND`).
 
 ## 9. Modules, includes and visibility
 
@@ -408,7 +418,7 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
   overlapping cases are an error and an `Else` that can never run is a warning (`W-CASE-ELSE`).
 * **Interrupt handlers** may call a user routine only inside `Save(…) … Restore` (error
   `E-ISR-CALL` otherwise). This is the conservative form of the rule in §8; the proof that a
-  routine touches only the handler's own storage needs interrupt handlers (M6).
+  routine touches only the handler's own storage is not attempted (D22).
 * **Calls.** Calling a function as a statement discards its result. `FunctionName = value` and
   `Result = value` are the same assignment.
 * **Addresses.** `@x` / `AddressOf(x)` has type `Word` for RAM objects and `LongWord` for constant

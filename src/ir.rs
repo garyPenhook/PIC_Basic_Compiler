@@ -253,6 +253,29 @@ pub enum St {
     DelayMs(Ex),
     /// `Terminate`: stop forever.
     Halt,
+    /// `Enable`/`Disable` of the interrupt handler that serves `level`.
+    Int { level: Level, on: bool },
+    /// `Save … Restore`: `items` are copied to a private save area before `body` and back after
+    /// it, including on `Return`, `Break` and `Continue`. `id` names the area.
+    Save { id: usize, items: Vec<SaveIt>, body: Vec<S> },
+}
+
+/// Which vector a handler serves. `Single` is the compatibility mode (IPEN = 0): one handler
+/// at the high vector for every source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    Single,
+    Low,
+    High,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveIt {
+    /// The compiler's working registers.
+    Regs,
+    Var(VarId),
+    /// The frame of a routine and of everything it calls.
+    Func(FuncId),
 }
 
 #[derive(Clone, Debug)]
@@ -283,6 +306,12 @@ pub struct Program {
     pub clock_mhz: f64,
     /// `CONFIGnX` register name and the byte written to it.
     pub config: Vec<(String, u32, u8)>,
+    /// Interrupt handlers (each is also an entry of `funcs`).
+    pub isrs: Vec<(FuncId, Level)>,
+    /// Number of `Save` blocks (`St::Save::id` is below this).
+    pub n_saves: usize,
+    /// `#option ISR_SHADOW`: a handler may use the hardware shadow registers.
+    pub isr_shadow: bool,
 }
 
 impl Place {
@@ -341,9 +370,10 @@ pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bo
         St::For { var: p, from, limit, body, .. } => p.touches(var, true) || ex(from) || ex(limit) || sub(body),
         St::Count { counter, body, step, .. } => counter.touches(var, true) || step.as_ref().is_some_and(|(p, _)| p.touches(var, true)) || sub(body),
         St::Asm(_) => true,
+        St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || sub(body),
         // A jump out leaves `var` unset when it is only assigned after the loop.
         St::Break | St::Return | St::Goto(_) | St::Label(_) | St::Halt => reads,
-        St::Continue => false,
+        St::Continue | St::Int { .. } => false,
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
     })
 }
@@ -352,7 +382,7 @@ pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bo
 fn sub_blocks(st: &St) -> Vec<&[S]> {
     match st {
         St::If(arms, other) => arms.iter().map(|(_, b)| b.as_slice()).chain(std::iter::once(other.as_slice())).collect(),
-        St::While(_, b) | St::Repeat(b, _) | St::For { body: b, .. } | St::Count { body: b, .. } => vec![b.as_slice()],
+        St::While(_, b) | St::Repeat(b, _) | St::For { body: b, .. } | St::Count { body: b, .. } | St::Save { body: b, .. } => vec![b.as_slice()],
         _ => Vec::new(),
     }
 }
@@ -373,8 +403,9 @@ pub fn mentions(body: &[S], var: VarId) -> bool {
         St::For { var: p, from, limit, body, .. } => p.touches(var, true) || ex(from) || ex(limit) || mentions(body, var),
         St::Count { counter, body, step, .. } => counter.touches(var, true) || step.as_ref().is_some_and(|(p, _)| p.touches(var, true)) || mentions(body, var),
         St::Asm(_) => true,
+        St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || mentions(body, var),
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt => false,
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt | St::Int { .. } => false,
     })
 }
 
