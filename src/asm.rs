@@ -61,6 +61,8 @@ pub enum Item {
     /// Lines from an `Asm` block, passed through.
     Raw(String),
     Comment(String),
+    /// Constant bytes in program memory (an even number of them).
+    Data(Vec<u8>),
 }
 
 /// Words an instruction occupies, from its mnemonic.
@@ -98,6 +100,7 @@ fn size_of(it: &Item, f: Form) -> u32 {
         Item::Br(Cc::Always, _) => if f == Form::Short { 1 } else { 2 },
         Item::Br(_, _) => if f == Form::Short { 1 } else { 3 },
         Item::Call(_) => if f == Form::Short { 1 } else { 2 },
+        Item::Data(b) => b.len().div_ceil(2) as u32,
     }
 }
 
@@ -153,6 +156,10 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
                     Item::Ins(t) => lines.push(format!("    {t}")),
                     Item::Raw(t) => lines.push(format!("    {t}")),
                     Item::Comment(t) => lines.push(format!("    ; {t}")),
+                    Item::Data(b) => {
+                        let text: Vec<String> = b.iter().map(|x| format!("0x{x:02X}")).collect();
+                        lines.push(format!("    db {}", text.join(", ")));
+                    }
                     Item::Br(cc, t) => match (forms[i], cc) {
                         (Form::Short, _) => lines.push(format!("    {} {t}", cc.mnemonic())),
                         (Form::Long, Cc::Always) => lines.push(format!("    goto {t}")),

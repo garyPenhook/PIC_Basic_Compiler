@@ -157,6 +157,19 @@ pub enum ExK {
     Call(FuncId, Vec<(Place, Ex)>),
     /// The 16-bit data address of a place (the argument of a `ByRef` parameter).
     Addr(Place),
+    /// `a = b` on strings: 1 when equal. `a` is a RAM string, `b` a RAM string or a literal.
+    StrEq(StrSrc, StrSrc),
+}
+
+/// One piece of a string value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StrSrc {
+    /// A `String` variable or `ByRef` string parameter (`Place::ty` is `Str`).
+    Ram(Place),
+    /// A literal held in program flash (without the terminating Null).
+    Lit(Vec<u8>),
+    /// A single Char value, appended to the text.
+    Char(Box<Ex>),
 }
 
 impl Ex {
@@ -176,12 +189,23 @@ impl Ex {
             ExK::Load(p) | ExK::Addr(p) => p.idx.as_ref().is_some_and(|i| i.has_call()),
             ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.has_call(),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.has_call() || b.has_call(),
+            ExK::StrEq(a, b) => a.has_call() || b.has_call(),
         }
     }
     pub fn as_const(&self) -> Option<u32> {
         match self.k {
             ExK::Const(v) => Some(v),
             _ => None,
+        }
+    }
+}
+
+impl StrSrc {
+    pub fn has_call(&self) -> bool {
+        match self {
+            StrSrc::Ram(p) => p.idx.as_ref().is_some_and(|i| i.has_call()),
+            StrSrc::Lit(_) => false,
+            StrSrc::Char(e) => e.has_call(),
         }
     }
 }
@@ -198,6 +222,9 @@ pub enum St {
     SetBit(Place, bool),
     ToggleBit(Place),
     Clear(Place),
+    /// `dst = parts[0] + parts[1] + …`, cut off after `cap` characters and Null-terminated. When
+    /// `keep` is set `parts[0]` is `dst` itself and is not copied. Only `parts[0]` may be `dst`.
+    StrSet { dst: Place, cap: u32, parts: Vec<StrSrc>, keep: bool },
     /// `Input`/`Output` on a port bit or a whole port: sets the matching TRIS bits.
     Direction { place: Place, output: bool },
     Call(FuncId, Vec<(Place, Ex)>),

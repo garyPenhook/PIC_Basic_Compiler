@@ -36,7 +36,7 @@ fn bas_files(dir: &Path) -> Vec<PathBuf> {
 /// Programs in `tests/valid` that use features scheduled for M5/M6; they must be rejected with
 /// `E-BACKEND` and nothing else. Anything not listed here must build.
 const DEFERRED: &[&str] = &[
-    "arrays_and_strings", "bit_array_warning", "byref_parameters", "byrefconst_string_any_size", "constants", "conversions",
+    "arrays_and_strings", "bit_array_warning", "byref_parameters", "conversions",
     "disable_frees_priority", "events", "float_math", "interrupts", "modifiers", "single_interrupt", "structures_and_unions",
 ];
 

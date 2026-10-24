@@ -4,8 +4,9 @@
 //! resolutions) is consumed here; the code generator never looks at the AST. M4 covers scalar
 //! programs: Boolean, Bit, Char and the 8/16/32-bit integers, device registers and register
 //! bits, routines with by-value parameters, and the structured statements. One-dimensional
-//! arrays of integers and Char (no initialisers yet) are indexed through `Place::idx`. Strings,
-//! structures, floats, by-reference parameters and interrupts report `E-BACKEND` (M5/M6).
+//! arrays of integers and Char (no initialisers yet) are indexed through `Place::idx`. Strings
+//! are Null-terminated RAM objects handled by `St::StrSet` and `ExK::StrEq`; literals live in
+//! program memory. Structures, floats and interrupts report `E-BACKEND` (M5/M6).
 
 use crate::ast::*;
 use crate::diag::{Diagnostics, Span};
@@ -32,6 +33,10 @@ fn cval_u32(c: &CVal) -> u32 {
         CVal::Str(s) if s.len() == 1 => s.as_bytes()[0] as u32,
         _ => 0,
     }
+}
+
+fn pty_of_var(vars: &[Var], v: VarId) -> &Ty {
+    &vars[v].ty
 }
 
 fn sign_extend(v: u32, w: u8) -> i64 {
@@ -87,6 +92,10 @@ pub struct Lowerer<'a> {
     cur_result: Option<(VarId, String)>,
     labels: HashMap<String, LabelId>,
     hidden: u32,
+    /// Static buffers holding string literals passed to `ByRefConst` parameters.
+    lits: HashMap<Vec<u8>, VarId>,
+    /// Statements that run before the program body (they fill those buffers).
+    startup: Vec<S>,
     failed: bool,
 }
 
@@ -112,6 +121,8 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         cur_result: None,
         labels: HashMap::new(),
         hidden: 0,
+        lits: HashMap::new(),
+        startup: Vec::new(),
         failed: false,
     };
     for (id, s) in a.symbols.iter().enumerate() {
@@ -146,6 +157,11 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     if lw.failed {
         return None;
     }
+    let main_body = {
+        let mut b = std::mem::take(&mut lw.startup);
+        b.append(&mut main_body);
+        b
+    };
 
     // Configuration words: the device's defaults overlaid with the program's settings.
     let mut config = Vec::new();
@@ -192,7 +208,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn unsupported(&mut self, span: Span, what: &str) {
-        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (arrays, strings, structures, floats and by-reference parameters arrive in M5, interrupts in M6)"));
+        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (structures, floats and the remaining array and by-reference forms arrive in M5, interrupts in M6)"));
     }
 
     fn unique(&mut self, base: String) -> String {
@@ -260,12 +276,13 @@ impl<'a> Lowerer<'a> {
                         }
                         _ => false,
                     };
-                    if !array && nat(&ty).is_none() {
+                    let string = matches!(ty, Ty::Str(_));
+                    if !array && !string && nat(&ty).is_none() {
                         self.unsupported_sym(sym, &format!("a variable of type {ty}"));
                         continue;
                     }
                     let init_e = it.init.as_ref().or(dim.trailing_init.as_ref());
-                    let init = init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32);
+                    let init = if string { None } else { init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32) };
                     let init = init.map(|v| v & mask(nat(&ty).map_or(32, |t| t.0)));
                     let s = &self.a.symbols[sym];
                     let asm = if s.local { format!("{}__{}", self.cur_asm, sanitize(&s.name)) } else { format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&s.name)) };
@@ -274,6 +291,10 @@ impl<'a> Lowerer<'a> {
                     let kind = if local { VarKind::Local } else { VarKind::Global };
                     let v = self.new_var(asm, &name, ty.clone(), kind, init.filter(|&i| i != 0 || local));
                     self.sym_var.insert(sym, v);
+                    if let (Ty::Str(cap), Some(e)) = (&ty, init_e) {
+                        let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
+                        self.str_assign(dst, *cap, e, it.name.span, inits);
+                    }
                     if local && !array && let Some(i) = init {
                         inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
                     }
@@ -327,8 +348,8 @@ impl<'a> Lowerer<'a> {
             };
             let supported = match info.mode {
                 ParamMode::ByVal => nat(&info.ty).is_some(),
-                ParamMode::ByRef => nat(pointee).is_some() && !matches!(pointee, Ty::Bit) && !(matches!(info.ty, Ty::Array(..)) && *pointee == Ty::Bool),
-                ParamMode::ByRefConst => false,
+                ParamMode::ByRef => matches!(info.ty, Ty::Str(_)) || (nat(pointee).is_some() && !matches!(pointee, Ty::Bit) && !(matches!(info.ty, Ty::Array(..)) && *pointee == Ty::Bool)),
+                ParamMode::ByRefConst => matches!(info.ty, Ty::Str(_)),
             };
             if !supported {
                 self.unsupported(p.name.span, &format!("parameter `{}` ({})", p.name.name, if info.mode == ParamMode::ByVal { "non-scalar" } else { "this by-reference form" }));
@@ -336,7 +357,7 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let v = self.new_var(format!("{asm}__{}", sanitize(&p.name.name)), &p.name.name, info.ty.clone(), VarKind::Param, None);
-            if info.mode == ParamMode::ByRef {
+            if info.mode != ParamMode::ByVal {
                 self.vars[v].by_ref = true;
                 self.vars[v].bytes = 2;
             }
@@ -557,9 +578,14 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 Part::Args(args, sp) => {
-                    let Ty::Array(elem, n) = place.ty.clone() else {
-                        self.unsupported(*sp, "indexing this");
-                        return None;
+                    // A string is indexed like an array of Char with room for the Null.
+                    let (elem, n) = match place.ty.clone() {
+                        Ty::Array(elem, n) => (elem, n),
+                        Ty::Str(n) => (Box::new(Ty::Char), n + 1),
+                        _ => {
+                            self.unsupported(*sp, "indexing this");
+                            return None;
+                        }
                     };
                     if place.bit.is_some() || place.idx.is_some() || args.len() != 1 {
                         self.unsupported(*sp, "this array access");
@@ -662,6 +688,9 @@ impl<'a> Lowerer<'a> {
                 Some(ex)
             }
             ExprKind::Binary(op, l, r) => {
+                if matches!(op, BinOp::Eq | BinOp::Ne) && matches!(self.a.types.get(&l.id), Some(Ty::Str(_))) && matches!(self.a.types.get(&r.id), Some(Ty::Str(_))) {
+                    return self.str_compare(*op, l, r, e);
+                }
                 let lv = self.expr(l)?;
                 let rv = self.expr(r)?;
                 self.binary(*op, lv, rv, &ty, w, ns, e)
@@ -762,15 +791,24 @@ impl<'a> Lowerer<'a> {
             let mut pty = self.vars[*pv].ty.clone();
             let ex = if self.vars[*pv].by_ref {
                 pty = WORD;
-                let Some(Expr { kind: ExprKind::Designator(dd), .. }) = args.get(i) else {
-                    self.unsupported(span, "this ByRef argument");
-                    return None;
+                let literal = match args.get(i).and_then(|a| self.a.consts.get(&a.id)) {
+                    Some(CVal::Str(t)) if matches!(pty_of_var(&self.vars, *pv), Ty::Str(_)) => Some(t.bytes().take_while(|&b| b != 0).collect::<Vec<u8>>()),
+                    _ => None,
                 };
-                let pl = self.place_idx_of(dd)?;
-                if pl.bit.is_some() {
-                    self.unsupported(dd.span, "a bit passed ByRef");
-                    return None;
-                }
+                let pl = if let Some(bytes) = literal {
+                    self.lit_place(bytes, span)
+                } else {
+                    let Some(Expr { kind: ExprKind::Designator(dd), .. }) = args.get(i) else {
+                        self.unsupported(span, "this ByRef argument");
+                        return None;
+                    };
+                    let pl = self.place_idx_of(dd)?;
+                    if pl.bit.is_some() {
+                        self.unsupported(dd.span, "a bit passed ByRef");
+                        return None;
+                    }
+                    pl
+                };
                 Ex::new(ExK::Addr(pl), 16, false)
             } else {
                 let (w, s) = nat(&pty).unwrap();
@@ -840,6 +878,114 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    // ---- strings -------------------------------------------------------------------------
+
+    /// The pieces a String expression is made of: literals, String variables and Chars joined by `+`.
+    fn str_parts(&mut self, e: &'a Expr, out: &mut Vec<StrSrc>) -> Option<()> {
+        let ty = self.a.types.get(&e.id).cloned();
+        if let Some(c) = self.a.consts.get(&e.id) {
+            let bytes: Vec<u8> = match c {
+                CVal::Str(t) => t.bytes().take_while(|&b| b != 0).collect(),
+                CVal::Int(i) if ty == Some(Ty::Char) => vec![*i as u8].into_iter().filter(|&b| b != 0).collect(),
+                _ => {
+                    self.unsupported(e.span, "this string constant");
+                    return None;
+                }
+            };
+            if !bytes.is_empty() {
+                out.push(StrSrc::Lit(bytes));
+            }
+            return Some(());
+        }
+        match (&e.kind, ty) {
+            (ExprKind::Binary(BinOp::Add, l, r), Some(Ty::Str(_))) => {
+                self.str_parts(l, out)?;
+                self.str_parts(r, out)
+            }
+            (ExprKind::Designator(d), Some(Ty::Str(_))) => {
+                let p = self.place_idx_of(d)?;
+                if p.idx.is_some() || p.bit.is_some() {
+                    self.unsupported(d.span, "this string");
+                    return None;
+                }
+                out.push(StrSrc::Ram(p));
+                Some(())
+            }
+            (_, Some(Ty::Char)) => {
+                let x = self.expr(e)?;
+                out.push(StrSrc::Char(Box::new(conv(x, 8, false))));
+                Some(())
+            }
+            _ => {
+                self.unsupported(e.span, "this string expression");
+                None
+            }
+        }
+    }
+
+    fn str_assign(&mut self, dst: Place, cap: u32, value: &'a Expr, span: Span, out: &mut Vec<S>) {
+        let mut parts = Vec::new();
+        if self.str_parts(value, &mut parts).is_none() {
+            return;
+        }
+        // `s = s + x` appends in place. The target anywhere else on the right would be
+        // overwritten before it is read.
+        let same = |p: &StrSrc| matches!(p, StrSrc::Ram(q) if q.base == dst.base && q.off == dst.off);
+        let keep = parts.first().is_some_and(same);
+        if parts.iter().skip(1).any(same) {
+            self.unsupported(span, "a String that is also read after its first operand on the right of its own assignment");
+            return;
+        }
+        Self::push(out, St::StrSet { dst, cap, parts, keep }, span);
+    }
+
+    fn str_compare(&mut self, op: BinOp, l: &'a Expr, r: &'a Expr, e: &Expr) -> Option<Ex> {
+        let (mut lp, mut rp) = (Vec::new(), Vec::new());
+        self.str_parts(l, &mut lp)?;
+        self.str_parts(r, &mut rp)?;
+        // An empty literal compares as the Null string; a single part is needed on each side.
+        let one = |v: Vec<StrSrc>| match v.len() {
+            0 => Some(StrSrc::Lit(Vec::new())),
+            1 => v.into_iter().next(),
+            _ => None,
+        };
+        let (Some(a), Some(b)) = (one(lp), one(rp)) else {
+            self.unsupported(e.span, "comparing a concatenation");
+            return None;
+        };
+        let (a, b) = match (a, b) {
+            (a @ StrSrc::Ram(_), b @ (StrSrc::Ram(_) | StrSrc::Lit(_))) => (a, b),
+            (a @ StrSrc::Lit(_), b @ StrSrc::Ram(_)) => (b, a),
+            _ => {
+                self.unsupported(e.span, "this string comparison");
+                return None;
+            }
+        };
+        let eq = Ex::boolean(ExK::StrEq(a, b));
+        Some(if op == BinOp::Ne { Ex::boolean(ExK::NotB(Box::new(eq))) } else { eq })
+    }
+
+    /// A static RAM copy of a string literal, filled at start-up, for a `ByRefConst` argument.
+    fn lit_place(&mut self, bytes: Vec<u8>, span: Span) -> Place {
+        let len = bytes.len() as u32;
+        let ty = Ty::Str(len);
+        let v = match self.lits.get(&bytes) {
+            Some(&v) => v,
+            None => {
+                let saved = self.cur_func.take();
+                let v = self.new_var(format!("__STRLIT{}", self.lits.len()), "(string literal)", ty.clone(), VarKind::Hidden, None);
+                self.cur_func = saved;
+                self.lits.insert(bytes.clone(), v);
+                if !bytes.is_empty() {
+                    let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
+                    self.startup.push(S { st: St::StrSet { dst, cap: len, parts: vec![StrSrc::Lit(bytes)], keep: false }, span });
+                }
+                v
+            }
+        };
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty }
+    }
+
     // ---- statements ----------------------------------------------------------------------
 
     fn label_id(&mut self, name: &Ident) -> LabelId {
@@ -869,7 +1015,12 @@ impl<'a> Lowerer<'a> {
         let span = s.span;
         match &s.kind {
             StmtKind::Assign { target, value } => {
-                let (Some(p), Some(v)) = (self.place_idx_of(target), self.expr(value)) else { return };
+                let Some(p) = self.place_idx_of(target) else { return };
+                if let Ty::Str(cap) = p.ty {
+                    self.str_assign(p, cap, value, span, out);
+                    return;
+                }
+                let Some(v) = self.expr(value) else { return };
                 let Some((w, sg)) = nat(&p.ty) else {
                     self.unsupported(target.span, &format!("assigning a {}", p.ty));
                     return;
@@ -973,6 +1124,11 @@ impl<'a> Lowerer<'a> {
             "clear" => {
                 let Some(p) = arg_place(self) else { return };
                 match nat(&p.ty) {
+                    None if matches!(p.ty, Ty::Str(_)) => {
+                        // The text is empty once its first byte is Null.
+                        let first = Place { ty: Ty::Char, ..p };
+                        Self::push(out, St::Assign(first, Ex::konst(0, 8, false)), span);
+                    }
                     Some((w, sg)) if p.indirect() => Self::push(out, St::Assign(p, Ex::konst(0, w, sg)), span),
                     Some(_) => Self::push(out, St::Clear(p), span),
                     None => self.unsupported(span, &format!("Clear of a {}", p.ty)),

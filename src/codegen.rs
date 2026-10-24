@@ -184,6 +184,8 @@ struct Gen<'p> {
     loops: Vec<(String, String)>,
     called: BTreeSet<FuncId>,
     helpers: BTreeSet<String>,
+    /// String literals held in program memory, in first-use order (label `__STR<n>`).
+    lits: Vec<Vec<u8>>,
     errors: Vec<(Span, String)>,
     span: Span,
     nvars: usize,
@@ -214,6 +216,7 @@ impl<'p> Gen<'p> {
             loops: Vec::new(),
             called: BTreeSet::new(),
             helpers: BTreeSet::new(),
+            lits: Vec::new(),
             errors: Vec::new(),
             span: Span::default(),
             nvars,
@@ -455,6 +458,24 @@ impl<'p> Gen<'p> {
                     self.fo("movwf", &a1);
                 }
             }
+            ExK::StrEq(a, b) => {
+                let StrSrc::Ram(pa) = a else {
+                    self.err("internal: a string comparison needs a variable on the left");
+                    return;
+                };
+                self.point_str(0, pa);
+                match b {
+                    StrSrc::Ram(pb) => {
+                        self.point_str(1, pb);
+                        self.call_helper("strqr1".into());
+                    }
+                    StrSrc::Lit(l) => {
+                        self.point_flash(l);
+                        self.call_helper("strqf1".into());
+                    }
+                    StrSrc::Char(_) => self.err("internal: a Char in a string comparison"),
+                }
+            }
             ExK::Conv(inner) => self.gen_conv(inner, e.w, e.signed),
             ExK::Neg(x) => {
                 self.gen_val(x);
@@ -566,6 +587,106 @@ impl<'p> Gen<'p> {
         let (f0l, f0h) = (self.sfr_mem("FSR0L"), self.sfr_mem("FSR0H"));
         self.movff(&f0l, &a0);
         self.movff(&f0h, &a1);
+    }
+
+    /// Points FSR`fsr` at the first byte of a RAM string (a variable or a `ByRef` parameter).
+    fn point_str(&mut self, fsr: u8, p: &Place) {
+        match &p.base {
+            Base::Var(v) => {
+                self.uses[*v] += weight(self.depth);
+                let sym = self.p.vars[*v].asm.clone();
+                let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
+                self.ins(format!("lfsr {fsr}, {at}"));
+            }
+            Base::Ptr(v) => {
+                if p.off != 0 {
+                    self.err("internal: an offset into a ByRef string");
+                }
+                let m = self.mem_obj(*v, self.p.vars[*v].asm.clone());
+                let (l, h) = (self.sfr_mem(&format!("FSR{fsr}L")), self.sfr_mem(&format!("FSR{fsr}H")));
+                self.movff(&l, &m);
+                self.movff(&h, &m.at(1));
+            }
+            Base::Abs { .. } => self.err("internal: a string in a device register"),
+        }
+    }
+
+    /// Points TBLPTR at a string literal in program memory (stored once, Null-terminated).
+    fn point_flash(&mut self, lit: &[u8]) {
+        let n = match self.lits.iter().position(|l| l == lit) {
+            Some(n) => n,
+            None => {
+                self.lits.push(lit.to_vec());
+                self.lits.len() - 1
+            }
+        };
+        for (reg, op) in [("TBLPTRL", "low"), ("TBLPTRH", "high"), ("TBLPTRU", "highword")] {
+            self.ins(format!("movlw {op}(__STR{n})"));
+            let m = self.sfr_mem(reg);
+            self.fo("movwf", &m);
+        }
+    }
+
+    /// `dst = parts[0] + parts[1] + …` through the string helpers: FSR0 is the write pointer,
+    /// `__D0` the room left, and each part is appended and the text Null-terminated.
+    fn str_set(&mut self, dst: &Place, cap: u32, parts: &[StrSrc], keep: bool) {
+        let todo = &parts[keep as usize..];
+        if keep && todo.is_empty() {
+            return;
+        }
+        // Char values other than constants are read first: computing one can use FSR0 and the
+        // scratch bytes, and a plain variable (`s(0)` of the target itself) must not be read
+        // after earlier parts have been written over it.
+        let mut saved: Vec<Option<Mem>> = Vec::new();
+        let mut ntemps = 0;
+        for p in todo {
+            match p {
+                StrSrc::Char(e) if e.as_const().is_none() => {
+                    saved.push(Some(self.spill(e)));
+                    ntemps += 1;
+                }
+                _ => saved.push(None),
+            }
+        }
+        self.point_str(0, dst);
+        self.ins(format!("movlw {cap}"));
+        let d0 = self.d(0);
+        self.fo("movwf", &d0);
+        if keep {
+            self.call_helper("stre1".into());
+        }
+        let mut wrote = keep;
+        for (p, t) in todo.iter().zip(&saved) {
+            match p {
+                StrSrc::Ram(pl) => {
+                    self.point_str(1, pl);
+                    self.call_helper("strr1".into());
+                    wrote = true;
+                }
+                StrSrc::Lit(b) if b.is_empty() => {}
+                StrSrc::Lit(b) => {
+                    self.point_flash(b);
+                    self.call_helper("strf1".into());
+                    wrote = true;
+                }
+                StrSrc::Char(e) => {
+                    match t {
+                        Some(m) => self.fop("movf", m, "w"),
+                        None => {
+                            let k = e.as_const().expect("an unspilled Char is a constant");
+                            self.ins(format!("movlw 0x{:02X}", k & 0xFF));
+                        }
+                    }
+                    self.call_helper("strc1".into());
+                    wrote = true;
+                }
+            }
+        }
+        if !wrote {
+            let m = self.sfr_mem("INDF0");
+            self.fo("clrf", &m);
+        }
+        self.free(ntemps);
     }
 
     fn load_place(&mut self, p: &Place, n: u32) {
@@ -1587,6 +1708,7 @@ impl<'p> Gen<'p> {
         match &s.st {
             St::Assign(p, e) => self.store(p, e),
             St::Add(p, d) => self.add_const(p, *d),
+            St::StrSet { dst, cap, parts, keep } => self.str_set(dst, *cap, parts, *keep),
             St::SetBit(p, v) => {
                 let m = self.place_mem(p, true);
                 self.fbit(if *v { "bsf" } else { "bcf" }, &m, p.bit.unwrap());
@@ -2043,6 +2165,75 @@ impl<'p> Gen<'p> {
                 self.label(&done);
                 self.ins("return");
             }
+            // String helpers. FSR0 is the destination (or the left string), FSR1 a RAM source,
+            // TBLPTR a source in program memory, `__D0` the room left in the destination.
+            "strr" | "strf" => {
+                let (lp, done) = (self.fresh(), self.fresh());
+                let d0 = self.d(0);
+                self.label(&lp);
+                self.fop("movf", &d0, "f");
+                self.br(Cc::Z, &done);
+                if kind == "strr" {
+                    self.ins("movf POSTINC1, w, c");
+                } else {
+                    self.ins("tblrd*+");
+                    self.ins("movf TABLAT, w, c");
+                }
+                self.br(Cc::Z, &done);
+                self.ins("movwf POSTINC0, c");
+                self.fop("decf", &d0, "f");
+                self.br(Cc::Always, &lp);
+                self.label(&done);
+                self.ins("clrf INDF0, c");
+                self.ins("return");
+            }
+            "strc" => {
+                let done = self.fresh();
+                let d0 = self.d(0);
+                self.ins("iorlw 0");
+                self.br(Cc::Z, &done);
+                self.fop("movf", &d0, "f");
+                self.br(Cc::Z, &done);
+                self.ins("movwf POSTINC0, c");
+                self.fop("decf", &d0, "f");
+                self.label(&done);
+                self.ins("clrf INDF0, c");
+                self.ins("return");
+            }
+            "stre" => {
+                let (lp, done) = (self.fresh(), self.fresh());
+                let d0 = self.d(0);
+                self.label(&lp);
+                self.ins("movf INDF0, f, c");
+                self.br(Cc::Z, &done);
+                self.fop("movf", &d0, "f");
+                self.br(Cc::Z, &done);
+                self.ins("movf POSTINC0, w, c");
+                self.fop("decf", &d0, "f");
+                self.br(Cc::Always, &lp);
+                self.label(&done);
+                self.ins("return");
+            }
+            "strqr" | "strqf" => {
+                let (lp, ne) = (self.fresh(), self.fresh());
+                let d0 = self.d(0);
+                self.label(&lp);
+                if kind == "strqr" {
+                    self.ins("movf POSTINC1, w, c");
+                } else {
+                    self.ins("tblrd*+");
+                    self.ins("movf TABLAT, w, c");
+                }
+                self.fo("movwf", &d0);
+                self.ins("movf POSTINC0, w, c");
+                self.fop("xorwf", &d0, "w");
+                self.br(Cc::Nz, &ne);
+                self.fop("movf", &d0, "f");
+                self.br(Cc::Nz, &lp);
+                self.ins("retlw 1");
+                self.label(&ne);
+                self.ins("retlw 0");
+            }
             _ => self.err(format!("unknown helper {name}")),
         }
     }
@@ -2130,6 +2321,17 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> 
         emitted.insert(h.clone());
         g.items.push(Item::Comment(format!("helper {h}")));
         g.emit_helper(&h);
+    }
+    // String literals follow the code, each Null-terminated and padded to a whole word.
+    for (n, lit) in std::mem::take(&mut g.lits).into_iter().enumerate() {
+        let mut bytes = lit.clone();
+        bytes.push(0);
+        if bytes.len() % 2 == 1 {
+            bytes.push(0);
+        }
+        g.items.push(Item::Label(format!("__STR{n}")));
+        g.items.push(Item::Data(bytes));
+        g.lits.push(lit);
     }
     let items = std::mem::take(&mut g.items);
     (g, items)
@@ -2316,6 +2518,9 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         if let Some(&a) = asmd.labels.get(&format!("__{h}")) {
             starts.push((format!("__{h}"), a));
         }
+    }
+    if let Some(&a) = asmd.labels.get("__STR0") {
+        starts.push(("(string literals)".into(), a));
     }
     starts.sort_by_key(|s| s.1);
     let mut func_words = Vec::new();

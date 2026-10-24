@@ -112,7 +112,21 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   like an indexed element. Not yet: `ByRefConst`, `Bit`/`Boolean` by reference, `Bound()` of an
   array parameter. Fixed: a local named `tmp` clashed with the routine's `__TMP` temporary area.
   Test: `tests/exec/byref.bas`.
-- Next in M5: strings, structures, 16×16 multiply, `DECFSZ` loops, frame overlay, peephole.
+- Strings (done): `String(n)` is n+1 RAM bytes, zeroed at start-up, with `Dim s As String = "…"`
+  initialisers (globals and locals). Supported: assignment from a literal, string, Char or a `+`
+  chain of them (`St::StrSet`, cut off at the declared size and Null-terminated), in-place append
+  (`s = s + x`), `=`/`<>` between strings or against a literal (`ExK::StrEq`), `s(i)` as a Char
+  (constant or run-time index, also through `ByRef`), `Clear(s)`, and `ByRef`/`ByRefConst` String
+  parameters. Literals live in program memory after the code (`__STR<n>`, read with `TBLRD*+`);
+  a literal passed to a `ByRefConst` parameter is copied once at start-up into a static RAM buffer
+  so the callee has a single (RAM) access path. Runtime helpers `strr/strf/strc/stre/strqr/strqf`
+  use FSR0 (destination), FSR1 (RAM source), TBLPTR/TABLAT (flash source) and `__D0` (room left).
+  The target may only appear as the first operand of its own `+` chain (`s = t + s` is `E-BACKEND`);
+  two `ByRef` parameters that alias at run time are not detected. Not yet: `Len`/`Left`/`Mid`
+  (not in the front end either), string-returning functions, arrays of strings, comparing a
+  concatenation. Interrupts (M6) must save FSR1, TBLPTR/TABLAT and `__D0` as well as FSR0.
+  Test: `tests/exec/strings.bas`.
+- Next in M5: structures, 16×16 multiply, `DECFSZ` loops, frame overlay, peephole.
 
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
