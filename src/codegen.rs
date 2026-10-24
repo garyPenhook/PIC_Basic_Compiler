@@ -2323,7 +2323,8 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> 
         g.emit_helper(&h);
     }
     // String literals follow the code, each Null-terminated and padded to a whole word.
-    for (n, lit) in std::mem::take(&mut g.lits).into_iter().enumerate() {
+    let lits = g.lits.clone();
+    for (n, lit) in lits.iter().enumerate() {
         let mut bytes = lit.clone();
         bytes.push(0);
         if bytes.len() % 2 == 1 {
@@ -2331,7 +2332,6 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>) -> 
         }
         g.items.push(Item::Label(format!("__STR{n}")));
         g.items.push(Item::Data(bytes));
-        g.lits.push(lit);
     }
     let items = std::mem::take(&mut g.items);
     (g, items)

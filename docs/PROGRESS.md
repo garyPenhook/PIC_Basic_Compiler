@@ -122,7 +122,7 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   so the callee has a single (RAM) access path. Runtime helpers `strr/strf/strc/stre/strqr/strqf`
   use FSR0 (destination), FSR1 (RAM source), TBLPTR/TABLAT (flash source) and `__D0` (room left).
   The target may only appear as the first operand of its own `+` chain (`s = t + s` is `E-BACKEND`);
-  two `ByRef` parameters that alias at run time are not detected. Not yet: `Len`/`Left`/`Mid`
+  two `ByRef` parameters that alias at run time are not detected; writing `s(n)` (the Null slot) is the program's responsibility, as there is no run-time bounds check; a literal passed ByRefConst is limited to 255 characters. Not yet: `Len`/`Left`/`Mid`
   (not in the front end either), string-returning functions, arrays of strings, comparing a
   concatenation. Interrupts (M6) must save FSR1, TBLPTR/TABLAT and `__D0` as well as FSR0.
   Test: `tests/exec/strings.bas`.

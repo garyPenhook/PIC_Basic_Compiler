@@ -35,10 +35,6 @@ fn cval_u32(c: &CVal) -> u32 {
     }
 }
 
-fn pty_of_var(vars: &[Var], v: VarId) -> &Ty {
-    &vars[v].ty
-}
-
 fn sign_extend(v: u32, w: u8) -> i64 {
     if w >= 32 {
         v as i32 as i64
@@ -208,7 +204,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn unsupported(&mut self, span: Span, what: &str) {
-        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (structures, floats and the remaining array and by-reference forms arrive in M5, interrupts in M6)"));
+        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (structures, floats, and some array and by-reference forms are not implemented yet; interrupts arrive in M6)"));
     }
 
     fn unique(&mut self, base: String) -> String {
@@ -792,10 +788,14 @@ impl<'a> Lowerer<'a> {
             let ex = if self.vars[*pv].by_ref {
                 pty = WORD;
                 let literal = match args.get(i).and_then(|a| self.a.consts.get(&a.id)) {
-                    Some(CVal::Str(t)) if matches!(pty_of_var(&self.vars, *pv), Ty::Str(_)) => Some(t.bytes().take_while(|&b| b != 0).collect::<Vec<u8>>()),
+                    Some(CVal::Str(t)) if matches!(self.vars[*pv].ty, Ty::Str(_)) => Some(t.bytes().take_while(|&b| b != 0).collect::<Vec<u8>>()),
                     _ => None,
                 };
                 let pl = if let Some(bytes) = literal {
+                    if bytes.len() > 255 {
+                        self.unsupported(span, "a string literal longer than 255 characters");
+                        return None;
+                    }
                     self.lit_place(bytes, span)
                 } else {
                     let Some(Expr { kind: ExprKind::Designator(dd), .. }) = args.get(i) else {
