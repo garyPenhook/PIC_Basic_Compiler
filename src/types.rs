@@ -65,7 +65,7 @@ impl Ty {
             Ty::Float => 4,
             Ty::Str(n) => n + 1,
             Ty::Struct(s) => struct_size(*s),
-            Ty::EventVar(_) | Ty::EventAny => 3,
+            Ty::EventVar(_) | Ty::EventAny => 1,
             Ty::Array(e, n) => match **e {
                 Ty::Bit | Ty::Bool => n.div_ceil(8),
                 _ => e.size_bytes(struct_size) * n,

@@ -24,7 +24,7 @@ use std::rc::Rc;
 /// Width and signedness of a scalar type, or None for types the back end cannot hold yet.
 fn nat(t: &Ty) -> Option<(u8, bool)> {
     match t {
-        Ty::Bool | Ty::Bit | Ty::Char => Some((8, false)),
+        Ty::Bool | Ty::Bit | Ty::Char | Ty::EventVar(_) | Ty::EventAny => Some((8, false)),
         Ty::Int(w, s) => Some((*w, *s)),
         _ => None,
     }
@@ -94,6 +94,11 @@ pub struct Lowerer<'a> {
     unsupported: HashMap<usize, String>,
     unit_syms: HashMap<(usize, String), usize>,
     routines: HashMap<usize, &'a Routine>,
+    event_decls: HashMap<usize, &'a EventDecl>,
+    /// Event handlers that are referenced, in order; an event variable holds the 1-based index (0 = none).
+    event_order: Vec<usize>,
+    /// The routine that calls the handler an event variable holds, and its parameter (the variable's value).
+    event_disp: Option<(FuncId, VarId)>,
     struct_decls: HashMap<usize, &'a StructDecl>,
     layouts: HashMap<usize, Rc<Vec<FieldLay>>>,
     queue: Vec<usize>,
@@ -129,6 +134,9 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         unsupported: HashMap::new(),
         unit_syms: HashMap::new(),
         routines: HashMap::new(),
+        event_decls: HashMap::new(),
+        event_order: Vec::new(),
+        event_disp: None,
         struct_decls: HashMap::new(),
         layouts: HashMap::new(),
         queue: Vec::new(),
@@ -157,6 +165,11 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
             {
                 lw.routines.insert(sym, r);
             }
+            if let DeclKind::Event(e) = &d.kind
+                && let Some(&sym) = a.decl_syms.get(&e.name.span)
+            {
+                lw.event_decls.insert(sym, e);
+            }
             if let DeclKind::Structure(sd) = &d.kind
                 && let Some(&sym) = a.decl_syms.get(&sd.name.span)
             {
@@ -179,6 +192,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     while let Some(sym) = lw.queue.pop() {
         lw.lower_routine(sym);
     }
+    lw.finish_event_dispatch();
     if lw.failed {
         return None;
     }
@@ -329,8 +343,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
             DeclKind::Interrupt(i) => self.lower_interrupt(i, ui),
-            DeclKind::Event(e) => self.unsupported(e.name.span, "an Event"),
-            DeclKind::Const(_) | DeclKind::Structure(_) | DeclKind::EventType(_) | DeclKind::Routine(_) => {}
+            DeclKind::Const(_) | DeclKind::Event(_) | DeclKind::Structure(_) | DeclKind::EventType(_) | DeclKind::Routine(_) => {}
         }
     }
 
@@ -492,7 +505,107 @@ impl<'a> Lowerer<'a> {
         Some(id)
     }
 
+    /// The function id of an event handler; its number is what an event variable holds.
+    fn event_func(&mut self, sym: usize) -> Option<(FuncId, u32)> {
+        let n = self.event_order.iter().position(|&s| s == sym);
+        if let (Some(n), Some(fi)) = (n, self.sym_func.get(&sym)) {
+            return Some((fi.id, n as u32 + 1));
+        }
+        let e = *self.event_decls.get(&sym)?;
+        let id = self.funcs.len();
+        self.funcs.push(None);
+        let ui = self.a.symbols[sym].unit;
+        let asm = self.unique(format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&e.name.name)));
+        self.asm_names.insert(format!("{asm}__TMP"));
+        self.sym_func.insert(sym, FuncInfo { id, asm, params: vec![], result: None });
+        self.event_order.push(sym);
+        self.queue.push(sym);
+        Some((id, self.event_order.len() as u32))
+    }
+
+    fn lower_event(&mut self, sym: usize, e: &'a EventDecl) {
+        let (id, asm) = {
+            let fi = &self.sym_func[&sym];
+            (fi.id, fi.asm.clone())
+        };
+        let ui = self.a.symbols[sym].unit;
+        let saved = (self.cur_func, std::mem::take(&mut self.cur_asm), std::mem::take(&mut self.labels), self.cur_result.take());
+        self.cur_func = Some(id);
+        self.cur_asm = asm.clone();
+        let mut body = Vec::new();
+        for d in &e.body.decls {
+            self.decl(d, ui, &mut body);
+        }
+        let mut rest = self.block(&e.body.stmts, ui);
+        body.append(&mut rest);
+        let mut entry = self.entry_clears(id, &body, e.name.span);
+        entry.append(&mut body);
+        let mut body = entry;
+        body.push(S { st: St::Return, span: e.name.span });
+        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params: vec![], result: None, body, span: e.name.span });
+        self.cur_func = saved.0;
+        self.cur_asm = saved.1;
+        self.labels = saved.2;
+        self.cur_result = saved.3;
+    }
+
+    /// The call of the handler held by an event variable, as a call of the shared dispatcher.
+    fn event_call(&mut self, held: Place, span: Span) -> (FuncId, Vec<(Place, Ex)>) {
+        let (id, pv) = match self.event_disp {
+            Some(d) => d,
+            None => {
+                let id = self.funcs.len();
+                self.funcs.push(None);
+                self.asm_names.insert("__EVDISP__TMP".to_string());
+                let saved = self.cur_func.replace(id);
+                let pv = self.new_var("__EVDISP__ID".to_string(), "(event)", BYTE, VarKind::Param, None);
+                self.cur_func = saved;
+                self.event_disp = Some((id, pv));
+                (id, pv)
+            }
+        };
+        let _ = span;
+        let param = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, ty: BYTE };
+        (id, vec![(param, Ex::new(ExK::Load(held), 8, false))])
+    }
+
+    /// Fills the dispatcher once every referenced handler is known: it calls the one whose number
+    /// the variable holds, and does nothing for 0 (no handler assigned).
+    fn finish_event_dispatch(&mut self) {
+        let Some((id, pv)) = self.event_disp else { return };
+        let sp = Span::default();
+        let param = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, ty: BYTE };
+        let mut arms = Vec::new();
+        for (n, sym) in self.event_order.clone().into_iter().enumerate() {
+            let fid = self.sym_func[&sym].id;
+            let cond = Ex::boolean(ExK::Cmp(CmpKind::Eq, Box::new(Ex::new(ExK::Load(param.clone()), 8, false)), Box::new(Ex::konst(n as u32 + 1, 8, false))));
+            arms.push((cond, vec![S { st: St::Call(fid, vec![]), span: sp }]));
+        }
+        let mut body = Vec::new();
+        if !arms.is_empty() {
+            body.push(S { st: St::If(arms, vec![]), span: sp });
+        }
+        body.push(S { st: St::Return, span: sp });
+        self.funcs[id] = Some(Func { asm: "__EVDISP".into(), name: "event".into(), params: vec![pv], result: None, body, span: sp });
+    }
+
+    /// The event handler a designator names (not calls), if it is one.
+    fn handler_of(&self, d: &Designator) -> Option<usize> {
+        let sym = match self.a.resolved.get(&d.id)? {
+            Res::Sym(id) => *id,
+            Res::Module(u) => {
+                let Some(Part::Member(n)) = d.parts.first() else { return None };
+                *self.unit_syms.get(&(*u, n.key()))?
+            }
+            _ => return None,
+        };
+        matches!(self.a.symbols[sym].kind, SymKind::Event).then_some(sym)
+    }
+
     fn lower_routine(&mut self, sym: usize) {
+        if let Some(&e) = self.event_decls.get(&sym) {
+            return self.lower_event(sym, e);
+        }
         let r = self.routines[&sym];
         let (id, asm, result, params) = {
             let fi = &self.sym_func[&sym];
@@ -627,6 +740,10 @@ impl<'a> Lowerer<'a> {
     }
 
     fn place_inner(&mut self, d: &'a Designator) -> Option<Place> {
+        self.place_inner_parts(d, &d.parts)
+    }
+
+    fn place_inner_parts(&mut self, d: &'a Designator, parts: &'a [Part]) -> Option<Place> {
         let mut i = 0;
         let place = match self.a.resolved.get(&d.id).cloned() {
             Some(Res::Sym(id)) => self.var_place(id, d.head.span)?,
@@ -651,7 +768,7 @@ impl<'a> Lowerer<'a> {
                 Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() }
             }
         };
-        self.apply_parts(place, &d.parts, i, d.span)
+        self.apply_parts(place, parts, i, d.span)
     }
 
     /// Follows `parts[i..]` (members, bit numbers, indices) from `place`.
@@ -1014,6 +1131,10 @@ impl<'a> Lowerer<'a> {
         if let Some(Res::Intrinsic(name)) = self.a.resolved.get(&d.id).cloned() {
             return self.intrinsic_value(&name, d, e);
         }
+        if let Some(sym) = self.handler_of(d) {
+            let (_, n) = self.event_func(sym)?;
+            return Some(Ex::konst(n, 8, false));
+        }
         let place = self.place_idx_of(d)?;
         let Some((w, s)) = nat(&place.ty) else {
             self.unsupported(d.span, &format!("a value of type {}", place.ty));
@@ -1327,6 +1448,20 @@ impl<'a> Lowerer<'a> {
                 Self::push(out, St::Call(id, a), span);
             }
             return;
+        }
+        if let Some(Part::Args(args, _)) = d.parts.last()
+            && args.is_empty()
+            && !matches!(self.a.resolved.get(&d.id), Some(Res::Intrinsic(_)))
+        {
+            let n = d.parts.len() - 1;
+            if let Some(held) = self.place_inner_parts(d, &d.parts[..n])
+                && matches!(held.ty, Ty::EventVar(_))
+                && held.idx.is_none()
+            {
+                let (id, a) = self.event_call(held, span);
+                Self::push(out, St::Call(id, a), span);
+                return;
+            }
         }
         let Some(Res::Intrinsic(name)) = self.a.resolved.get(&d.id).cloned() else {
             self.unsupported(span, "this statement");

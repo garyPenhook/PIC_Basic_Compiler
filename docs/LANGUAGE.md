@@ -306,7 +306,13 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
   priorities, set its `IPRx` bit (they reset to *high*). Clearing the global bit inside a handler
   is undone by the return. Wide variables shared with a handler are not accessed atomically.
   Cycle-counted delays (`DelayUs`/`DelayMs`) run longer when interrupted.
-* **Not built yet:** `Event` handlers (`E-BACKEND`).
+* **Events (M6).** An event variable is one byte: 0 until assigned, then the number of the handler
+  assigned to it (numbered in order of first use; only handlers named in an assignment are compiled).
+  `Cb()` calls a shared dispatcher that compares the byte and calls that handler; an unassigned
+  variable does nothing. Handler frames are ordinary frames, overlaid by the same call-graph rule as
+  routines. For that reason (and because the dispatcher's parameter is shared) an interrupt handler
+  must wrap an event call in `Save` like any other call (`E-ISR-CALL`). Event variables cannot be
+  compared and there are no arrays of them.
 
 ## 9. Modules, includes and visibility
 

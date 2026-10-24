@@ -210,7 +210,7 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   program through the final item stream (routines, shared helpers, `call`/`rcall` in raw `Asm`),
   plus one level for each interrupt priority and that handler's own deepest chain, must not exceed
   31. An unknown raw-`Asm` call counts as one level. Test: `hardware_stack_depth_is_checked`.
-- Not yet: `Event` handlers; the `gpio`, `delay`, `timer`, `serial` library; hardware runs
+- Not yet: the `gpio`, `delay`, `timer`, `serial` library; hardware runs
   (D6 still open). Large frames named in `Save` are copied byte by byte, which is long for big arrays.
 - Library (done, `lib/`, `docs/LIBRARY.md`): `gpio`, `delay`, `timer` (Timer0/1/2), `serial` (EUSART1).
   Register values were taken from the data sheet through the pic-docs server. Tests:
@@ -262,3 +262,16 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   written and that a one-shot Timer2 clears ON after its period. The simulator has no pin stimulus, so
   counting on real external edges and gate pulses is not exercised; not checked on hardware (D6).
 - `clock` is a reserved word, so library parameters use `clk`.
+
+## M6 — Event handlers (done 2026-10-24)
+- `Event` handlers and event variables (`lower.rs` `event_func`, `event_call`, `finish_event_dispatch`):
+  a variable is one byte (the type's size was 3 in `types.rs`; now 1) holding the 1-based number of the
+  handler assigned to it; a call goes to one generated dispatcher routine (`__EVDISP`, an `If` chain of
+  ordinary calls built once all referenced handlers are known), so call graph, overlay and stack-depth
+  analysis need no special cases. Only handlers named in an assignment are compiled.
+- Deviation from the LANGUAGE.md §8 wording ("own non-overlaid frame"): handler frames overlay by the
+  normal call-graph rule, and a handler must call an event inside `Save` (`E-ISR-CALL`), because the
+  dispatcher's parameter byte is shared. Safe either way; revisit if modules need unwrapped calls.
+- Tests: `tests/exec/events.bas` (simulator, optimised and `-O0`: reassignment, unassigned call, two
+  variables, locals zeroed per call, handler calling a routine), `tests/negative/event_in_isr.bas`,
+  `tests/valid/event_in_isr_save.bas`.

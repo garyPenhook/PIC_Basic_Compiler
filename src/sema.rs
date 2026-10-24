@@ -2017,6 +2017,9 @@ impl<'p, 'd> Sema<'p, 'd> {
                         if !args.is_empty() {
                             return self.err("E-ARGS", *sp, "an event takes no arguments");
                         }
+                        if self.ctx.kind == Kind::Interrupt && self.ctx.saves == 0 {
+                            self.diags.error("E-ISR-CALL", *sp, "an interrupt handler cannot call an event directly; the call goes through a shared dispatcher. Wrap the call in Save(…) … Restore (LANGUAGE.md §8)");
+                        }
                         Cur::Val(EI { call: true, ..EI::new(Ty::Void) })
                     }
                     t => return self.err("E-TYPE", *sp, format!("a {t} cannot be indexed or called")),
