@@ -36,7 +36,6 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
     let mut proj = Project::default();
     let mut ld = Loader {
         cfg,
-        defined: cfg.defines.iter().map(|d| d.to_ascii_lowercase()).collect(),
         by_path: HashMap::new(),
         loading: HashSet::new(),
     };
@@ -59,7 +58,6 @@ pub fn load_text(name: &str, text: &str, diags: &mut Diagnostics) -> Project {
 
 struct Loader<'c> {
     cfg: &'c LoadConfig,
-    defined: HashSet<String>,
     by_path: HashMap<PathBuf, usize>,
     loading: HashSet<PathBuf>,
 }
@@ -83,7 +81,10 @@ impl Loader<'_> {
         };
         self.loading.insert(canon.clone());
         let file = proj.sources.add(path.display().to_string(), text.clone());
-        let pp = preprocess(file, &text, &mut self.defined, diags);
+        // `#define` names are scoped to the file: only the command-line names are shared, so the
+        // result does not depend on include order.
+        let mut defined: HashSet<String> = self.cfg.defines.iter().map(|d| d.to_ascii_lowercase()).collect();
+        let pp = preprocess(file, &text, &mut defined, diags);
         proj.options.extend(pp.options);
         let toks = lex(file, &pp.text, diags);
         let unit = parse_unit(file, toks, diags, &mut proj.next_id);

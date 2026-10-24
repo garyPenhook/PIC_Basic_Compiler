@@ -397,6 +397,8 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
   default to `ByRef` when no mode is written; writing `ByVal` for them is an error. `ByRefConst`
   accepts a constant array or a string literal. A default value is allowed only on a trailing `ByVal`
   parameter and must be a constant.
+* **`ByRef` strings** must match the callee's `String(n)` size exactly (a longer write would overrun a smaller buffer); `ByRefConst` accepts any size.
+* **`#define` names are scoped to the file** that defines them (only `-D` names are shared), so results do not depend on include order. Directives inside `(* *)` or `{ }` comments are ignored.
 * **Unary minus** on an unsigned variable widens to the next signed type (`Byte` to `Integer`,
   `Word` to `LongInt`); a `LongWord` cannot be negated without a conversion.
 * **`Bound(a)`** is a constant for a declared array and a non-constant `Word` for an array parameter.

@@ -33,6 +33,44 @@ fn starts_asm(code: &str) -> bool {
     low == "asm" || (low.starts_with("asm") && !low.as_bytes()[3].is_ascii_alphanumeric() && low.as_bytes()[3] != b'_')
 }
 
+/// Updates the open-comment stack for one line, ignoring text in strings and after `'` or `//`.
+fn scan_block_comments(line: &str, blocks: &mut Vec<u8>) {
+    let b = line.as_bytes();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < b.len() {
+        let c = b[i];
+        match blocks.last() {
+            Some(b'(') if c == b'*' && b.get(i + 1) == Some(&b')') => {
+                blocks.pop();
+                i += 2;
+                continue;
+            }
+            Some(b'{') if c == b'}' => {
+                blocks.pop();
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if c == b'(' && b.get(i + 1) == Some(&b'*') {
+            blocks.push(b'(');
+            i += 2;
+            continue;
+        }
+        if c == b'{' {
+            blocks.push(b'{');
+        } else if blocks.is_empty() {
+            if c == b'"' {
+                in_str = !in_str;
+            } else if !in_str && (c == b'\'' || (c == b'/' && b.get(i + 1) == Some(&b'/'))) {
+                break;
+            }
+        }
+        i += 1;
+    }
+}
+
 fn ends_asm(code: &str) -> bool {
     let low = code.trim().to_ascii_lowercase();
     let mut words = low.split(|c: char| c.is_whitespace() || c == '\'').filter(|w| !w.is_empty());
@@ -44,11 +82,19 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, diags: &m
     let mut options = Vec::new();
     let mut stack: Vec<Cond> = Vec::new();
     let mut in_asm = false;
+    // Open block comments, innermost last: b'(' for `(*`, b'{' for `{`.
+    let mut blocks: Vec<u8> = Vec::new();
     for (i, line) in src.lines().enumerate() {
         let span = Span { file, line: (i + 1) as u32, col: 1 };
         let active = stack.last().map(|c| c.active).unwrap_or(true);
         let trimmed = line.trim_start();
-        let directive = trimmed.strip_prefix('#').filter(|r| r.chars().next().is_some_and(|c| c.is_ascii_alphabetic()));
+        let was_in_comment = !blocks.is_empty();
+        if !in_asm {
+            scan_block_comments(line, &mut blocks);
+        }
+        // Text inside a block comment is not code, so a directive there is not executed.
+        let directive = if was_in_comment { None } else { trimmed.strip_prefix('#') };
+        let directive = directive.filter(|r| r.chars().next().is_some_and(|c| c.is_ascii_alphabetic()));
         if in_asm {
             if ends_asm(line) {
                 in_asm = false;

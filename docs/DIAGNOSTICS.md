@@ -22,6 +22,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-CLOCK | `Clock` not a positive number, or two different values |
 | E-CONFIG | Unknown configuration setting or value, setting given twice |
 | E-INCLUDE | Module not found, include cycle, name mismatch, program included |
+| W-REGNAME | A declaration reuses a device register's name and hides the register |
 | E-REDECL, E-UNDECLARED, E-AMBIG, E-PRIVATE | Name clash, unknown name, same name in two modules, Private access |
 | E-VIS, E-NESTED | `Public`/`Private` on a local; routine or type declared inside a routine |
 | E-RAM | Global variables exceed the device's usable RAM |

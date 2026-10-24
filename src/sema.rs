@@ -236,6 +236,10 @@ pub struct Sema<'p, 'd> {
 }
 
 pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Analysis {
+    if proj.units.is_empty() {
+        // The main file could not be read; the loader has already reported why.
+        return Analysis::default();
+    }
     let mut s = Sema {
         proj,
         diags,
@@ -345,9 +349,14 @@ impl<'p, 'd> Sema<'p, 'd> {
         self.read_options();
         self.find_device();
         self.predefine();
+        // Clock and Config of every unit first, so that `_Clock` is visible to library modules
+        // that are analysed before the main program.
         for i in 0..proj.units.len() {
             self.unit = i;
             self.headers(i);
+        }
+        for i in 0..proj.units.len() {
+            self.unit = i;
             let u = &proj.units[i].unit;
             for d in &u.decls {
                 self.decl(d);
@@ -1121,7 +1130,11 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.diags.error("E-ENABLE", n.span, format!("`{}` is not an Interrupt", n.name));
             return;
         };
-        if enabling {
+        if !enabling {
+            if self.enabled.get(&priority) == Some(&id) {
+                self.enabled.remove(&priority);
+            }
+        } else {
             match self.enabled.get(&priority) {
                 Some(&other) if other != id => {
                     let on = self.a.symbols[other].name.clone();
@@ -1136,6 +1149,10 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     fn assign(&mut self, target: &'p Designator, value: &'p Expr, span: Span) {
         // `FunctionName = value` inside the function assigns its result.
+        if target.head.key() == "result" && self.ctx.ret.is_some() {
+            // `Result = x`, `Result.Byte0 = x` and `Result(i) = x` all assign the result.
+            self.ctx.result_assigned = true;
+        }
         let fn_target = target.parts.is_empty() && self.ctx.kind == Kind::Function && self.ctx.fn_key.as_deref() == Some(&target.head.key());
         let tgt = if fn_target || (target.parts.is_empty() && target.head.key() == "result") {
             match self.ctx.ret.clone() {
@@ -1871,10 +1888,7 @@ impl<'p, 'd> Sema<'p, 'd> {
         let key = d.head.key();
         if key == "result" {
             return match self.ctx.ret.clone() {
-                Some(t) => {
-                    self.ctx.result_assigned = true;
-                    Some(Cur::Val(EI::place(t, Place::Var)))
-                }
+                Some(t) => Some(Cur::Val(EI::place(t, Place::Var))),
                 None => self.err("E-RESULT", d.head.span, "`Result` is only available inside a Function"),
             };
         }
@@ -2045,7 +2059,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             return mk(BYTE);
         }
         if let Some(num) = key.strip_prefix("word").and_then(|s| s.parse::<u32>().ok()) {
-            if (num + 1) * 16 > bits {
+            if num >= bits / 16 {
                 return self.err("E-BOUNDS", n.span, format!("a {} has no `{}`", v.ty, n.name));
             }
             return mk(WORD);
@@ -2141,7 +2155,9 @@ impl<'p, 'd> Sema<'p, 'd> {
                     }
                     let same = match (&p.ty, &ei.ty) {
                         (Ty::Array(pe, _), Ty::Array(ae, _)) => pe == ae,
-                        (Ty::Str(_), Ty::Str(_)) => true,
+                        // A ByRef string must have the callee's capacity: a longer write would
+                        // run past a smaller buffer. ByRefConst only reads, so any size is fine.
+                        (Ty::Str(pn), Ty::Str(an)) => const_ok || pn == an,
                         (x, y) => x == y,
                     };
                     if !same {

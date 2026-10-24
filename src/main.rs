@@ -11,18 +11,10 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: basicc [--check] [-D NAME] [-L LIBDIR] [--devices DIR] [--version] <program.bas>";
 
-/// Folders named `name` in `start` and each of its parents, nearest first.
-fn ancestors_with(start: &Path, name: &str) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut cur = Some(start.to_path_buf());
-    while let Some(d) = cur {
-        let cand = d.join(name);
-        if cand.is_dir() {
-            out.push(cand);
-        }
-        cur = d.parent().map(Path::to_path_buf);
-    }
-    out
+/// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
+/// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
+fn nearest_with(start: &Path, name: &str) -> Option<PathBuf> {
+    start.ancestors().map(|d| d.join(name)).find(|c| c.is_dir())
 }
 
 fn main() -> ExitCode {
@@ -62,8 +54,9 @@ fn main() -> ExitCode {
     let Some(file) = file else { return usage() };
 
     let start = file.canonicalize().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
-    lib_dirs.extend(ancestors_with(&start, "lib"));
-    dev_dirs.extend(ancestors_with(&start, "devices"));
+    lib_dirs.extend(nearest_with(&start, "lib"));
+    dev_dirs.extend(nearest_with(&start, "devices"));
+    // Last resort for a development build run outside the project tree.
     let home = Path::new(env!("CARGO_MANIFEST_DIR"));
     lib_dirs.push(home.join("lib"));
     dev_dirs.push(home.join("devices"));
@@ -72,6 +65,13 @@ fn main() -> ExitCode {
     let project = load(&file, &LoadConfig { lib_dirs, defines }, &mut diags);
     // Run semantic analysis even after syntax errors in other units so that one run reports as
     // much as possible, but not when the main file did not parse at all.
+    if project.units.is_empty() {
+        for d in &diags.items {
+            eprintln!("{}", Render(d, &project.sources));
+        }
+        eprintln!("basicc: {} error(s)", diags.error_count());
+        return ExitCode::from(1);
+    }
     let analysis = analyze(&project, &SemaConfig { devices_dirs: dev_dirs }, &mut diags);
     let mut items = diags.items.clone();
     items.sort_by_key(|d| (d.span.file, d.span.line, d.span.col));
