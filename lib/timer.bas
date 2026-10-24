@@ -7,12 +7,74 @@ Module Timer
 ' Clock source is FOSC/4 [Table 19-1, T0CS = 010]. In 8-bit mode the timer counts 0..period and
 ' then restarts, so one overflow takes (period + 1) * 2^prescale instruction cycles
 ' (prescale 0..15 selects 1:1 to 1:32768 [T0CON1]).
+' Timer1 clock sources, the CS field of T1CLK [Table 20-2]. T1ClkPin counts rising edges on the
+' T1CKI pin (RC0 at reset, T1CKIPPS); T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise.
+Public Const T1ClkPin = 0
+Public Const T1ClkFosc4 = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkHfIntOsc = 3
+Public Const T1ClkLfIntOsc = 4
+Public Const T1ClkMfIntOsc = 5
+Public Const T1ClkSosc = 6
+Public Const T1ClkTmr0 = 8
+
+' Timer1 gate sources, the GSS field of T1GATE [Table 20-4]. T1GatePin is the T1G pin (RB5 at
+' reset, T1GPPS).
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateTmr2 = 3
+Public Const T1GateCcp1 = 8
+Public Const T1GateCcp2 = 9
+Public Const T1GateCmp1 = 12
+Public Const T1GateCmp2 = 13
+
+' Timer2 operating modes, the MODE field of T2HLT [Table 21-3]. The "Gate" and "Reset" modes
+' keep the free-running period; the "OneShot" modes stop at the period match and clear ON;
+' the "Mono" modes stop at the period match but leave ON set. Edge and level are those of the
+' reset source.
+Public Const T2ModeSoftware = 0
+Public Const T2ModeGateHigh = 1
+Public Const T2ModeGateLow = 2
+Public Const T2ModeResetAnyEdge = 3
+Public Const T2ModeResetRising = 4
+Public Const T2ModeResetFalling = 5
+Public Const T2ModeResetLow = 6
+Public Const T2ModeResetHigh = 7
+Public Const T2ModeOneShot = 8
+Public Const T2ModeOneShotRising = 9
+Public Const T2ModeOneShotFalling = 10
+Public Const T2ModeOneShotAnyEdge = 11
+Public Const T2ModeOneShotRisingReset = 12
+Public Const T2ModeOneShotFallingReset = 13
+Public Const T2ModeOneShotRisingLow = 14
+Public Const T2ModeOneShotFallingHigh = 15
+Public Const T2ModeMonoRising = 17
+Public Const T2ModeMonoFalling = 18
+Public Const T2ModeMonoAnyEdge = 19
+Public Const T2ModeOneShotLevelHigh = 22
+Public Const T2ModeOneShotLevelLow = 23
+
+' Timer2 external reset sources, the RSEL field of T2RST [Table 21-2]. T2RstPin is the T2IN pin
+' (RC3 at reset, T2INPPS).
+Public Const T2RstPin = 0
+Public Const T2RstTmr4 = 2
+Public Const T2RstTmr6 = 3
+Public Const T2RstCcp1 = 4
+Public Const T2RstCcp2 = 5
+Public Const T2RstPwm3 = 6
+Public Const T2RstPwm4 = 7
+Public Const T2RstCmp1 = 8
+Public Const T2RstCmp2 = 9
+
 Dim Tmr0If As PIR0.5
 Dim Tmr0Ie As PIE0.5
 Dim Tmr1If As PIR4.0
 Dim Tmr1Ie As PIE4.0
 Dim Tmr2If As PIR4.1
 Dim Tmr2Ie As PIE4.1
+Dim T1GoDone As T1GCON.3
+Dim T1GateVal As T1GCON.2
+Dim Tmr2On As T2CON.7
 
 ' 8-bit periodic timer. period = 0..255.
 Public Sub Timer0Start(ByVal prescale As Byte, ByVal period As Byte)
@@ -80,6 +142,84 @@ Public Sub Timer1Start(ByVal prescale As Byte)
     T1CON = (prescale And 3) * 16 + 3
 End Sub
 
+' Timer1 from any clock in T1Clk*, free-running and ungated. The external sources are
+' synchronised to the system clock (SYNC = 0), so the pulses must be longer than a system clock
+' cycle; asynchronous operation (for Sleep) is not offered. The input pin of T1ClkPin must be a
+' digital input (ANSELx = 0, TRISx = 1). In counter mode a falling edge must be seen before the
+' first rising edge counts [20.2.2 note], so the first pulse after a start may be missed.
+Public Sub Timer1StartSource(ByVal clk As Byte, ByVal prescale As Byte)
+    T1CON = 0
+    T1CLK = clk And 31
+    T1GCON = 0
+    TMR1L = 0
+    TMR1H = 0
+    Tmr1If = 0
+    T1CON = (prescale And 3) * 16 + 3
+End Sub
+
+' Counts rising edges on the T1CKI pin.
+Public Sub Timer1StartCounter(ByVal prescale As Byte)
+    Timer1StartSource(T1ClkPin, prescale)
+End Sub
+
+' Counts only while the gate source (one of T1Gate*) is at the given level: high with
+' activeHigh, low without [Table 20-3]. The gate is set up before
+' the timer is switched on, so no count is taken ungated. Timer1GateState reads the live gate.
+Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean)
+    T1CON = 0
+    T1CLK = clk And 31
+    T1GATE = source And 31
+    If activeHigh Then
+        T1GCON = 192
+    Else
+        T1GCON = 128
+    End If
+    TMR1L = 0
+    TMR1H = 0
+    Tmr1If = 0
+    T1CON = (prescale And 3) * 16 + 3
+End Sub
+
+' Measures one gate pulse: the timer counts during the first pulse of the gate source after
+' this call, then holds. Timer1PulseDone reports the end of the pulse and Timer1Read is its
+' length in clock counts. With fullCycle the gate toggles on every rising edge, so the measured
+' time is a whole period of the source instead of its high (or low) time [20.7.3, 20.7.4].
+Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean, ByVal fullCycle As Boolean)
+    T1CON = 0
+    T1CLK = clk And 31
+    T1GATE = source And 31
+    If activeHigh Then
+        T1GCON = 192
+    Else
+        T1GCON = 128
+    End If
+    If fullCycle Then
+        T1GCON = T1GCON Or 32
+    End If
+    T1GCON = T1GCON Or 16
+    TMR1L = 0
+    TMR1H = 0
+    Tmr1If = 0
+    T1CON = (prescale And 3) * 16 + 3
+    T1GCON = T1GCON Or 8
+End Sub
+
+' True once the pulse started by Timer1StartPulse has ended (GGO/DONE cleared by hardware).
+Public Function Timer1PulseDone() As Boolean
+    Result = False
+    If T1GoDone = 0 Then
+        Result = True
+    End If
+End Function
+
+' The current state of the gate [GVAL]; it is not affected by the gate enable.
+Public Function Timer1GateState() As Boolean
+    Result = False
+    If T1GateVal = 1 Then
+        Result = True
+    End If
+End Function
+
 Public Sub Timer1Stop()
     T1CON = 0
 End Sub
@@ -127,6 +267,34 @@ Public Sub Timer2Start(ByVal prescale As Byte, ByVal postscale As Byte, ByVal pe
     Tmr2If = 0
     T2CON = 128 + (prescale And 7) * 16 + (postscale And 15)
 End Sub
+
+' Timer2 with a hardware-limit mode: mode is one of T2Mode*, source one of T2Rst* [T2HLT, T2RST]
+' (prescale, postscale and period as for Timer2Start). The clock stays FOSC/4 and the control
+' bits PSYNC, CPOL and CSYNC stay 0. Writing ON arms the timer: in the edge and level modes it
+' then waits for the reset source, and in the one-shot modes it runs once and clears ON, which
+' Timer2Running reports. Use Timer2Running, not the flag, to see a one-shot end: the data sheet
+' does not say that TMR2IF is set when ON clears, and with a postscaler it would need
+' postscale + 1 period matches. Edge-triggered modes need six timer clocks between triggers,
+' level modes a level of at least three [21.5]. The T2RstPin input must be a digital input (ANSELx = 0,
+' TRISx = 1).
+Public Sub Timer2StartLimit(ByVal prescale As Byte, ByVal postscale As Byte, ByVal period As Byte, ByVal mode As Byte, ByVal source As Byte)
+    T2CON = 0
+    T2CLKCON = 1
+    T2HLT = mode And 31
+    T2RST = source And 31
+    T2PR = period
+    T2TMR = 0
+    Tmr2If = 0
+    T2CON = 128 + (prescale And 7) * 16 + (postscale And 15)
+End Sub
+
+' True while the timer is on; a one-shot timer clears ON after its period [Table 21-3 note 2].
+Public Function Timer2Running() As Boolean
+    Result = False
+    If Tmr2On = 1 Then
+        Result = True
+    End If
+End Function
 
 ' Turning the timer off also resets its counters [21.9.3].
 Public Sub Timer2Stop()

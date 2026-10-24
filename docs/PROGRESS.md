@@ -214,11 +214,11 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   (D6 still open). Large frames named in `Save` are copied byte by byte, which is long for big arrays.
 - Library (done, `lib/`, `docs/LIBRARY.md`): `gpio`, `delay`, `timer` (Timer0/1/2), `serial` (EUSART1).
   Register values were taken from the data sheet through the pic-docs server. Tests:
-  `tests/exec/lib_serial.bas`, `lib_timer.bas`, `lib_timer12.bas` (simulator, optimised and `-O0`) and
+  `tests/exec/lib_serial.bas`, `lib_timer.bas`, `lib_timer12.bas`, `lib_timer_hw.bas` (simulator, optimised and `-O0`) and
   `tests/programs/library_all.bas`. Fixed on the way: a module-qualified call used as a statement
   (`Serial.SerialInit(...)`) was rejected by the back end (`callee_of` in `lower.rs`). The MDB
   simulator models TXIF/TRMT timing but gives no way to see the bytes sent, so serial output is
-  not checked, only its set-up and handshake. Not yet: hardware runs (D6), EUSART2, Timer1 gate/external clock, Timer2 hardware-limit modes.
+  not checked, only its set-up and handshake. Not yet: hardware runs (D6), EUSART2.
 - Known limits: a `Save` block inside a routine that both main and a handler call shares one static
   save area; each `Exit`/`Break`/`Continue` inside `Save` repeats the restore code instead of
   jumping to one copy; `Save` bodies are scanned for callees by a separate IR walker
@@ -247,3 +247,18 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Decision D46: drop Route B for now. Route A stays the single back end. Not changed: the symlinks
   stay on the recovered tree, so the LLVM build directory cannot reconfigure until the backend is
   rebuilt or the links are removed.
+
+## M6 — Timer1 gate/external clock, Timer2 hardware-limit modes (done 2026-10-24)
+- `lib/timer.bas` gains `Timer1StartSource/StartCounter/StartGated/StartPulse`, `Timer1PulseDone`,
+  `Timer1GateState` (T1CLK Table 20-2, T1GATE Table 20-4, T1GCON 20.14.2) and `Timer2StartLimit`,
+  `Timer2Running` (T2HLT Table 21-3, T2RST Table 21-2), with `T1Clk*`, `T1Gate*`, `T2Mode*`,
+  `T2Rst*` constants. Documented in `docs/LIBRARY.md`.
+- The library does not set up pins: the caller makes T1CKI (RC0), T1G (RB5) and T2IN (RC3) digital
+  inputs (ANSELx resets to 1 [p.247]). External Timer1 clocks are synchronised (SYNC = 0); asynchronous
+  mode (Sleep) is not offered.
+- The data sheet does not say that TMR2IF is set when a one-shot clears ON, and the MDB simulator does
+  not set it: a one-shot end is detected with `Timer2Running`, and the flag is not tested.
+- Test: `tests/exec/lib_timer_hw.bas` (simulator, optimised and `-O0`) checks the register values
+  written and that a one-shot Timer2 clears ON after its period. The simulator has no pin stimulus, so
+  counting on real external edges and gate pulses is not exercised; not checked on hardware (D6).
+- `clock` is a reserved word, so library parameters use `clk`.
