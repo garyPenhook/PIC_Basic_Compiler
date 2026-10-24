@@ -928,7 +928,8 @@ impl<'a> Lowerer<'a> {
     /// The routine a designator calls, with its argument list, when it is a call.
     fn callee_of(&self, d: &'a Designator) -> Option<(usize, &'a [Expr], Span)> {
         let (sym, next) = match self.a.resolved.get(&d.id)? {
-            Res::Sym(id) if matches!(self.a.symbols[*id].kind, SymKind::Routine { .. }) => (*id, 0),
+            // `Module.Routine(...)` is resolved to the routine itself; the member name stays in `parts`.
+            Res::Sym(id) if matches!(self.a.symbols[*id].kind, SymKind::Routine { .. }) => (*id, usize::from(matches!(d.parts.first(), Some(Part::Member(_))))),
             Res::Module(u) => {
                 let Some(Part::Member(n)) = d.parts.first() else { return None };
                 let id = *self.unit_syms.get(&(*u, n.key()))?;

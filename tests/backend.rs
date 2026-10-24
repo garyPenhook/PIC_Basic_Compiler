@@ -165,6 +165,26 @@ fn jumps_into_or_out_of_save_are_reported() {
     assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
 }
 
+/// Every library module in one program builds, with no warning from the compiler or pic-as.
+#[test]
+fn library_modules_build_cleanly() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("library");
+    let r = Command::new(basicc())
+        .arg(root().join("tests/programs/library_all.bas"))
+        .arg("-L")
+        .arg(root().join("lib"))
+        .arg("-o")
+        .arg(out.join("lib.hex"))
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(r.status.success(), "{text}");
+    assert!(!text.contains("warning"), "{text}");
+}
+
 #[test]
 fn reentrant_routines_are_rejected() {
     let out = scratch("reentrant");
