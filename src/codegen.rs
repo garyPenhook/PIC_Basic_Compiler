@@ -277,6 +277,7 @@ impl<'p> Gen<'p> {
 
     fn place_mem(&self, pl: &Place, write: bool) -> Mem {
         let m = match &pl.base {
+            Base::Ptr(_) => unreachable!("an indirect place has no direct memory operand"),
             Base::Var(v) => self.mem_obj(*v, self.p.vars[*v].asm.clone()),
             Base::Abs { addr, name } => {
                 // Writes to a port go to its latch (read-modify-write on PORT is unreliable).
@@ -352,7 +353,7 @@ impl<'p> Gen<'p> {
     fn simple(&self, e: &Ex) -> Option<Src> {
         match &e.k {
             ExK::Const(v) => Some(Src::Imm(*v & mask(e.w))),
-            ExK::Load(p) if p.bit.is_none() => Some(Src::Mem(self.place_mem(p, false), p.bytes())),
+            ExK::Load(p) if p.bit.is_none() && !p.indirect() => Some(Src::Mem(self.place_mem(p, false), p.bytes())),
             ExK::Conv(inner) => {
                 let s = self.simple(inner)?;
                 if e.w <= inner.w {
@@ -433,6 +434,27 @@ impl<'p> Gen<'p> {
                 }
             }
             ExK::Load(p) => self.load_place(p, n),
+            ExK::Addr(p) => {
+                if p.indirect() {
+                    // Leaves the address in __A0:__A1 as well.
+                    self.point_fsr0(p);
+                } else {
+                    let sym = match &p.base {
+                        Base::Var(v) => {
+                            self.uses[*v] += weight(self.depth);
+                            self.p.vars[*v].asm.clone()
+                        }
+                        Base::Abs { name, .. } => name.clone(),
+                        Base::Ptr(_) => unreachable!(),
+                    };
+                    let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
+                    let (a0, a1) = (self.a(0), self.a(1));
+                    self.ins(format!("movlw low({at})"));
+                    self.fo("movwf", &a0);
+                    self.ins(format!("movlw high({at})"));
+                    self.fo("movwf", &a1);
+                }
+            }
             ExK::Conv(inner) => self.gen_conv(inner, e.w, e.signed),
             ExK::Neg(x) => {
                 self.gen_val(x);
@@ -489,7 +511,78 @@ impl<'p> Gen<'p> {
         }
     }
 
+    /// A special function register by name, for the indirect-addressing registers.
+    fn sfr_mem(&self, name: &str) -> Mem {
+        Mem { sym: name.to_string(), addr: self.tgt.sfr.get(name).copied(), obj: None, reg: false }
+    }
+
+    /// Points FSR0 at the byte an indirect place names: `base + off (+ idx)`, where the base is
+    /// an array or the address held by a `ByRef` parameter. Clobbers `__A`.
+    fn point_fsr0(&mut self, p: &Place) {
+        let (a0, a1) = (self.a(0), self.a(1));
+        let ptr = match &p.base {
+            Base::Ptr(v) => {
+                let m = self.mem_obj(*v, self.p.vars[*v].asm.clone());
+                Some((*v, m))
+            }
+            _ => None,
+        };
+        if let Some(idx) = &p.idx {
+            self.gen_to_acc(idx);
+        } else if let Some((_, m)) = &ptr {
+            self.movff(&a0, m);
+            self.movff(&a1, &m.at(1));
+        } else {
+            self.err("internal: an indirect place without an index or pointer");
+            return;
+        }
+        match (&p.base, &ptr) {
+            (Base::Var(v), _) => {
+                // Counted once, not by loop depth: FSR0 access gains nothing from the Access Bank.
+                self.uses[*v] += 1;
+                let sym = &self.p.vars[*v].asm;
+                let at = if p.off == 0 { sym.clone() } else { format!("{sym}+{}", p.off) };
+                self.ins(format!("movlw low({at})"));
+                self.fop("addwf", &a0, "f");
+                self.ins(format!("movlw high({at})"));
+                self.fop("addwfc", &a1, "f");
+            }
+            (_, Some((_, m))) => {
+                if p.idx.is_some() {
+                    self.fop("movf", m, "w");
+                    self.fop("addwf", &a0, "f");
+                    self.fop("movf", &m.at(1), "w");
+                    self.fop("addwfc", &a1, "f");
+                }
+                if p.off != 0 {
+                    self.ins(format!("movlw 0x{:02X}", p.off & 0xFF));
+                    self.fop("addwf", &a0, "f");
+                    self.ins(format!("movlw 0x{:02X}", (p.off >> 8) & 0xFF));
+                    self.fop("addwfc", &a1, "f");
+                }
+            }
+            _ => self.err("internal: an indirect place on a device register"),
+        }
+        let (f0l, f0h) = (self.sfr_mem("FSR0L"), self.sfr_mem("FSR0H"));
+        self.movff(&f0l, &a0);
+        self.movff(&f0h, &a1);
+    }
+
     fn load_place(&mut self, p: &Place, n: u32) {
+        if p.indirect() {
+            self.point_fsr0(p);
+            if n == 1 {
+                let m = self.sfr_mem("INDF0");
+                self.fop("movf", &m, "w");
+            } else {
+                let post = self.sfr_mem("POSTINC0");
+                for i in 0..n {
+                    let d = self.a(i);
+                    self.movff(&d, &post);
+                }
+            }
+            return;
+        }
         let m = self.place_mem(p, false);
         if let Some(b) = p.bit {
             self.ins("movlw 0");
@@ -1127,7 +1220,7 @@ impl<'p> Gen<'p> {
                 self.fbit(if when { "btfsc" } else { "btfss" }, &m, p.bit.unwrap());
                 self.br(Cc::Always, target);
             }
-            ExK::Load(p) if p.bytes() == 1 => {
+            ExK::Load(p) if p.bytes() == 1 && !p.indirect() => {
                 let m = self.place_mem(p, false);
                 self.fop("movf", &m, "f");
                 self.br(if when { Cc::Nz } else { Cc::Z }, target);
@@ -1355,6 +1448,25 @@ impl<'p> Gen<'p> {
     // ---- statements -----------------------------------------------------------------------
 
     fn store(&mut self, p: &Place, e: &Ex) {
+        if p.indirect() {
+            // The value is settled before FSR0 is loaded, since computing either can use FSR0.
+            let n = p.bytes();
+            let post = self.sfr_mem("POSTINC0");
+            if let Some(s) = self.simple(e) {
+                self.point_fsr0(p);
+                for i in 0..n {
+                    self.put_byte(&post, &s.byte(i));
+                }
+            } else {
+                let t = self.spill(e);
+                self.point_fsr0(p);
+                for i in 0..n {
+                    self.movff(&post, &t.at(i));
+                }
+                self.free(n);
+            }
+            return;
+        }
         if let Some(b) = p.bit {
             self.store_bit(p, b, e);
             return;
@@ -1370,6 +1482,7 @@ impl<'p> Gen<'p> {
             && matches!(op, BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor)
             && let ExK::Load(lp) = &l.k
             && lp.bit.is_none()
+            && !lp.indirect()
             && lp.base == p.base
             && lp.off == p.off
             && self.place_mem(lp, false).sym == dst.sym

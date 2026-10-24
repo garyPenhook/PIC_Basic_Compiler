@@ -22,7 +22,7 @@ pub enum VarKind {
     Hidden,
 }
 
-/// A statically allocated object. Every routine has its own frame, so a variable is only live
+/// A statically allocated object (an array is one object of `bytes` = elements × size). Every routine has its own frame, so a variable is only live
 /// while its routine runs (frames are not overlaid yet; M5).
 #[derive(Clone, Debug)]
 pub struct Var {
@@ -36,11 +36,16 @@ pub struct Var {
     pub owner: Option<FuncId>,
     /// Value stored once at start-up (globals) or on every entry (locals).
     pub init: Option<u32>,
+    /// A `ByRef` parameter: the object holds the 16-bit address of the argument, and `ty` is
+    /// the type it points to (an array of unknown length for an array parameter).
+    pub by_ref: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Base {
     Var(VarId),
+    /// The object a `ByRef` parameter points to (the variable holds its address).
+    Ptr(VarId),
     /// A device register or other fixed data address. The name is the symbol pic-as knows.
     Abs { addr: u32, name: String },
 }
@@ -52,10 +57,16 @@ pub struct Place {
     pub base: Base,
     pub off: u32,
     pub bit: Option<u8>,
+    /// Array element selected at run time: the unsigned 16-bit byte offset from `base + off`.
+    pub idx: Option<Box<Ex>>,
     pub ty: Ty,
 }
 
 impl Place {
+    /// Reached through FSR0: a run-time array index or a `ByRef` parameter.
+    pub fn indirect(&self) -> bool {
+        self.idx.is_some() || matches!(self.base, Base::Ptr(_))
+    }
     /// Width in bits of the value the place holds (a bit place reads as 0/1 in 8 bits).
     pub fn width(&self) -> u8 {
         match &self.ty {
@@ -120,14 +131,14 @@ impl CmpKind {
 
 /// An expression. `w` is the width in bits the value has (8, 16, 24 or 32) and `signed` how its
 /// extension and ordering are read. Boolean values are 0/1 in 8 bits.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Ex {
     pub k: ExK,
     pub w: u8,
     pub signed: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExK {
     /// Value truncated to `w` bits (negative numbers are stored two's complement).
     Const(u32),
@@ -144,6 +155,8 @@ pub enum ExK {
     OrElse(Box<Ex>, Box<Ex>),
     NotB(Box<Ex>),
     Call(FuncId, Vec<(Place, Ex)>),
+    /// The 16-bit data address of a place (the argument of a `ByRef` parameter).
+    Addr(Place),
 }
 
 impl Ex {
@@ -159,7 +172,8 @@ impl Ex {
     pub fn has_call(&self) -> bool {
         match &self.k {
             ExK::Call(..) => true,
-            ExK::Const(_) | ExK::Load(_) => false,
+            ExK::Const(_) => false,
+            ExK::Load(p) | ExK::Addr(p) => p.idx.as_ref().is_some_and(|i| i.has_call()),
             ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.has_call(),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.has_call() || b.has_call(),
         }

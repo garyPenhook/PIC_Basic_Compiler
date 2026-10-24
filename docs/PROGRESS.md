@@ -100,6 +100,20 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 Arrays, strings, structures, ByRef, 16×16 hardware multiply and multiply-by-constant, `DECFSZ` loops,
 frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.md`.
 
+## M5 progress
+- Arrays (done): `Dim a(n) As <integer|Char>` for globals and locals; constant indices fold to an
+  offset (out of range is `E-BOUNDS`), run-time indices are a 16-bit byte offset in `Place::idx`
+  and are addressed through FSR0 (`point_fsr0` in `codegen.rs`; the value of a store is settled
+  first). `Inc/Dec/Clear` of an element work. Not yet: array initialisers, `Bit`/`Boolean` arrays,
+  whole-array `Clear`/assignment, `ByRef` array parameters, Const arrays. Interrupts (M6) must save
+  FSR0 because element access uses it. Test: `tests/exec/arrays.bas`.
+- ByRef parameters (done): scalars and arrays of integer/Char; the parameter holds a 16-bit address
+  (`Var.by_ref`, `Base::Ptr`), the caller passes `ExK::Addr`, and every access goes through FSR0
+  like an indexed element. Not yet: `ByRefConst`, `Bit`/`Boolean` by reference, `Bound()` of an
+  array parameter. Fixed: a local named `tmp` clashed with the routine's `__TMP` temporary area.
+  Test: `tests/exec/byref.bas`.
+- Next in M5: strings, structures, 16×16 multiply, `DECFSZ` loops, frame overlay, peephole.
+
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
 reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,

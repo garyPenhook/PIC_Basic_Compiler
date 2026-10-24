@@ -3,7 +3,8 @@
 //! Everything the semantic pass recorded (types, constants, evaluation widths, name
 //! resolutions) is consumed here; the code generator never looks at the AST. M4 covers scalar
 //! programs: Boolean, Bit, Char and the 8/16/32-bit integers, device registers and register
-//! bits, routines with by-value parameters, and the structured statements. Arrays, strings,
+//! bits, routines with by-value parameters, and the structured statements. One-dimensional
+//! arrays of integers and Char (no initialisers yet) are indexed through `Place::idx`. Strings,
 //! structures, floats, by-reference parameters and interrupts report `E-BACKEND` (M5/M6).
 
 use crate::ast::*;
@@ -205,9 +206,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn new_var(&mut self, asm: String, name: &str, ty: Ty, kind: VarKind, init: Option<u32>) -> VarId {
-        let (w, _) = nat(&ty).expect("scalar");
+        let bytes = ty.size_bytes(&|_| 0);
         let asm = self.unique(asm);
-        self.vars.push(Var { asm, name: name.to_string(), ty, bytes: w as u32 / 8, kind, owner: self.cur_func, init });
+        self.vars.push(Var { asm, name: name.to_string(), ty, bytes, kind, owner: self.cur_func, init, by_ref: false });
         self.vars.len() - 1
     }
 
@@ -215,7 +216,7 @@ impl<'a> Lowerer<'a> {
         self.hidden += 1;
         let asm = format!("{}__H{}", self.cur_asm, self.hidden);
         let v = self.new_var(asm, "(hidden)", ty.clone(), VarKind::Hidden, None);
-        Place { base: Base::Var(v), off: 0, bit: None, ty }
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty }
     }
 
     // ---- declarations --------------------------------------------------------------------
@@ -245,13 +246,27 @@ impl<'a> Lowerer<'a> {
             let Some(&sym) = self.a.decl_syms.get(&it.name.span) else { continue };
             match self.a.symbols[sym].kind.clone() {
                 SymKind::Var { ty } => {
-                    if nat(&ty).is_none() {
+                    let array = match &ty {
+                        Ty::Array(elem, _) => {
+                            if matches!(**elem, Ty::Bit | Ty::Bool) || nat(elem).is_none() {
+                                self.unsupported_sym(sym, &format!("an array of {elem}"));
+                                continue;
+                            }
+                            if it.init.is_some() || dim.trailing_init.is_some() {
+                                self.unsupported_sym(sym, "an array with an initialiser");
+                                continue;
+                            }
+                            true
+                        }
+                        _ => false,
+                    };
+                    if !array && nat(&ty).is_none() {
                         self.unsupported_sym(sym, &format!("a variable of type {ty}"));
                         continue;
                     }
                     let init_e = it.init.as_ref().or(dim.trailing_init.as_ref());
                     let init = init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32);
-                    let init = init.map(|v| v & mask(nat(&ty).unwrap().0));
+                    let init = init.map(|v| v & mask(nat(&ty).map_or(32, |t| t.0)));
                     let s = &self.a.symbols[sym];
                     let asm = if s.local { format!("{}__{}", self.cur_asm, sanitize(&s.name)) } else { format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&s.name)) };
                     let name = s.name.clone();
@@ -259,8 +274,8 @@ impl<'a> Lowerer<'a> {
                     let kind = if local { VarKind::Local } else { VarKind::Global };
                     let v = self.new_var(asm, &name, ty.clone(), kind, init.filter(|&i| i != 0 || local));
                     self.sym_var.insert(sym, v);
-                    if local && let Some(i) = init {
-                        inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
+                    if local && !array && let Some(i) = init {
+                        inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
                     }
                 }
                 SymKind::Alias { .. } => {
@@ -298,22 +313,37 @@ impl<'a> Lowerer<'a> {
         self.funcs.push(None);
         let ui = self.a.symbols[sym].unit;
         let asm = self.unique(format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&r.name.name)));
+        // The code generator names the routine's temporary area this; a local must not take it.
+        self.asm_names.insert(format!("{asm}__TMP"));
         let saved = (self.cur_func, std::mem::take(&mut self.cur_asm));
         self.cur_func = Some(id);
         self.cur_asm = asm.clone();
         let mut params = Vec::new();
         let mut ok = true;
         for (p, info) in r.params.iter().zip(&params_info) {
-            if info.mode != ParamMode::ByVal || nat(&info.ty).is_none() {
-                self.unsupported(p.name.span, &format!("parameter `{}` ({})", p.name.name, if info.mode != ParamMode::ByVal { "by reference" } else { "non-scalar" }));
+            let pointee = match &info.ty {
+                Ty::Array(e, _) => &**e,
+                t => t,
+            };
+            let supported = match info.mode {
+                ParamMode::ByVal => nat(&info.ty).is_some(),
+                ParamMode::ByRef => nat(pointee).is_some() && !matches!(pointee, Ty::Bit) && !(matches!(info.ty, Ty::Array(..)) && *pointee == Ty::Bool),
+                ParamMode::ByRefConst => false,
+            };
+            if !supported {
+                self.unsupported(p.name.span, &format!("parameter `{}` ({})", p.name.name, if info.mode == ParamMode::ByVal { "non-scalar" } else { "this by-reference form" }));
                 ok = false;
                 continue;
             }
             let v = self.new_var(format!("{asm}__{}", sanitize(&p.name.name)), &p.name.name, info.ty.clone(), VarKind::Param, None);
+            if info.mode == ParamMode::ByRef {
+                self.vars[v].by_ref = true;
+                self.vars[v].bytes = 2;
+            }
             if let Some(&psym) = self.a.decl_syms.get(&p.name.span) {
                 self.sym_var.insert(psym, v);
             }
-            let (w, s) = nat(&info.ty).unwrap();
+            let (w, s) = nat(&info.ty).unwrap_or((16, false));
             let default = p.default.as_ref().and_then(|e| self.a.consts.get(&e.id)).map(|c| Ex::konst(cval_u32(c), w, s));
             params.push((v, default));
         }
@@ -363,7 +393,10 @@ impl<'a> Lowerer<'a> {
 
     fn var_place(&mut self, sym: usize, span: Span) -> Option<Place> {
         if let Some(&v) = self.sym_var.get(&sym) {
-            return Some(Place { base: Base::Var(v), off: 0, bit: None, ty: self.vars[v].ty.clone() });
+            if self.vars[v].by_ref {
+                return Some(Place { base: Base::Ptr(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() });
+            }
+            return Some(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() });
         }
         if let Some(p) = self.sym_alias.get(&sym) {
             return Some(p.clone());
@@ -383,7 +416,7 @@ impl<'a> Lowerer<'a> {
                 self.unsupported(span, &format!("the {}-bit register `{}`", s.width, s.name));
                 return None;
             }
-            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, ty: BYTE });
+            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, idx: None, ty: BYTE });
         }
         if let Some(j) = dev.joined.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
             let ty = match j.bytes {
@@ -395,17 +428,34 @@ impl<'a> Lowerer<'a> {
                     return None;
                 }
             };
-            return Some(Place { base: Base::Abs { addr: j.addr, name: j.name.clone() }, off: 0, bit: None, ty });
+            return Some(Place { base: Base::Abs { addr: j.addr, name: j.name.clone() }, off: 0, bit: None, idx: None, ty });
         }
         None
     }
 
-    /// The place a designator names, or None after reporting why not.
+    /// The place a designator names, or None after reporting why not. Elements picked by a
+    /// run-time index are only accepted by `place_idx_of`.
     pub fn place_of(&mut self, d: &'a Designator) -> Option<Place> {
+        let p = self.place_idx_of(d)?;
+        if p.indirect() {
+            self.unsupported(d.span, "an array element or ByRef parameter here");
+            return None;
+        }
+        Some(p)
+    }
+
+    pub fn place_idx_of(&mut self, d: &'a Designator) -> Option<Place> {
         let before = self.diags.error_count();
         let p = self.place_inner(d);
         if p.is_none() && self.diags.error_count() == before {
             self.unsupported(d.span, &format!("`{}` here", d.head.name));
+        }
+        if let Some(pl) = &p
+            && pl.bit.is_some()
+            && pl.indirect()
+        {
+            self.unsupported(d.span, "a bit of an array element or ByRef parameter");
+            return None;
         }
         p
     }
@@ -432,12 +482,16 @@ impl<'a> Lowerer<'a> {
                     self.unsupported(d.span, &format!("`{}`", d.head.name));
                     return None;
                 }
-                Place { base: Base::Var(v), off: 0, bit: None, ty: self.vars[v].ty.clone() }
+                Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() }
             }
         };
         while i < d.parts.len() {
             match &d.parts[i] {
                 Part::BitIndex(n, _) => {
+                    if place.idx.is_some() {
+                        self.unsupported(d.span, "a bit of an array element");
+                        return None;
+                    }
                     place.off += (*n / 8) as u32;
                     place.bit = Some((*n % 8) as u8);
                     place.ty = Ty::Bit;
@@ -502,9 +556,33 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
-                Part::Args(_, sp) => {
-                    self.unsupported(*sp, "array indexing");
-                    return None;
+                Part::Args(args, sp) => {
+                    let Ty::Array(elem, n) = place.ty.clone() else {
+                        self.unsupported(*sp, "indexing this");
+                        return None;
+                    };
+                    if place.bit.is_some() || place.idx.is_some() || args.len() != 1 {
+                        self.unsupported(*sp, "this array access");
+                        return None;
+                    }
+                    let size = elem.size_bytes(&|_| 0);
+                    if let Some(CVal::Int(c)) = self.a.consts.get(&args[0].id) {
+                        if *c < 0 || (n > 0 && *c >= n as i128) {
+                            self.err("E-BOUNDS", args[0].span, format!("index {c} is outside the array (0 to {})", n.saturating_sub(1)));
+                            return None;
+                        }
+                        place.off += *c as u32 * size;
+                    } else {
+                        let ix = self.expr(&args[0])?;
+                        let ix = conv(ix, 16, false);
+                        let off = match size {
+                            1 => ix,
+                            s if s.is_power_of_two() => Ex::new(ExK::Bin(BinKind::Shl, Box::new(ix), Box::new(Ex::konst(s.trailing_zeros(), 8, false))), 16, false),
+                            s => Ex::new(ExK::Bin(BinKind::Mul, Box::new(ix), Box::new(Ex::konst(s, 16, false))), 16, false),
+                        };
+                        place.idx = Some(Box::new(off));
+                    }
+                    place.ty = *elem;
                 }
             }
             i += 1;
@@ -681,13 +759,27 @@ impl<'a> Lowerer<'a> {
         }
         let mut out = Vec::new();
         for (i, (pv, def)) in params.iter().enumerate() {
-            let pty = self.vars[*pv].ty.clone();
-            let (w, s) = nat(&pty).unwrap();
-            let ex = match args.get(i) {
-                Some(a) => conv(self.expr(a)?, w, s),
-                None => def.clone()?,
+            let mut pty = self.vars[*pv].ty.clone();
+            let ex = if self.vars[*pv].by_ref {
+                pty = WORD;
+                let Some(Expr { kind: ExprKind::Designator(dd), .. }) = args.get(i) else {
+                    self.unsupported(span, "this ByRef argument");
+                    return None;
+                };
+                let pl = self.place_idx_of(dd)?;
+                if pl.bit.is_some() {
+                    self.unsupported(dd.span, "a bit passed ByRef");
+                    return None;
+                }
+                Ex::new(ExK::Addr(pl), 16, false)
+            } else {
+                let (w, s) = nat(&pty).unwrap();
+                match args.get(i) {
+                    Some(a) => conv(self.expr(a)?, w, s),
+                    None => def.clone()?,
+                }
             };
-            out.push((Place { base: Base::Var(*pv), off: 0, bit: None, ty: pty }, ex));
+            out.push((Place { base: Base::Var(*pv), off: 0, bit: None, idx: None, ty: pty }, ex));
         }
         Some((id, out))
     }
@@ -708,8 +800,11 @@ impl<'a> Lowerer<'a> {
         if let Some(Res::Intrinsic(name)) = self.a.resolved.get(&d.id).cloned() {
             return self.intrinsic_value(&name, d, e);
         }
-        let place = self.place_of(d)?;
-        let (w, s) = nat(&place.ty)?;
+        let place = self.place_idx_of(d)?;
+        let Some((w, s)) = nat(&place.ty) else {
+            self.unsupported(d.span, &format!("a value of type {}", place.ty));
+            return None;
+        };
         Some(Ex::new(ExK::Load(place), w, s))
     }
 
@@ -774,8 +869,11 @@ impl<'a> Lowerer<'a> {
         let span = s.span;
         match &s.kind {
             StmtKind::Assign { target, value } => {
-                let (Some(p), Some(v)) = (self.place_of(target), self.expr(value)) else { return };
-                let (w, sg) = nat(&p.ty).unwrap();
+                let (Some(p), Some(v)) = (self.place_idx_of(target), self.expr(value)) else { return };
+                let Some((w, sg)) = nat(&p.ty) else {
+                    self.unsupported(target.span, &format!("assigning a {}", p.ty));
+                    return;
+                };
                 let v = conv(v, w, sg);
                 Self::push(out, St::Assign(p, v), span);
             }
@@ -844,7 +942,13 @@ impl<'a> Lowerer<'a> {
         // The first argument as a place, for the intrinsics that act on one.
         let arg_place = |this: &mut Self| -> Option<Place> {
             match args.first().map(|a| &a.kind) {
-                Some(ExprKind::Designator(dd)) => this.place_of(dd),
+                Some(ExprKind::Designator(dd)) => {
+                    if matches!(name.as_str(), "inc" | "dec" | "clear") {
+                        this.place_idx_of(dd)
+                    } else {
+                        this.place_of(dd)
+                    }
+                }
                 _ => None,
             }
         };
@@ -852,11 +956,27 @@ impl<'a> Lowerer<'a> {
             "inc" | "dec" => {
                 let Some(p) = arg_place(self) else { return };
                 let delta = if name == "inc" { 1u32 } else { u32::MAX };
-                Self::push(out, St::Add(p, delta), span);
+                if p.indirect() {
+                    // The index is evaluated twice, so it must not contain a call.
+                    let Some((w, sg)) = nat(&p.ty) else { return };
+                    if p.idx.as_ref().is_some_and(|i| i.has_call()) {
+                        self.unsupported(span, "a call inside the index of Inc/Dec");
+                        return;
+                    }
+                    let load = Ex::new(ExK::Load(p.clone()), w, sg);
+                    let sum = Ex::new(ExK::Bin(BinKind::Add, Box::new(load), Box::new(Ex::konst(delta, w, sg))), w, sg);
+                    Self::push(out, St::Assign(p, sum), span);
+                } else {
+                    Self::push(out, St::Add(p, delta), span);
+                }
             }
             "clear" => {
                 let Some(p) = arg_place(self) else { return };
-                Self::push(out, St::Clear(p), span);
+                match nat(&p.ty) {
+                    Some((w, sg)) if p.indirect() => Self::push(out, St::Assign(p, Ex::konst(0, w, sg)), span),
+                    Some(_) => Self::push(out, St::Clear(p), span),
+                    None => self.unsupported(span, &format!("Clear of a {}", p.ty)),
+                }
             }
             "high" | "low" | "toggle" => {
                 let Some(p) = arg_place(self) else { return };
