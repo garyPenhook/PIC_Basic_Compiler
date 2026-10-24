@@ -1,0 +1,334 @@
+//! Lexer. Keywords are case-insensitive (D10); identifiers keep their written spelling.
+
+use crate::diag::{Diagnostics, Span};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Tok {
+    Int(u64),
+    Float(f64),
+    Str(String),
+    /// `#13`: a Char by code.
+    CharCode(u32),
+    Ident(String),
+    /// A reserved word, lower-cased.
+    Kw(&'static str),
+    Punct(&'static str),
+    Colon,
+    Newline,
+    /// The raw body lines of an `Asm` block, passed through untouched.
+    RawAsm(Vec<String>),
+    Eof,
+}
+
+#[derive(Clone, Debug)]
+pub struct Token {
+    pub tok: Tok,
+    pub span: Span,
+}
+
+/// Reserved words: the list in `GRAMMAR.md` plus the Positron-style spellings of `LANGUAGE.md` §14.
+pub const KEYWORDS: &[&str] = &[
+    "absolute", "access", "addressof", "and", "as", "asm", "bit", "bitof", "boolean", "bound", "break", "byref",
+    "byrefconst", "byte", "byval", "case", "char", "clear", "clock", "compound", "config", "const", "continue", "dec",
+    "delayms", "delayus", "device", "dim", "disable", "else", "elseif", "enable", "end", "endif", "endselect", "event",
+    "exit", "false", "float", "for", "function", "goto", "high", "if", "inc", "include", "inline", "input", "integer",
+    "interrupt", "longint", "longword", "low", "mod", "module", "next", "noinline", "not", "null", "or", "output",
+    "private", "program", "public", "reentrant", "repeat", "restore", "result", "save", "select", "shortint", "step",
+    "string", "structure", "sub", "terminate", "then", "to", "toggle", "true", "type", "until", "wend", "while", "word",
+    "xor", // Positron-style aliases
+    "declare", "do", "endproc", "exitproc", "loop", "proc", "symbol",
+];
+
+pub fn keyword(lower: &str) -> Option<&'static str> {
+    KEYWORDS.iter().find(|k| **k == lower).copied()
+}
+
+/// Reserved words that name an intrinsic or a conversion and so can head a designator
+/// (`Inc(x)`, `Byte(x)`).
+pub const CALLABLE_KEYWORDS: &[&str] = &[
+    "addressof", "bitof", "bound", "clear", "dec", "delayms", "delayus", "high", "inc", "input", "low", "output",
+    "terminate", "toggle", "byte", "word", "integer", "longword", "longint", "shortint", "boolean", "bit", "float",
+    "char", "string",
+];
+
+/// True when `line` closes an `Asm` block (`End Asm`, optionally followed by a comment).
+pub fn is_end_asm(line: &str) -> bool {
+    let low = line.trim().to_ascii_lowercase();
+    let mut words = low.split(|c: char| c.is_whitespace() || c == '\'').filter(|w| !w.is_empty());
+    words.next() == Some("end") && words.next() == Some("asm")
+}
+
+pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut toks: Vec<Token> = Vec::new();
+    let (mut i, mut line, mut col) = (0usize, 1u32, 1u32);
+    let mut asm_pending = false;
+    let mut block_depth: Vec<(char, Span)> = Vec::new();
+
+    macro_rules! span {
+        () => {
+            Span { file, line, col }
+        };
+    }
+    macro_rules! adv {
+        () => {{
+            if chars[i] == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+            i += 1;
+        }};
+    }
+
+    while i < chars.len() {
+        let c = chars[i];
+        let sp = span!();
+        // Inside a block comment.
+        if let Some(&(open, osp)) = block_depth.last() {
+            if c == '*' && chars.get(i + 1) == Some(&')') && open == '(' {
+                adv!();
+                adv!();
+                block_depth.pop();
+            } else if c == '}' && open == '{' {
+                adv!();
+                block_depth.pop();
+            } else if c == '(' && chars.get(i + 1) == Some(&'*') {
+                block_depth.push(('(', sp));
+                adv!();
+                adv!();
+            } else if c == '{' {
+                block_depth.push(('{', sp));
+                adv!();
+            } else {
+                adv!();
+            }
+            let _ = osp;
+            continue;
+        }
+        match c {
+            ' ' | '\t' | '\r' => adv!(),
+            '\n' => {
+                adv!();
+                toks.push(Token { tok: Tok::Newline, span: sp });
+                if asm_pending {
+                    asm_pending = false;
+                    // Collect raw lines up to (not including) the `End Asm` line.
+                    let start = span!();
+                    let mut lines = Vec::new();
+                    let mut closed = false;
+                    while i < chars.len() {
+                        let mut j = i;
+                        while j < chars.len() && chars[j] != '\n' {
+                            j += 1;
+                        }
+                        let text: String = chars[i..j].iter().collect();
+                        if is_end_asm(&text) {
+                            closed = true;
+                            break;
+                        }
+                        lines.push(text.trim_end_matches('\r').to_string());
+                        while i < j {
+                            adv!();
+                        }
+                        if i < chars.len() {
+                            adv!();
+                        }
+                    }
+                    if !closed {
+                        diags.error("E-LEX", start, "Asm block is not closed by `End Asm`");
+                    }
+                    toks.push(Token { tok: Tok::RawAsm(lines), span: start });
+                }
+            }
+            '\'' => {
+                while i < chars.len() && chars[i] != '\n' {
+                    adv!();
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    adv!();
+                }
+            }
+            '(' if chars.get(i + 1) == Some(&'*') => {
+                block_depth.push(('(', sp));
+                adv!();
+                adv!();
+            }
+            '{' => {
+                block_depth.push(('{', sp));
+                adv!();
+            }
+            '_' if (i == 0 || chars[i - 1] == ' ' || chars[i - 1] == '\t') && continuation(&chars, i) => {
+                // Line continuation: skip to and past the newline.
+                while i < chars.len() && chars[i] != '\n' {
+                    adv!();
+                }
+                if i < chars.len() {
+                    adv!();
+                }
+            }
+            c if c.is_ascii_alphabetic() || c == '_' => {
+                let st = i;
+                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                    adv!();
+                }
+                let word: String = chars[st..i].iter().collect();
+                let low = word.to_ascii_lowercase();
+                match keyword(&low) {
+                    Some(k) => {
+                        let at_start = matches!(toks.last().map(|t| &t.tok), None | Some(Tok::Newline) | Some(Tok::Colon));
+                        if k == "asm" && at_start {
+                            asm_pending = true;
+                        }
+                        toks.push(Token { tok: Tok::Kw(k), span: sp });
+                    }
+                    None => toks.push(Token { tok: Tok::Ident(word), span: sp }),
+                }
+            }
+            c if c.is_ascii_digit() => {
+                let st = i;
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    adv!();
+                }
+                let mut is_float = false;
+                if chars.get(i) == Some(&'.') && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
+                    is_float = true;
+                    adv!();
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        adv!();
+                    }
+                    if matches!(chars.get(i), Some('e') | Some('E')) {
+                        let mut j = i + 1;
+                        if matches!(chars.get(j), Some('+') | Some('-')) {
+                            j += 1;
+                        }
+                        if chars.get(j).is_some_and(|d| d.is_ascii_digit()) {
+                            while i < j {
+                                adv!();
+                            }
+                            while i < chars.len() && chars[i].is_ascii_digit() {
+                                adv!();
+                            }
+                        }
+                    }
+                }
+                let text: String = chars[st..i].iter().collect();
+                if is_float {
+                    match text.parse::<f64>() {
+                        Ok(v) => toks.push(Token { tok: Tok::Float(v), span: sp }),
+                        Err(_) => diags.error("E-LEX", sp, format!("bad number `{text}`")),
+                    }
+                } else {
+                    match text.parse::<u64>() {
+                        Ok(v) => toks.push(Token { tok: Tok::Int(v), span: sp }),
+                        Err(_) => diags.error("E-LEX", sp, format!("integer `{text}` is too large")),
+                    }
+                }
+            }
+            '$' | '%' => {
+                let (radix, ok): (u32, fn(char) -> bool) =
+                    if c == '$' { (16, |d| d.is_ascii_hexdigit()) } else { (2, |d| d == '0' || d == '1') };
+                if chars.get(i + 1).is_some_and(|d| ok(*d)) {
+                    adv!();
+                    let st = i;
+                    while i < chars.len() && ok(chars[i]) {
+                        adv!();
+                    }
+                    let text: String = chars[st..i].iter().collect();
+                    match u64::from_str_radix(&text, radix) {
+                        Ok(v) => toks.push(Token { tok: Tok::Int(v), span: sp }),
+                        Err(_) => diags.error("E-LEX", sp, format!("integer `{c}{text}` is too large")),
+                    }
+                } else {
+                    diags.error("E-LEX", sp, format!("`{c}` must be followed by {} digits", if c == '$' { "hexadecimal" } else { "binary" }));
+                    adv!();
+                }
+            }
+            '#' => {
+                adv!();
+                let radix_start = i;
+                let (radix, digit_ok): (u32, fn(char) -> bool) = match chars.get(i) {
+                    Some('$') => {
+                        adv!();
+                        (16, |d| d.is_ascii_hexdigit())
+                    }
+                    Some('%') => {
+                        adv!();
+                        (2, |d| d == '0' || d == '1')
+                    }
+                    _ => (10, |d| d.is_ascii_digit()),
+                };
+                let st = i;
+                while i < chars.len() && digit_ok(chars[i]) {
+                    adv!();
+                }
+                let text: String = chars[st..i].iter().collect();
+                match u32::from_str_radix(&text, radix) {
+                    Ok(v) if v <= 255 => toks.push(Token { tok: Tok::CharCode(v), span: sp }),
+                    Ok(v) => diags.error("E-LEX", sp, format!("character code {v} is outside 0..255")),
+                    Err(_) => {
+                        diags.error("E-LEX", sp, "`#` must be followed by a character code");
+                        let _ = radix_start;
+                    }
+                }
+            }
+            '"' => {
+                adv!();
+                let st = i;
+                while i < chars.len() && chars[i] != '"' && chars[i] != '\n' {
+                    adv!();
+                }
+                if chars.get(i) == Some(&'"') {
+                    let text: String = chars[st..i].iter().collect();
+                    adv!();
+                    toks.push(Token { tok: Tok::Str(text), span: sp });
+                } else {
+                    diags.error("E-LEX", sp, "string is not closed before the end of the line");
+                }
+            }
+            ':' => {
+                adv!();
+                toks.push(Token { tok: Tok::Colon, span: sp });
+            }
+            _ => {
+                let two: String = chars[i..(i + 2).min(chars.len())].iter().collect();
+                let p2 = ["<>", "<=", ">=", "<<", ">>"].iter().find(|p| **p == two).copied();
+                if let Some(p) = p2 {
+                    adv!();
+                    adv!();
+                    toks.push(Token { tok: Tok::Punct(p), span: sp });
+                } else if let Some(p) = ["(", ")", ",", ".", "=", "<", ">", "+", "-", "*", "/", "@"].iter().find(|p| p.starts_with(c)) {
+                    adv!();
+                    toks.push(Token { tok: Tok::Punct(p), span: sp });
+                } else {
+                    diags.error("E-LEX", sp, format!("unexpected character `{c}`"));
+                    adv!();
+                }
+            }
+        }
+    }
+    for (open, osp) in block_depth.iter().rev() {
+        let close = if *open == '(' { "*)" } else { "}" };
+        diags.error("E-LEX", *osp, format!("block comment is not closed (expected `{close}`)"));
+    }
+    toks.push(Token { tok: Tok::Newline, span: Span { file, line, col } });
+    toks.push(Token { tok: Tok::Eof, span: Span { file, line, col } });
+    toks
+}
+
+/// A lone `_` followed only by blanks or a comment up to the end of the line.
+fn continuation(chars: &[char], at: usize) -> bool {
+    let mut j = at + 1;
+    while j < chars.len() && chars[j] != '\n' {
+        match chars[j] {
+            ' ' | '\t' | '\r' => j += 1,
+            '\'' => return true,
+            '/' if chars.get(j + 1) == Some(&'/') => return true,
+            _ => return false,
+        }
+    }
+    true
+}

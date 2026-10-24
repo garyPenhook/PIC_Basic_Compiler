@@ -29,3 +29,16 @@ recommendation shown; any item can be reopened.
 | D18 | Efficiency is gated by measurement | Benchmark harness (size via map file, cycles via MDB) built in **M4**; XC8 `-Os`/`-O2` baselines; targets calibrated from real numbers at M4, enforced from M5 | PLAN §7A.4. |
 | D19 | Internal integer widths | **8, 16, 24 and 32 bits** are all first-class in the IR; the *language* types stay 8/16/32 (24-bit appears only as a compiler-chosen width after range analysis) | 24-bit is cheaper than 32-bit on an 8-bit core (to be re-measured in M4). |
 | D15 | Vendor material | Manuals kept in `reference/` (git-ignored); nothing copied from vendor libraries or data files | PLAN §2. |
+
+## Decisions made in M3 (front end)
+
+| ID | Decision | Choice | Reason |
+|----|----------|--------|--------|
+| D20 | Positron aliases | Accept exactly `Declare Xtal`, `Symbol`, `Proc … , Type … EndProc`, `ExitProc`, `Do … Loop [Until/While]` and `Do While/Until`, rewritten to core forms by the parser | Confirmed from the Positron8 manual (LANGUAGE.md §14). Nothing else of its syntax is accepted. |
+| D21 | Aggregates by reference | Arrays, `String` and structures are parameters by reference; `ByRef` is the default for them and `ByVal` is an error | "Large aggregates must be ByRef" (LANGUAGE.md §7) made enforceable. |
+| D22 | Interrupt safety, conservative form | A handler may call a user routine only inside `Save … Restore` (`E-ISR-CALL`) | The "proven to use only the handler's storage" exemption needs frame overlay (M5). |
+| D23 | Labels | `name:` alone on a line | `:` is also the statement separator; this removes the ambiguity without reserving more words. |
+| D24 | Single-line `If … Then stmt` | Rejected with a message | Not in the grammar; keeps block structure unambiguous with `:` separators. |
+| D25 | Preprocessor in M3 | Conditional compilation on `#define` names plus `#error/#warning/#option`; `#if` family reported unsupported | An expression evaluator is not needed by anything in M3–M5. |
+| D26 | Overflow warnings | `W-OVF` deferred to M5 with range analysis; evaluation widths are recorded now | Warning on every `Byte + Byte` without range information would be noise. |
+| D27 | Clock limit check | Not done in M3 | The maximum clock is a data sheet value that the device description does not carry yet; add a hand-entered, cross-checked field in `devgen` first (as for vectors). |

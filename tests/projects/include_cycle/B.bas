@@ -1,0 +1,2 @@
+Module B
+Include "A"

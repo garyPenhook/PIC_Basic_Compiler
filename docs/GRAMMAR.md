@@ -5,9 +5,9 @@ statements; `:` also separates statements; ` _` at line end continues a line. Co
 whitespace are removed by the lexer. `{ x }` zero or more, `[ x ]` optional, `( a | b )` choice,
 terminals in quotes or `UPPER` for token classes.
 
-This grammar is the contract for milestone M3 (front end). Positron-style aliases (LANGUAGE.md §14)
-are handled in the lexer/parser as alternative spellings of the same productions and are not
-repeated here.
+This grammar is the contract for milestone M3 (front end), implemented in `src/lexer.rs` and
+`src/parser.rs`. Positron-style spellings (LANGUAGE.md §14) are added below as extra productions;
+the parser rewrites them into the core forms.
 
 ## Lexical tokens
 
@@ -43,10 +43,11 @@ module      = "Module" IDENT EOL
               { header } { include } { decl } { stmt }
               [ "End" ] ;
 
-header      = ( "Device" "=" device_name
+header      = ( "Declare" "Xtal" "=" const_expr             (* Positron spelling of Clock *)
+              | "Device" "=" device_name
               | "Clock"  "=" const_expr
               | "Config" config_item { "," config_item } ) EOL ;
-device_name = IDENT | INT IDENT | INT ;           (* e.g. 18F27Q10, PIC18F27Q10 *)
+device_name = IDENT | INT IDENT | INT ;           (* glued, no spaces: 18F27Q10, PIC18F27Q10 *)
 config_item = IDENT "=" ( IDENT | INT ) ;
 
 include     = "Include" STRING EOL ;
@@ -60,13 +61,15 @@ identifier declared before use.
 
 ```
 decl        = [ vis ] ( const_decl | dim_decl | struct_decl | type_decl | routine_decl
-                      | interrupt_decl | event_decl ) EOL ;
+                      | interrupt_decl | event_decl | symbol_decl ) EOL ;
+symbol_decl = "Symbol" IDENT [ "=" ] expr ;       (* Positron: alias or constant, decided by the value *)
 vis         = "Public" | "Private" ;
 
 const_decl  = "Const" const_item { "," const_item } ;
 const_item  = IDENT [ "(" const_expr ")" ] [ "As" type ] "=" ( expr | "(" expr { "," expr } ")" ) ;
 
-dim_decl    = "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) ] ;
+dim_decl    = "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) [ "=" expr ] ] ;
+                                                  (* the trailing "=" needs a single scalar item *)
 dim_item    = IDENT [ "(" const_expr ")" ] [ "=" expr ] ;
 alias_target= designator ;                        (* alias form: Dim LED As PORTB.0 *)
 
@@ -79,9 +82,10 @@ type        = "Boolean" | "Bit" | "Byte" | "ShortInt" | "Word" | "Integer"
             | "LongWord" | "LongInt" | "Float" | "Char"
             | "String" [ "(" const_expr ")" ] | IDENT ;       (* IDENT = structure/event type *)
 
-routine_decl= [ "Inline" | "NoInline" ] [ "Reentrant" ]
+routine_decl= { "Inline" | "NoInline" | "Reentrant" }
               ( "Sub" IDENT "(" [ params ] ")" EOL body "End" "Sub"
-              | "Function" IDENT "(" [ params ] ")" "As" type EOL body "End" "Function" ) ;
+              | "Function" IDENT "(" [ params ] ")" "As" type EOL body "End" "Function"
+              | "Proc" IDENT "(" [ params ] ")" [ "," type ] EOL body "EndProc" ) ;
 params      = param { "," param } ;
 param       = [ "ByVal" | "ByRef" | "ByRefConst" ] IDENT [ "(" ")" ] "As" type [ "=" const_expr ] ;
 body        = { local_decl } { stmt } ;
@@ -94,9 +98,9 @@ event_decl     = "Event" IDENT "(" ")" EOL body "End" "Event" ;
 ## Statements
 
 ```
-stmt        = ( assign | call | if_stmt | select_stmt | while_stmt | repeat_stmt | for_stmt
-              | "Break" | "Continue" | "Exit" | goto_stmt | label | save_block | asm_block
-              | enable_stmt ) EOL ;
+stmt        = ( assign | call | if_stmt | select_stmt | while_stmt | repeat_stmt | do_stmt | for_stmt
+              | "Break" | "Continue" | "Exit" | "ExitProc" | goto_stmt | label | save_block
+              | asm_block | enable_stmt ) EOL ;
 
 assign      = designator "=" expr ;
 call        = designator [ "(" [ expr { "," expr } ] ")" ] ;   (* arguments need parentheses;
@@ -109,14 +113,16 @@ if_stmt     = "If" expr "Then" EOL { stmt } { "ElseIf" expr "Then" EOL { stmt } 
 select_stmt = "Select" expr EOL
               { "Case" case_cond { "," case_cond } EOL { stmt } }
               [ "Else" EOL { stmt } ] "EndSelect" ;
-case_cond   = expr [ "To" expr ] | relop expr ;
+case_cond   = expr [ "To" expr ] | relop expr ;   (* "Case Else" is accepted as "Else" *)
 
 while_stmt  = "While" expr EOL { stmt } "Wend" ;
+do_stmt     = "Do" [ ( "While" | "Until" ) expr ] EOL { stmt } "Loop" [ ( "Until" | "While" ) expr ] ;
+                                                  (* a test at the top or at the bottom, not both *)
 repeat_stmt = "Repeat" EOL { stmt } "Until" expr ;
 for_stmt    = "For" designator "=" expr "To" expr [ "Step" expr ] EOL { stmt } "Next" ;
 
 goto_stmt   = "GoTo" IDENT ;
-label       = IDENT ":" ;
+label       = IDENT ":" ;                         (* first on its line, nothing after the colon *)
 enable_stmt = ( "Enable" | "Disable" ) "(" IDENT ")" ;
 save_block  = "Save" "(" save_item { "," save_item } ")" EOL { stmt } "Restore" ;
 save_item   = designator | INT ;
@@ -145,6 +151,10 @@ designator  = IDENT { "." IDENT | "(" expr { "," expr } ")" } ;   (* name, field
 const_expr  = expr ;                                               (* checked constant by the semantic pass *)
 ```
 
+Block ends may be written closed (`EndIf`, `EndSelect`) or open (`End If`, `End Select`).
+A single-line `If c Then statement` is not part of the grammar and is rejected with a message.
+Preprocessor lines (`#define`, `#ifdef` …) are handled before lexing (`src/pp.rs`).
+
 Disambiguation notes (resolved in semantic analysis, not in the grammar):
 * `name(args)` is a function call, a subroutine call, or an array index depending on what `name`
   was declared as; modifiers (`.Byte1`, `.Bits(3)`, `.7`) are resolved the same way.
@@ -155,4 +165,4 @@ Disambiguation notes (resolved in semantic analysis, not in the grammar):
 ## Not yet covered
 
 Overloading and compound subroutines (M9), `With` statements, multi-dimensional arrays (not
-supported in 0.1), and the exact spelling table for Positron-style aliases (M3).
+supported in 0.1).

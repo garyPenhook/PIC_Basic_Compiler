@@ -40,6 +40,29 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
   skipped; joined registers defined by byte members (pack widths unreliable, e.g. 22-bit `NVMADR`
   declared 16-bit); non-contiguous sectors refused rather than guessed.
 
-## Next: M3 — Front end
-Lexer, parser, AST and semantic analysis for the core language, per `docs/GRAMMAR.md` and
-`docs/LANGUAGE.md`; the semantic pass resolves register names through `devdesc`.
+## M3 — Front end (done 2026-10-23)
+- `basicc` is now a library plus a binary: `src/{diag,pp,lexer,ast,parser,types,project,sema}.rs`.
+  `basicc --check prog.bas` runs the whole front end and prints `file:line:col: error[CODE]: message`
+  with the source line and a caret.
+- Lexer: case-insensitive keywords, `$FF` `%101` `#13` `1.5e3` literals, `'` `//` `(* *)` `{ }` comments
+  (nesting), ` _` continuation, raw `Asm` bodies. Preprocessor: `#define/#ifdef/#option/#error…` (D25).
+- Parser: the full `GRAMMAR.md` including headers, includes, declarations, structures and unions, routines,
+  interrupts, events, `Save`, `Asm`, `Select`, loops and the Positron spellings (D20). Errors are
+  recovered per line, so one run reports several problems.
+- Semantic analysis: scopes and visibility, modules and qualified names, device registers and bit
+  fields resolved through `devdesc`, `Config` settings validated against the pack, constant folding,
+  the D16 typing and evaluation-width rules (widths are recorded per node), D11 boolean/integer mixing,
+  D12 narrowing, D13 recursion (call-graph cycle check), array/bit bounds, modifiers and promotions,
+  `For`/`Select`/label/`Break` rules, parameter and call checking, interrupt priority and `Save` rules,
+  global RAM against the device's usable RAM.
+- Tests: 89 negative and 32 valid programs plus 6 multi-file projects, each naming the exact diagnostic
+  codes expected (`tests/frontend.rs`); lexer unit tests; a damaged-input test (every prefix and every
+  line-deleted variant of the corpus, over 1000 runs) that must not panic.
+- Language gaps found and settled are in LANGUAGE.md §14A and DECISIONS.md D20–D27. One doc error
+  fixed: the `Const T(2) … (1, 2, 3)` example contradicted the element-count rule.
+- Not done, by decision: `W-OVF` (D26), clock upper limit (D27), `#if` family (D25).
+- Diagnostic codes: `docs/DIAGNOSTICS.md`.
+
+## Next: M4 — Minimal back end (Route A) + measurement
+Width-annotated IR from the checked tree (`Analysis.types`, `.widths`, `.consts`, `.resolved`,
+`.calls`), PIC18 code generator, static frames, pic-as driver, benchmark harness.

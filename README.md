@@ -9,7 +9,8 @@ First target: **PIC18F27Q10**. Other microcontrollers will be added slowly, one 
 * Plan and status: `PLAN.md`, `docs/PROGRESS.md`. Decisions: `docs/DECISIONS.md`.
 * Language: `docs/LANGUAGE.md`, `docs/GRAMMAR.md`. Calling convention: `docs/ABI.md`.
 
-Status: planning / foundations (milestone M0). Nothing compiles yet.
+Status: front end done (M3): `basicc --check prog.bas` lexes, parses and type-checks a program against the
+device description. There is no code generator yet (M4), so nothing produces a `.hex`.
 
 Personal-use project. Vendor manuals under `reference/` are not part of the repository and must
 not be redistributed.

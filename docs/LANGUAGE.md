@@ -97,7 +97,7 @@ assigned a number. A `Bit` is a numeric 0/1. Converting between them is explicit
   (SF; the reference manual's own example shows a 5-element array iterated 0 to 4.) The size
   must be a constant expression. A constant index outside the array is a compile error; a
   variable index is not checked at run time unless `#option BoundsCheck = true` (NEW, costs code).
-* `Const` arrays live in program memory: `Const T(2) As Byte = (1, 2, 3)`. They can be read by
+* `Const` arrays live in program memory: `Const T(3) As Byte = (1, 2, 3)` (the size, like `Dim`, is the element count, and must match the list). They can be read by
   index and assigned wholesale to a same-sized RAM array. (SF)
 * Multi-dimensional arrays are not supported in 0.1. (SF)
 * Bit/Boolean arrays indexed by a variable are expensive; the compiler warns (W-BITARR). (SF/NEW)
@@ -360,17 +360,21 @@ names (documented in `ABI.md`). (SF/NEW)
 
 ## 14. Positron-style spellings accepted (provisional)
 
-To be confirmed against the Positron8 manual in M3 (marked ⚠). Anything not listed here is not
-accepted.
+Confirmed against the Positron8 manual in M3 (`Proc`/`EndProc` p.453, `Do…Loop` p.302,
+`Symbol` p.462, `Declare`). Anything not listed here is not accepted.
 
 | Positron-style | Meaning here |
 |---|---|
 | `Declare Xtal = n` | `Clock = n` |
 | `Device = 18F27Q10` / `PIC18F27Q10` | same |
-| `Symbol LED = PORTB.0` | `Dim LED As PORTB.0` |
+| `Symbol LED = PORTB.0` / `Symbol cMax = 100` (the `=` is optional) | alias or constant, chosen by what the value is |
 | `Dim x As Byte` | same (it is also the native form) |
-| `Proc Name(…)` … `EndProc` ⚠ | `Sub Name(…)` … `End Sub` |
-| `Do … Loop` ⚠ , `Do While c … Loop` ⚠ | `While True … Wend` / `While c … Wend` |
+| `Proc Name(p As T)` … `EndProc` | `Sub Name(p As T)` … `End Sub` |
+| `Proc Name(p As T), RetType` … `EndProc` | `Function Name(p As T) As RetType` … `End Function` (return value in `Result`) |
+| `ExitProc` | `Exit` |
+| `Do … Loop` | `While True … Wend` |
+| `Do While c … Loop`, `Do Until c … Loop` | `While c … Wend`, `While Not c … Wend` |
+| `Do … Loop Until c`, `Do … Loop While c` | `Repeat … Until c`, `Repeat … Until Not c` |
 | `$FF`, `%1010` | native |
 | `:` between statements | native |
 | `HRSOut`, `HRSIn`, `Toggle`, `Inc`, `Dec`, `DelayMS`, `DelayUS` | library or intrinsic with the same name where the behaviour matches |
@@ -379,10 +383,46 @@ Positron's global `Declare` switches (for example for LCD pins or baud rate) are
 reproduced as a global mechanism; the corresponding library modules take their settings as
 `Const` or `#constant` values (PLAN §4.2).
 
+## 14A. Rules settled while building the front end (M3)
+
+These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D27).
+
+* **Labels.** `name:` is a label only when it is the first thing on a line and nothing follows the
+  colon. Elsewhere `:` separates statements. Labels are local to the routine (or to the unit's
+  top-level code) and must be unique there.
+* **Single-line `If … Then statement` is rejected** with a message; use a block or `If c GoTo label`.
+* **`Dim n As Byte = 10`** and **`Dim n = 10, m = 20 As Byte`** are both accepted. An initial value
+  must be a constant. On a local variable it takes effect at each entry to the routine.
+* **Parameters.** Arrays, `String` and structure parameters are passed `ByRef` (or `ByRefConst`) and
+  default to `ByRef` when no mode is written; writing `ByVal` for them is an error. `ByRefConst`
+  accepts a constant array or a string literal. A default value is allowed only on a trailing `ByVal`
+  parameter and must be a constant.
+* **Unary minus** on an unsigned variable widens to the next signed type (`Byte` to `Integer`,
+  `Word` to `LongInt`); a `LongWord` cannot be negated without a conversion.
+* **`Bound(a)`** is a constant for a declared array and a non-constant `Word` for an array parameter.
+* **`Case Else`** is accepted as a spelling of `Else` in `Select`. Case values must be constants;
+  overlapping cases are an error and an `Else` that can never run is a warning (`W-CASE-ELSE`).
+* **Interrupt handlers** may call a user routine only inside `Save(…) … Restore` (error
+  `E-ISR-CALL` otherwise). This is the conservative form of the rule in §8; the proof that a
+  routine touches only the handler's own storage comes with frame overlay in M5.
+* **Calls.** Calling a function as a statement discards its result. `FunctionName = value` and
+  `Result = value` are the same assignment.
+* **Addresses.** `@x` / `AddressOf(x)` has type `Word` for RAM objects and `LongWord` for constant
+  arrays and routines.
+* **`BitOf`** is reserved but not specified in 0.1; using it is an error.
+* **Preprocessor subset.** `#define`, `#undefine`, `#ifdef`, `#ifndef`, `#else`, `#endif`, `#error`,
+  `#warning` and `#option` work. `#if`, `#elseif`, `#constant` and `#variable` need a compile-time
+  expression evaluator and are reported as unsupported until a later milestone.
+* **Clock limits.** `Clock` is checked to be a positive number. The upper limit for the device is
+  not in the device description yet (it is a data sheet value, not in the pack), so it is not checked.
+* **Overflow warnings (`W-OVF`)** need range analysis and arrive with the optimiser (M5). The
+  evaluation width of every integer expression is already recorded (D16) for the code generator.
+
 ## 15. Open points
 
 * Float format (D7).
 * Exact interrupt context-save behaviour and vector registers for the 18F27Q10 (M1).
-* The precise list and spelling of Positron aliases (M3, from the manual).
+* Positron's own type names (`SByte`, `Long`, `Dword`, …), `ByValue`/`BycRef`, `Static` and command
+  statements without parentheses (`High LED`) are not accepted; only the spellings in §14 are.
 * Overloading and compound subroutines (M9).
 * Whether `Boolean`/`Bit` arrays are packed (likely yes) and their access cost (M5).
