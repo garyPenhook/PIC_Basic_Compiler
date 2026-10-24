@@ -126,7 +126,16 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   (not in the front end either), string-returning functions, arrays of strings, comparing a
   concatenation. Interrupts (M6) must save FSR1, TBLPTR/TABLAT and `__D0` as well as FSR0.
   Test: `tests/exec/strings.bas`.
-- Next in M5: structures, 16×16 multiply, `DECFSZ` loops, frame overlay, peephole.
+- Multiply (done): 16/24/32-bit products use the 8×8 hardware multiplier (`MULWF`/`MULLW`, unsigned;
+  the low n bytes of the product are the same for signed operands). `__mulN` sums the partial
+  products `A[i]*B[j]` with `i+j < n` into `__C`, then copies to `__A` (n=2: 3 multiplies, no loop).
+  A constant factor is inlined instead of calling the helper: a power of two is a shift, otherwise one
+  `MULLW` per non-zero constant byte (and per live byte of a zero-extended Byte operand). Interrupts
+  (M6) must also save PRODH/PRODL and `__C`. Benchmarks: add32 57208 → 4808 cycles, fixmul 33463 →
+  7437. A constant factor that is zero (after masking to the width) still evaluates a call in the other
+  operand. Tests: `tests/exec/arith_mulconst.bas` (generated; constants at 16/24/32 bits including
+  negative and top-bit-set ones, Word×Byte), `tests/exec/mulzero.bas`.
+- Next in M5: structures, `DECFSZ` loops, frame overlay, peephole.
 
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with

@@ -49,14 +49,16 @@ convention. Measured against the cost model (open question 3) in M5.
 * **Clobbered**: everything. `WREG`, `STATUS`, `BSR`, `PRODH:PRODL`, `__A`..`__D` and the temporaries
   of the caller's frame are not preserved across a call; `BSR` is treated as unknown after one.
 * **Expression values**: 8-bit in `WREG`; 16/24/32-bit in the accumulator `__A0..__A3`. `__B`
-  (second operand), `__C` (remainder) and `__D` (loop and shift counters) belong to the
-  multiply/divide/shift helpers and to delay loops. All are Access Bank bytes, allocated only up to
+  (second operand), `__C` (remainder, and the product accumulator of multiplies) and `__D` (loop
+  and shift counters) belong to the multiply/divide/shift helpers and to delay loops. All are Access Bank bytes, allocated only up to
   the highest byte actually used.
 * **Temporaries** (partial results saved while a second operand is evaluated) live in the
   routine's own frame, symbol `<ROUTINE>__TMP`, sized to the deepest use. A callee therefore cannot
   clobber its caller's temporaries.
 * **Helpers**: `__mulN`, `__divN`, `__sdivN`, `__shlN`, `__shrN`, `__sarN` (N = bytes) are emitted
-  only when reached. Division truncates toward zero; the remainder has the dividend's sign; division
+  only when reached. `__mulN` uses the hardware multiplier (partial products `A[i]*B[j]`, `i+j < N`,
+  summed in `__C`); a multiply by a constant is expanded inline with `MULLW` and calls no helper. Both
+  clobber `PRODH:PRODL` and `__C`. Division truncates toward zero; the remainder has the dividend's sign; division
   by zero yields an all-ones quotient and the dividend as remainder (no trap).
 * **Tail calls, inlining, overlay**: not yet (M5). Every routine's frame is private.
 * **Reentrant routines**: not yet (M9).

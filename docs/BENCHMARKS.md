@@ -28,6 +28,16 @@ Cycles relative to XC8 `-O2`: median **1.11**; outliers are the multiplications 
 Start-up reference point from PLAN §7A.4 (`x = 5`, then `x = x + 1` forever, `x` a byte): XC8
 24 bytes / 1 byte RAM, Swordfish 32 / 26, **basicc 14 / 1** (the start-up `clrf` of `x` goes in M5).
 
+## After M5 hardware multiply, 2026-10-24
+
+| kernel | basicc B | RAM | cyc | was cyc |
+|---|---:|---:|---:|---:|
+| add32 | 128 | 17 | 4808 | 57208 |
+| fixmul | 128 | 12 | 7437 | 33463 |
+
+The other kernels are unchanged. `add32` is now 0.26× XC8 `-O2` in cycles; `fixmul` is 1.9×
+(its `For` loop and the accumulator traffic remain, M5 `DECFSZ` and peephole items).
+
 ## Why the numbers look like this
 
 * Size is already below XC8 because nothing is emitted that is not used (no runtime, one static

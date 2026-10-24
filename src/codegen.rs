@@ -191,6 +191,12 @@ struct Gen<'p> {
     nvars: usize,
 }
 
+/// The second factor of a partial product in `mul_partials`: a literal byte or byte `j` of `__B`.
+enum Fac {
+    Lit(u8),
+    B,
+}
+
 fn weight(depth: u32) -> u64 {
     8u64.pow(depth.min(4))
 }
@@ -1069,13 +1075,6 @@ impl<'p> Gen<'p> {
     }
 
     fn gen_mul(&mut self, l: &Ex, r: &Ex, e: &Ex) {
-        let n = Self::nb(e);
-        if n == 1 {
-            self.mul8(l, r);
-            self.ins("movf PRODL, w, c");
-            return;
-        }
-        // Two zero-extended bytes: one hardware multiply.
         let narrow = |x: &Ex| -> Option<Ex> {
             match &x.k {
                 ExK::Conv(i) if i.w == 8 && !i.signed => Some((**i).clone()),
@@ -1083,6 +1082,13 @@ impl<'p> Gen<'p> {
                 _ => None,
             }
         };
+        let n = Self::nb(e);
+        if n == 1 {
+            self.mul8(l, r);
+            self.ins("movf PRODL, w, c");
+            return;
+        }
+        // Two zero-extended bytes: one hardware multiply.
         if let (Some(x), Some(y)) = (narrow(l), narrow(r)) {
             self.mul8(&x, &y);
             let a0 = self.a(0);
@@ -1095,8 +1101,99 @@ impl<'p> Gen<'p> {
             }
             return;
         }
-        self.prep_ab(l, r, n);
-        self.call_helper(format!("mul{n}"));
+        // A constant factor: shift for a power of two, otherwise one `MULLW` per non-zero byte of it.
+        let mask = crate::ir::mask(e.w);
+        let (var, k) = match (l.as_const(), r.as_const()) {
+            (_, Some(k)) => (l, k & mask),
+            (Some(k), None) => (r, k & mask),
+            _ => {
+                self.prep_ab(l, r, n);
+                self.call_helper(format!("mul{n}"));
+                return;
+            }
+        };
+        if k == 0 {
+            if var.has_call() {
+                self.gen_val(var);
+            }
+            self.gen_val(&Ex::konst(0, e.w, e.signed));
+        } else if k.is_power_of_two() {
+            self.gen_to_acc(var);
+            if k > 1 {
+                self.shift_acc(true, false, k.trailing_zeros(), n);
+            }
+        } else {
+            let m = match narrow(var) {
+                Some(x) => {
+                    self.gen_to_acc(&x);
+                    1
+                }
+                None => {
+                    self.gen_to_acc(var);
+                    n
+                }
+            };
+            let mut pairs = Vec::new();
+            for j in 0..n {
+                let kj = (k >> (8 * j)) as u8;
+                for i in 0..m.min(n - j) {
+                    if kj != 0 {
+                        pairs.push((i, j, Fac::Lit(kj)));
+                    }
+                }
+            }
+            self.mul_partials(n, pairs);
+        }
+    }
+
+    /// `__A = sum of the partial products` (mod 2^(8n)): each `(i, j, f)` is byte `i` of `__A` times
+    /// factor byte `j`, added at byte `i + j`. The lowest pair is stored, the rest are added into `__C`.
+    fn mul_partials(&mut self, n: u32, mut pairs: Vec<(u32, u32, Fac)>) {
+        pairs.sort_by_key(|p| p.0 + p.1);
+        for (idx, (i, j, f)) in pairs.iter().enumerate() {
+            let ai = self.a(*i);
+            self.fop("movf", &ai, "w");
+            match f {
+                Fac::Lit(k) => self.ins(format!("mullw 0x{k:02X}")),
+                Fac::B => {
+                    let bj = self.b(*j);
+                    self.fo("mulwf", &bj);
+                }
+            }
+            let s = i + j;
+            if idx == 0 {
+                for t in 0..n {
+                    let c = self.c(t);
+                    if t == s {
+                        self.movff_sfr(&c, "PRODL");
+                    } else if t == s + 1 {
+                        self.movff_sfr(&c, "PRODH");
+                    } else {
+                        self.fo("clrf", &c);
+                    }
+                }
+                continue;
+            }
+            let cs = self.c(s);
+            self.ins("movf PRODL, w, c");
+            self.fop("addwf", &cs, "f");
+            if s + 1 < n {
+                let c1 = self.c(s + 1);
+                self.ins("movf PRODH, w, c");
+                self.fop("addwfc", &c1, "f");
+                if s + 2 < n {
+                    self.ins("movlw 0");
+                    for t in s + 2..n {
+                        let c = self.c(t);
+                        self.fop("addwfc", &c, "f");
+                    }
+                }
+            }
+        }
+        for t in 0..n {
+            let (a, c) = (self.a(t), self.c(t));
+            self.movff(&a, &c);
+        }
     }
 
     fn movff_sfr(&mut self, dst: &Mem, sfr: &str) {
@@ -2017,38 +2114,13 @@ impl<'p> Gen<'p> {
         self.bsr = None;
         match kind {
             "mul" => {
-                for i in 0..n {
-                    let c = self.c(i);
-                    self.fo("clrf", &c);
+                let mut pairs = Vec::new();
+                for j in 0..n {
+                    for i in 0..n - j {
+                        pairs.push((i, j, Fac::B));
+                    }
                 }
-                let d0 = self.d(0);
-                self.ins(format!("movlw {}", 8 * n));
-                self.fo("movwf", &d0);
-                let (lp, sk) = (self.fresh(), self.fresh());
-                self.label(&lp);
-                self.ins("bcf STATUS, 0, c");
-                for i in (0..n).rev() {
-                    let b = self.b(i);
-                    self.fop("rrcf", &b, "f");
-                }
-                self.br(Cc::Nc, &sk);
-                for i in 0..n {
-                    let (a, c) = (self.a(i), self.c(i));
-                    self.fop("movf", &a, "w");
-                    self.fop(if i == 0 { "addwf" } else { "addwfc" }, &c, "f");
-                }
-                self.label(&sk);
-                self.ins("bcf STATUS, 0, c");
-                for i in 0..n {
-                    let a = self.a(i);
-                    self.fop("rlcf", &a, "f");
-                }
-                self.fop("decfsz", &d0, "f");
-                self.br(Cc::Always, &lp);
-                for i in 0..n {
-                    let (a, c) = (self.a(i), self.c(i));
-                    self.movff(&a, &c);
-                }
+                self.mul_partials(n, pairs);
                 self.ins("return");
             }
             "div" => {
