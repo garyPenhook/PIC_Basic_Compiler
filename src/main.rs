@@ -1,15 +1,18 @@
 //! basicc — BASIC compiler for PIC microcontrollers.
 //!
-//! Milestone M3: the front end (lexer, parser, semantic analysis) is complete; there is no code
-//! generator yet, so `basicc prog.bas` checks the program and reports diagnostics.
+//! `basicc prog.bas` compiles to `prog.hex` (with `prog.S` and `prog.map` beside it) through
+//! pic-as. `--check` stops after the front end, `-S` stops after writing the assembly.
 
+use basicc::codegen::generate;
 use basicc::diag::{Diagnostics, Render, Severity};
+use basicc::driver::{find_pic_as, report, run_pic_as, target_of};
+use basicc::lower::lower;
 use basicc::project::{LoadConfig, load};
 use basicc::sema::{SemaConfig, analyze};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: basicc [--check] [-D NAME] [-L LIBDIR] [--devices DIR] [--version] <program.bas>";
+const USAGE: &str = "usage: basicc [--check] [-S] [--report] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
 
 /// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
 /// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
@@ -21,6 +24,10 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut file: Option<PathBuf> = None;
     let mut check_only = false;
+    let mut asm_only = false;
+    let mut want_report = false;
+    let mut out_hex: Option<PathBuf> = None;
+    let mut pic_as: Option<PathBuf> = None;
     let mut defines = Vec::new();
     let mut lib_dirs = Vec::new();
     let mut dev_dirs = Vec::new();
@@ -31,6 +38,16 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--check" => check_only = true,
+            "-S" => asm_only = true,
+            "--report" => want_report = true,
+            "-o" => match args.next() {
+                Some(v) => out_hex = Some(PathBuf::from(v)),
+                None => return usage(),
+            },
+            "--pic-as" => match args.next() {
+                Some(v) => pic_as = Some(PathBuf::from(v)),
+                None => return usage(),
+            },
             "-D" => match args.next() {
                 Some(v) => defines.push(v),
                 None => return usage(),
@@ -73,6 +90,24 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     let analysis = analyze(&project, &SemaConfig { devices_dirs: dev_dirs }, &mut diags);
+    let dev_name = analysis.device.as_ref().map(|d| d.device.name.clone()).unwrap_or_else(|| "no device".into());
+    let front_errors = diags.error_count();
+
+    // Lowering and code generation only run on a program the front end accepted.
+    let mut program = None;
+    if front_errors == 0 && !check_only {
+        program = lower(&project, &analysis, &mut diags);
+    }
+    let mut generated = None;
+    if let Some(p) = &program {
+        let dev = analysis.device.as_ref().unwrap();
+        let g = generate(p, &target_of(dev));
+        for (span, msg) in &g.errors {
+            diags.error("E-BACKEND", *span, msg.clone());
+        }
+        generated = Some(g);
+    }
+
     let mut items = diags.items.clone();
     items.sort_by_key(|d| (d.span.file, d.span.line, d.span.col));
     for d in &items {
@@ -84,14 +119,47 @@ fn main() -> ExitCode {
         eprintln!("basicc: {errors} error(s), {warnings} warning(s)");
         return ExitCode::from(1);
     }
-    let dev = analysis.device.as_ref().map(|d| d.device.name.as_str()).unwrap_or("no device");
-    eprintln!("basicc: front end OK ({} unit(s), {dev}, {warnings} warning(s))", project.units.len());
     if check_only {
-        ExitCode::SUCCESS
-    } else {
-        eprintln!("basicc: code generation is not implemented yet (milestone M4)");
-        ExitCode::from(2)
+        eprintln!("basicc: front end OK ({} unit(s), {dev_name}, {warnings} warning(s))", project.units.len());
+        return ExitCode::SUCCESS;
     }
+    let (program, generated) = (program.unwrap(), generated.unwrap());
+
+    let hex = out_hex.unwrap_or_else(|| file.with_extension("hex"));
+    let asm_path = hex.with_extension("S");
+    let map_path = hex.with_extension("map");
+    if let Err(e) = std::fs::write(&asm_path, &generated.out.text) {
+        eprintln!("basicc: cannot write {}: {e}", asm_path.display());
+        return ExitCode::from(1);
+    }
+    if want_report {
+        print!("{}", report(&program, &generated));
+    }
+    if asm_only {
+        eprintln!("basicc: wrote {} ({} words)", asm_path.display(), generated.out.words);
+        return ExitCode::SUCCESS;
+    }
+    let Some(pic_as) = pic_as.or_else(find_pic_as) else {
+        eprintln!("basicc: pic-as not found (install MPLAB XC8 or set BASICC_PICAS)");
+        return ExitCode::from(1);
+    };
+    match run_pic_as(&pic_as, analysis.device.as_ref().unwrap(), &asm_path, &hex, &map_path) {
+        Ok(run) => {
+            for line in run.output.lines().filter(|l| l.contains("error") || l.contains("warning")) {
+                eprintln!("pic-as: {line}");
+            }
+            if !run.ok {
+                eprintln!("basicc: pic-as failed; see {}", asm_path.display());
+                return ExitCode::from(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("basicc: {e}");
+            return ExitCode::from(1);
+        }
+    }
+    eprintln!("basicc: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);
+    ExitCode::SUCCESS
 }
 
 fn usage() -> ExitCode {

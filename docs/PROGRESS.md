@@ -63,6 +63,39 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 - Not done, by decision: `W-OVF` (D26), clock upper limit (D27), `#if` family (D25).
 - Diagnostic codes: `docs/DIAGNOSTICS.md`.
 
-## Next: M4 — Minimal back end (Route A) + measurement
-Width-annotated IR from the checked tree (`Analysis.types`, `.widths`, `.consts`, `.resolved`,
-`.calls`), PIC18 code generator, static frames, pic-as driver, benchmark harness.
+## M4 — Back end, Route A (done 2026-10-23)
+- Pipeline: checked tree → `lower.rs` (width-annotated IR, `ir.rs`) → `codegen.rs` (two passes: use
+  counts, then final code against the planned layout) → `asm.rs` (branch relaxation, text) →
+  pic-as (`driver.rs`). `basicc prog.bas` produces `prog.hex`, `prog.S`, `prog.map`; `--report`
+  prints words per routine and every data object; `-S` stops at the assembly.
+- Covered: Boolean/Bit/Char and 8/16/32-bit integers, all operators (hardware 8×8 multiply,
+  shift-and-add/restoring-division helpers for the rest), comparisons incl. signed, short-circuit
+  logic, `If/Select/While/Repeat/For/Break/Continue/Exit/GoTo`, routines with by-value parameters
+  and results, device registers and register bits, `Inc/Dec/Clear/High/Low/Toggle/Input/Output`,
+  exact `DelayMS/DelayUS`, `Asm`, `Terminate`, configuration words, start-up RAM clearing.
+- Front-end hooks added: `Symbol.owner`, `Analysis.decl_syms`, `Span: Hash`.
+- Tests: `tests/backend.rs` (assembles the valid corpus with zero pic-as warnings, checks the reset
+  vector, checks unsupported features are rejected); `scripts/exec-test.py` runs `tests/exec` in the
+  MPLAB X simulator (`BASICC_MDB=1 cargo test --test backend`). `scripts/gen-arith-tests.py`
+  generates every operator at all six integer types on run-time operands with independently
+  computed expectations (about 3,900 checks, all passing); further programs cover control flow,
+  routines, registers and exact delay cycle counts (1,600 / 16,000 / 8,000,000 cycles).
+- Benchmarks: `scripts/bench.py`, nine kernel pairs vs XC8 `-Os`/`-O2`, results in
+  `docs/BENCHMARKS.md`; targets recalibrated there.
+- Self-review (`/code-review high`) found and fixed: a stale carry after skipping a zero low byte in
+  multi-byte add/subtract of a constant (wrong results, e.g. `a + 256`); `Reentrant` routines silently
+  compiled with a static frame (now `E-BACKEND`); one-character string initialisers and defaults
+  stored as 0; variables used only in `Asm` blocks getting no storage; duplicated error reports;
+  silent `None` exits in place resolution; hard-coded Access Bank bounds; unused scratch bytes
+  reserved by unsigned wide compares; variable delays at a non-integral cycles-per-unit clock now an
+  error instead of a silent rounding. Regression cases are in `tests/exec/carry.bas` and
+  `tests/backend.rs` (the deferred-feature list is now explicit).
+- Found while testing: the simulator's OV flag after `SUBWFB` (D34); `Inc` is a reserved word, so
+  it cannot name a program.
+- Not done (by decision D35): arrays, strings, structures, floats, ByRef, interrupts, hardware
+  verification (no programmer decision yet, D6), `.bas` golden-assembly tests (arrive with the
+  optimiser in M5, when assembly text starts to be worth pinning).
+
+## Next: M5 — Language breadth + first optimisations
+Arrays, strings, structures, ByRef, 16×16 hardware multiply and multiply-by-constant, `DECFSZ` loops,
+frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.md`.

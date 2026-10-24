@@ -194,7 +194,7 @@ This is the core efficiency rule of the language.
    target or an explicit `Word(…)`/`LongWord(…)` conversion to silence it. The programmer, not the
    compiler, decides when wrapping is wanted. This keeps the cheap 8-bit code without making
    overflow silent.
-5. **Division and modulo** use the evaluation width above; division by a constant power of two
+5. **Division and modulo** use the evaluation width above, truncate toward zero, and `Mod` takes the dividend's sign (D31); dividing by zero at run time gives an all-ones quotient and the dividend as remainder; division by a constant power of two
    becomes a shift; division by zero in a constant expression is an error.
 6. **Shifts.** The shift count must be a constant or a `Byte`; shifting by the operand width or
    more yields 0 (or the sign for arithmetic right shift of signed values). `>>` is arithmetic for
@@ -228,7 +228,7 @@ GoTo label  /  label:
 Inc(v)  Dec(v)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)  Input(bit)  Output(bit)
 ```
 (SF.) Notes:
-* The loop variable of `For` must not be modified inside the loop (SF); the compiler may keep it
+* The limit of `For` is evaluated once, the step must be a constant, and after a loop that ran the variable keeps the last value it took, not one past it (D33). The loop variable of `For` must not be modified inside the loop (SF); the compiler may keep it
   in a register or count down when the body does not use it (PLAN §7A.2).
 * A `For` loop whose bounds are constants and whose body is small may be unrolled; `For` over a
   `Byte` with an upper bound of 255 is safe (the compiler does not wrap-loop forever). (NEW)

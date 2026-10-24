@@ -3,7 +3,7 @@
 use std::fmt;
 
 /// A position in a source file. `file` indexes `SourceMap`; `line` and `col` are 1-based.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub file: u32,
     pub line: u32,

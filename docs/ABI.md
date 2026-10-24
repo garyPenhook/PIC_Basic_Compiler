@@ -1,6 +1,6 @@
-# ABI (outline — to be finalised in M4)
+# ABI (M4: sections 1, 3, 5 implemented; 2 and 4 partly)
 
-Status: **outline only**. Nothing here is implemented. Every device-specific statement is marked
+Status: M4 implementation for scalar programs; sections not marked otherwise are still the plan. Every device-specific statement is marked
 **TO VERIFY (M1)** until it has a datasheet page cite. The aim is the cheapest correct convention
 on an 8-bit PIC18 (PLAN §7A), not compatibility with any other compiler.
 
@@ -34,19 +34,32 @@ saves them in software. Everything else a handler touches (`PRODH:PRODL`, `FSRn`
 `TABLAT`, compiler scratch) is saved by the handler. `MOVFF` is never used to write interrupt
 control registers while any interrupt is enabled (`[DS40002043F p.194]`).
 
-## 3. Calling convention (provisional)
+## 3. Calling convention (as implemented in M4)
 
-* **Arguments**: first byte (or the only byte) in `WREG`; remaining bytes in the callee's frame
-  slots, written by the caller directly (static frames mean the caller knows the callee's
-  addresses). Multi-byte arguments are passed little-endian in consecutive frame bytes.
-* **Return values**: 8-bit in `WREG`; 16/24/32-bit in a fixed scratch area in the Access Bank
-  (`RET0..RET3`); larger values (strings, structures) by address of a caller-supplied buffer.
-* **Callee-saved**: none by default (no registers survive a call); the compiler tracks what each
-  routine clobbers and does not reload values that a callee provably leaves intact.
-* **Tail calls**: a call immediately followed by return becomes a jump.
-* **Inlining** decisions precede ABI lowering; an inlined routine has no ABI at all.
-* **Reentrant routines**: arguments and locals are accessed through `FSR2` with indexed literal
-  offset (extended instruction set), return address on the hardware stack.
+The parameter-in-`WREG` idea of the draft was dropped for M4: with static frames the caller knows
+every callee address, so a plain store into the callee's frame is as cheap and needs no
+convention. Measured against the cost model (open question 3) in M5.
+
+* **Arguments**: the caller stores each argument, converted to the parameter's type, directly
+  into the callee's parameter variable (`<ROUTINE>__<PARAM>`), then `rcall`/`call`s. When more than
+  one argument contains a call, all arguments are first evaluated into temporaries, so a nested
+  call cannot overwrite a parameter already stored.
+* **Return value**: the callee assigns the function's `Result` variable (`<ROUTINE>__RESULT`); the
+  caller reads it after the call. There are no return registers.
+* **Clobbered**: everything. `WREG`, `STATUS`, `BSR`, `PRODH:PRODL`, `__A`..`__D` and the temporaries
+  of the caller's frame are not preserved across a call; `BSR` is treated as unknown after one.
+* **Expression values**: 8-bit in `WREG`; 16/24/32-bit in the accumulator `__A0..__A3`. `__B`
+  (second operand), `__C` (remainder) and `__D` (loop and shift counters) belong to the
+  multiply/divide/shift helpers and to delay loops. All are Access Bank bytes, allocated only up to
+  the highest byte actually used.
+* **Temporaries** (partial results saved while a second operand is evaluated) live in the
+  routine's own frame, symbol `<ROUTINE>__TMP`, sized to the deepest use. A callee therefore cannot
+  clobber its caller's temporaries.
+* **Helpers**: `__mulN`, `__divN`, `__sdivN`, `__shlN`, `__shrN`, `__sarN` (N = bytes) are emitted
+  only when reached. Division truncates toward zero; the remainder has the dividend's sign; division
+  by zero yields an all-ones quotient and the dividend as remainder (no trap).
+* **Tail calls, inlining, overlay**: not yet (M5). Every routine's frame is private.
+* **Reentrant routines**: not yet (M9).
 
 ## 4. Symbol naming (needed by embedded assembly, LANGUAGE.md §13)
 
@@ -61,15 +74,27 @@ __v_reset, __v_hi, __v_lo  vector psects
 ```
 The compiler prints the symbol map with `--report` so `Asm` blocks can name variables reliably.
 
-## 5. Program layout
+## 5. Program layout (implemented)
 
 * **Vectors** are pinned explicitly (reset `0x0000`, high `0x0008`, low `0x0018`)
   `[DS40002043F p.108]`. In testing, a vector psect without an absolute/linker position was
   placed by pic-as at the *end* of flash; the code generator therefore emits absolute positions
   and the driver checks the map file.
-* **Start-up** (`__v_reset` → `__start`): configure clock/ports per `Config` and `Clock`;
-  zero only the RAM that needs it; run module initialisation statements in include order; then
-  the program body; then a halt loop.
+* **Start-up**: without interrupts the program begins at address 0 (no reset `goto`). The
+  clock comes from the `Config` block alone; start-up clears every allocated global, local and
+  `Result` byte (a loop through `FSR0` for runs over four bytes), stores initial values, runs module
+  initialisation statements in include order, then the program body, then `__halt: bra __halt`.
+* **Data layout**: the compiler assigns every address itself and writes `NAME equ 0xNNN` lines, so
+  pic-as does not place data and `Data space used` in the map is 0. `--report` prints the real
+  usage. Objects are placed hottest first (use count × 8^loop depth) into the Access Bank, then
+  into banks, each inside one 256-byte bank; system RAM (bank 13) is never used. Unused
+  variables get no storage.
+* **Ports**: a write to `PORTx` is emitted as a write to `LATx` (reads stay on `PORTx`), so a
+  bit-set never read-modify-writes the pins. `Input`/`Output` address `TRISx`.
+* **Code placement**: one absolute psect `code` at `ORG 0`; the file ends `END __reset` (pic-as
+  otherwise warns about a missing start record). Branches are relaxed to `bra`/`rcall`/short
+  conditional forms when in range, else `goto`/`call` (inverted skip for conditionals).
+* **Label table**: the generated file ends with `;SYM name 0xADDR` lines (byte addresses) for tools.
 * **Interrupt entry**: priority and context-save code per LANGUAGE.md §8 and the M1 facts.
 
 ## 6. Open questions for M1/M4

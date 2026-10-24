@@ -1,0 +1,967 @@
+//! Lowers the checked tree to the IR (`ir.rs`).
+//!
+//! Everything the semantic pass recorded (types, constants, evaluation widths, name
+//! resolutions) is consumed here; the code generator never looks at the AST. M4 covers scalar
+//! programs: Boolean, Bit, Char and the 8/16/32-bit integers, device registers and register
+//! bits, routines with by-value parameters, and the structured statements. Arrays, strings,
+//! structures, floats, by-reference parameters and interrupts report `E-BACKEND` (M5/M6).
+
+use crate::ast::*;
+use crate::diag::{Diagnostics, Span};
+use crate::ir::*;
+use crate::project::Project;
+use crate::sema::{Analysis, Res, SymKind};
+use crate::types::*;
+use std::collections::{HashMap, HashSet};
+
+/// Width and signedness of a scalar type, or None for types the back end cannot hold yet.
+fn nat(t: &Ty) -> Option<(u8, bool)> {
+    match t {
+        Ty::Bool | Ty::Bit | Ty::Char => Some((8, false)),
+        Ty::Int(w, s) => Some((*w, *s)),
+        _ => None,
+    }
+}
+
+/// The integer a constant stores as; a one-character string is a Char.
+fn cval_u32(c: &CVal) -> u32 {
+    match c {
+        CVal::Int(i) => *i as u32,
+        CVal::Bool(b) => *b as u32,
+        CVal::Str(s) if s.len() == 1 => s.as_bytes()[0] as u32,
+        _ => 0,
+    }
+}
+
+fn sign_extend(v: u32, w: u8) -> i64 {
+    if w >= 32 {
+        v as i32 as i64
+    } else if v & (1 << (w - 1)) != 0 {
+        (v | !mask(w)) as i32 as i64
+    } else {
+        v as i64
+    }
+}
+
+/// Converts `ex` to `w`/`signed`, extending by the operand's own signedness.
+pub fn conv(ex: Ex, w: u8, signed: bool) -> Ex {
+    if ex.w == w && ex.signed == signed {
+        return ex;
+    }
+    if let ExK::Const(v) = ex.k {
+        let val = if ex.signed { sign_extend(v, ex.w) } else { v as i64 };
+        return Ex::konst(val as u32, w, signed);
+    }
+    if ex.w == w && matches!(ex.k, ExK::Load(_)) {
+        return Ex { signed, ..ex };
+    }
+    Ex::new(ExK::Conv(Box::new(ex)), w, signed)
+}
+
+struct FuncInfo {
+    id: FuncId,
+    asm: String,
+    params: Vec<(VarId, Option<Ex>)>,
+    result: Option<VarId>,
+}
+
+pub struct Lowerer<'a> {
+    proj: &'a Project,
+    a: &'a Analysis,
+    diags: &'a mut Diagnostics,
+    vars: Vec<Var>,
+    funcs: Vec<Option<Func>>,
+    label_names: Vec<String>,
+    sym_var: HashMap<usize, VarId>,
+    sym_alias: HashMap<usize, Place>,
+    sym_func: HashMap<usize, FuncInfo>,
+    /// Symbols the back end cannot represent yet, with a description for the message.
+    unsupported: HashMap<usize, String>,
+    unit_syms: HashMap<(usize, String), usize>,
+    routines: HashMap<usize, &'a Routine>,
+    queue: Vec<usize>,
+    asm_names: HashSet<String>,
+    cur_func: Option<FuncId>,
+    cur_asm: String,
+    cur_result: Option<(VarId, String)>,
+    labels: HashMap<String, LabelId>,
+    hidden: u32,
+    failed: bool,
+}
+
+pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Program> {
+    let device = a.device.as_ref()?;
+    let mut lw = Lowerer {
+        proj,
+        a,
+        diags,
+        vars: Vec::new(),
+        funcs: Vec::new(),
+        label_names: Vec::new(),
+        sym_var: HashMap::new(),
+        sym_alias: HashMap::new(),
+        sym_func: HashMap::new(),
+        unsupported: HashMap::new(),
+        unit_syms: HashMap::new(),
+        routines: HashMap::new(),
+        queue: Vec::new(),
+        asm_names: HashSet::new(),
+        cur_func: None,
+        cur_asm: String::new(),
+        cur_result: None,
+        labels: HashMap::new(),
+        hidden: 0,
+        failed: false,
+    };
+    for (id, s) in a.symbols.iter().enumerate() {
+        if !s.local && s.unit != usize::MAX {
+            lw.unit_syms.entry((s.unit, s.name.to_ascii_lowercase())).or_insert(id);
+        }
+    }
+    for lu in &proj.units {
+        for d in &lu.unit.decls {
+            if let DeclKind::Routine(r) = &d.kind
+                && let Some(&sym) = a.decl_syms.get(&r.name.span)
+            {
+                lw.routines.insert(sym, r);
+            }
+        }
+    }
+
+    let mut main_body = Vec::new();
+    for (ui, lu) in proj.units.iter().enumerate() {
+        lw.labels.clear();
+        lw.cur_func = None;
+        lw.cur_asm = unit_prefix(proj, ui);
+        for d in &lu.unit.decls {
+            lw.decl(d, ui, &mut main_body);
+        }
+        let mut body = lw.block(&lu.unit.stmts, ui);
+        main_body.append(&mut body);
+    }
+    while let Some(sym) = lw.queue.pop() {
+        lw.lower_routine(sym);
+    }
+    if lw.failed {
+        return None;
+    }
+
+    // Configuration words: the device's defaults overlaid with the program's settings.
+    let mut config = Vec::new();
+    for reg in &device.config {
+        if reg.implemented == 0 {
+            continue;
+        }
+        let mut v = reg.default;
+        for cs in a.config.iter().filter(|c| c.register.eq_ignore_ascii_case(&reg.name)) {
+            if let Some(f) = reg.fields.iter().find(|f| f.name.eq_ignore_ascii_case(&cs.field)) {
+                let m = ((1u32 << f.width) - 1) << f.pos;
+                v = (v & !m) | ((cs.value << f.pos) & m);
+            }
+        }
+        config.push((reg.name.clone(), reg.addr, (v & reg.implemented) as u8));
+    }
+
+    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default() };
+    let funcs = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
+    Some(Program {
+        vars: lw.vars,
+        funcs,
+        main,
+        label_names: lw.label_names,
+        device: device.device.name.clone(),
+        clock_mhz: a.clock_mhz.unwrap_or(0.0),
+        config,
+    })
+}
+
+fn unit_prefix(proj: &Project, ui: usize) -> String {
+    let n = proj.units[ui].unit.name.as_ref().map(|n| n.name.clone()).unwrap_or_else(|| "MAIN".into());
+    sanitize(&n)
+}
+
+fn sanitize(s: &str) -> String {
+    s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect()
+}
+
+impl<'a> Lowerer<'a> {
+    fn err(&mut self, code: &'static str, span: Span, msg: impl Into<String>) {
+        self.failed = true;
+        self.diags.error(code, span, msg);
+    }
+
+    fn unsupported(&mut self, span: Span, what: &str) {
+        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (arrays, strings, structures, floats and by-reference parameters arrive in M5, interrupts in M6)"));
+    }
+
+    fn unique(&mut self, base: String) -> String {
+        let mut n = base.clone();
+        let mut i = 2;
+        while !self.asm_names.insert(n.clone()) {
+            n = format!("{base}_{i}");
+            i += 1;
+        }
+        n
+    }
+
+    fn new_var(&mut self, asm: String, name: &str, ty: Ty, kind: VarKind, init: Option<u32>) -> VarId {
+        let (w, _) = nat(&ty).expect("scalar");
+        let asm = self.unique(asm);
+        self.vars.push(Var { asm, name: name.to_string(), ty, bytes: w as u32 / 8, kind, owner: self.cur_func, init });
+        self.vars.len() - 1
+    }
+
+    fn hidden_var(&mut self, ty: Ty) -> Place {
+        self.hidden += 1;
+        let asm = format!("{}__H{}", self.cur_asm, self.hidden);
+        let v = self.new_var(asm, "(hidden)", ty.clone(), VarKind::Hidden, None);
+        Place { base: Base::Var(v), off: 0, bit: None, ty }
+    }
+
+    // ---- declarations --------------------------------------------------------------------
+
+    /// Declares the variables and aliases of one declaration. Local declarations append their
+    /// initialisers to `inits`.
+    fn decl(&mut self, d: &'a Decl, ui: usize, inits: &mut Vec<S>) {
+        match &d.kind {
+            DeclKind::Dim(dim) => self.dim(dim, ui, inits),
+            DeclKind::Symbol(name, e) => {
+                let Some(&sym) = self.a.decl_syms.get(&name.span) else { return };
+                if matches!(self.a.symbols[sym].kind, SymKind::Alias { .. })
+                    && let ExprKind::Designator(dd) = &e.kind
+                    && let Some(p) = self.place_of(dd)
+                {
+                    self.sym_alias.insert(sym, p);
+                }
+            }
+            DeclKind::Interrupt(i) => self.unsupported(i.name.span, "an Interrupt"),
+            DeclKind::Event(e) => self.unsupported(e.name.span, "an Event"),
+            DeclKind::Const(_) | DeclKind::Structure(_) | DeclKind::EventType(_) | DeclKind::Routine(_) => {}
+        }
+    }
+
+    fn dim(&mut self, dim: &'a DimDecl, ui: usize, inits: &mut Vec<S>) {
+        for it in &dim.items {
+            let Some(&sym) = self.a.decl_syms.get(&it.name.span) else { continue };
+            match self.a.symbols[sym].kind.clone() {
+                SymKind::Var { ty } => {
+                    if nat(&ty).is_none() {
+                        self.unsupported_sym(sym, &format!("a variable of type {ty}"));
+                        continue;
+                    }
+                    let init_e = it.init.as_ref().or(dim.trailing_init.as_ref());
+                    let init = init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32);
+                    let init = init.map(|v| v & mask(nat(&ty).unwrap().0));
+                    let s = &self.a.symbols[sym];
+                    let asm = if s.local { format!("{}__{}", self.cur_asm, sanitize(&s.name)) } else { format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&s.name)) };
+                    let name = s.name.clone();
+                    let local = s.local;
+                    let kind = if local { VarKind::Local } else { VarKind::Global };
+                    let v = self.new_var(asm, &name, ty.clone(), kind, init.filter(|&i| i != 0 || local));
+                    self.sym_var.insert(sym, v);
+                    if local && let Some(i) = init {
+                        inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
+                    }
+                }
+                SymKind::Alias { .. } => {
+                    if let Some(AsClause::Designator(dd)) = &dim.as_clause
+                        && let Some(p) = self.place_of(dd)
+                    {
+                        self.sym_alias.insert(sym, p);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn unsupported_sym(&mut self, sym: usize, what: &str) {
+        self.unsupported.insert(sym, what.to_string());
+    }
+
+    // ---- routines ------------------------------------------------------------------------
+
+    /// The function id of a routine, creating its frame variables on first use.
+    fn func_of(&mut self, sym: usize, span: Span) -> Option<FuncId> {
+        if let Some(fi) = self.sym_func.get(&sym) {
+            return Some(fi.id);
+        }
+        let r = *self.routines.get(&sym)?;
+        if r.reentrant {
+            self.unsupported(r.name.span, &format!("the Reentrant routine `{}`", r.name.name));
+        }
+        let (params_info, ret) = match &self.a.symbols[sym].kind {
+            SymKind::Routine { params, ret, .. } => (params.clone(), ret.clone()),
+            _ => return None,
+        };
+        let id = self.funcs.len();
+        self.funcs.push(None);
+        let ui = self.a.symbols[sym].unit;
+        let asm = self.unique(format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&r.name.name)));
+        let saved = (self.cur_func, std::mem::take(&mut self.cur_asm));
+        self.cur_func = Some(id);
+        self.cur_asm = asm.clone();
+        let mut params = Vec::new();
+        let mut ok = true;
+        for (p, info) in r.params.iter().zip(&params_info) {
+            if info.mode != ParamMode::ByVal || nat(&info.ty).is_none() {
+                self.unsupported(p.name.span, &format!("parameter `{}` ({})", p.name.name, if info.mode != ParamMode::ByVal { "by reference" } else { "non-scalar" }));
+                ok = false;
+                continue;
+            }
+            let v = self.new_var(format!("{asm}__{}", sanitize(&p.name.name)), &p.name.name, info.ty.clone(), VarKind::Param, None);
+            if let Some(&psym) = self.a.decl_syms.get(&p.name.span) {
+                self.sym_var.insert(psym, v);
+            }
+            let (w, s) = nat(&info.ty).unwrap();
+            let default = p.default.as_ref().and_then(|e| self.a.consts.get(&e.id)).map(|c| Ex::konst(cval_u32(c), w, s));
+            params.push((v, default));
+        }
+        let result = match &ret {
+            Some(t) if nat(t).is_some() => Some(self.new_var(format!("{asm}__RESULT"), "Result", t.clone(), VarKind::Result, None)),
+            Some(t) => {
+                self.unsupported(span, &format!("a function returning {t}"));
+                ok = false;
+                None
+            }
+            None => None,
+        };
+        self.cur_func = saved.0;
+        self.cur_asm = saved.1;
+        let _ = ok;
+        self.sym_func.insert(sym, FuncInfo { id, asm, params, result });
+        self.queue.push(sym);
+        Some(id)
+    }
+
+    fn lower_routine(&mut self, sym: usize) {
+        let r = self.routines[&sym];
+        let (id, asm, result, params) = {
+            let fi = &self.sym_func[&sym];
+            (fi.id, fi.asm.clone(), fi.result, fi.params.iter().map(|p| p.0).collect::<Vec<_>>())
+        };
+        let ui = self.a.symbols[sym].unit;
+        let saved = (self.cur_func, std::mem::take(&mut self.cur_asm), std::mem::take(&mut self.labels), self.cur_result.take());
+        self.cur_func = Some(id);
+        self.cur_asm = asm.clone();
+        self.cur_result = result.map(|v| (v, r.name.key()));
+        let mut body = Vec::new();
+        for d in &r.body.decls {
+            self.decl(d, ui, &mut body);
+        }
+        let mut rest = self.block(&r.body.stmts, ui);
+        body.append(&mut rest);
+        body.push(S { st: St::Return, span: r.name.span });
+        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span });
+        self.cur_func = saved.0;
+        self.cur_asm = saved.1;
+        self.labels = saved.2;
+        self.cur_result = saved.3;
+    }
+
+    // ---- places --------------------------------------------------------------------------
+
+    fn var_place(&mut self, sym: usize, span: Span) -> Option<Place> {
+        if let Some(&v) = self.sym_var.get(&sym) {
+            return Some(Place { base: Base::Var(v), off: 0, bit: None, ty: self.vars[v].ty.clone() });
+        }
+        if let Some(p) = self.sym_alias.get(&sym) {
+            return Some(p.clone());
+        }
+        let name = self.a.symbols[sym].name.clone();
+        match self.unsupported.get(&sym).cloned() {
+            Some(what) => self.unsupported(span, &format!("`{name}` ({what})")),
+            None => self.unsupported(span, &format!("`{name}`")),
+        }
+        None
+    }
+
+    fn reg_place(&mut self, name: &str, span: Span) -> Option<Place> {
+        let dev = self.a.device.as_ref()?;
+        if let Some(s) = dev.find_sfr(name) {
+            if s.width > 8 {
+                self.unsupported(span, &format!("the {}-bit register `{}`", s.width, s.name));
+                return None;
+            }
+            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, ty: BYTE });
+        }
+        if let Some(j) = dev.joined.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
+            let ty = match j.bytes {
+                1 => BYTE,
+                2 => WORD,
+                4 => LONGWORD,
+                n => {
+                    self.unsupported(span, &format!("the {n}-byte register `{}`", j.name));
+                    return None;
+                }
+            };
+            return Some(Place { base: Base::Abs { addr: j.addr, name: j.name.clone() }, off: 0, bit: None, ty });
+        }
+        None
+    }
+
+    /// The place a designator names, or None after reporting why not.
+    pub fn place_of(&mut self, d: &'a Designator) -> Option<Place> {
+        let before = self.diags.error_count();
+        let p = self.place_inner(d);
+        if p.is_none() && self.diags.error_count() == before {
+            self.unsupported(d.span, &format!("`{}` here", d.head.name));
+        }
+        p
+    }
+
+    fn place_inner(&mut self, d: &'a Designator) -> Option<Place> {
+        let mut i = 0;
+        let mut place = match self.a.resolved.get(&d.id).cloned() {
+            Some(Res::Sym(id)) => self.var_place(id, d.head.span)?,
+            Some(Res::Register(name)) => self.reg_place(&name, d.head.span)?,
+            Some(Res::Module(u)) => {
+                let Some(Part::Member(n)) = d.parts.first() else { return None };
+                let id = *self.unit_syms.get(&(u, n.key()))?;
+                i = 1;
+                self.var_place(id, n.span)?
+            }
+            Some(Res::Intrinsic(_)) => {
+                self.unsupported(d.span, "this use of an intrinsic");
+                return None;
+            }
+            None => {
+                // `Result`, or the function's own name used as its result.
+                let (v, key) = self.cur_result.clone()?;
+                if d.head.key() != "result" && d.head.key() != key {
+                    self.unsupported(d.span, &format!("`{}`", d.head.name));
+                    return None;
+                }
+                Place { base: Base::Var(v), off: 0, bit: None, ty: self.vars[v].ty.clone() }
+            }
+        };
+        while i < d.parts.len() {
+            match &d.parts[i] {
+                Part::BitIndex(n, _) => {
+                    place.off += (*n / 8) as u32;
+                    place.bit = Some((*n % 8) as u8);
+                    place.ty = Ty::Bit;
+                }
+                Part::Member(n) => {
+                    let key = n.key();
+                    // A named bit field of a device register.
+                    if let Base::Abs { name, .. } = &place.base
+                        && place.off == 0
+                        && place.bit.is_none()
+                        && let Some(s) = self.a.device.as_ref().and_then(|dv| dv.find_sfr(name))
+                        && let Some(f) = s.fields.iter().chain(s.legacy.iter()).find(|f| f.name.eq_ignore_ascii_case(&key))
+                    {
+                        if f.width != 1 {
+                            self.unsupported(n.span, &format!("the multi-bit field `{}`", n.name));
+                            return None;
+                        }
+                        place.bit = Some(f.pos);
+                        place.ty = Ty::Bit;
+                        i += 1;
+                        continue;
+                    }
+                    if let Some(num) = key.strip_prefix("byte").and_then(|s| s.parse::<u32>().ok()) {
+                        place.off += num;
+                        place.ty = BYTE;
+                    } else if let Some(num) = key.strip_prefix("word").and_then(|s| s.parse::<u32>().ok()) {
+                        place.off += num * 2;
+                        place.ty = WORD;
+                    } else {
+                        match key.as_str() {
+                            "bytes" | "words" | "bits" | "booleans" => {
+                                let Some(Part::Args(args, _)) = d.parts.get(i + 1) else { return None };
+                                let Some(CVal::Int(c)) = args.first().and_then(|e| self.a.consts.get(&e.id)) else { return None };
+                                let c = *c as u32;
+                                i += 1;
+                                match key.as_str() {
+                                    "bytes" => {
+                                        place.off += c;
+                                        place.ty = BYTE;
+                                    }
+                                    "words" => {
+                                        place.off += c * 2;
+                                        place.ty = WORD;
+                                    }
+                                    _ => {
+                                        place.off += c / 8;
+                                        place.bit = Some((c % 8) as u8);
+                                        place.ty = if key == "bits" { Ty::Bit } else { Ty::Bool };
+                                    }
+                                }
+                            }
+                            "asbyte" => place.ty = BYTE,
+                            "asshortint" => place.ty = SHORTINT,
+                            "asword" => place.ty = WORD,
+                            "asinteger" => place.ty = INTEGER,
+                            "aslongword" => place.ty = LONGWORD,
+                            "aslongint" => place.ty = LONGINT,
+                            _ => {
+                                self.unsupported(n.span, &format!("the member `{}`", n.name));
+                                return None;
+                            }
+                        }
+                    }
+                }
+                Part::Args(_, sp) => {
+                    self.unsupported(*sp, "array indexing");
+                    return None;
+                }
+            }
+            i += 1;
+        }
+        Some(place)
+    }
+
+    // ---- expressions ---------------------------------------------------------------------
+
+    fn const_ex(&mut self, e: &Expr, c: &CVal) -> Option<Ex> {
+        let ty = self.a.types.get(&e.id).cloned().unwrap_or(BYTE);
+        let (w, s) = match nat(&ty) {
+            Some(x) => x,
+            None => match c {
+                // A one-character string constant is a Char.
+                CVal::Str(st) if st.len() == 1 => (8, false),
+                _ => {
+                    self.unsupported(e.span, &format!("a constant of type {ty}"));
+                    return None;
+                }
+            },
+        };
+        let v = match c {
+            CVal::Int(i) => *i as u32,
+            CVal::Bool(b) => *b as u32,
+            CVal::Str(st) if st.len() == 1 => st.as_bytes()[0] as u32,
+            _ => {
+                self.unsupported(e.span, "this constant");
+                return None;
+            }
+        };
+        Some(Ex::konst(v, w, s))
+    }
+
+    /// Applies the evaluation width the semantic pass chose for the node.
+    fn widen(&self, e: &Expr, ex: Ex) -> Ex {
+        match self.a.widths.get(&e.id) {
+            Some(&w) if w != ex.w && w >= ex.w => {
+                let sg = ex.signed;
+                conv(ex, w, sg)
+            }
+            _ => ex,
+        }
+    }
+
+    pub fn expr(&mut self, e: &'a Expr) -> Option<Ex> {
+        if let Some(c) = self.a.consts.get(&e.id) {
+            let ex = self.const_ex(e, c)?;
+            return Some(self.widen(e, ex));
+        }
+        let ty = self.a.types.get(&e.id).cloned().unwrap_or(BYTE);
+        let Some((nw, ns)) = nat(&ty) else {
+            self.unsupported(e.span, &format!("an expression of type {ty}"));
+            return None;
+        };
+        let w = self.a.widths.get(&e.id).copied().unwrap_or(nw).max(nw);
+        match &e.kind {
+            ExprKind::Designator(d) => {
+                let ex = self.designator_value(d, e)?;
+                Some(self.widen(e, ex))
+            }
+            ExprKind::Unary(op, x) => {
+                let xv = self.expr(x)?;
+                let ex = match op {
+                    UnOp::Plus => conv(xv, w, ns),
+                    UnOp::Neg => Ex::new(ExK::Neg(Box::new(conv(xv, w, ns))), w, ns),
+                    UnOp::Not => match ty {
+                        Ty::Bool => Ex::boolean(ExK::NotB(Box::new(xv))),
+                        Ty::Bit => Ex::new(ExK::Bin(BinKind::Xor, Box::new(xv), Box::new(Ex::konst(1, 8, false))), 8, false),
+                        _ => Ex::new(ExK::Com(Box::new(conv(xv, w, ns))), w, ns),
+                    },
+                    UnOp::AddressOf => {
+                        self.unsupported(e.span, "`@` (address of)");
+                        return None;
+                    }
+                };
+                Some(ex)
+            }
+            ExprKind::Binary(op, l, r) => {
+                let lv = self.expr(l)?;
+                let rv = self.expr(r)?;
+                self.binary(*op, lv, rv, &ty, w, ns, e)
+            }
+            _ => {
+                self.unsupported(e.span, "this expression");
+                None
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn binary(&mut self, op: BinOp, lv: Ex, rv: Ex, ty: &Ty, w: u8, ns: bool, e: &Expr) -> Option<Ex> {
+        if op.is_relational() {
+            let kind = match op {
+                BinOp::Eq => CmpKind::Eq,
+                BinOp::Ne => CmpKind::Ne,
+                BinOp::Lt => CmpKind::Lt,
+                BinOp::Gt => CmpKind::Gt,
+                BinOp::Le => CmpKind::Le,
+                _ => CmpKind::Ge,
+            };
+            let cw = lv.w.max(rv.w);
+            let sg = lv.signed || rv.signed;
+            return Some(Ex::boolean(ExK::Cmp(kind, Box::new(conv(lv, cw, sg)), Box::new(conv(rv, cw, sg)))));
+        }
+        if *ty == Ty::Bool {
+            return Some(match op {
+                BinOp::And => Ex::boolean(ExK::AndAlso(Box::new(lv), Box::new(rv))),
+                BinOp::Or => Ex::boolean(ExK::OrElse(Box::new(lv), Box::new(rv))),
+                _ => Ex::boolean(ExK::Bin(BinKind::Xor, Box::new(lv), Box::new(rv))),
+            });
+        }
+        let kind = match op {
+            BinOp::Add => BinKind::Add,
+            BinOp::Sub => BinKind::Sub,
+            BinOp::Mul => BinKind::Mul,
+            BinOp::Div => BinKind::Div,
+            BinOp::Mod => BinKind::Mod,
+            BinOp::And => BinKind::And,
+            BinOp::Or => BinKind::Or,
+            BinOp::Xor => BinKind::Xor,
+            BinOp::Shl => BinKind::Shl,
+            BinOp::Shr => BinKind::Shr,
+            _ => {
+                self.unsupported(e.span, "this operator");
+                return None;
+            }
+        };
+        let l = conv(lv, w, ns);
+        let r = if matches!(kind, BinKind::Shl | BinKind::Shr) { conv(rv, 8, false) } else { conv(rv, w, ns) };
+        // Unsigned division and remainder by a power of two are a shift and a mask.
+        if !ns && let Some(c) = r.as_const() {
+            if kind == BinKind::Div && c.is_power_of_two() {
+                return Some(Ex::new(ExK::Bin(BinKind::Shr, Box::new(l), Box::new(Ex::konst(c.trailing_zeros(), 8, false))), w, ns));
+            }
+            if kind == BinKind::Mod && c.is_power_of_two() {
+                return Some(Ex::new(ExK::Bin(BinKind::And, Box::new(l), Box::new(Ex::konst(c - 1, w, ns))), w, ns));
+            }
+        }
+        Some(Ex::new(ExK::Bin(kind, Box::new(l), Box::new(r)), w, ns))
+    }
+
+    /// The routine a designator calls, with its argument list, when it is a call.
+    fn callee_of(&self, d: &'a Designator) -> Option<(usize, &'a [Expr], Span)> {
+        let (sym, next) = match self.a.resolved.get(&d.id)? {
+            Res::Sym(id) if matches!(self.a.symbols[*id].kind, SymKind::Routine { .. }) => (*id, 0),
+            Res::Module(u) => {
+                let Some(Part::Member(n)) = d.parts.first() else { return None };
+                let id = *self.unit_syms.get(&(*u, n.key()))?;
+                if !matches!(self.a.symbols[id].kind, SymKind::Routine { .. }) {
+                    return None;
+                }
+                (id, 1)
+            }
+            _ => return None,
+        };
+        match d.parts.get(next) {
+            Some(Part::Args(args, sp)) => Some((sym, args.as_slice(), *sp)),
+            None => Some((sym, &[], d.span)),
+            _ => None,
+        }
+    }
+
+    fn call(&mut self, sym: usize, args: &'a [Expr], span: Span) -> Option<(FuncId, Vec<(Place, Ex)>)> {
+        let id = self.func_of(sym, span)?;
+        let params: Vec<(VarId, Option<Ex>)> = self.sym_func[&sym].params.clone();
+        let nparams = match &self.a.symbols[sym].kind {
+            SymKind::Routine { params, .. } => params.len(),
+            _ => 0,
+        };
+        if params.len() != nparams {
+            // A parameter the back end rejected has already been reported.
+            return None;
+        }
+        let mut out = Vec::new();
+        for (i, (pv, def)) in params.iter().enumerate() {
+            let pty = self.vars[*pv].ty.clone();
+            let (w, s) = nat(&pty).unwrap();
+            let ex = match args.get(i) {
+                Some(a) => conv(self.expr(a)?, w, s),
+                None => def.clone()?,
+            };
+            out.push((Place { base: Base::Var(*pv), off: 0, bit: None, ty: pty }, ex));
+        }
+        Some((id, out))
+    }
+
+    fn designator_value(&mut self, d: &'a Designator, e: &'a Expr) -> Option<Ex> {
+        if let Some((sym, args, sp)) = self.callee_of(d) {
+            let (id, args) = self.call(sym, args, sp)?;
+            let fi = &self.sym_func[&sym];
+            let Some(rv) = fi.result else {
+                self.err("E-BACKEND", e.span, "a subroutine has no value");
+                return None;
+            };
+            let (w, s) = nat(&self.vars[rv].ty).unwrap();
+            let boolean = self.vars[rv].ty == Ty::Bool;
+            let _ = boolean;
+            return Some(Ex::new(ExK::Call(id, args), w, s));
+        }
+        if let Some(Res::Intrinsic(name)) = self.a.resolved.get(&d.id).cloned() {
+            return self.intrinsic_value(&name, d, e);
+        }
+        let place = self.place_of(d)?;
+        let (w, s) = nat(&place.ty)?;
+        Some(Ex::new(ExK::Load(place), w, s))
+    }
+
+    fn intrinsic_value(&mut self, name: &str, d: &'a Designator, e: &'a Expr) -> Option<Ex> {
+        let args: &[Expr] = match d.parts.first() {
+            Some(Part::Args(a, _)) => a,
+            _ => &[],
+        };
+        let ty = self.a.types.get(&e.id).cloned().unwrap_or(BYTE);
+        match name {
+            "byte" | "word" | "integer" | "longword" | "longint" | "shortint" | "char" => {
+                let (w, s) = nat(&ty)?;
+                let x = self.expr(&args[0])?;
+                Some(conv(x, w, s))
+            }
+            "boolean" | "bit" => {
+                let x = self.expr(&args[0])?;
+                let argty = self.a.types.get(&args[0].id).cloned().unwrap_or(BYTE);
+                if matches!(argty, Ty::Bool | Ty::Bit) {
+                    return Some(Ex { signed: false, ..x });
+                }
+                if name == "bit" {
+                    self.unsupported(e.span, "converting a number to Bit");
+                    return None;
+                }
+                let zero = Ex::konst(0, x.w, x.signed);
+                Some(Ex::boolean(ExK::Cmp(CmpKind::Ne, Box::new(x), Box::new(zero))))
+            }
+            n => {
+                self.unsupported(e.span, &format!("the intrinsic `{n}`"));
+                None
+            }
+        }
+    }
+
+    // ---- statements ----------------------------------------------------------------------
+
+    fn label_id(&mut self, name: &Ident) -> LabelId {
+        let key = name.key();
+        if let Some(&l) = self.labels.get(&key) {
+            return l;
+        }
+        let id = self.label_names.len();
+        self.label_names.push(format!("L_{}_{}", id, sanitize(&name.name)));
+        self.labels.insert(key, id);
+        id
+    }
+
+    pub fn block(&mut self, ss: &'a [Stmt], ui: usize) -> Vec<S> {
+        let mut out = Vec::new();
+        for s in ss {
+            self.stmt(s, ui, &mut out);
+        }
+        out
+    }
+
+    fn push(out: &mut Vec<S>, st: St, span: Span) {
+        out.push(S { st, span });
+    }
+
+    fn stmt(&mut self, s: &'a Stmt, ui: usize, out: &mut Vec<S>) {
+        let span = s.span;
+        match &s.kind {
+            StmtKind::Assign { target, value } => {
+                let (Some(p), Some(v)) = (self.place_of(target), self.expr(value)) else { return };
+                let (w, sg) = nat(&p.ty).unwrap();
+                let v = conv(v, w, sg);
+                Self::push(out, St::Assign(p, v), span);
+            }
+            StmtKind::Call(d) => self.call_stmt(d, span, out),
+            StmtKind::If { arms, otherwise } => {
+                let mut a = Vec::new();
+                for (c, b) in arms {
+                    let Some(cv) = self.expr(c) else { return };
+                    a.push((cv, self.block(b, ui)));
+                }
+                let o = otherwise.as_ref().map(|b| self.block(b, ui)).unwrap_or_default();
+                Self::push(out, St::If(a, o), span);
+            }
+            StmtKind::IfGoto { cond, label } => {
+                let Some(cv) = self.expr(cond) else { return };
+                let l = self.label_id(label);
+                Self::push(out, St::If(vec![(cv, vec![S { st: St::Goto(l), span }])], vec![]), span);
+            }
+            StmtKind::Select { subject, cases, otherwise } => self.select(subject, cases, otherwise.as_deref(), ui, span, out),
+            StmtKind::While { cond, body } => {
+                let Some(cv) = self.expr(cond) else { return };
+                let b = self.block(body, ui);
+                Self::push(out, St::While(cv, b), span);
+            }
+            StmtKind::Repeat { body, until } => {
+                let b = self.block(body, ui);
+                let Some(cv) = self.expr(until) else { return };
+                Self::push(out, St::Repeat(b, cv), span);
+            }
+            StmtKind::For { var, from, to, step, body } => self.for_stmt(var, from, to, step.as_ref(), body, ui, span, out),
+            StmtKind::Break => Self::push(out, St::Break, span),
+            StmtKind::Continue => Self::push(out, St::Continue, span),
+            StmtKind::Exit => Self::push(out, St::Return, span),
+            StmtKind::GoTo(l) => {
+                let id = self.label_id(l);
+                Self::push(out, St::Goto(id), span);
+            }
+            StmtKind::Label(l) => {
+                let id = self.label_id(l);
+                Self::push(out, St::Label(id), span);
+            }
+            StmtKind::Save { body, .. } => {
+                let b = self.block(body, ui);
+                out.extend(b);
+            }
+            StmtKind::Asm { lines, .. } => Self::push(out, St::Asm(lines.clone()), span),
+            StmtKind::Enable(n) | StmtKind::Disable(n) => self.unsupported(n.span, "Enable/Disable"),
+        }
+    }
+
+    fn call_stmt(&mut self, d: &'a Designator, span: Span, out: &mut Vec<S>) {
+        if let Some((sym, args, sp)) = self.callee_of(d) {
+            if let Some((id, a)) = self.call(sym, args, sp) {
+                Self::push(out, St::Call(id, a), span);
+            }
+            return;
+        }
+        let Some(Res::Intrinsic(name)) = self.a.resolved.get(&d.id).cloned() else {
+            self.unsupported(span, "this statement");
+            return;
+        };
+        let args: &'a [Expr] = match d.parts.first() {
+            Some(Part::Args(a, _)) => a,
+            _ => &[],
+        };
+        // The first argument as a place, for the intrinsics that act on one.
+        let arg_place = |this: &mut Self| -> Option<Place> {
+            match args.first().map(|a| &a.kind) {
+                Some(ExprKind::Designator(dd)) => this.place_of(dd),
+                _ => None,
+            }
+        };
+        match name.as_str() {
+            "inc" | "dec" => {
+                let Some(p) = arg_place(self) else { return };
+                let delta = if name == "inc" { 1u32 } else { u32::MAX };
+                Self::push(out, St::Add(p, delta), span);
+            }
+            "clear" => {
+                let Some(p) = arg_place(self) else { return };
+                Self::push(out, St::Clear(p), span);
+            }
+            "high" | "low" | "toggle" => {
+                let Some(p) = arg_place(self) else { return };
+                if p.bit.is_some() {
+                    let st = match name.as_str() {
+                        "high" => St::SetBit(p, true),
+                        "low" => St::SetBit(p, false),
+                        _ => St::ToggleBit(p),
+                    };
+                    Self::push(out, st, span);
+                } else {
+                    // A Boolean or Bit variable holds 0 or 1 in a byte.
+                    let v = match name.as_str() {
+                        "high" => Ex::konst(1, 8, false),
+                        "low" => Ex::konst(0, 8, false),
+                        _ => Ex::new(ExK::Bin(BinKind::Xor, Box::new(Ex::new(ExK::Load(p.clone()), 8, false)), Box::new(Ex::konst(1, 8, false))), 8, false),
+                    };
+                    Self::push(out, St::Assign(p, v), span);
+                }
+            }
+            "input" | "output" => {
+                let Some(p) = arg_place(self) else { return };
+                Self::push(out, St::Direction { place: p, output: name == "output" }, span);
+            }
+            "delayms" | "delayus" => {
+                let Some(x) = self.expr(&args[0]) else { return };
+                Self::push(out, if name == "delayms" { St::DelayMs(x) } else { St::DelayUs(x) }, span);
+            }
+            "terminate" => Self::push(out, St::Halt, span),
+            n => self.unsupported(span, &format!("the intrinsic `{n}`")),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn for_stmt(&mut self, var: &'a Designator, from: &'a Expr, to: &'a Expr, step: Option<&'a Expr>, body: &'a [Stmt], ui: usize, span: Span, out: &mut Vec<S>) {
+        let Some(vp) = self.place_of(var) else { return };
+        let (w, sg) = nat(&vp.ty).unwrap();
+        let step_v = match step {
+            None => 1i64,
+            Some(se) => match self.a.consts.get(&se.id) {
+                Some(CVal::Int(i)) => *i as i64,
+                _ => {
+                    self.unsupported(se.span, "a For step that is not a constant");
+                    return;
+                }
+            },
+        };
+        let (Some(f), Some(t)) = (self.expr(from), self.expr(to)) else { return };
+        let (f, t) = (conv(f, w, sg), conv(t, w, sg));
+        let limit = if t.as_const().is_some() {
+            t
+        } else {
+            let h = self.hidden_var(vp.ty.clone());
+            Self::push(out, St::Assign(h.clone(), t), span);
+            Ex::new(ExK::Load(h), w, sg)
+        };
+        let b = self.block(body, ui);
+        Self::push(out, St::For { var: vp, from: f, limit, step: step_v, body: b }, span);
+    }
+
+    fn select(&mut self, subject: &'a Expr, cases: &'a [Case], otherwise: Option<&'a [Stmt]>, ui: usize, span: Span, out: &mut Vec<S>) {
+        let Some(sv) = self.expr(subject) else { return };
+        let (w, sg) = (sv.w, sv.signed);
+        let sty = if sg { Ty::Int(w, true) } else { Ty::Int(w, false) };
+        let h = self.hidden_var(sty);
+        Self::push(out, St::Assign(h.clone(), sv), span);
+        let load = |h: &Place| Ex::new(ExK::Load(h.clone()), w, sg);
+        let cmp = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
+        let mut arms = Vec::new();
+        for c in cases {
+            let mut cond: Option<Ex> = None;
+            for cc in &c.conds {
+                let one = match cc {
+                    CaseCond::Value(e) => {
+                        let Some(v) = self.expr(e) else { return };
+                        cmp(CmpKind::Eq, load(&h), conv(v, w, sg))
+                    }
+                    CaseCond::Range(lo, hi) => {
+                        let (Some(l), Some(u)) = (self.expr(lo), self.expr(hi)) else { return };
+                        let a = cmp(CmpKind::Ge, load(&h), conv(l, w, sg));
+                        let b = cmp(CmpKind::Le, load(&h), conv(u, w, sg));
+                        Ex::boolean(ExK::AndAlso(Box::new(a), Box::new(b)))
+                    }
+                    CaseCond::Rel(op, e) => {
+                        let Some(v) = self.expr(e) else { return };
+                        let k = match op {
+                            BinOp::Lt => CmpKind::Lt,
+                            BinOp::Gt => CmpKind::Gt,
+                            BinOp::Le => CmpKind::Le,
+                            BinOp::Ge => CmpKind::Ge,
+                            BinOp::Ne => CmpKind::Ne,
+                            _ => CmpKind::Eq,
+                        };
+                        cmp(k, load(&h), conv(v, w, sg))
+                    }
+                };
+                cond = Some(match cond {
+                    None => one,
+                    Some(prev) => Ex::boolean(ExK::OrElse(Box::new(prev), Box::new(one))),
+                });
+            }
+            let Some(cond) = cond else { continue };
+            arms.push((cond, self.block(&c.body, ui)));
+        }
+        let o = otherwise.map(|b| self.block(b, ui)).unwrap_or_default();
+        Self::push(out, St::If(arms, o), span);
+    }
+}

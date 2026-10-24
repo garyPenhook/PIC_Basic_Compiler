@@ -42,3 +42,16 @@ recommendation shown; any item can be reopened.
 | D25 | Preprocessor in M3 | Conditional compilation on `#define` names plus `#error/#warning/#option`; `#if` family reported unsupported | An expression evaluator is not needed by anything in M3–M5. |
 | D26 | Overflow warnings | `W-OVF` deferred to M5 with range analysis; evaluation widths are recorded now | Warning on every `Byte + Byte` without range information would be noise. |
 | D27 | Clock limit check | Not done in M3 | The maximum clock is a data sheet value that the device description does not carry yet; add a hand-entered, cross-checked field in `devgen` first (as for vectors). |
+
+## Decisions made in M4 (back end)
+
+| ID | Decision | Choice | Reason |
+|----|----------|--------|--------|
+| D28 | Calling convention | Arguments stored straight into the callee's static frame; result read from the callee's `Result` variable; nothing preserved across calls | With static frames the caller knows every address; simplest correct form, measured against alternatives in M5. Finalises D4 for non-reentrant code. |
+| D29 | Data placement | The compiler assigns all data addresses (`equ`), hottest first into the Access Bank; pic-as places only code | Exact bank-select decisions at compile time; usage counts drive placement (PLAN §7A.3 #3). |
+| D30 | Code placement | One absolute psect from address 0; no reset `goto` while there are no interrupts | Smallest; vectors are added with interrupts in M6. |
+| D31 | Division | Truncates toward zero; `Mod` takes the dividend's sign; divide by zero gives an all-ones quotient and the dividend as remainder | Matches C and what the restoring helper produces for free; no trap code. Unsigned division/mod by a power of two is a shift/mask. |
+| D32 | Port writes | A store to `PORTx` is emitted as a store to `LATx` | Avoids read-modify-write on the pins; reads are unchanged. |
+| D33 | `For` loop | Limit evaluated once; constant step only (variable step is `E-BACKEND`); after a loop that ran the variable holds the last value it took (the limit for step ±1), and the counter never steps past the limit, so a `Byte` loop to 255 terminates | Needed for a correct count-down/`DECFSZ` form in M5. Post-loop value was unspecified; this is now the rule. |
+| D34 | Signed multi-byte compare | Both top bytes are biased by 0x80 and compared unsigned; the overflow flag of a multi-byte subtract is not used | The simulator's `SUBWFB` overflow flag disagreed with the textbook value, and the data sheet only says OV is affected (DS40002043F p.674). The carry chain is unambiguous. |
+| D35 | Unsupported constructs | Reported as `E-BACKEND` at the use, never miscompiled: arrays, strings, structures, floats, by-reference parameters, `@`, `Abs/Min/Max`, interrupts/events, multi-bit register fields, 3-byte registers | Scheduled for M5 (data) and M6 (interrupts). |

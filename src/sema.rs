@@ -74,6 +74,8 @@ pub struct Symbol {
     pub unit: usize,
     /// True for symbols declared inside a routine.
     pub local: bool,
+    /// The routine, interrupt or event that declares a local symbol or parameter.
+    pub owner: Option<SymId>,
     pub kind: SymKind,
 }
 
@@ -118,6 +120,9 @@ pub struct Analysis {
     pub calls: Vec<CallEdge>,
     /// Bytes of global variables.
     pub global_ram: u32,
+    /// The symbol declared at the position of a declared name; the back end uses it to walk the
+    /// tree and find the symbol each declaration created.
+    pub decl_syms: HashMap<Span, SymId>,
 }
 
 /// Parsed device descriptions by path. The 18F27Q10 file is large, and tests and tools analyse
@@ -269,8 +274,13 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     fn add_symbol(&mut self, name: &str, span: Span, vis: Vis, kind: SymKind) -> SymId {
         let local = !self.scopes.is_empty();
-        self.a.symbols.push(Symbol { name: name.to_string(), span, vis, unit: self.unit, local, kind });
-        self.a.symbols.len() - 1
+        let owner = if local { self.ctx.routine } else { None };
+        self.a.symbols.push(Symbol { name: name.to_string(), span, vis, unit: self.unit, local, owner, kind });
+        let id = self.a.symbols.len() - 1;
+        if span != Span::default() {
+            self.a.decl_syms.insert(span, id);
+        }
+        id
     }
 
     /// Declares `name` in the innermost scope; reports a clash with a name in the same scope.
