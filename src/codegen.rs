@@ -1950,6 +1950,28 @@ impl<'p> Gen<'p> {
                 self.label(&end);
             }
             St::For { var, from, limit, step, body } => self.for_loop(var, from, limit, *step, body),
+            St::Count { counter, count, body, step } => {
+                let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
+                self.store(counter, &Ex::konst(*count as u32, 8, false));
+                self.depth += 1;
+                self.label(&top);
+                self.loops.push((cont.clone(), end.clone()));
+                self.block(body);
+                self.loops.pop();
+                self.label(&cont);
+                let m = self.place_mem(counter, true);
+                if let Some((var, k)) = step {
+                    // Leave before stepping so the variable never goes past its last value.
+                    self.fop("dcfsnz", &m, "f");
+                    self.br(Cc::Always, &end);
+                    self.add_const(var, *k);
+                } else {
+                    self.fop("decfsz", &m, "f");
+                }
+                self.br(Cc::Always, &top);
+                self.depth -= 1;
+                self.label(&end);
+            }
             St::Break => {
                 if let Some((_, end)) = self.loops.last().cloned() {
                     self.br(Cc::Always, &end);

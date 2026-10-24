@@ -38,6 +38,22 @@ Start-up reference point from PLAN §7A.4 (`x = 5`, then `x = x + 1` forever, `x
 The other kernels are unchanged. `add32` is now 0.26× XC8 `-O2` in cycles; `fixmul` is 1.9×
 (its `For` loop and the accumulator traffic remain, M5 `DECFSZ` and peephole items).
 
+## After M5 counted loops, 2026-10-24
+
+| kernel | basicc B | RAM | cyc | was B | was cyc |
+|---|---:|---:|---:|---:|---:|
+| add32 | 130 | 18 | 4710 | 128 | 4808 |
+| cmpchain | 64 | 6 | 3222 | 62 | 3421 |
+| crc8 | 72 | 6 | 6769 | 70 | 6831 |
+| div16 | 190 | 17 | 32232 | 188 | 32280 |
+| fixmul | 102 | 11 | 5294 | 128 | 7437 |
+| mul8 | 70 | 9 | 1906 | 68 | 2004 |
+| sum16 | 46 | 6 | 1806 | 44 | 2004 |
+
+`bitbang` and `state` are unchanged. Each counted loop costs a hidden counter byte and two code
+bytes where the old compare was already cheap; it wins where the compare was wide (`fixmul`'s
+16-bit `Step 7` loop).
+
 ## Why the numbers look like this
 
 * Size is already below XC8 because nothing is emitted that is not used (no runtime, one static

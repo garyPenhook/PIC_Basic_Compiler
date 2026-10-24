@@ -149,7 +149,19 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   of an element picked at run time. All of the run-time-index forms report `E-BACKEND` (pinned by a
   test in `tests/backend.rs`). Local structures are static and zeroed once at start-up, like every
   local. Test: `tests/exec/structs.bas`.
-- Next in M5: `DECFSZ` loops, frame overlay, peephole.
+- Counted loops (done): a `For` with constant bounds and step that runs at most 255 times counts a
+  hidden Byte down (`St::Count`, `lower.rs` `for_stmt`). If the body never mentions the variable
+  (and has no `Break`/`Return`/`Goto`/label/raw `Asm`; with a global variable, no calls either) the
+  exit test is a single `DECFSZ` and the variable is set to its last value after the loop. If the
+  body only reads the variable (`blocks_count_loop` in `ir.rs`: no write, no address taken, no call
+  when the variable is global, no raw `Asm`) the variable is still stepped, with
+  `DCFSNZ`/`BRA end`/add/`BRA top`, so `Break` and `Return` see the right value and the variable
+  never passes its last value (D33). Other loops keep the compare form. Interrupts (M6) need nothing
+  extra: the counter is an ordinary hidden static. Not yet: variable bounds (would need a computed
+  trip count), trip counts over 255. Test: `tests/exec/countloop.bas`. Benchmarks: fixmul 7437 →
+  5294 cycles and 128 → 102 bytes, add32 4808 → 4710; kernels whose loops are not constant-bounded
+  gain one hidden byte of RAM and two bytes of code.
+- Next in M5: frame overlay, peephole.
 
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with

@@ -238,6 +238,10 @@ pub enum St {
     /// `For`: `var` runs from `from` to the value held in `limit` (a constant, or a hidden
     /// variable evaluated once) in steps of the constant `step`.
     For { var: Place, from: Ex, limit: Ex, step: i64, body: Vec<S> },
+    /// A loop that runs `count` (1 to 255) times, counted down in the hidden Byte `counter` with
+    /// `DECFSZ`. With `step` the loop variable is kept up to date (added to between passes); the
+    /// body never writes it. Without, the body does not mention the variable at all.
+    Count { counter: Place, count: u8, body: Vec<S>, step: Option<(Place, u32)> },
     Break,
     Continue,
     Return,
@@ -279,4 +283,67 @@ pub struct Program {
     pub clock_mhz: f64,
     /// `CONFIGnX` register name and the byte written to it.
     pub config: Vec<(String, u32, u8)>,
+}
+
+impl Place {
+    /// True when the place is, or may overlap, the object `v` (directly or through a pointer).
+    fn is_var(&self, v: VarId) -> bool {
+        matches!(self.base, Base::Var(i) | Base::Ptr(i) if i == v)
+    }
+    fn touches(&self, v: VarId, reads: bool) -> bool {
+        self.is_var(v) || self.idx.as_ref().is_some_and(|i| i.touches(v, reads))
+    }
+}
+
+impl Ex {
+    /// True when the expression changes or exposes variable `v`: its address is taken, or, when
+    /// `reads` is set, it is loaded as well.
+    pub fn touches(&self, v: VarId, reads: bool) -> bool {
+        match &self.k {
+            ExK::Const(_) => false,
+            ExK::Load(p) => (reads && p.is_var(v)) || p.idx.as_ref().is_some_and(|i| i.touches(v, reads)),
+            ExK::Addr(p) => p.touches(v, reads),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.touches(v, reads),
+            ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.touches(v, reads) || b.touches(v, reads),
+            ExK::Call(_, args) => args.iter().any(|(p, e)| p.touches(v, reads) || e.touches(v, reads)),
+            ExK::StrEq(a, b) => a.touches(v, reads) || b.touches(v, reads),
+        }
+    }
+}
+
+impl StrSrc {
+    fn touches(&self, v: VarId, reads: bool) -> bool {
+        match self {
+            StrSrc::Ram(p) => (reads && p.is_var(v)) || p.idx.as_ref().is_some_and(|i| i.touches(v, reads)),
+            StrSrc::Lit(_) => false,
+            StrSrc::Char(e) => e.touches(v, reads),
+        }
+    }
+}
+
+/// Whether a statement list stops `var` from being the control of a counted loop.
+///
+/// With `reads` set the body may not mention `var` at all and may not leave the loop (the
+/// variable is then set once, after the loop). Without it the body may read `var` and leave the
+/// loop, but may not write it or take its address. In both cases a call is refused when `calls`
+/// says the callee could reach `var` (a global), and raw assembly is always refused.
+pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bool {
+    let ex = |e: &Ex| e.touches(var, reads) || (calls && e.has_call());
+    let sub = |b: &[S]| blocks_count_loop(b, var, calls, reads);
+    body.iter().any(|s| match &s.st {
+        St::Assign(p, e) => p.touches(var, true) || ex(e),
+        St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::Clear(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => p.touches(var, true),
+        St::Copy { dst, src, .. } => dst.touches(var, true) || src.touches(var, reads),
+        St::StrSet { dst, parts, .. } => dst.touches(var, true) || parts.iter().any(|p| p.touches(var, reads) || (calls && p.has_call())),
+        St::Call(_, args) => calls || args.iter().any(|(p, e)| p.touches(var, true) || ex(e)),
+        St::If(arms, other) => arms.iter().any(|(c, b)| ex(c) || sub(b)) || sub(other),
+        St::While(c, b) | St::Repeat(b, c) => ex(c) || sub(b),
+        St::For { var: p, from, limit, body, .. } => p.touches(var, true) || ex(from) || ex(limit) || sub(body),
+        St::Count { counter, body, step, .. } => counter.touches(var, true) || step.as_ref().is_some_and(|(p, _)| p.touches(var, true)) || sub(body),
+        St::Asm(_) => true,
+        // A jump out leaves `var` unset when it is only assigned after the loop.
+        St::Break | St::Return | St::Goto(_) | St::Label(_) | St::Halt => reads,
+        St::Continue => false,
+        St::DelayUs(e) | St::DelayMs(e) => ex(e),
+    })
 }

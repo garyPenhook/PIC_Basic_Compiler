@@ -1322,6 +1322,30 @@ impl<'a> Lowerer<'a> {
             Ex::new(ExK::Load(h), w, sg)
         };
         let b = self.block(body, ui);
+        if let (Some(fv), Some(lv), Base::Var(vid), None, None) = (f.as_const(), limit.as_const(), &vp.base, &vp.idx, vp.bit) {
+            let v = |x: u32| if sg { sign_extend(x, w) } else { x as i64 };
+            let (fv, lv) = (v(fv), v(lv));
+            let span_len = if step_v > 0 { lv - fv } else { fv - lv };
+            let s = step_v.abs();
+            let global = self.vars[*vid].kind == VarKind::Global;
+            if step_v != 0 && span_len >= 0 && span_len / s < 255 {
+                // The loop runs span_len / s + 1 times and ends with the last value it took.
+                let n = span_len / s + 1;
+                let last = fv + (n - 1) * step_v;
+                let pure = !blocks_count_loop(&b, *vid, global, true);
+                if pure || !blocks_count_loop(&b, *vid, global, false) {
+                    let counter = self.hidden_var(crate::types::BYTE);
+                    if pure {
+                        Self::push(out, St::Count { counter, count: n as u8, body: b, step: None }, span);
+                        Self::push(out, St::Assign(vp, Ex::konst(last as u32, w, sg)), span);
+                    } else {
+                        Self::push(out, St::Assign(vp.clone(), f), span);
+                        Self::push(out, St::Count { counter, count: n as u8, body: b, step: Some((vp, step_v as u32)) }, span);
+                    }
+                    return;
+                }
+            }
+        }
         Self::push(out, St::For { var: vp, from: f, limit, step: step_v, body: b }, span);
     }
 
