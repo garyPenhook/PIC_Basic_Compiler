@@ -1,0 +1,11 @@
+[package]
+name = "devgen"
+version = "0.1.0"
+edition = "2024"
+description = "Generates device descriptions from Microchip device packs and cross-checks them against the data sheet"
+
+[dependencies]
+devdesc = { path = "../../crates/devdesc" }
+roxmltree = "0.20"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
