@@ -67,6 +67,23 @@ Same routines as `serial` with the prefix `Serial2` (`Serial2Init`, `Serial2Writ
 `PIR3` bits 6 and 7, registers `SP2BRG`, `TX2STA`, `RC2STA`, `BAUD2CON`. RB6/RB7 are also the ICSP pins, so
 disconnect the programmer while using them. Both modules can be included and run together.
 
+## adc (ADCC, basic mode, right-justified 10-bit results)
+| Routine | Effect |
+|---|---|
+| `AdcInit()` | ADC on, VDD/VSS reference, FOSC clock with the smallest TAD >= 1 us (ADCLK), hardware acquisition (`ADACQ`) of 5 us; runs a 32-bit calculation once from `Clock` |
+| `AdcPin(ch)` | `TRISx`/`ANSELx` bit of channel 0..23 (RA0-7 = 0..7, RB = 8..15, RC = 16..23) |
+| `AdcRead(ch)` | one conversion, 0..1023. Channels `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63 are internal |
+| `AdcReadAvg(ch, n)` | mean of n (1..64) conversions |
+| `AdcMillivolts(raw, vrefMv)` | `raw * vref / 1023` |
+| `AdcRefVdd()` / `AdcRefFvr(gain)` | reference VDD, or FVR at gain 1, 2, 4 (any value >= 4 is taken as 4, 0 as 1; waits for `FVRRDY`) |
+
+Errata (DS80000832G): 1.4.4, the first conversion after a channel change is run and dropped (the
+module remembers the last channel; code that writes `ADPCH` itself bypasses that). 1.4.1, `AdcRefFvr`
+raises TAD to >= 8 us, which `ADCS` allows only up to `Clock` = 16 MHz; above that the slowest clock is
+used and the missing-code workaround is not met, so use the VDD reference there. Not reentrant.
+The temperature indicator needs `FVRCON.TSEN` (not set here). Source impedance above 10 kohm needs a
+larger `ADACQ`.
+
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

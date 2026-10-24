@@ -8,6 +8,7 @@ Include "delay"
 Include "timer"
 Include "serial"
 Include "serial2"
+Include "adc"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -33,3 +34,10 @@ Serial2.Serial2WriteHex(171)
 Serial2.Serial2NewLine()
 Serial2.Serial2Flush()
 r = Serial2.Serial2Read()
+Adc.AdcInit()
+Adc.AdcPin(0)
+Adc.AdcRefVdd()
+x = Adc.AdcRead(0)
+x = Adc.AdcReadAvg(0, 8)
+x = Adc.AdcMillivolts(x, 3300)
+Adc.AdcRefFvr(1)

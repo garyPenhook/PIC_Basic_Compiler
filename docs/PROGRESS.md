@@ -282,3 +282,11 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Test `tests/exec/lib_serial2.bas` (optimised and `-O0`) checks the register values only: the MDB simulator never
   sets TX2IF (PIR3 reads 0x10, only TX1IF), so a send would hang there. Transmit/receive on EUSART2 is unverified
   until hardware (D6). `tests/programs/library_all.bas` includes the module.
+
+## M8 — adc (done 2026-10-24)
+- `lib/adc.bas` (module `Adc`): see `docs/LIBRARY.md`. Register values from DS40002043F §33 (ADCON0, ADREF, ADCLK,
+  ADACQ, Table 33-1, AD20 TAD 1..9 us) and §30 (FVRCON); errata 1.4.1 and 1.4.4 applied, 1.4.2/1.4.3 not relevant.
+- Test `tests/exec/lib_adc.bas` (optimised and `-O0`): register values after init and after `AdcRefFvr`, pin
+  set-up, ADPCH, and that conversions complete in the simulator. The input is not driven, so result values and the
+  dropped first conversion (errata 1.4.4) are not checked; nothing runs on hardware (D6).
+- `trisa` clashes with the register `TRISA`: names are case-insensitive, so a variable cannot share a register's name.
