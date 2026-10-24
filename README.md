@@ -1,21 +1,115 @@
 # Basic_Compiler
 
-A personal BASIC compiler for PIC microcontrollers, with code efficiency as a top priority.
-First target: **PIC18F27Q10**. Other microcontrollers will be added slowly, one at a time, later.
+A BASIC compiler for PIC microcontrollers, built for small, fast code. It turns a structured,
+typed BASIC (modules, subroutines and functions, structures, interrupts) into a `.hex` file, and
+comes with a library of ready-made modules for the common peripherals.
 
-* Language: a structured, typed core (modules, subroutines/functions, structures, interrupts)
-  with a friendly command library on top.
-* Back end: generates assembly for Microchip's `pic-as`, which assembles and links the `.hex`.
-* Plan and status: `PLAN.md`, `docs/PROGRESS.md`. Decisions: `docs/DECISIONS.md`.
-* Language: `docs/LANGUAGE.md`, `docs/GRAMMAR.md`. Calling convention: `docs/ABI.md`. Benchmarks: `docs/BENCHMARKS.md`.
+First target: **PIC18F27Q10**. More microcontrollers will follow, one at a time.
 
-Status: M5 in progress (back end done in M4; arrays, by-reference parameters, strings, structures, hardware multiply and `DECFSZ` counted loops added). `basicc prog.bas`
-compiles programs to `prog.hex` (plus `prog.S`, `prog.map`) through pic-as; `--report` prints sizes, `-S` stops at the
-assembly, `--check` stops after the front end. Floats and events (and a few remaining array, string,
-structure and by-reference forms) are rejected with `E-BACKEND` until a later milestone. Interrupt handlers and the `gpio`, `delay`, `timer`, `serial`, `serial2`, `adc` and `eeprom` library (`docs/LIBRARY.md`) work (M6).
+## A taste
 
-* Tests: `cargo test`; simulator tests with `BASICC_MDB=1 cargo test --test backend` (needs MPLAB X `mdb`).
-* Benchmarks against XC8: `scripts/bench.py`, results in `docs/BENCHMARKS.md`.
+```basic
+Program Blink
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+Include "gpio"
+Include "serial"
+
+Dim led As PORTB.0
+Dim ticks As Word
+
+Interrupt Tick()
+    PIR0.5 = 0
+    Inc(ticks)
+End Interrupt
+
+Gpio.GpioAllDigital()
+Output(led)
+Serial.SerialInit(115200)
+T0CON1 = 65
+PIE0.5 = 1
+Enable(Tick)
+T0CON0 = 128
+While True
+    Toggle(led)
+    Serial.SerialWrite("tick")
+    Serial.SerialNewLine()
+    DelayMS(500)
+Wend
+```
+
+```
+basicc blink.bas          # writes blink.hex (plus blink.S and blink.map)
+basicc --report blink.bas # also prints code and RAM sizes per routine and variable
+```
+
+## What works today
+
+**Language**
+* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers, strings, arrays, structures
+  and unions, constants.
+* Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
+  short-circuit conditions.
+* `If`, `Select Case`, `While`, `Repeat`, `For` (with `Break`/`Continue`/`Exit`), `GoTo`.
+* Subroutines and functions with by-value, `ByRef` and `ByRefConst` parameters; modules and `Include`.
+* Interrupt handlers (one or two priorities) with automatic context saving and `Save … Restore`
+  blocks; `Enable`/`Disable`; event handlers.
+* Direct access to every device register and register bit by name, inline assembly, exact
+  cycle-counted `DelayMS`/`DelayUS`.
+* Compile-time checks: RAM use, hardware stack depth, recursion, array bounds, bad configuration
+  values. Errors show the file, line, column and the offending source line.
+
+**Code quality**
+* Compared with Microchip XC8 on a set of small kernels, the output is typically about a third smaller
+  and about as fast (see `docs/BENCHMARKS.md`, including an interrupt-plus-multiply-and-divide case).
+* Optimisations include constant folding, narrowing, Access Bank placement, overlapping of
+  routines' variables that are never live together, counted-loop forms and a peephole pass.
+  Every test program is also built unoptimised (`-O0`) and checked to give the same results.
+
+**Library** (`docs/LIBRARY.md`)
+
+| Module | What it gives you |
+|---|---|
+| `gpio` | port set-up, pull-ups, open-drain |
+| `delay` | millisecond/microsecond/second delays |
+| `timer` | Timer0, Timer1 (external clock, gate, pulse measurement), Timer2 (hardware-limit and one-shot modes) |
+| `serial`, `serial2` | EUSART1 and EUSART2: send/receive bytes, strings and numbers |
+| `adc` | 10-bit ADC reads, averaging, millivolts, FVR reference (silicon errata worked around) |
+| `eeprom` | data EEPROM read/write (bytes and words) |
+| `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
+
+## Still to do
+
+* **Library:** `i2c`, `spi`, `lcd` (HD44780), `system` (reset cause, clock set-up), program-flash
+  self-write.
+* **Language:** floating point, `Inline` functions, overloading, reentrant functions, a few remaining
+  array, string and structure forms (the compiler reports these clearly rather than miscompiling),
+  array/structure initialisers, `#if` in the preprocessor.
+* **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
+  Serial output, PWM waveforms, external timer inputs and the second EUSART are the main things
+  that need a hardware run.
+* **Tooling:** editor support (syntax highlighting, a build task), more golden-output tests.
+* **More devices:** only the PIC18F27Q10 is supported; each further device is added only after it
+  passes its own tests.
+
+## Using it
+
+Requirements: a Rust toolchain to build the compiler, and Microchip's `pic-as` assembler (from
+MPLAB XC8) to assemble and link. Simulator tests additionally need MPLAB X's `mdb`.
+
+```
+cargo build --release
+target/release/basicc prog.bas
+```
+
+Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-check only), `-O0`
+(no optimisation).
+
+Documentation: language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
+diagnostics `docs/DIAGNOSTICS.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,
+`docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
+`BASICC_MDB=1 cargo test --test backend` for the simulator suite.
 
 Personal-use project. Vendor manuals under `reference/` are not part of the repository and must
 not be redistributed.
