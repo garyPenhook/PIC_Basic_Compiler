@@ -96,3 +96,19 @@ baseline already meets the size ones, so they are tightened; cycles are the open
 
 Re-run `scripts/bench.py --md` after any change to code generation and update the table with the
 compiler revision.
+
+## Interrupt with multiply and divide — 2026-10-24
+
+Kernel `isrmuldiv`: 50 passes; each does a 16-bit multiply and a 16-bit divide in the main program,
+raises `TMR0IF` in software and waits for the handler, which does a multiply by 5, a divide by 7 and a
+`Mod` 13 on its own 16-bit state. The handler therefore runs exactly 50 times in every build, so the
+three `sink` values agree (and do). Cycles include the interrupt entry, context save and exit.
+
+| kernel | basicc B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| isrmuldiv | 464 | 35 | 53456 | 582 | 45 | 51994 | 608 | 45 | 54338 |
+
+Size is 0.80 of XC8 `-Os`; cycles are 0.98 of `-O2` and 1.03 of `-Os`. The C kernel sets `PEIE` as
+well as `GIE`: DS40002043F p.199 says the `PIR0` flags (including `TMR0IF`) are not gated by `PEIE`,
+but the MDB simulator does not deliver the Timer0 interrupt without it (without it the XC8 build
+never leaves its wait loop). basicc's `Enable` sets both bits, so it was not affected.
