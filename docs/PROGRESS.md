@@ -290,3 +290,11 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   set-up, ADPCH, and that conversions complete in the simulator. The input is not driven, so result values and the
   dropped first conversion (errata 1.4.4) are not checked; nothing runs on hardware (D6).
 - `trisa` clashes with the register `TRISA`: names are case-insensitive, so a variable cannot share a register's name.
+
+## M8 — eeprom (done 2026-10-24)
+- `lib/eeprom.bas` (module `Eeprom`): see `docs/LIBRARY.md`. Read and write sequences from DS40002043F §12.3
+  (Examples 12-6, 12-7), NVMCON0/1 from §12.5; DFM array at NVMADRU = 0x31 (`docs/FACTS-18F27Q10.md`). Errata 1.6.1
+  (NVMERR sticky, no work-around) means success is judged by read-back. 1.6.2 is program flash only.
+- Test `tests/exec/lib_eeprom.bas` (optimised and `-O0`): the MDB simulator does not model DFM reads (a read leaves
+  NVMDATL unchanged), so stored values are not checked; it checks the address registers, NVMEN cleared, GIE restored
+  (and left off when it was off), invalid addresses and that a write completes. Nothing runs on hardware (D6).

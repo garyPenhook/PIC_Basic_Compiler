@@ -84,6 +84,21 @@ used and the missing-code workaround is not met, so use the VDD reference there.
 The temperature indicator needs `FVRCON.TSEN` (not set here). Source impedance above 10 kohm needs a
 larger `ADACQ`.
 
+## eeprom (data EEPROM, 1024 bytes)
+| Routine | Effect |
+|---|---|
+| `EepromRead(addr)` | byte at 0..1023; 255 for a larger address |
+| `EepromWrite(addr, value)` | skips the write when the byte already holds `value`; otherwise unlock sequence, waits for the write to finish. Returns 1 when the byte reads back as `value`, 0 for an invalid address or a failed write |
+| `EepromReadWord(addr)` / `EepromWriteWord(addr, value)` | 16-bit value, low byte first, at addr and addr + 1 (the write returns 1 only if both bytes were stored) |
+| `EepromSize` | constant 1024 |
+
+`NVMEN` is set only around the write and global interrupts are off for the unlock sequence (the previous
+`GIE` is restored). Errata 1.6.1 (DS80000832G): `NVMERR` stays set across Resets after a Reset during a write
+until one write succeeds, so it is not used as the error flag: success is the read-back, and the module clears
+`NVMERR`. A write takes the device's programming time, during which the routine waits (the CPU is not stalled
+by the hardware, but the next write cannot start). Not reentrant: do not call it from a handler and from the
+main program.
+
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

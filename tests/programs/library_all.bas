@@ -9,6 +9,7 @@ Include "timer"
 Include "serial"
 Include "serial2"
 Include "adc"
+Include "eeprom"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -41,3 +42,7 @@ x = Adc.AdcRead(0)
 x = Adc.AdcReadAvg(0, 8)
 x = Adc.AdcMillivolts(x, 3300)
 Adc.AdcRefFvr(1)
+r = Eeprom.EepromRead(0)
+r = Eeprom.EepromWrite(0, r)
+x = Eeprom.EepromReadWord(2)
+r = Eeprom.EepromWriteWord(2, x)
