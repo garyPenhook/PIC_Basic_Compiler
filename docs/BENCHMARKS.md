@@ -54,14 +54,34 @@ The other kernels are unchanged. `add32` is now 0.26× XC8 `-O2` in cycles; `fix
 bytes where the old compare was already cheap; it wins where the compare was wide (`fixmul`'s
 16-bit `Step 7` loop).
 
+## After M5 frame overlay, in-place read-modify-write and the peephole pass, 2026-10-24
+
+| kernel | basicc B | RAM | cyc | was B | was RAM | was cyc |
+|---|---:|---:|---:|---:|---:|---:|
+| add32 | 108 | 18 | 3610 | 130 | 18 | 4710 |
+| bitbang | 34 | 4 | 125 | 34 | 4 | 182 |
+| cmpchain | 64 | 6 | 3222 | 64 | 6 | 3222 |
+| crc8 | 70 | 6 | 6257 | 72 | 6 | 6769 |
+| div16 | 174 | 17 | 31832 | 190 | 17 | 32232 |
+| fixmul | 78 | 11 | 3578 | 102 | 11 | 5294 |
+| mul8 | 54 | 9 | 1106 | 70 | 9 | 1906 |
+| state | 72 | 6 | 1580 | 74 | 5 | 1877 |
+| sum16 | 46 | 6 | 1806 | 46 | 6 | 1806 |
+
+Size relative to XC8 `-Os`: median **0.64**, worst 0.81 (crc8). Cycles relative to XC8 `-O2`: median
+**0.94**, worst 1.04 (div16); `fixmul` and `mul8` are at or below XC8. The M5 gates above are met.
+None of the kernels has more than one routine, so frame overlay does not show here (its test is
+`tests/exec/overlay.bas`: sibling routines share storage); the gains are `x = x op <expression>`
+folded into the variable (`mul8`, `fixmul`, `add32`) and the peephole pass (dead accumulator
+copies, a redundant `xorlw 0` after `andlw`, a branch to the next instruction, repeated `movlw`).
+
 ## Why the numbers look like this
 
 * Size is already below XC8 because nothing is emitted that is not used (no runtime, one static
   frame, helpers only when reached) and branches are relaxed to their short forms.
-* Cycles lose where the generator is naive: multiplication by a constant and 16×16 products use
-  the shift-and-add helper instead of `MULWF`/`MULLW` (M5, pass 6), `For` loops compare and branch
-  where a count-down `DECFSZ` loop would do (M5), and values travel through the `__A` accumulator
-  where a peephole would keep them in place (M5, pass 8).
+* Cycles lost in the M4 baseline where the generator was naive; M5 added the hardware multiply,
+  counted `DECFSZ` loops, in-place updates and the peephole pass (sections above). What is left is
+  scratch-to-scratch copies (`movff __C0, __A0`) and the bit-store patterns (PLAN pass 8).
 
 ## Targets, calibrated from this table (PLAN §7A.4, D18)
 

@@ -110,6 +110,51 @@ fn reentrant_routines_are_rejected() {
     assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
 }
 
+/// Addresses of the one-byte `NAME equ 0x...` data lines in generated assembly.
+fn data_addrs(asm: &str) -> std::collections::HashMap<String, u32> {
+    asm.lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            let (name, kw, val) = (w.next()?, w.next()?, w.next()?);
+            if kw != "equ" || name.starts_with("__") {
+                return None;
+            }
+            Some((name.to_string(), u32::from_str_radix(val.strip_prefix("0x")?, 16).ok()?))
+        })
+        .collect()
+}
+
+#[test]
+fn frames_overlay_only_when_never_live_together() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("overlay");
+    let hex = out.join("overlay.hex");
+    let r = Command::new(basicc()).arg(root().join("tests/exec/overlay.bas")).arg("-S").arg("-o").arg(&hex).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let a = data_addrs(&std::fs::read_to_string(out.join("overlay.S")).unwrap());
+    // Siblings (neither calls the other) share storage.
+    assert_eq!(a["T_DIRTY__Q"], a["T_ZA__Q"], "sibling frames should overlay");
+    // A routine and the routine it calls never do: Sum3 is live while F1 runs.
+    let sum3 = ["T_SUM3__S", "T_SUM3__K", "T_SUM3__RESULT", "T_SUM3__H1"].map(|n| a[n]);
+    let f1 = ["T_F1__X", "T_F1__RESULT", "T_F1__T"].map(|n| a[n]);
+    for x in sum3 {
+        assert!(!f1.contains(&x), "caller and callee frames overlap at {x:#x}");
+    }
+    // Nor do the chain Outer -> Mid -> Inner.
+    let chain = [["T_OUTER__O", "T_OUTER__X", "T_OUTER__RESULT"], ["T_MID__M", "T_MID__X", "T_MID__RESULT"], ["T_INNER__T", "T_INNER__X", "T_INNER__RESULT"]];
+    for i in 0..3 {
+        for j in i + 1..3 {
+            for x in chain[i] {
+                assert!(!chain[j].iter().any(|y| a[*y] == a[x]), "{x} overlaps {}", chain[j].iter().find(|y| a[**y] == a[x]).unwrap());
+            }
+        }
+    }
+}
+
+/// The simulator tests run twice: optimised, and as the `-O0` reference build the optimiser is
+/// differential-tested against (PLAN §7A.1).
 #[test]
 fn exec_programs_in_simulator() {
     if std::env::var("BASICC_MDB").is_err() {
@@ -117,13 +162,16 @@ fn exec_programs_in_simulator() {
         return;
     }
     let files: Vec<PathBuf> = bas_files(&root().join("tests/exec"));
-    let r = Command::new("python3")
-        .arg(root().join("scripts/exec-test.py"))
-        .arg("--basicc")
-        .arg(basicc())
-        .args(&files)
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
-    assert!(r.status.success(), "{text}");
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3")
+            .arg(root().join("scripts/exec-test.py"))
+            .arg("--basicc")
+            .arg(basicc())
+            .arg(format!("--flags={flags}"))
+            .args(&files)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
 }

@@ -66,7 +66,13 @@ convention. Measured against the cost model (open question 3) in M5.
   summed in `__C`); a multiply by a constant is expanded inline with `MULLW` and calls no helper. Both
   clobber `PRODH:PRODL` and `__C`. Division truncates toward zero; the remainder has the dividend's sign; division
   by zero yields an all-ones quotient and the dividend as remainder (no trap).
-* **Tail calls, inlining, overlay**: not yet (M5). Every routine's frame is private.
+* **Frame overlay (done)**: two routines whose frames can never be live together (neither reaches
+  the other through the call graph) are given the same addresses; a routine and anything it calls,
+  directly or not, never overlap. The main program's own storage, globals and compiler scratch are
+  never overlaid, and interrupt handlers (M6) must not be. Because the storage is shared, a local
+  and `Result` start at zero on **every** entry (the clear is skipped when the body certainly assigns
+  the variable first); parameters are written by the caller.
+* **Tail calls, inlining**: not yet (M5).
 * **Reentrant routines**: not yet (M9).
 
 ## 4. Symbol naming (needed by embedded assembly, LANGUAGE.md §13)

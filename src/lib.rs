@@ -9,6 +9,7 @@ pub mod ir;
 pub mod lexer;
 pub mod lower;
 pub mod parser;
+pub mod peephole;
 pub mod pp;
 pub mod project;
 pub mod sema;

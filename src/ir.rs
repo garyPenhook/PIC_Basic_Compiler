@@ -22,8 +22,8 @@ pub enum VarKind {
     Hidden,
 }
 
-/// A statically allocated object (an array is one object of `bytes` = elements × size). Every routine has its own frame, so a variable is only live
-/// while its routine runs (frames are not overlaid yet; M5).
+/// A statically allocated object (an array is one object of `bytes` = elements × size). A routine's variables are only live while the routine runs, and
+/// the frames of routines that are never live together share addresses (`owner` names the routine).
 #[derive(Clone, Debug)]
 pub struct Var {
     /// Symbol written to the assembly file.
@@ -346,4 +346,61 @@ pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bo
         St::Continue => false,
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
     })
+}
+
+/// The statement lists nested directly inside `st`.
+fn sub_blocks(st: &St) -> Vec<&[S]> {
+    match st {
+        St::If(arms, other) => arms.iter().map(|(_, b)| b.as_slice()).chain(std::iter::once(other.as_slice())).collect(),
+        St::While(_, b) | St::Repeat(b, _) | St::For { body: b, .. } | St::Count { body: b, .. } => vec![b.as_slice()],
+        _ => Vec::new(),
+    }
+}
+
+/// Whether any statement of `body` (at any depth) reads, writes or takes the address of `var`.
+/// Raw assembly counts as a mention; a call does not (a routine's own variables are not visible
+/// to its callees).
+pub fn mentions(body: &[S], var: VarId) -> bool {
+    let ex = |e: &Ex| e.touches(var, true);
+    body.iter().any(|s| match &s.st {
+        St::Assign(p, e) => p.touches(var, true) || ex(e),
+        St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::Clear(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => p.touches(var, true),
+        St::Copy { dst, src, .. } => dst.touches(var, true) || src.touches(var, true),
+        St::StrSet { dst, parts, .. } => dst.touches(var, true) || parts.iter().any(|p| p.touches(var, true)),
+        St::Call(_, args) => args.iter().any(|(p, e)| p.touches(var, true) || ex(e)),
+        St::If(arms, other) => arms.iter().any(|(c, b)| ex(c) || mentions(b, var)) || mentions(other, var),
+        St::While(c, b) | St::Repeat(b, c) => ex(c) || mentions(b, var),
+        St::For { var: p, from, limit, body, .. } => p.touches(var, true) || ex(from) || ex(limit) || mentions(body, var),
+        St::Count { counter, body, step, .. } => counter.touches(var, true) || step.as_ref().is_some_and(|(p, _)| p.touches(var, true)) || mentions(body, var),
+        St::Asm(_) => true,
+        St::DelayUs(e) | St::DelayMs(e) => ex(e),
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt => false,
+    })
+}
+
+fn has_return(s: &S) -> bool {
+    matches!(s.st, St::Return) || sub_blocks(&s.st).into_iter().any(|b| b.iter().any(has_return))
+}
+
+fn has_jump_target(body: &[S]) -> bool {
+    body.iter().any(|s| matches!(s.st, St::Label(_) | St::Goto(_)) || sub_blocks(&s.st).into_iter().any(has_jump_target))
+}
+
+/// Whether the scalar `var` is certainly assigned before anything reads it: the first top-level
+/// statement that mentions it is a plain assignment of the whole variable from an expression that
+/// does not mention it, and the body has no `Goto`/label that could jump over that assignment.
+pub fn written_first(body: &[S], var: VarId) -> bool {
+    if has_jump_target(body) {
+        return false;
+    }
+    let Some(at) = body.iter().position(|s| mentions(std::slice::from_ref(s), var)) else { return false };
+    // A `Return` before the assignment leaves the variable unwritten.
+    if body[..at].iter().any(has_return) {
+        return false;
+    }
+    let first = &body[at];
+    match &first.st {
+        St::Assign(p, e) => matches!(p.base, Base::Var(v) if v == var) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && !e.touches(var, true),
+        _ => false,
+    }
 }

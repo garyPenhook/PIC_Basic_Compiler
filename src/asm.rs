@@ -61,6 +61,12 @@ pub enum Item {
     /// Lines from an `Asm` block, passed through.
     Raw(String),
     Comment(String),
+    /// End of a statement: no value is carried in `WREG` or the scratch registers past it. Emits
+    /// nothing; the peephole pass reads it.
+    Fence,
+    /// `Keep(true)` starts, and `Keep(false)` ends, code whose exact instructions matter (cycle
+    /// counted delays): the peephole pass leaves it untouched. Emits nothing.
+    Keep(bool),
     /// Constant bytes in program memory (an even number of them).
     Data(Vec<u8>),
 }
@@ -94,7 +100,7 @@ enum Form {
 
 fn size_of(it: &Item, f: Form) -> u32 {
     match it {
-        Item::Label(_) | Item::Comment(_) => 0,
+        Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) => 0,
         Item::Ins(t) => words_of(t),
         Item::Raw(t) => words_of(t),
         Item::Br(Cc::Always, _) => if f == Form::Short { 1 } else { 2 },
@@ -156,6 +162,7 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
                     Item::Ins(t) => lines.push(format!("    {t}")),
                     Item::Raw(t) => lines.push(format!("    {t}")),
                     Item::Comment(t) => lines.push(format!("    ; {t}")),
+                    Item::Fence | Item::Keep(_) => {}
                     Item::Data(b) => {
                         let text: Vec<String> = b.iter().map(|x| format!("0x{x:02X}")).collect();
                         lines.push(format!("    db {}", text.join(", ")));

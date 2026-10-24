@@ -16,6 +16,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--basicc", default=os.path.join(os.path.dirname(__file__), "../target/debug/basicc"))
 ap.add_argument("--mdb", default=None)
 ap.add_argument("--keep", action="store_true")
+ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for the reference build")
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()
 mdb = a.mdb or sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh"))[-1]
@@ -26,7 +27,7 @@ fails = 0
 for src in a.files:
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
-    r = subprocess.run([a.basicc, src, "-o", hexf], capture_output=True, text=True)
+    r = subprocess.run([a.basicc, *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL {name}: compile\n{r.stderr}")
         fails += 1

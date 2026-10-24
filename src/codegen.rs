@@ -28,6 +28,8 @@ pub struct Target {
     /// First address of the Access Bank's SFR half.
     pub access_sfr: u32,
     pub sfr: HashMap<String, u32>,
+    /// Optimise (`-O0` turns it off, giving the reference build for differential tests).
+    pub opt: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,55 +47,104 @@ pub struct Obj {
     pub force_access: bool,
     /// Zero-initialised at start-up (user variables only).
     pub zero: bool,
+    /// The routine whose frame this object belongs to. Objects of two routines that are never
+    /// live together may share addresses; `None` objects (globals, scratch, the main program's
+    /// own storage) are exclusive.
+    pub owner: Option<usize>,
 }
 
 const SCRATCH: [&str; 4] = ["A", "B", "C", "D"];
 
-pub fn plan_layout(objs: &[Obj], tgt: &Target) -> Result<Layout, String> {
+/// Which pairs of routines can never be live at once: neither one can reach the other through
+/// the call graph (`calls[f]` lists the routines `f` calls directly; the last entry is the main
+/// program). Indexed `[f][g]`.
+pub fn independent(calls: &[BTreeSet<FuncId>]) -> Vec<Vec<bool>> {
+    let n = calls.len();
+    let mut reach = vec![vec![false; n]; n];
+    for f in 0..n {
+        let mut stack: Vec<usize> = calls[f].iter().copied().collect();
+        while let Some(g) = stack.pop() {
+            if !reach[f][g] {
+                reach[f][g] = true;
+                stack.extend(calls[g].iter().copied());
+            }
+        }
+    }
+    (0..n).map(|f| (0..n).map(|g| f != g && !reach[f][g] && !reach[g][f]).collect()).collect()
+}
+
+/// A run of RAM being filled by `plan_layout`.
+struct Region {
+    lo: u32,
+    hi: u32,
+    /// Placed blocks: start, length, owner.
+    placed: Vec<(u32, u32, Option<usize>)>,
+}
+
+impl Region {
+    /// The lowest start where `n` bytes fit without clobbering a block that can be live at the
+    /// same time as `owner`. With `one_bank` the bytes stay inside one 256-byte bank, so a single
+    /// BSR value covers them.
+    fn find(&self, n: u32, owner: Option<usize>, one_bank: bool, indep: &[Vec<bool>]) -> Option<u32> {
+        let mut cands: Vec<u32> = vec![self.lo];
+        for &(s, l, _) in &self.placed {
+            cands.push(s);
+            cands.push(s + l);
+        }
+        if one_bank {
+            let mut b = (self.lo >> 8) + 1;
+            while (b << 8) < self.hi {
+                cands.push(b << 8);
+                b += 1;
+            }
+        }
+        cands.sort_unstable();
+        cands.dedup();
+        cands.into_iter().find(|&c| {
+            c >= self.lo
+                && c + n <= self.hi
+                && (!one_bank || if n <= 256 { (c >> 8) == ((c + n - 1) >> 8) } else { c & 0xFF == 0 })
+                && self.placed.iter().all(|&(s, l, o)| c + n <= s || s + l <= c || matches!((owner, o), (Some(a), Some(b)) if indep[a][b]))
+        })
+    }
+}
+
+pub fn plan_layout(objs: &[Obj], tgt: &Target, indep: &[Vec<bool>]) -> Result<Layout, String> {
     let mut addr: Vec<Option<u32>> = vec![None; objs.len()];
-    let (a_lo, a_hi) = tgt.access;
-    let mut acc_next = a_lo;
+    let mut access = Region { lo: tgt.access.0, hi: tgt.access.1, placed: Vec::new() };
     // Scratch first, in order, so the helpers' registers sit at fixed low addresses.
     for (i, o) in objs.iter().enumerate() {
         if o.force_access && o.bytes > 0 {
-            if acc_next + o.bytes > a_hi {
+            let Some(a) = access.find(o.bytes, None, false, indep) else {
                 return Err("out of Access Bank RAM for compiler scratch registers".into());
-            }
-            addr[i] = Some(acc_next);
-            acc_next += o.bytes;
+            };
+            addr[i] = Some(a);
+            access.placed.push((a, o.bytes, None));
         }
     }
     let mut order: Vec<usize> = (0..objs.len()).filter(|&i| !objs[i].force_access && objs[i].bytes > 0).collect();
     order.sort_by(|&x, &y| objs[y].weight.cmp(&objs[x].weight).then(x.cmp(&y)));
-    // Hot objects go into the Access Bank while it has room; the rest are banked.
-    let mut banked: Vec<usize> = Vec::new();
+    let mut banks: Vec<Region> = tgt.ram.iter().map(|&(lo, hi)| Region { lo, hi, placed: Vec::new() }).collect();
+    // Hot objects go into the Access Bank while it has room; the rest are banked. Either way an
+    // object may sit on top of a frame that is never live at the same time.
     for &i in &order {
-        if acc_next + objs[i].bytes <= a_hi {
-            addr[i] = Some(acc_next);
-            acc_next += objs[i].bytes;
-        } else {
-            banked.push(i);
+        let o = &objs[i];
+        if let Some(a) = access.find(o.bytes, o.owner, false, indep) {
+            addr[i] = Some(a);
+            access.placed.push((a, o.bytes, o.owner));
+            continue;
         }
-    }
-    let mut ranges: Vec<(u32, u32)> = tgt.ram.clone();
-    for &i in &banked {
-        let n = objs[i].bytes;
         let mut placed = false;
-        for r in ranges.iter_mut() {
-            let mut s = r.0;
-            // Keep an object inside one 256-byte bank so a single BSR value covers it.
-            if (s >> 8) != ((s + n - 1) >> 8) {
-                s = ((s >> 8) + 1) << 8;
-            }
-            if s + n <= r.1 {
-                addr[i] = Some(s);
-                r.0 = s + n;
+        for r in banks.iter_mut() {
+            if let Some(a) = r.find(o.bytes, o.owner, true, indep) {
+                addr[i] = Some(a);
+                r.placed.push((a, o.bytes, o.owner));
                 placed = true;
                 break;
             }
         }
         if !placed {
-            return Err(format!("out of data RAM placing `{}` ({} bytes)", objs[i].name, n));
+            return Err(format!("out of data RAM placing `{}` ({} bytes)", o.name, o.bytes));
         }
     }
     Ok(Layout { addr })
@@ -183,6 +234,8 @@ struct Gen<'p> {
     scratch_max: [u32; 4],
     loops: Vec<(String, String)>,
     called: BTreeSet<FuncId>,
+    /// Routines each routine calls directly (the last entry is the main program).
+    calls: Vec<BTreeSet<FuncId>>,
     helpers: BTreeSet<String>,
     /// String literals held in program memory, in first-use order (label `__STR<n>`).
     lits: Vec<Vec<u8>>,
@@ -221,6 +274,7 @@ impl<'p> Gen<'p> {
             scratch_max: [0; 4],
             loops: Vec::new(),
             called: BTreeSet::new(),
+            calls: vec![BTreeSet::new(); p.funcs.len() + 1],
             helpers: BTreeSet::new(),
             lits: Vec::new(),
             errors: Vec::new(),
@@ -1757,21 +1811,45 @@ impl<'p> Gen<'p> {
             self.store_src(&dst, n, &s);
             return;
         }
-        // In-place read-modify-write: `x = x op operand`.
+        // In-place read-modify-write: `x = x op operand` (or `operand op x` for a commutative op).
         if let ExK::Bin(op, l, r) = &e.k
             && matches!(op, BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor)
-            && let ExK::Load(lp) = &l.k
-            && lp.bit.is_none()
-            && !lp.indirect()
-            && lp.base == p.base
-            && lp.off == p.off
-            && self.place_mem(lp, false).sym == dst.sym
-            && l.w == e.w
-            && let Some(rs) = self.simple(r)
         {
-            let d2 = dst.clone();
-            self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &rs, n);
-            return;
+            let is_p = |g: &Self, x: &Ex| {
+                matches!(&x.k, ExK::Load(lp) if lp.bit.is_none() && !lp.indirect() && lp.base == p.base && lp.off == p.off && g.place_mem(lp, false).sym == dst.sym) && x.w == e.w
+            };
+            let operand = if is_p(self, l) {
+                Some(&**r)
+            } else if *op != BinKind::Sub && self.tgt.opt && is_p(self, r) {
+                Some(&**l)
+            } else {
+                None
+            };
+            if let Some(x) = operand {
+                let d2 = dst.clone();
+                if let Some(xs) = self.simple(x) {
+                    self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &xs, n);
+                    return;
+                } else if self.tgt.opt && !x.has_call() && Self::nb(x) == n {
+                    // The operand is worked out first (it cannot change `x`: no call), then folded
+                    // into `x` in place, without a round trip through the accumulator.
+                    self.gen_val(x);
+                    if n == 1 {
+                        let name = match op {
+                            BinKind::Add => "addwf",
+                            BinKind::Sub => "subwf",
+                            BinKind::And => "andwf",
+                            BinKind::Or => "iorwf",
+                            _ => "xorwf",
+                        };
+                        self.fop(name, &d2, "f");
+                    } else {
+                        let a = self.a(0);
+                        self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &Src::Mem(a, n), n);
+                    }
+                    return;
+                }
+            }
         }
         self.gen_val(e);
         if n == 1 {
@@ -1832,6 +1910,7 @@ impl<'p> Gen<'p> {
 
     fn do_call(&mut self, f: FuncId, args: &[(Place, Ex)]) {
         self.called.insert(f);
+        self.calls[self.cur].insert(f);
         // Arguments that contain calls are evaluated first, so a nested call cannot overwrite
         // a parameter that was already stored.
         let nested = args.len() > 1 && args.iter().any(|(_, e)| e.has_call());
@@ -1859,6 +1938,8 @@ impl<'p> Gen<'p> {
     fn block(&mut self, ss: &[S]) {
         for s in ss {
             self.stmt(s);
+            // Nothing is carried in WREG or the scratch registers from one statement to the next.
+            self.items.push(Item::Fence);
         }
     }
 
@@ -2088,7 +2169,9 @@ impl<'p> Gen<'p> {
         if let Some(n) = e.as_const() {
             let per = if ms { self.fcy_per_us() * 1000.0 } else { self.fcy_per_us() };
             let cycles = (n as f64 * per).round() as u64;
+            self.items.push(Item::Keep(true));
             self.emit_cycles(cycles, 0);
+            self.items.push(Item::Keep(false));
             return;
         }
         if e.w > 16 {
@@ -2109,6 +2192,8 @@ impl<'p> Gen<'p> {
         }
         // 16-bit counter in D0:D1, zero-guarded, counting down to a borrow.
         self.gen_to_acc_16(e);
+        // The cycle count of the rest is exact: the peephole pass must leave it alone.
+        self.items.push(Item::Keep(true));
         let (a0, a1) = (self.a(0), self.a(1));
         let (d0, d1) = (self.d(0), self.d(1));
         let skip = self.fresh();
@@ -2131,6 +2216,7 @@ impl<'p> Gen<'p> {
         self.fop("subwfb", &d1, "f");
         self.br(Cc::C, &lp);
         self.label(&skip);
+        self.items.push(Item::Keep(false));
     }
 
     fn gen_to_acc_16(&mut self, e: &Ex) {
@@ -2502,7 +2588,8 @@ impl<'p> Gen<'p> {
         // Zero ranges: all allocated user variables, merged.
         let mut ranges: Vec<(u32, u32)> = Vec::new();
         for (i, v) in self.p.vars.iter().enumerate() {
-            if let Some(a) = layout.addr[i] {
+            // A routine's own variables share overlaid storage and are cleared on entry instead.
+            if v.owner.is_none() && let Some(a) = layout.addr[i] {
                 ranges.push((a, a + v.bytes));
             }
         }
@@ -2584,22 +2671,23 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let mut temps = g1.temp_max.clone();
     let mut errors: Vec<(Span, String)> = Vec::new();
     let pass1_errors = g1.errors.clone();
+    let indep = independent(&g1.calls);
     let nvars = p.vars.len();
     drop(g1);
     let mut result = None;
     for _round in 0..4 {
         let mut objs: Vec<Obj> = Vec::new();
         for (i, v) in p.vars.iter().enumerate() {
-            objs.push(Obj { name: v.asm.clone(), bytes: if uses[i] > 0 { v.bytes } else { 0 }, weight: uses[i], force_access: false, zero: true });
+            objs.push(Obj { name: v.asm.clone(), bytes: if uses[i] > 0 { v.bytes } else { 0 }, weight: uses[i], force_access: false, zero: true, owner: v.owner });
         }
         for r in 0..4 {
-            objs.push(Obj { name: format!("__{}", SCRATCH[r]), bytes: scratch[r], weight: u64::MAX, force_access: true, zero: false });
+            objs.push(Obj { name: format!("__{}", SCRATCH[r]), bytes: scratch[r], weight: u64::MAX, force_access: true, zero: false, owner: None });
         }
         for f in 0..=p.funcs.len() {
             let asm = if f < p.funcs.len() { p.funcs[f].asm.clone() } else { p.main.asm.clone() };
-            objs.push(Obj { name: format!("{asm}__TMP"), bytes: temps[f], weight: uses[nvars + 4 + f], force_access: false, zero: false });
+            objs.push(Obj { name: format!("{asm}__TMP"), bytes: temps[f], weight: uses[nvars + 4 + f], force_access: false, zero: false, owner: if f < p.funcs.len() { Some(f) } else { None } });
         }
-        let layout = match plan_layout(&objs, tgt) {
+        let layout = match plan_layout(&objs, tgt, &indep) {
             Ok(l) => l,
             Err(e) => {
                 errors.push((Span::default(), e));
@@ -2631,6 +2719,23 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let Some((objs, layout, items, helpers)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
         return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, objs: vec![], layout: Layout::default(), errors };
+    };
+    let items = if tgt.opt {
+        let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
+        for (i, o) in objs.iter().enumerate() {
+            if let Some(a) = layout.addr[i] {
+                let name = if i >= nvars && i < nvars + 4 { format!("__{}0", SCRATCH[i - nvars]) } else { o.name.clone() };
+                plain.insert(name, (a, o.bytes));
+            }
+        }
+        for n in ["PRODL", "PRODH"] {
+            if let Some(&a) = tgt.sfr.get(n) {
+                plain.insert(n.to_string(), (a, 1));
+            }
+        }
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr })
+    } else {
+        items
     };
     let asmd: Assembled = assemble(&items, 0);
     let mut text = String::new();

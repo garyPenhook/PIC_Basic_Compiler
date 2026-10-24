@@ -145,7 +145,9 @@ Zero-cost partial access is the intended way to work with multi-byte values effi
   `Dim Out As Serial.Write`. (SF)
 * **Initial values**: all variables are zero-initialised at start-up unless the declaration
   carries an initialiser (`Dim n As Byte = 10`) (NEW). The compiler removes the clearing code
-  for variables it can prove are written before being read (efficiency, PLAN §7A).
+  for variables it can prove are written before being read (efficiency, PLAN §7A). A routine's
+  locals and `Result` are zero at **every entry** to the routine, not only the first (their storage
+  is shared with other routines, §7); an initialiser is applied at every entry too.
 
 ## 5. Expressions
 
@@ -406,7 +408,7 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
   overlapping cases are an error and an `Else` that can never run is a warning (`W-CASE-ELSE`).
 * **Interrupt handlers** may call a user routine only inside `Save(…) … Restore` (error
   `E-ISR-CALL` otherwise). This is the conservative form of the rule in §8; the proof that a
-  routine touches only the handler's own storage comes with frame overlay in M5.
+  routine touches only the handler's own storage needs interrupt handlers (M6).
 * **Calls.** Calling a function as a statement discards its result. `FunctionName = value` and
   `Result = value` are the same assignment.
 * **Addresses.** `@x` / `AddressOf(x)` has type `Word` for RAM objects and `LongWord` for constant

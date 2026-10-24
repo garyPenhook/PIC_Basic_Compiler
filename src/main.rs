@@ -12,7 +12,7 @@ use basicc::sema::{SemaConfig, analyze};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: basicc [--check] [-S] [--report] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
+const USAGE: &str = "usage: basicc [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
 
 /// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
 /// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
@@ -26,6 +26,7 @@ fn main() -> ExitCode {
     let mut check_only = false;
     let mut asm_only = false;
     let mut want_report = false;
+    let mut optimise = true;
     let mut out_hex: Option<PathBuf> = None;
     let mut pic_as: Option<PathBuf> = None;
     let mut defines = Vec::new();
@@ -40,6 +41,8 @@ fn main() -> ExitCode {
             "--check" => check_only = true,
             "-S" => asm_only = true,
             "--report" => want_report = true,
+            "-O0" => optimise = false,
+            "-O1" | "-O2" | "-Os" => optimise = true,
             "-o" => match args.next() {
                 Some(v) => out_hex = Some(PathBuf::from(v)),
                 None => return usage(),
@@ -101,7 +104,9 @@ fn main() -> ExitCode {
     let mut generated = None;
     if let Some(p) = &program {
         let dev = analysis.device.as_ref().unwrap();
-        let g = generate(p, &target_of(dev));
+        let mut target = target_of(dev);
+        target.opt = optimise;
+        let g = generate(p, &target);
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());
         }

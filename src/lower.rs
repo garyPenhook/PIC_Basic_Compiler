@@ -460,12 +460,50 @@ impl<'a> Lowerer<'a> {
         }
         let mut rest = self.block(&r.body.stmts, ui);
         body.append(&mut rest);
+        let mut entry = self.entry_clears(id, &body, r.name.span);
+        entry.append(&mut body);
+        let mut body = entry;
         body.push(S { st: St::Return, span: r.name.span });
         self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
         self.cur_result = saved.3;
+    }
+
+    /// Statements that zero the routine's locals and `Result` on entry. Frames are overlaid, so
+    /// storage holds whatever another routine left there; a variable is zero at every entry
+    /// unless the body provably writes it first (LANGUAGE.md §4).
+    fn entry_clears(&self, id: FuncId, body: &[S], span: Span) -> Vec<S> {
+        let mut out = Vec::new();
+        for (v, var) in self.vars.iter().enumerate() {
+            if var.owner != Some(id) || !matches!(var.kind, VarKind::Local | VarKind::Result) {
+                continue;
+            }
+            let ty = var.ty.clone();
+            let scalar = nat(&ty).is_some();
+            if (scalar || matches!(ty, Ty::Str(_))) && written_first(body, v) {
+                continue;
+            }
+            if var.kind == VarKind::Local && !mentions(body, v) {
+                continue;
+            }
+            let place = |off: u32, ty: Ty| Place { base: Base::Var(v), off, bit: None, idx: None, ty };
+            if scalar {
+                out.push(S { st: St::Clear(place(0, ty)), span });
+            } else if matches!(ty, Ty::Str(_)) {
+                // The text is empty once its first byte is Null.
+                out.push(S { st: St::Assign(place(0, Ty::Char), Ex::konst(0, 8, false)), span });
+            } else {
+                let mut off = 0;
+                while off < var.bytes {
+                    let n = (var.bytes - off).min(255);
+                    out.push(S { st: St::ClearMem(place(off, ty.clone()), n), span });
+                    off += n;
+                }
+            }
+        }
+        out
     }
 
     // ---- places --------------------------------------------------------------------------

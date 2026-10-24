@@ -161,7 +161,32 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   trip count), trip counts over 255. Test: `tests/exec/countloop.bas`. Benchmarks: fixmul 7437 →
   5294 cycles and 128 → 102 bytes, add32 4808 → 4710; kernels whose loops are not constant-bounded
   gain one hidden byte of RAM and two bytes of code.
-- Next in M5: frame overlay, peephole.
+- Frame overlay (done): `independent()` in `codegen.rs` derives from the call graph which routines
+  can never be live together; `plan_layout` places each object first-fit (hottest first, Access Bank
+  first) and lets it sit on top of objects of independent routines (`Obj::owner`). Locals and `Result`
+  are therefore cleared on entry (`entry_clears` in `lower.rs`, skipped when `written_first` proves an
+  assignment comes first; D37) and start-up clears globals only. Not overlaid: globals, scratch, the
+  main program's own objects, `ByRefConst` string buffers. Interrupt handlers (M6) must be `owner =
+  None`. Tests: `tests/exec/overlay.bas` (siblings, nested chain, stale-storage cases, nested
+  calls in expressions) and `frames_overlay_only_when_never_live_together` in `tests/backend.rs`.
+- Read-modify-write (done): `x = x op <expr>` and `x = <expr> op x` (commutative ops) work the operand
+  out first and fold it into `x` (`addwf x,f` / `addwf A,w` chains) when the operand contains no
+  call. Test: `tests/exec/rmw.bas`.
+- Peephole (done, `src/peephole.rs`): branch to the next instruction, `xorlw 0` after an instruction
+  that set Z/N, redundant `WREG` loads, copy forwarding from `movff s, __X`, and dead stores to
+  `WREG`/`__A`..`__D` (dead at a statement end, `Item::Fence`). Local to straight runs; status flags
+  are tracked, so a flag-setting instruction is only deleted when nothing can read the flags; only
+  compiler-placed RAM (and PRODL/PRODH) is ever reasoned about. Cycle-exact delay code is fenced
+  off (`Item::Keep`). `-O0` disables the pass and the RMW forms (D38); the simulator suite runs every
+  program both ways. Interrupts (M6): a handler can change a variable between a store and a reload,
+  so `W::Mem` reasoning must be revisited for variables a handler writes. Not done: bit-store
+  patterns, scratch-to-scratch copy forwarding, jump threading.
+- Review fixes (done): passes never touch the instruction after a skip and never use it as a copy
+  source; `Result` is cleared on entry unless a straight-line assignment precedes any `Return`;
+  objects over 256 bytes start on a bank boundary. Test: `tests/exec/review.bas`. Known cost: the
+  first-fit layout (`Region::find`) is slower than the old bump pointer; not measured on large programs.
+- Remaining for the M5 exit: golden-assembly tests, zero-init elimination of globals, single-call
+  inlining.
 
 ## Backlog: extended instruction set (XINST = 1)
 Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Scheduled for M9 with
