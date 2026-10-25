@@ -376,3 +376,6 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   now follows `btfsc/btfss` + `bra` (both paths must be dead). `my_src/first_test`: 89 -> 75 words (`Settle` 41 -> 27). Test
   `bit_branch_sees_through_a_skip_over_a_branch`.
 
+- 0.1.3: every successful build ends with a flash and RAM bar against the chosen device (`driver::usage_summary`): flash bytes of
+  `memory.program.size`, RAM bytes against `usable_gpr` (system RAM excluded). Colour (green / yellow from 75% / red from 90%) only on a
+  terminal with `NO_COLOR` unset, so the VS Code task terminal and logs stay plain.

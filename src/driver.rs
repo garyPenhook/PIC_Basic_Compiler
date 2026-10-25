@@ -63,6 +63,35 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, hex: &Path, map: &Pat
     Ok(AsmRun { ok: out.status.success(), output: text })
 }
 
+/// Data RAM bytes the program places (variables, temporaries, scratch registers).
+pub fn ram_used(g: &Generated) -> u32 {
+    g.objs.iter().enumerate().filter(|(i, _)| g.layout.addr.get(*i).copied().flatten().is_some()).map(|(_, o)| o.bytes).sum()
+}
+
+/// One bar line: `label [####....]  used / size unit (pct)`.
+fn usage_line(label: &str, used: u32, size: u32, unit: &str, color: bool) -> String {
+    const W: usize = 24;
+    let pct = if size == 0 { 0.0 } else { used as f64 * 100.0 / size as f64 };
+    let filled = ((pct / 100.0 * W as f64).ceil() as usize).min(W).max(usize::from(used > 0));
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(W - filled));
+    let (on, off) = match (color, pct) {
+        (false, _) => ("", ""),
+        (true, p) if p >= 90.0 => ("\x1b[31m", "\x1b[0m"),
+        (true, p) if p >= 75.0 => ("\x1b[33m", "\x1b[0m"),
+        (true, _) => ("\x1b[32m", "\x1b[0m"),
+    };
+    format!("  {label:<6}{on}{bar}{off}  {used:>6} / {size} {unit}  ({pct:.1}%)\n")
+}
+
+/// The flash and RAM use against what the chosen device has, printed after every successful build.
+pub fn usage_summary(dev: &Device, g: &Generated, color: bool) -> String {
+    let flash_bytes = dev.memory.program.size;
+    let mut s = format!("{}:\n", dev.device.name);
+    s.push_str(&usage_line("Flash", g.out.words * 2, flash_bytes, "bytes", color));
+    s.push_str(&usage_line("RAM", ram_used(g), dev.memory.data.usable_gpr, "bytes", color));
+    s
+}
+
 pub fn report(p: &Program, g: &Generated) -> String {
     let mut s = String::new();
     s.push_str(&format!("Program: {} words ({} bytes)\n", g.out.words, g.out.words * 2));

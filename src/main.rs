@@ -5,7 +5,7 @@
 
 use basicc::codegen::generate;
 use basicc::diag::{Diagnostics, Render, Severity};
-use basicc::driver::{find_pic_as, report, run_pic_as, target_of};
+use basicc::driver::{find_pic_as, report, run_pic_as, target_of, usage_summary};
 use basicc::lower::lower;
 use basicc::project::{LoadConfig, load};
 use basicc::sema::{SemaConfig, analyze};
@@ -167,6 +167,8 @@ fn main() -> ExitCode {
         }
     }
     eprintln!("basicc: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);
+    let color = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none();
+    eprint!("{}", usage_summary(analysis.device.as_ref().unwrap(), &generated, color));
     ExitCode::SUCCESS
 }
 
