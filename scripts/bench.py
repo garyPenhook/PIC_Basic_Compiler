@@ -6,7 +6,10 @@ two markers (BASIC: `mark_a:` / `mark_b:` labels in Asm blocks; C: calls to mark
 whose call overhead is measured with an empty kernel and subtracted). The value each kernel
 leaves in `sink` must be identical in all builds -- a difference is a bug somewhere.
 
-Usage: bench.py [--md] [kernel ...]
+XC8 program sizes have the marker scaffolding (the two noinline marker functions and their calls,
+measured as empty-harness minus bare-main) subtracted; --raw leaves it in.
+
+Usage: bench.py [--md] [--raw] [kernel ...]
 """
 import argparse, glob, os, re, subprocess, sys, tempfile
 
@@ -14,6 +17,7 @@ root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ap = argparse.ArgumentParser()
 ap.add_argument("--basil", default=os.path.join(root, "target/release/basil"))
 ap.add_argument("--md", action="store_true", help="print a Markdown table")
+ap.add_argument("--raw", action="store_true", help="do not subtract the XC8 marker scaffolding from sizes")
 ap.add_argument("kernels", nargs="*")
 a = ap.parse_args()
 if not os.path.exists(a.basil):
@@ -40,14 +44,22 @@ def xc8(src, opt, out):
 
 
 # ---- builds
+scaffold = {}  # XC8 harness program bytes that basil kernels do not have (marker functions, calls)
 jobs = []  # (label, kernel, kind, image, program_bytes, data_bytes, info)
 empty_c = os.path.join(work, "empty.c")
 open(empty_c, "w").write(open(os.path.join(root, "bench/kernels", "sum16.c")).read().split("void main")[0]
                          + "void main(void){ mark_a(); mark_b(); for(;;){} }\n")
 for opt in ("-Os", "-O2"):
     out = os.path.join(work, f"empty{opt}.elf")
-    xc8(empty_c, opt, out)
-    jobs.append((f"xc8 {opt}", "(empty)", "c", out, 0, 0, None))
+    epb, edb = xc8(empty_c, opt, out)
+    jobs.append((f"xc8 {opt}", "(empty)", "c", out, epb, edb, None))
+    # the same harness with no marker calls and no volatile sink: what is left is XC8's own start-up,
+    # a real cost of using XC8; the difference is scaffolding the basil kernels do not carry
+    bare_c = os.path.join(work, "bare.c")
+    open(bare_c, "w").write("#include <xc.h>\n" + re.search(r"#pragma config[^\n]*\n", open(empty_c).read()).group(0)
+                            + "void main(void){ for(;;){} }\n")
+    bpb, _ = xc8(bare_c, opt, os.path.join(work, f"bare{opt}.elf"))
+    scaffold[f"xc8 {opt}"] = epb - bpb
 for k in names:
     b = os.path.join(root, "bench/kernels", k + ".bas")
     hexf = os.path.join(work, k + ".hex")
@@ -120,6 +132,8 @@ for k in names:
         elif val != ref:
             bad += 1
             print(f"MISMATCH {k}: {lab} sink={val}, basil sink={ref}", file=sys.stderr)
+        if lab != "basil" and not a.raw:
+            pb -= scaffold[lab]
         row += [pb, db, cy]
     rows.append(row)
 

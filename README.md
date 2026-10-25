@@ -63,8 +63,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
   values. Errors show the file, line, column and the offending source line.
 
 **Code quality**
-* Compared with Microchip XC8 on a set of small kernels, the output is typically about a third smaller
-  and about as fast (see `docs/BENCHMARKS.md`, including an interrupt-plus-multiply-and-divide case).
+* Compared with Microchip XC8 on a set of small kernels, the output is roughly 20% smaller in total
+  (median kernel about 11% smaller; a few are the same size or slightly larger) and about as fast (see `docs/BENCHMARKS.md`, including an interrupt-plus-multiply-and-divide case).
 * Optimisations include constant folding, narrowing, Access Bank placement, overlapping of
   routines' variables that are never live together, counted-loop forms, tail calls, inlining of routines called once, a Byte argument passed in
   `WREG` and a peephole pass, and literal strings read through

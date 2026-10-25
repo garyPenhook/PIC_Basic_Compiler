@@ -7,6 +7,13 @@ overhead measured on an empty kernel and subtracted. Every kernel leaves a resul
 script fails if the three builds disagree. Comparators are used as black boxes (PLAN §2): XC8
 v4.00 `-Os` / `-O2`.
 
+**Size correction (0.1.26).** The C kernels need `mark_a()`/`mark_b()` functions and calls that the
+BASIC kernels replace with labels: 22 B per kernel (40 B empty harness against 18 B bare `main`).
+The tables below dated before 0.1.26 include that and overstate basil's size advantage (total 0.69
+there; 0.80 once corrected). `bench.py` now subtracts it from the XC8 sizes (`--raw` keeps it).
+The kernels are tiny, written alongside the compiler, and the optimiser was tuned on them, so they
+are not an independent sample.
+
 ## Baseline — M4, 2026-10-23 (first code generator, no optimisation passes yet)
 
 | kernel | basil B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
@@ -77,7 +84,7 @@ copies, a redundant `xorlw 0` after `andlw`, a branch to the next instruction, r
 
 ## Why the numbers look like this
 
-* Size is already below XC8 because nothing is emitted that is not used (no runtime, one static
+* Size is below XC8 mostly on arithmetic-heavy kernels because nothing is emitted that is not used (no runtime, one static
   frame, helpers only when reached) and branches are relaxed to their short forms.
 * Cycles lost in the M4 baseline where the generator was naive; M5 added the hardware multiply,
   counted `DECFSZ` loops, in-place updates and the peephole pass (sections above). What is left is
@@ -136,3 +143,24 @@ against XC8's 201, a mismatch that looked like a miscompile but was not). XC8 ke
 Total flash 1156 B against 1673 B for XC8 `-Os` (0.69; median 0.69, range 0.55 `add32` / `bitbang` to
 0.81 `crc8`). Total RAM 118 B against 121 B: basil uses 1-3 bytes more on six kernels, less on
 `add32`, `div16` and `isrmuldiv`, and the same on `sum16`. All sinks agree in the three builds.
+
+## Re-run at 0.1.26, 2026-10-25 (XC8 marker scaffolding removed from sizes)
+
+| kernel | basil B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| add32 | 108 | 18 | 3610 | 174 | 21 | 17166 | 196 | 21 | 18350 |
+| bitbang | 34 | 4 | 125 | 40 | 3 | 165 | 40 | 3 | 165 |
+| cmpchain | 64 | 6 | 3222 | 66 | 5 | 3224 | 66 | 5 | 3224 |
+| crc8 | 70 | 6 | 6257 | 64 | 4 | 6376 | 64 | 4 | 6641 |
+| div16 | 174 | 17 | 31832 | 270 | 18 | 29380 | 284 | 18 | 30746 |
+| fixmul | 78 | 11 | 3578 | 82 | 8 | 3725 | 88 | 8 | 3870 |
+| isrmuldiv | 456 | 35 | 53258 | 560 | 45 | 51994 | 586 | 45 | 54338 |
+| mul8 | 54 | 9 | 1106 | 75 | 7 | 1109 | 77 | 7 | 1110 |
+| state | 72 | 6 | 1580 | 72 | 4 | 1532 | 80 | 4 | 1857 |
+| sum16 | 46 | 6 | 1806 | 50 | 6 | 1807 | 52 | 6 | 1808 |
+
+Total flash 1156 B against 1453 B for XC8 `-Os` (0.80). Per kernel the ratio ranges from 0.62
+(`add32`) to 1.09 (`crc8`), median about 0.89; `state` is equal and `crc8` is larger. XC8's own
+18 B start-up is left in. Gains are concentrated in `add32`, `div16`, `mul8` and `isrmuldiv`; on
+the small control-flow kernels the two compilers are within a few bytes. The "about as fast" claim
+holds (cycles unchanged). RAM is not an advantage: basil is 1-3 B larger on six kernels.
