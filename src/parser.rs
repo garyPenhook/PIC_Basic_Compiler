@@ -18,7 +18,7 @@ pub struct Parser<'a> {
 }
 
 const DECL_STARTERS: &[&str] =
-    &["public", "private", "const", "dim", "structure", "type", "sub", "function", "proc", "inline", "noinline", "reentrant", "interrupt", "symbol"];
+    &["public", "private", "const", "dim", "static", "volatile", "structure", "type", "sub", "function", "proc", "inline", "noinline", "reentrant", "interrupt", "symbol"];
 
 const TYPE_KEYWORDS: &[&str] = &["boolean", "bit", "byte", "shortint", "word", "integer", "longword", "longint", "float", "char", "string"];
 
@@ -390,6 +390,21 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        let (mut is_static, mut is_volatile) = (false, false);
+        loop {
+            let (flag, word) = match self.peek() {
+                Tok::Kw("static") => (&mut is_static, "Static"),
+                Tok::Kw("volatile") => (&mut is_volatile, "Volatile"),
+                _ => break,
+            };
+            if std::mem::replace(flag, true) {
+                self.diags.error("E-SYNTAX", self.span(), format!("`{word}` is written twice"));
+            }
+            self.bump();
+        }
+        if (is_static || is_volatile) && !matches!(self.peek(), Tok::Kw("dim")) {
+            return self.expected("`Dim` after `Static` or `Volatile`");
+        }
         let kind = match self.peek().clone() {
             Tok::Kw("const") => {
                 self.bump();
@@ -402,7 +417,9 @@ impl<'a> Parser<'a> {
             }
             Tok::Kw("dim") => {
                 self.bump();
-                let d = self.dim_decl()?;
+                let mut d = self.dim_decl()?;
+                d.is_static = is_static;
+                d.is_volatile = is_volatile;
                 self.end_stmt()?;
                 DeclKind::Dim(d)
             }
@@ -505,7 +522,7 @@ impl<'a> Parser<'a> {
         }
         let as_clause = if self.eat_kw("as") { Some(self.as_clause()?) } else { None };
         let (trailing_init, trailing_list) = if as_clause.is_some() && self.eat_punct("=") { self.dim_init()? } else { (None, None) };
-        Ok(DimDecl { items, as_clause, trailing_init, trailing_list })
+        Ok(DimDecl { is_static: false, is_volatile: false, items, as_clause, trailing_init, trailing_list })
     }
 
     /// The value after `=` in a `Dim`: an expression, or a list `(1, 2, 3)` for an array.

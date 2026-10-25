@@ -352,7 +352,7 @@ impl<'a> Lowerer<'a> {
     fn new_var(&mut self, asm: String, name: &str, ty: Ty, kind: VarKind, init: Option<u32>) -> VarId {
         let bytes = self.size_of(&ty);
         let asm = self.unique(asm);
-        self.vars.push(Var { asm, name: name.to_string(), ty, bytes, kind, owner: self.cur_func, init, by_ref: false });
+        self.vars.push(Var { asm, name: name.to_string(), ty, bytes, kind, owner: self.cur_func, init, by_ref: false, volatile: false });
         self.vars.len() - 1
     }
 
@@ -463,6 +463,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn dim(&mut self, dim: &'a DimDecl, ui: usize, inits: &mut Vec<S>) {
+        // A `Static` local is initialised once, before the main program, not at each entry.
+        let mut once = Vec::new();
+        let inits = if dim.is_static { &mut once } else { inits };
         for it in &dim.items {
             let Some(&sym) = self.a.decl_syms.get(&it.name.span) else { continue };
             match self.a.symbols[sym].kind.clone() {
@@ -490,8 +493,15 @@ impl<'a> Lowerer<'a> {
                     let asm = if s.local { format!("{}__{}", self.cur_asm, sanitize(&s.name)) } else { format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&s.name)) };
                     let name = s.name.clone();
                     let local = s.local;
+                    // A `Static` local is a global with a local name: its own address, never
+                    // overlaid, cleared and initialised once at start-up instead of at each entry.
+                    let local = local && !dim.is_static;
                     let kind = if local { VarKind::Local } else { VarKind::Global };
                     let v = self.new_var(asm, &name, ty.clone(), kind, init.filter(|&i| i != 0 || local));
+                    if !local {
+                        self.vars[v].owner = None;
+                    }
+                    self.vars[v].volatile = dim.is_volatile;
                     self.sym_var.insert(sym, v);
                     if let Ty::Array(e, n) = &ty
                         && matches!(**e, Ty::Bit | Ty::Bool)
@@ -529,6 +539,7 @@ impl<'a> Lowerer<'a> {
                 _ => {}
             }
         }
+        self.startup.append(&mut once);
     }
 
     /// Gives a freshly declared array its initial values. Storage is zero already (start-up

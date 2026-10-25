@@ -33,9 +33,9 @@ pub const KEYWORDS: &[&str] = &[
     "delayms", "delayus", "device", "dim", "disable", "else", "elseif", "enable", "end", "endif", "endselect", "event",
     "exit", "false", "float", "for", "function", "goto", "high", "if", "inc", "include", "inline", "input", "integer",
     "interrupt", "longint", "longword", "low", "mod", "module", "next", "noinline", "not", "null", "or", "output",
-    "private", "program", "public", "reentrant", "repeat", "restore", "result", "save", "select", "shortint", "step",
-    "string", "structure", "sub", "terminate", "then", "to", "toggle", "true", "type", "until", "wend", "while", "word",
-    "xor", // alternative-spelling aliases
+    "private", "program", "public", "reentrant", "repeat", "restore", "result", "save", "select", "shortint", "static", "step",
+    "string", "structure", "sub", "terminate", "then", "to", "toggle", "true", "type", "until", "volatile", "wend", "while",
+    "word", "xor", // alternative-spelling aliases
     "declare", "do", "endproc", "exitproc", "loop", "proc", "symbol",
 ];
 

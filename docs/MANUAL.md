@@ -1,6 +1,6 @@
-# basil Compiler User Manual
+# Basil Manual
 
-Revision for **basil 0.1.9**, target device **PIC18F27Q10**.
+Revision for **basil 0.1.21**, target device **PIC18F27Q10**.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -28,6 +28,8 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
    - Identifiers, labels, comments, line continuation
    - Numeric representations and literals
    - Variables and types
+   - `Static` locals
+   - `Volatile` variables
    - Aliases and register bits
    - Constants and `Symbol`
    - Arrays, strings, structures
@@ -199,7 +201,8 @@ unsigned `Long`. There is no 24-bit type; 24 bits is only used inside the compil
 `Double` are not accepted. A `Pin` type is not accepted.
 
 * All variables are zeroed at start-up unless they have an initialiser. A routine's local variables
-  are zeroed **at every entry**, and an initialiser is applied at every entry too.
+  are zeroed **at every entry**, and an initialiser is applied at every entry too (use `Static` to
+  keep a local between calls).
 * Declarations are `Private` by default; `Public` exports from a module.
 * Name lookup order: local, then the current file, then the `Public` names of included modules.
   Qualify with `Module.Name` to resolve a clash.
@@ -212,6 +215,96 @@ unsigned `Long`. There is no 24-bit type; 24 bits is only used inside the compil
 `Boolean(x)`, `Bit(x)`, `Char(x)`, and the alternative spellings `SByte(x)`, `SWord(x)`, `Dword(x)`,
 `Long(x)`. A constant that does not fit the target type is an error (`E-CONST-RANGE`). Conversion
 to `String` is not supported. Float to integer truncates toward zero.
+
+### `Static` locals
+
+```basic
+Static Dim Name As Type [= constant]
+Static Dim Name(n) As Type [= (v1, v2, ...)]
+```
+
+**Overview.** An ordinary local is created afresh each time its routine runs: it is zero (or its
+initial value) at every entry, and its RAM is shared with other routines. A `Static` local instead
+keeps its value from one call to the next, like a `static` variable in C. It is still visible only
+inside the routine that declares it.
+
+**What the compiler does.** A `Static` local gets its own RAM address that no other routine uses.
+It is cleared once at start-up, and an initial value (including a whole array or string
+initialiser) is applied once before the main program starts, not at each call. The cost is that the
+RAM is permanently reserved, whereas an ordinary local costs nothing when its routine is not
+running.
+
+**Rules.**
+
+* Only inside a `Sub`, `Function`, `Interrupt` or `Event`. At module level every variable already
+  lasts for the whole run, so `Static Dim` there is error `E-DIM`.
+* Applies to a variable, not an alias (`E-DIM`). It can be combined with `Volatile`, in either order.
+* It may be used in an interrupt handler (the value then persists between interrupts). `Save ...
+  Restore` does not save or restore it, because it is not part of the routine's overlaid frame.
+
+**Example.**
+
+```basic
+Function NextId() As Byte
+    Static Dim id As Byte = 100     ' set to 100 once, at start-up
+    Inc(id)
+    Result = id
+End Function
+
+Dim a, b As Byte
+a = NextId()    ' 101
+b = NextId()    ' 102
+```
+
+### `Volatile` variables
+
+```basic
+Volatile Dim Name As Type
+Private Volatile Dim Name As Type
+Static Volatile Dim Name As Type      ' inside a routine
+```
+
+**Overview.** `Volatile` tells the compiler that the variable can change, or be observed, by
+something outside the code it is compiling: an interrupt handler, an `Asm` block, or the hardware
+(for example a variable that mirrors a register). Every read and every write written in the source
+is carried out, in the order written.
+
+**What changes.** Normally the optimiser may keep a value in `WREG` or a scratch register and reuse
+it, merge two reads into one, replace a variable by a known constant, or delete a store to a
+variable that is never read. For a `Volatile` variable it does none of these:
+
+| Source | Ordinary variable | `Volatile` variable |
+|---|---|---|
+| `x = flag : y = flag` | `flag` may be read once | read twice |
+| `flag = 1 : flag = 2` | first store may be dropped | both stores happen |
+| write to a variable nothing ever reads | store removed | store kept |
+| `Do : If flag = 0 Then ... : Loop` | may reuse a loaded value | reloaded on every pass |
+
+**Rules and cost.** Allowed on any scalar, array, string or structure `Dim` at any level; not on an
+alias (`E-DIM`). A volatile access can be a word or two larger than the same access to an ordinary
+variable, so use it only where it is needed. `Volatile` does not make a multi-byte access atomic:
+a `Word` or `LongWord` shared with an interrupt handler can still change between its bytes; read it
+between `Disable(Handler)` and `Enable(Handler)`, or keep the shared value to one `Byte`.
+
+**Example.** A flag set by a handler and polled by the main program:
+
+```basic
+Volatile Dim tick As Byte
+
+Interrupt Timer()
+    tick = 1
+    ' clear the flag of your interrupt source here
+End Interrupt
+
+' set up the source and its PIEx enable bit first
+Enable(Timer)
+Do
+    If tick = 1 Then          ' reloaded on every pass of the loop
+        tick = 0
+        ' ... handle the event ...
+    End If
+Loop
+```
 
 ## Aliases and register bits
 
@@ -3189,7 +3282,7 @@ reports these rather than miscompiling them.
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
 | `Declare` switches (LCD pins, baud, pin routing) | only `Declare Xtal`; peripherals take arguments in `...Init(...)` calls |
 | `PinHigh`, `PinLow`, `PinSet`, `PinGet`, `PinMode`, pin numbers in `High` | use register bits / aliases |
-| `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Static`/`Global`/`Shared` variables | not accepted |
+| `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
 | `Print`, `Cls`, `Cursor`, `Plot`, `Line`, graphic LCD commands | `lcd` module routines; no graphics |
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `SerialWriteWord`, `SerialWriteHex` only |

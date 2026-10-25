@@ -768,6 +768,10 @@ impl<'p, 'd> Sema<'p, 'd> {
         };
         let Some(base) = ty else {
             let AsClause::Designator(d) = ac else { unreachable!() };
+            if dim.is_static || dim.is_volatile {
+                self.diags.error("E-DIM", dim.items[0].name.span, "`Static` and `Volatile` apply to a variable, not to an alias");
+                return;
+            }
             self.alias_decl(dim, d, vis);
             return;
         };
@@ -777,6 +781,10 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
         if dim.trailing_init.is_some() && (dim.items.len() != 1 || dim.items[0].init.is_some() || dim.items[0].list.is_some()) {
             self.diags.error("E-DIM", dim.items[0].name.span, "an initial value after `As` needs a single variable");
+            return;
+        }
+        if dim.is_static && self.scopes.is_empty() {
+            self.diags.error("E-DIM", dim.items[0].name.span, "`Static` is for a variable inside a routine; a module-level variable already keeps its value");
             return;
         }
         for it in &dim.items {

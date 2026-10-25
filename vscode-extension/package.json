@@ -2,7 +2,7 @@
   "name": "picbasic",
   "displayName": "PIC BASIC (basil)",
   "description": "Language support for the basil PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "garypenhook",
   "license": "UNLICENSED",
   "engines": { "vscode": "^1.80.0" },

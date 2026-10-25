@@ -3575,7 +3575,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         let items = inline_single_calls(items, ranges);
         let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
         for (i, o) in objs.iter().enumerate() {
-            if let Some(a) = layout.addr[i] {
+            if let Some(a) = layout.addr[i] && !(i < nvars && p.vars[i].volatile) {
                 let name = if i >= nvars && i < nvars + 4 { format!("__{}0", SCRATCH[i - nvars]) } else { o.name.clone() };
                 plain.insert(name, (a, o.bytes));
             }

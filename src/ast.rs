@@ -111,6 +111,10 @@ pub enum ConstInit {
 
 #[derive(Debug)]
 pub struct DimDecl {
+    /// `Static Dim`: a local that keeps its value between calls.
+    pub is_static: bool,
+    /// `Volatile Dim`: every access reaches memory, in the order written.
+    pub is_volatile: bool,
     pub items: Vec<DimItem>,
     pub as_clause: Option<AsClause>,
     /// Initialiser written after the `As` clause (`Dim n As Byte = 10`).

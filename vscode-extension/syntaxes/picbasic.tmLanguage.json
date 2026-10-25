@@ -216,7 +216,7 @@
     },
     {
      "name": "storage.modifier.picbasic",
-     "match": "\\b(?i:ByRefConst|Interrupt|Structure|Reentrant|Absolute|NoInline|Function|Private|Program|Declare|Public|Symbol|Inline|Access|Module|Event|ByRef|ByVal|Const|Type|Proc|Dim|Sub)\\b"
+     "match": "\\b(?i:ByRefConst|Interrupt|Structure|Reentrant|Volatile|Static|Absolute|NoInline|Function|Private|Program|Declare|Public|Symbol|Inline|Access|Module|Event|ByRef|ByVal|Const|Type|Proc|Dim|Sub)\\b"
     },
     {
      "name": "keyword.other.header.picbasic",

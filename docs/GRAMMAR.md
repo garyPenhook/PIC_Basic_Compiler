@@ -26,8 +26,8 @@ names are ordinary identifiers resolved by the device description):
 clear clock compound config const continue dec delayms delayus device dim disable else elseif enable end
 endif endselect event exit false float for function goto high if inc include inline input integer
 interrupt longint longword low mod module next noinline not null or output private program public
-reentrant repeat restore result save select shortint step string structure sub terminate then to toggle
-true type until wend while word xor`
+reentrant repeat restore result save select shortint static step string structure sub terminate then to toggle
+true type until volatile wend while word xor`
 
 ## Compilation units
 
@@ -68,7 +68,7 @@ vis         = "Public" | "Private" ;
 const_decl  = "Const" const_item { "," const_item } ;
 const_item  = IDENT [ "(" const_expr ")" ] [ "As" type ] "=" ( expr | "(" expr { "," expr } ")" ) ;
 
-dim_decl    = "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) [ "=" ( expr | array_init ) ] ] ;
+dim_decl    = { "Static" | "Volatile" } "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) [ "=" ( expr | array_init ) ] ] ;
                                                   (* the trailing "=" needs a single scalar item *)
 dim_item    = IDENT [ "(" const_expr ")" ] [ "=" ( expr | array_init ) ] ;
 array_init  = "(" const_expr "," const_expr { "," const_expr } ")" ;   (* one value per element *)

@@ -39,6 +39,9 @@ pub struct Var {
     /// A `ByRef` parameter: the object holds the 16-bit address of the argument, and `ty` is
     /// the type it points to (an array of unknown length for an array parameter).
     pub by_ref: bool,
+    /// `Volatile`: other code (a handler, the hardware) may change it at any time, so no pass may
+    /// keep its value, merge two accesses or drop one.
+    pub volatile: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

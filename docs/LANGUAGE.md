@@ -161,6 +161,16 @@ Zero-cost partial access is the intended way to work with multi-byte values effi
   for variables it can prove are written before being read (efficiency, PLAN §7A). A routine's
   locals and `Result` are zero at **every entry** to the routine, not only the first (their storage
   is shared with other routines, §7); an initialiser is applied at every entry too.
+* **`Static`** (`Static Dim n As Byte = 10`, inside a routine only): the local keeps its value
+  between calls. It has its own RAM (never overlaid), is cleared and initialised once at start-up
+  instead of at each entry, and is still visible only inside its routine. At module level every
+  variable already lasts for the whole run, so `Static` there is `E-DIM`.
+* **`Volatile`** (`Volatile Dim flag As Byte`, any scope): something outside the code the compiler
+  sees (an interrupt handler, `Asm`, the hardware through an alias of a register) may change the
+  variable at any time. Every read and every write in the source is performed, in source order:
+  none is kept in a register, merged with a neighbour, forwarded as a constant or removed as dead
+  or write-only. Without it a variable that is never read has its stores removed. Not allowed on
+  an alias (`E-DIM`). `Static` and `Volatile` may be combined in either order after `Public`/`Private`.
 
 ## 5. Expressions
 
@@ -467,6 +477,6 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
 
 * Float format (D7).
 * Exact interrupt context-save behaviour and vector registers for the 18F27Q10 (M1).
-* Other type names, `ByValue`/`BycRef`, `Static` and command
+* Other type names, `ByValue`/`BycRef` and command
   statements without parentheses (`High LED`) are not accepted; only the spellings in §14 are.
 * Overloading and compound subroutines (M9).

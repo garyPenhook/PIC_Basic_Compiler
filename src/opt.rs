@@ -655,7 +655,7 @@ fn propagate_locals(p: &mut Program) -> bool {
     let vars = p.vars.clone();
     for (owner, body) in all_bodies(p) {
         let Some(owner) = owner else { continue };
-        let tracked = |v: VarId| vars[v].kind == VarKind::Local && vars[v].owner == Some(owner) && !vars[v].by_ref && !addr.contains(&v);
+        let tracked = |v: VarId| vars[v].kind == VarKind::Local && vars[v].owner == Some(owner) && !vars[v].by_ref && !vars[v].volatile && !addr.contains(&v);
         let mut known: HashMap<VarId, u32> = HashMap::new();
         for s in body.iter_mut() {
             let straight = matches!(s.st, St::Assign(..) | St::Add(..) | St::SetBit(..) | St::ToggleBit(..) | St::Clear(..) | St::ClearMem(..) | St::Copy { .. } | St::StrSet { .. } | St::Call(..) | St::DelayUs(_) | St::DelayMs(_) | St::Direction { .. });
@@ -748,7 +748,7 @@ fn drop_dead(p: &mut Program) -> bool {
     }
     let dead = |vars: &[Var], v: VarId| {
         let var = &vars[v];
-        matches!(var.kind, VarKind::Local | VarKind::Param | VarKind::Hidden) && var.owner.map_or(!main_asm, |o| !pinned.contains(&o)) && !all.read.contains(&v)
+        !var.volatile && matches!(var.kind, VarKind::Local | VarKind::Param | VarKind::Hidden) && var.owner.map_or(!main_asm, |o| !pinned.contains(&o)) && !all.read.contains(&v)
     };
     let vars = p.vars.clone();
     let mut changed = false;
@@ -918,7 +918,7 @@ fn walk_tables(blk: &mut Vec<S>, vars: &[Var], users: &HashSet<FuncId>, owner: F
             _ => continue,
         };
         let var = &vars[i];
-        if !matches!(var.kind, VarKind::Local | VarKind::Hidden) || var.owner != Some(owner) || var.by_ref || !matches!(var.ty, Ty::Int(_, false)) || body.len() < 2 {
+        if !matches!(var.kind, VarKind::Local | VarKind::Hidden) || var.owner != Some(owner) || var.by_ref || var.volatile || !matches!(var.ty, Ty::Int(_, false)) || body.len() < 2 {
             continue;
         }
         // It starts at a constant: the last statement before the loop that mentions it.
