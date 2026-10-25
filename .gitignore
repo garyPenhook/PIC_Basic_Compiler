@@ -7,3 +7,11 @@
 # vendor manuals are for personal reference only: never commit them
 *.pdf
 !docs/MANUAL.pdf
+# compiler outputs next to the sources in my_src/
+my_src/**/*.S
+my_src/**/*.cmf
+my_src/**/*.d
+my_src/**/*.hxl
+my_src/**/*.i
+my_src/**/*.sdb
+my_src/**/*.sym
