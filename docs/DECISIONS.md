@@ -71,6 +71,15 @@ recommendation shown; any item can be reopened.
 | D44 | Handler frames | A handler is never independent of any routine in the overlay analysis, so its locals and temporaries never share an address; they are zero on every entry like any local | The handler can run at any moment. |
 | D45 | Atomicity | None is provided. Reading or writing a variable wider than a byte that a handler also uses can see a half-updated value; the program must disable the interrupt around such accesses | Matches the reference language; an `Atomic` form can come later. |
 
+## Decisions made after M8 (array completion)
+
+| ID | Decision | Choice | Reason |
+|----|----------|--------|--------|
+| D47 | `Bit`/`Boolean` arrays | **One byte per element, not packed** (`types.rs::size_bytes`); W-BITARR is gone | A packed array needs a run-time bit mask on every access, which is what made it "expensive". One byte per element makes an element an ordinary byte (indexing, `ByRef`, `Bound`, copies, initialisers, structure fields) at the cost of 8x the RAM. Matches a single `Bit`/`Boolean` variable, which already takes a byte. Reversible; the layout is one function. |
+| D48 | `Const` arrays | Kept in program memory (`Base::Flash`, label `__CA<n>`, little-endian elements) and read with `TBLRD*+`; a constant index folds to a literal. Passed to a `ByRefConst` parameter they are copied once at start-up to a RAM buffer, like string literals (D-strings) | One access path in the callee. Costs RAM only for tables that are actually passed by reference. |
+| D49 | Array parameter length | A `ByRef`/`ByRefConst` array parameter is the 16-bit address; when its routine calls `Bound(a)` it also holds the 16-bit element count in the next two bytes, passed by every caller. Callers of routines that never use `Bound` pass nothing (`strip_unused_lengths`) | `Bound` of a parameter needs the length at run time; the cost is paid only by routines that ask for it. |
+| D50 | Array initialisers | Zero storage is already guaranteed (start-up clears globals, entry clears locals), so only non-zero values are written: stored one by one up to 8 bytes, otherwise copied from a program-memory table. Whole-array copies and clears of any size up to 65535 bytes work (chunks of 255) | Smallest code for the common cases. |
+
 ## Decisions made in M7 (Route B evaluation)
 
 | ID | Decision | Choice | Reason |

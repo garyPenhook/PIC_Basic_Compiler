@@ -115,6 +115,8 @@ pub struct DimDecl {
     pub as_clause: Option<AsClause>,
     /// Initialiser written after the `As` clause (`Dim n As Byte = 10`).
     pub trailing_init: Option<Expr>,
+    /// Array initialiser written after the `As` clause (`Dim a(3) As Byte = (1, 2, 3)`).
+    pub trailing_list: Option<Vec<Expr>>,
 }
 
 #[derive(Debug)]
@@ -122,6 +124,8 @@ pub struct DimItem {
     pub name: Ident,
     pub size: Option<Expr>,
     pub init: Option<Expr>,
+    /// Array initialiser written before the `As` clause: `Dim a(3) = (1, 2, 3) As Byte`.
+    pub list: Option<Vec<Expr>>,
 }
 
 /// What follows `As`: a built-in type, or a designator that is either a user type name or the

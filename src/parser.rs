@@ -497,15 +497,34 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            let init = if self.eat_punct("=") { Some(self.expr()?) } else { None };
-            items.push(DimItem { name, size, init });
+            let (init, list) = if self.eat_punct("=") { self.dim_init()? } else { (None, None) };
+            items.push(DimItem { name, size, init, list });
             if !self.eat_punct(",") {
                 break;
             }
         }
         let as_clause = if self.eat_kw("as") { Some(self.as_clause()?) } else { None };
-        let trailing_init = if as_clause.is_some() && self.eat_punct("=") { Some(self.expr()?) } else { None };
-        Ok(DimDecl { items, as_clause, trailing_init })
+        let (trailing_init, trailing_list) = if as_clause.is_some() && self.eat_punct("=") { self.dim_init()? } else { (None, None) };
+        Ok(DimDecl { items, as_clause, trailing_init, trailing_list })
+    }
+
+    /// The value after `=` in a `Dim`: an expression, or a list `(1, 2, 3)` for an array.
+    fn dim_init(&mut self) -> PResult<(Option<Expr>, Option<Vec<Expr>>)> {
+        if self.at_punct("(") {
+            let save = self.pos;
+            self.bump();
+            let first = self.expr()?;
+            if self.at_punct(",") {
+                let mut items = vec![first];
+                while self.eat_punct(",") {
+                    items.push(self.expr()?);
+                }
+                self.expect_punct(")")?;
+                return Ok((None, Some(items)));
+            }
+            self.pos = save;
+        }
+        Ok((Some(self.expr()?), None))
     }
 
     fn as_clause(&mut self) -> PResult<AsClause> {

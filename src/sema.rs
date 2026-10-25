@@ -730,8 +730,12 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.alias_decl(dim, d, vis);
             return;
         };
-        if dim.trailing_init.is_some() && (dim.items.len() != 1 || dim.items[0].init.is_some() || dim.items[0].size.is_some()) {
-            self.diags.error("E-DIM", dim.items[0].name.span, "an initial value after `As` needs a single scalar variable");
+        if dim.trailing_list.is_some() && (dim.items.len() != 1 || dim.items[0].init.is_some() || dim.items[0].list.is_some() || dim.items[0].size.is_none()) {
+            self.diags.error("E-DIM", dim.items[0].name.span, "a list of initial values after `As` needs a single array: `Dim a(3) As Byte = (1, 2, 3)`");
+            return;
+        }
+        if dim.trailing_init.is_some() && (dim.items.len() != 1 || dim.items[0].init.is_some() || dim.items[0].list.is_some()) {
+            self.diags.error("E-DIM", dim.items[0].name.span, "an initial value after `As` needs a single variable");
             return;
         }
         for it in &dim.items {
@@ -749,8 +753,21 @@ impl<'p, 'd> Sema<'p, 'd> {
                 vty = Ty::Array(Box::new(vty), n as u32);
             }
             let init = it.init.as_ref().or(dim.trailing_init.as_ref());
-            if let Some(e) = init {
-                if matches!(vty, Ty::Array(..) | Ty::Struct(_) | Ty::EventVar(_)) {
+            let list = it.list.as_ref().or(dim.trailing_list.as_ref());
+            if let Some(items) = list {
+                match &vty {
+                    Ty::Array(elem, n) => self.array_init(&it.name, elem, *n, items),
+                    _ => self.diags.error("E-DIM", it.name.span, "a list of initial values is for an array"),
+                }
+            } else if let Some(e) = init {
+                if let Ty::Array(elem, n) = &vty {
+                    // A one-element array may be initialised with a plain value.
+                    if *n == 1 {
+                        self.array_init(&it.name, elem, 1, std::slice::from_ref(e));
+                    } else {
+                        self.diags.error("E-DIM", e.span, format!("an array is initialised with a list: `Dim {}({n}) As {elem} = (…)`", it.name.name));
+                    }
+                } else if matches!(vty, Ty::Struct(_) | Ty::EventVar(_)) {
                     self.diags.error("E-DIM", e.span, format!("a {vty} cannot have an initial value here"));
                 } else if let Some(ei) = self.check_expr(e) {
                     if ei.val.is_none() {
@@ -768,9 +785,30 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
     }
 
+    /// Checks the values of an array initialiser: as many as the array has elements, each known
+    /// at compile time and assignable to the element type.
+    fn array_init(&mut self, name: &Ident, elem: &Ty, n: u32, items: &'p [Expr]) {
+        if !matches!(elem, Ty::Int(..) | Ty::Char | Ty::Bool | Ty::Bit) {
+            self.diags.error("E-DIM", name.span, format!("an array of {elem} cannot have initial values"));
+            return;
+        }
+        if items.len() != n as usize {
+            self.diags.error("E-DIM-ARRAY", name.span, format!("`{}` declares {n} elements but the list has {}", name.name, items.len()));
+            return;
+        }
+        for e in items {
+            let Some(ei) = self.check_expr(e) else { continue };
+            if ei.val.is_none() {
+                self.diags.error("E-CONST-EXPR", e.span, "an initial value must be known at compile time");
+            } else {
+                self.assign_ok(elem, &ei, e.span, "initial value");
+            }
+        }
+    }
+
     fn alias_decl(&mut self, dim: &'p DimDecl, d: &'p Designator, vis: Vis) {
         let it = &dim.items[0];
-        if dim.items.len() != 1 || it.size.is_some() || it.init.is_some() || dim.trailing_init.is_some() {
+        if dim.items.len() != 1 || it.size.is_some() || it.init.is_some() || it.list.is_some() || dim.trailing_init.is_some() || dim.trailing_list.is_some() {
             self.diags.error("E-ALIAS", it.name.span, "an alias names one existing object and has no size or initial value");
             return;
         }
@@ -1990,9 +2028,6 @@ impl<'p, 'd> Sema<'p, 'd> {
                         match &ix.val {
                             Some(CVal::Int(c)) if *c < 0 || (n > 0 && *c >= n as i128) => {
                                 return self.err("E-BOUNDS", args[0].span, format!("index {c} is outside the array (0 to {})", n.saturating_sub(1)));
-                            }
-                            None if matches!(*elem, Ty::Bit | Ty::Bool) => {
-                                self.diags.warn("W-BITARR", args[0].span, "a Bit or Boolean array indexed by a variable is expensive");
                             }
                             _ => {}
                         }

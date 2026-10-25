@@ -68,9 +68,10 @@ vis         = "Public" | "Private" ;
 const_decl  = "Const" const_item { "," const_item } ;
 const_item  = IDENT [ "(" const_expr ")" ] [ "As" type ] "=" ( expr | "(" expr { "," expr } ")" ) ;
 
-dim_decl    = "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) [ "=" expr ] ] ;
+dim_decl    = "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) [ "=" ( expr | array_init ) ] ] ;
                                                   (* the trailing "=" needs a single scalar item *)
-dim_item    = IDENT [ "(" const_expr ")" ] [ "=" expr ] ;
+dim_item    = IDENT [ "(" const_expr ")" ] [ "=" ( expr | array_init ) ] ;
+array_init  = "(" const_expr "," const_expr { "," const_expr } ")" ;   (* one value per element *)
 alias_target= designator ;                        (* alias form: Dim LED As PORTB.0 *)
 
 struct_decl = "Structure" IDENT EOL { field EOL } "End" "Structure" ;

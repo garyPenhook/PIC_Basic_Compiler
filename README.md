@@ -47,7 +47,7 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 ## What works today
 
 **Language**
-* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers, strings, arrays, structures
+* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers, strings, arrays (with initialisers and program-memory `Const` tables), structures
   and unions, constants.
 * Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
   short-circuit conditions.
@@ -83,10 +83,10 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 
 ## Still to do
 
-* **Library:** program-flash self-write; OLED pixel drawing and bitmaps (no frame buffer or `Const` arrays yet).
+* **Library:** program-flash self-write; OLED pixel drawing and bitmaps (`Const` arrays now exist, so a bitmap font table is possible).
 * **Language:** floating point, `Inline` functions, overloading, reentrant functions, a few remaining
-  array, string and structure forms (the compiler reports these clearly rather than miscompiling),
-  array/structure initialisers, `#if` in the preprocessor.
+  string and structure forms (the compiler reports these clearly rather than miscompiling),
+  structure initialisers, arrays of strings and multi-dimensional arrays, `#if` in the preprocessor.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
   Serial output, PWM waveforms, external timer inputs and the second EUSART are the main things
   that need a hardware run.

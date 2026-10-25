@@ -99,8 +99,17 @@ assigned a number. A `Bit` is a numeric 0/1. Converting between them is explicit
   variable index is not checked at run time unless `#option BoundsCheck = true` (NEW, costs code).
 * `Const` arrays live in program memory: `Const T(3) As Byte = (1, 2, 3)` (the size, like `Dim`, is the element count, and must match the list). They can be read by
   index and assigned wholesale to a same-sized RAM array. (SF)
+* A RAM array may be given values when it is declared: `Dim a(3) As Byte = (1, 2, 3)` (or
+  `Dim a(3) = (1, 2, 3) As Byte`). The list must have exactly as many values as the array has
+  elements, each known at compile time. A global array is filled once at start-up, a local one on
+  every entry. Element types are the integers, `Char`, `Boolean` and `Bit`. (NEW)
 * Multi-dimensional arrays are not supported in 0.1. (SF)
-* Bit/Boolean arrays indexed by a variable are expensive; the compiler warns (W-BITARR). (SF/NEW)
+* A `Bit` or `Boolean` array uses one byte per element (like a single `Bit` or `Boolean` variable),
+  so indexing it costs the same as any other array, and it can be passed `ByRef`. (NEW, D47)
+* A bit of an element picked at run time (`a(i).3`, `p(i).Flag`) or of a `ByRef` parameter
+  (`x.5`) is read and written with a read-modify-write of its byte. The index must not contain a
+  call, and, as with `Inc` on an element, it is evaluated twice, so an index changed by an interrupt
+  during the statement may hit a different element. (NEW)
 
 ### 3.3 Structures and unions
 ```
@@ -445,4 +454,3 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
 * Positron's own type names (`SByte`, `Long`, `Dword`, …), `ByValue`/`BycRef`, `Static` and command
   statements without parentheses (`High LED`) are not accepted; only the spellings in §14 are.
 * Overloading and compound subroutines (M9).
-* Whether `Boolean`/`Bit` arrays are packed (likely yes) and their access cost (M5).

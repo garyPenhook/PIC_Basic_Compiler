@@ -48,6 +48,15 @@ pub enum Base {
     Ptr(VarId),
     /// A device register or other fixed data address. The name is the symbol pic-as knows.
     Abs { addr: u32, name: String },
+    /// A constant table in program memory (`Program::flash[i]`), read-only.
+    Flash(usize),
+}
+
+/// Constant data placed in program memory, labelled `asm`.
+#[derive(Clone, Debug)]
+pub struct FlashObj {
+    pub asm: String,
+    pub bytes: Vec<u8>,
 }
 
 /// A scalar storage place: `bytes` bytes starting `off` bytes into `base`, or a single bit of
@@ -63,9 +72,10 @@ pub struct Place {
 }
 
 impl Place {
-    /// Reached through FSR0: a run-time array index or a `ByRef` parameter.
+    /// Reached through FSR0 (a run-time array index or a `ByRef` parameter) or, for a constant
+    /// table, through TBLPTR: there is no direct memory operand.
     pub fn indirect(&self) -> bool {
-        self.idx.is_some() || matches!(self.base, Base::Ptr(_))
+        self.idx.is_some() || matches!(self.base, Base::Ptr(_) | Base::Flash(_))
     }
     /// Width in bits of the value the place holds (a bit place reads as 0/1 in 8 bits).
     pub fn width(&self) -> u8 {
@@ -299,6 +309,8 @@ pub struct Func {
 pub struct Program {
     pub vars: Vec<Var>,
     pub funcs: Vec<Func>,
+    /// Constant tables kept in program memory.
+    pub flash: Vec<FlashObj>,
     /// Module initialisation followed by the program body; runs once after reset.
     pub main: Func,
     pub label_names: Vec<String>,

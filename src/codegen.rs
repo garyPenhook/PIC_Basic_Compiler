@@ -607,7 +607,7 @@ impl<'p> Gen<'p> {
 
     fn place_mem(&self, pl: &Place, write: bool) -> Mem {
         let m = match &pl.base {
-            Base::Ptr(_) => unreachable!("an indirect place has no direct memory operand"),
+            Base::Ptr(_) | Base::Flash(_) => unreachable!("an indirect place has no direct memory operand"),
             Base::Var(v) => self.mem_obj(*v, self.p.vars[*v].asm.clone()),
             Base::Abs { addr, name } => {
                 // Writes to a port go to its latch (read-modify-write on PORT is unreliable).
@@ -775,7 +775,7 @@ impl<'p> Gen<'p> {
                             self.p.vars[*v].asm.clone()
                         }
                         Base::Abs { name, .. } => name.clone(),
-                        Base::Ptr(_) => unreachable!(),
+                        Base::Ptr(_) | Base::Flash(_) => unreachable!(),
                     };
                     let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
                     let (a0, a1) = (self.a(0), self.a(1));
@@ -944,12 +944,19 @@ impl<'p> Gen<'p> {
             return;
         }
         self.point_fsr(0, p);
-        self.ins(format!("movlw {bytes}"));
-        let l = self.fresh();
-        self.label(&l);
-        self.ins("clrf POSTINC0, c");
-        self.ins("decfsz WREG, f, c");
-        self.br(Cc::Always, &l);
+        // The loop counts in WREG, so a long run is done in chunks of up to 255 bytes; POSTINC0
+        // carries on from where the last one stopped.
+        let mut left = bytes;
+        while left > 0 {
+            let n = left.min(255);
+            left -= n;
+            self.ins(format!("movlw {n}"));
+            let l = self.fresh();
+            self.label(&l);
+            self.ins("clrf POSTINC0, c");
+            self.ins("decfsz WREG, f, c");
+            self.br(Cc::Always, &l);
+        }
     }
 
     /// `dst = src` for `bytes` bytes. FSR1 is pointed at the source first: the destination's index
@@ -962,14 +969,32 @@ impl<'p> Gen<'p> {
             }
             return;
         }
-        self.point_fsr(1, src);
-        self.point_fsr(0, dst);
-        self.ins(format!("movlw {bytes}"));
-        let l = self.fresh();
-        self.label(&l);
-        self.ins("movff POSTINC1, POSTINC0");
-        self.ins("decfsz WREG, f, c");
-        self.br(Cc::Always, &l);
+        let from_flash = matches!(src.base, Base::Flash(_));
+        if from_flash {
+            // A whole constant table has no index to compute, so TBLPTR can be pointed after
+            // the destination (whose index may itself read a table).
+            self.point_fsr(0, dst);
+            self.point_tblptr(src);
+        } else {
+            self.point_fsr(1, src);
+            self.point_fsr(0, dst);
+        }
+        let mut left = bytes;
+        while left > 0 {
+            let n = left.min(255);
+            left -= n;
+            self.ins(format!("movlw {n}"));
+            let l = self.fresh();
+            self.label(&l);
+            if from_flash {
+                self.ins("tblrd*+");
+                self.ins("movff TABLAT, POSTINC0");
+            } else {
+                self.ins("movff POSTINC1, POSTINC0");
+            }
+            self.ins("decfsz WREG, f, c");
+            self.br(Cc::Always, &l);
+        }
     }
 
     /// Points FSR`fsr` at the first byte of a RAM string (a variable or a `ByRef` parameter).
@@ -996,7 +1021,7 @@ impl<'p> Gen<'p> {
                     self.fop("addwfc", &fh, "f");
                 }
             }
-            Base::Abs { .. } => self.err("internal: a string in a device register"),
+            Base::Abs { .. } | Base::Flash(_) => self.err("internal: a string in a device register or constant table"),
         }
     }
 
@@ -1078,7 +1103,52 @@ impl<'p> Gen<'p> {
         self.free(ntemps);
     }
 
+    /// Points TBLPTR at the byte a constant-table place names: the table's address plus `off`
+    /// plus the run-time byte index, if any. Clobbers `__A` when the index needs code.
+    fn point_tblptr(&mut self, p: &Place) {
+        let Base::Flash(f) = p.base else {
+            self.err("internal: TBLPTR for a place that is not a constant table");
+            return;
+        };
+        let sym = self.p.flash[f].asm.clone();
+        let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
+        let (tl, th, tu) = (self.sfr_mem("TBLPTRL"), self.sfr_mem("TBLPTRH"), self.sfr_mem("TBLPTRU"));
+        if let Some(idx) = &p.idx {
+            self.gen_to_acc(idx);
+            let (a0, a1) = (self.a(0), self.a(1));
+            self.ins(format!("movlw low({at})"));
+            self.fop("addwf", &a0, "w");
+            self.fo("movwf", &tl);
+            self.ins(format!("movlw high({at})"));
+            self.fop("addwfc", &a1, "w");
+            self.fo("movwf", &th);
+            self.ins(format!("movlw highword({at})"));
+            self.fo("movwf", &tu);
+            self.ins("movlw 0");
+            self.fop("addwfc", &tu, "f");
+        } else {
+            for (m, op) in [(&tl, "low"), (&th, "high"), (&tu, "highword")] {
+                self.ins(format!("movlw {op}({at})"));
+                self.fo("movwf", m);
+            }
+        }
+    }
+
     fn load_place(&mut self, p: &Place, n: u32) {
+        if matches!(p.base, Base::Flash(_)) {
+            self.point_tblptr(p);
+            let t = self.sfr_mem("TABLAT");
+            for i in 0..n {
+                self.ins("tblrd*+");
+                if n == 1 {
+                    self.fop("movf", &t, "w");
+                } else {
+                    let d = self.a(i);
+                    self.movff(&d, &t);
+                }
+            }
+            return;
+        }
         if p.indirect() {
             self.point_fsr0(p);
             if n == 1 {
@@ -3133,6 +3203,15 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
             bytes.push(0);
         }
         g.items.push(Item::Label(format!("__STR{n}")));
+        g.items.push(Item::Data(bytes));
+    }
+    // Constant tables, padded to a whole word.
+    for f in &p.flash {
+        let mut bytes = f.bytes.clone();
+        if bytes.len() % 2 == 1 {
+            bytes.push(0);
+        }
+        g.items.push(Item::Label(f.asm.clone()));
         g.items.push(Item::Data(bytes));
     }
     let items = std::mem::take(&mut g.items);

@@ -112,6 +112,16 @@ pub struct Lowerer<'a> {
     lits: HashMap<Vec<u8>, VarId>,
     /// Statements that run before the program body (they fill those buffers).
     startup: Vec<S>,
+    /// Constant tables in program memory: `Const` arrays and array initialisers.
+    flash: Vec<FlashObj>,
+    /// The flash table of each `Const` array symbol.
+    sym_flash: HashMap<usize, usize>,
+    /// RAM copies of constant arrays passed to `ByRefConst` parameters (by flash table).
+    flash_copies: HashMap<usize, VarId>,
+    /// Array parameters whose run-time length (`Bound`) the routine reads.
+    len_used: HashSet<VarId>,
+    /// `(callee parameter, caller parameter)`: an array parameter passed on to another one.
+    len_fwd: Vec<(VarId, VarId)>,
     isrs: Vec<(FuncId, Level)>,
     n_saves: usize,
     /// Nesting depth of `Save` blocks being lowered.
@@ -148,6 +158,11 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         hidden: 0,
         lits: HashMap::new(),
         startup: Vec::new(),
+        flash: Vec::new(),
+        sym_flash: HashMap::new(),
+        flash_copies: HashMap::new(),
+        len_used: HashSet::new(),
+        len_fwd: Vec::new(),
         isrs: Vec::new(),
         n_saves: 0,
         in_save: 0,
@@ -196,6 +211,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     if lw.failed {
         return None;
     }
+
     let main_body = {
         let mut b = std::mem::take(&mut lw.startup);
         b.append(&mut main_body);
@@ -219,10 +235,13 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     }
 
     let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default() };
-    let funcs = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
+    let mut funcs: Vec<Func> = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
+    let mut main = main;
+    strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
     Some(Program {
         vars: lw.vars,
         funcs,
+        flash: lw.flash,
         main,
         label_names: lw.label_names,
         device: device.device.name.clone(),
@@ -319,6 +338,53 @@ impl<'a> Lowerer<'a> {
         self.vars.len() - 1
     }
 
+    /// A table in program memory holding `vals` as little-endian elements of `size` bytes.
+    fn new_flash(&mut self, vals: &[u32], size: u32) -> usize {
+        let mut bytes = Vec::new();
+        for &v in vals {
+            for i in 0..size {
+                bytes.push((v >> (8 * i)) as u8);
+            }
+        }
+        let asm = self.unique(format!("__CA{}", self.flash.len()));
+        self.flash.push(FlashObj { asm, bytes });
+        self.flash.len() - 1
+    }
+
+    /// The value of a constant-table element at a compile-time position, if `p` names one.
+    fn flash_const(&self, p: &Place) -> Option<Ex> {
+        let Base::Flash(f) = p.base else { return None };
+        let (w, s) = nat(&p.ty)?;
+        if p.idx.is_some() || p.bit.is_some() {
+            return None;
+        }
+        let bytes = &self.flash[f].bytes;
+        let mut v = 0u32;
+        for i in 0..(w as usize / 8) {
+            v |= (*bytes.get(p.off as usize + i)? as u32) << (8 * i);
+        }
+        Some(Ex::konst(v, w, s))
+    }
+
+    /// A RAM copy of a constant table, filled at start-up, for a `ByRefConst` argument.
+    fn flash_copy(&mut self, f: usize, ty: &Ty, span: Span) -> Place {
+        let v = match self.flash_copies.get(&f) {
+            Some(&v) => v,
+            None => {
+                let saved = self.cur_func.take();
+                let v = self.new_var(format!("__CACOPY{f}"), "(constant array)", ty.clone(), VarKind::Hidden, None);
+                self.cur_func = saved;
+                self.flash_copies.insert(f, v);
+                let bytes = self.flash[f].bytes.len() as u32;
+                let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
+                let src = Place { base: Base::Flash(f), off: 0, bit: None, idx: None, ty: ty.clone() };
+                self.startup.push(S { st: St::Copy { dst, src, bytes }, span });
+                v
+            }
+        };
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }
+    }
+
     fn hidden_var(&mut self, ty: Ty) -> Place {
         self.hidden += 1;
         let asm = format!("{}__H{}", self.cur_asm, self.hidden);
@@ -383,12 +449,8 @@ impl<'a> Lowerer<'a> {
                 SymKind::Var { ty } => {
                     let array = match &ty {
                         Ty::Array(elem, _) => {
-                            if matches!(**elem, Ty::Bit | Ty::Bool) || (nat(elem).is_none() && !matches!(**elem, Ty::Struct(_))) {
+                            if nat(elem).is_none() && !matches!(**elem, Ty::Struct(_)) {
                                 self.unsupported_sym(sym, &format!("an array of {elem}"));
-                                continue;
-                            }
-                            if it.init.is_some() || dim.trailing_init.is_some() {
-                                self.unsupported_sym(sym, "an array with an initialiser");
                                 continue;
                             }
                             true
@@ -402,7 +464,7 @@ impl<'a> Lowerer<'a> {
                         continue;
                     }
                     let init_e = it.init.as_ref().or(dim.trailing_init.as_ref());
-                    let init = if string { None } else { init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32) };
+                    let init = if string || array { None } else { init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32) };
                     let init = init.map(|v| v & mask(nat(&ty).map_or(32, |t| t.0)));
                     let s = &self.a.symbols[sym];
                     let asm = if s.local { format!("{}__{}", self.cur_asm, sanitize(&s.name)) } else { format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&s.name)) };
@@ -414,6 +476,17 @@ impl<'a> Lowerer<'a> {
                     if let (Ty::Str(cap), Some(e)) = (&ty, init_e) {
                         let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
                         self.str_assign(dst, *cap, e, it.name.span, inits);
+                    }
+                    if let Ty::Array(elem, _) = &ty {
+                        let list: Option<Vec<&'a Expr>> = match (it.list.as_ref().or(dim.trailing_list.as_ref()), init_e) {
+                            (Some(l), _) => Some(l.iter().collect()),
+                            (None, Some(e)) => Some(vec![e]),
+                            _ => None,
+                        };
+                        if let Some(list) = list {
+                            let vals: Vec<u32> = list.iter().map(|e| self.a.consts.get(&e.id).map(cval_u32).unwrap_or(0)).collect();
+                            self.array_init(v, elem, &vals, it.name.span, inits);
+                        }
                     }
                     if local && !array && !record && let Some(i) = init {
                         inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
@@ -429,6 +502,33 @@ impl<'a> Lowerer<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// Gives a freshly declared array its initial values. Storage is zero already (start-up
+    /// clears globals, entry clears locals), so a few non-zero values are stored one by one and
+    /// a longer table is copied from program memory.
+    fn array_init(&mut self, v: VarId, elem: &Ty, vals: &[u32], span: Span, inits: &mut Vec<S>) {
+        let size = self.size_of(elem);
+        let (w, sg) = nat(elem).unwrap_or((8, false));
+        let nonzero = vals.iter().filter(|&&x| x & mask(w) != 0).count() as u32;
+        if nonzero == 0 {
+            return;
+        }
+        let ty = self.vars[v].ty.clone();
+        if nonzero * size <= 8 {
+            for (i, &x) in vals.iter().enumerate() {
+                if x & mask(w) != 0 {
+                    let dst = Place { base: Base::Var(v), off: i as u32 * size, bit: None, idx: None, ty: elem.clone() };
+                    inits.push(S { st: St::Assign(dst, Ex::konst(x, w, sg)), span });
+                }
+            }
+            return;
+        }
+        let f = self.new_flash(vals, size);
+        let bytes = self.flash[f].bytes.len() as u32;
+        let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
+        let src = Place { base: Base::Flash(f), off: 0, bit: None, idx: None, ty };
+        inits.push(S { st: St::Copy { dst, src, bytes }, span });
     }
 
     fn unsupported_sym(&mut self, sym: usize, what: &str) {
@@ -468,8 +568,8 @@ impl<'a> Lowerer<'a> {
             };
             let supported = match info.mode {
                 ParamMode::ByVal => nat(&info.ty).is_some(),
-                ParamMode::ByRef => matches!(info.ty, Ty::Str(_)) || matches!(pointee, Ty::Struct(_)) || (nat(pointee).is_some() && !matches!(pointee, Ty::Bit) && !(matches!(info.ty, Ty::Array(..)) && *pointee == Ty::Bool)),
-                ParamMode::ByRefConst => matches!(info.ty, Ty::Str(_)),
+                ParamMode::ByRef => matches!(info.ty, Ty::Str(_)) || matches!(pointee, Ty::Struct(_)) || (nat(pointee).is_some() && (!matches!(pointee, Ty::Bit) || matches!(info.ty, Ty::Array(..)))),
+                ParamMode::ByRefConst => matches!(info.ty, Ty::Str(_)) || (matches!(info.ty, Ty::Array(..)) && nat(pointee).is_some()),
             };
             if !supported {
                 self.unsupported(p.name.span, &format!("parameter `{}` ({})", p.name.name, if info.mode == ParamMode::ByVal { "non-scalar" } else { "this by-reference form" }));
@@ -680,6 +780,23 @@ impl<'a> Lowerer<'a> {
         if let Some(p) = self.sym_alias.get(&sym) {
             return Some(p.clone());
         }
+        if let SymKind::ConstArray { elem, vals } = self.a.symbols[sym].kind.clone() {
+            if nat(&elem).is_none() {
+                self.unsupported(span, &format!("a constant array of {elem}"));
+                return None;
+            }
+            let f = match self.sym_flash.get(&sym) {
+                Some(&f) => f,
+                None => {
+                    let size = self.size_of(&elem);
+                    let words: Vec<u32> = vals.iter().map(cval_u32).collect();
+                    let f = self.new_flash(&words, size);
+                    self.sym_flash.insert(sym, f);
+                    f
+                }
+            };
+            return Some(Place { base: Base::Flash(f), off: 0, bit: None, idx: None, ty: Ty::Array(Box::new(elem), vals.len() as u32) });
+        }
         let name = self.a.symbols[sym].name.clone();
         match self.unsupported.get(&sym).cloned() {
             Some(what) => self.unsupported(span, &format!("`{name}` ({what})")),
@@ -729,13 +846,6 @@ impl<'a> Lowerer<'a> {
         if p.is_none() && self.diags.error_count() == before {
             self.unsupported(d.span, &format!("`{}` here", d.head.name));
         }
-        if let Some(pl) = &p
-            && pl.bit.is_some()
-            && pl.indirect()
-        {
-            self.unsupported(d.span, "a bit of an array element or ByRef parameter");
-            return None;
-        }
         p
     }
 
@@ -772,14 +882,10 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Follows `parts[i..]` (members, bit numbers, indices) from `place`.
-    fn apply_parts(&mut self, mut place: Place, parts: &'a [Part], mut i: usize, span: Span) -> Option<Place> {
+    fn apply_parts(&mut self, mut place: Place, parts: &'a [Part], mut i: usize, _span: Span) -> Option<Place> {
         while i < parts.len() {
             match &parts[i] {
                 Part::BitIndex(n, _) => {
-                    if place.idx.is_some() {
-                        self.unsupported(span, "a bit of an array element");
-                        return None;
-                    }
                     place.off += (*n / 8) as u32;
                     place.bit = Some((*n % 8) as u8);
                     place.ty = Ty::Bit;
@@ -1076,6 +1182,7 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let mut out = Vec::new();
+        let mut lens = Vec::new();
         for (i, (pv, def)) in params.iter().enumerate() {
             let mut pty = self.vars[*pv].ty.clone();
             let ex = if self.vars[*pv].by_ref {
@@ -1100,8 +1207,31 @@ impl<'a> Lowerer<'a> {
                         self.unsupported(dd.span, "a bit passed ByRef");
                         return None;
                     }
-                    pl
+                    match pl.base {
+                        // A constant table is read through a RAM copy made at start-up.
+                        Base::Flash(f) if pl.off == 0 && pl.idx.is_none() => self.flash_copy(f, &pl.ty.clone(), dd.span),
+                        Base::Flash(_) => {
+                            self.unsupported(dd.span, "part of a constant array passed by reference");
+                            return None;
+                        }
+                        _ => pl,
+                    }
                 };
+                if matches!(self.vars[*pv].ty, Ty::Array(..)) {
+                    // The callee may ask for the array's length with `Bound`; it travels beside the address.
+                    let len = match (&pl.ty, &pl.base) {
+                        (Ty::Array(_, n), _) if *n > 0 => Ex::konst(*n, 16, false),
+                        (Ty::Array(_, 0), Base::Ptr(src)) if pl.off == 0 && pl.idx.is_none() => {
+                            self.len_fwd.push((*pv, *src));
+                            Ex::new(ExK::Load(Place { base: Base::Var(*src), off: 2, bit: None, idx: None, ty: WORD }), 16, false)
+                        }
+                        _ => {
+                            self.unsupported(span, "this array argument");
+                            return None;
+                        }
+                    };
+                    lens.push((Place { base: Base::Var(*pv), off: 2, bit: None, idx: None, ty: WORD }, len));
+                }
                 Ex::new(ExK::Addr(pl), 16, false)
             } else {
                 let (w, s) = nat(&pty).unwrap();
@@ -1112,6 +1242,7 @@ impl<'a> Lowerer<'a> {
             };
             out.push((Place { base: Base::Var(*pv), off: 0, bit: None, idx: None, ty: pty }, ex));
         }
+        out.append(&mut lens);
         Some((id, out))
     }
 
@@ -1136,11 +1267,58 @@ impl<'a> Lowerer<'a> {
             return Some(Ex::konst(n, 8, false));
         }
         let place = self.place_idx_of(d)?;
+        if let Some(k) = self.flash_const(&place) {
+            return Some(k);
+        }
         let Some((w, s)) = nat(&place.ty) else {
             self.unsupported(d.span, &format!("a value of type {}", place.ty));
             return None;
         };
+        if place.bit.is_some() && place.indirect() {
+            return self.bit_read(&place, d.span);
+        }
         Some(Ex::new(ExK::Load(place), w, s))
+    }
+
+    /// The value (0 or 1) of a bit of a byte that is reached through FSR0 or TBLPTR: an element of
+    /// an array picked at run time, a field of one, a `ByRef` parameter or a constant table.
+    fn bit_read(&mut self, p: &Place, span: Span) -> Option<Ex> {
+        if p.idx.as_ref().is_some_and(|i| i.has_call()) {
+            self.unsupported(span, "a call inside the index of a bit");
+            return None;
+        }
+        let b = p.bit?;
+        let byte = Place { bit: None, ty: BYTE, ..p.clone() };
+        let load = Ex::new(ExK::Load(byte), 8, false);
+        let masked = Ex::new(ExK::Bin(BinKind::And, Box::new(load), Box::new(Ex::konst(1 << b, 8, false))), 8, false);
+        Some(if b == 0 { masked } else { Ex::new(ExK::Bin(BinKind::Shr, Box::new(masked), Box::new(Ex::konst(b as u32, 8, false))), 8, false) })
+    }
+
+    /// Stores 0 or 1 (`v`, 8 bits) into a bit read by `bit_read`, as a read-modify-write of its
+    /// byte. `toggle` flips the bit instead.
+    fn bit_write(&mut self, p: &Place, v: Option<Ex>, span: Span) -> Option<St> {
+        if p.idx.as_ref().is_some_and(|i| i.has_call()) {
+            self.unsupported(span, "a call inside the index of a bit");
+            return None;
+        }
+        let b = p.bit?;
+        let mask = 1u32 << b;
+        let byte = Place { bit: None, ty: BYTE, ..p.clone() };
+        let load = Ex::new(ExK::Load(byte.clone()), 8, false);
+        let bin = |k: BinKind, l: Ex, r: Ex| Ex::new(ExK::Bin(k, Box::new(l), Box::new(r)), 8, false);
+        let new = match v {
+            // Toggle.
+            None => bin(BinKind::Xor, load, Ex::konst(mask, 8, false)),
+            Some(v) => match v.as_const() {
+                Some(0) => bin(BinKind::And, load, Ex::konst(!mask, 8, false)),
+                Some(_) => bin(BinKind::Or, load, Ex::konst(mask, 8, false)),
+                None => {
+                    let shifted = if b == 0 { v } else { bin(BinKind::Shl, v, Ex::konst(b as u32, 8, false)) };
+                    bin(BinKind::Or, bin(BinKind::And, load, Ex::konst(!mask, 8, false)), shifted)
+                }
+            },
+        };
+        Some(St::Assign(byte, new))
     }
 
     fn intrinsic_value(&mut self, name: &str, d: &'a Designator, e: &'a Expr) -> Option<Ex> {
@@ -1167,6 +1345,26 @@ impl<'a> Lowerer<'a> {
                 }
                 let zero = Ex::konst(0, x.w, x.signed);
                 Some(Ex::boolean(ExK::Cmp(CmpKind::Ne, Box::new(x), Box::new(zero))))
+            }
+            "bound" => {
+                // Only an array parameter gets here (sema folds the others): its length travels
+                // with the address, in the two bytes after it.
+                let Some(Expr { kind: ExprKind::Designator(dd), .. }) = args.first() else {
+                    self.unsupported(e.span, "`Bound` of this");
+                    return None;
+                };
+                let p = self.place_idx_of(dd)?;
+                let Base::Ptr(v) = p.base else {
+                    self.unsupported(e.span, "`Bound` of this");
+                    return None;
+                };
+                if p.off != 0 || p.idx.is_some() || !matches!(p.ty, Ty::Array(_, 0)) {
+                    self.unsupported(e.span, "`Bound` of this");
+                    return None;
+                }
+                self.len_used.insert(v);
+                let len = Ex::new(ExK::Load(Place { base: Base::Var(v), off: 2, bit: None, idx: None, ty: WORD }), 16, false);
+                Some(Ex::new(ExK::Bin(BinKind::Sub, Box::new(len), Box::new(Ex::konst(1, 16, false))), 16, false))
             }
             n => {
                 self.unsupported(e.span, &format!("the intrinsic `{n}`"));
@@ -1223,8 +1421,8 @@ impl<'a> Lowerer<'a> {
     /// Size of a whole structure or array that is cleared or copied, if the back end can do it.
     fn block_bytes(&mut self, p: &Place, span: Span, what: &str) -> Option<u32> {
         let bytes = self.size_of(&p.ty);
-        if bytes == 0 || bytes > 255 {
-            self.unsupported(span, &format!("{what} of a {bytes}-byte {} (1 to 255 bytes are handled)", p.ty));
+        if bytes == 0 {
+            self.unsupported(span, &format!("{what} of a {} of unknown size", p.ty));
             return None;
         }
         if p.bit.is_some() || p.idx.as_ref().is_some_and(|i| i.has_call()) {
@@ -1363,6 +1561,12 @@ impl<'a> Lowerer<'a> {
                     return;
                 };
                 let v = conv(v, w, sg);
+                if p.bit.is_some() && p.indirect() {
+                    if let Some(st) = self.bit_write(&p, Some(v), span) {
+                        Self::push(out, st, span);
+                    }
+                    return;
+                }
                 Self::push(out, St::Assign(p, v), span);
             }
             StmtKind::Call(d) => self.call_stmt(d, span, out),
@@ -1475,7 +1679,7 @@ impl<'a> Lowerer<'a> {
         let arg_place = |this: &mut Self| -> Option<Place> {
             match args.first().map(|a| &a.kind) {
                 Some(ExprKind::Designator(dd)) => {
-                    if matches!(name.as_str(), "inc" | "dec" | "clear") {
+                    if matches!(name.as_str(), "inc" | "dec" | "clear" | "high" | "low" | "toggle") {
                         this.place_idx_of(dd)
                     } else {
                         this.place_of(dd)
@@ -1488,6 +1692,10 @@ impl<'a> Lowerer<'a> {
             "inc" | "dec" => {
                 let Some(p) = arg_place(self) else { return };
                 let delta = if name == "inc" { 1u32 } else { u32::MAX };
+                if p.bit.is_some() && p.indirect() {
+                    self.unsupported(span, "Inc/Dec of a bit reached through a pointer or index");
+                    return;
+                }
                 if p.indirect() {
                     // The index is evaluated twice, so it must not contain a call.
                     let Some((w, sg)) = nat(&p.ty) else { return };
@@ -1504,6 +1712,12 @@ impl<'a> Lowerer<'a> {
             }
             "clear" => {
                 let Some(p) = arg_place(self) else { return };
+                if p.bit.is_some() && p.indirect() {
+                    if let Some(st) = self.bit_write(&p, Some(Ex::konst(0, 8, false)), span) {
+                        Self::push(out, st, span);
+                    }
+                    return;
+                }
                 match nat(&p.ty) {
                     None if matches!(p.ty, Ty::Str(_)) => {
                         // The text is empty once its first byte is Null.
@@ -1521,6 +1735,17 @@ impl<'a> Lowerer<'a> {
             }
             "high" | "low" | "toggle" => {
                 let Some(p) = arg_place(self) else { return };
+                if p.bit.is_some() && p.indirect() {
+                    let v = match name.as_str() {
+                        "high" => Some(Ex::konst(1, 8, false)),
+                        "low" => Some(Ex::konst(0, 8, false)),
+                        _ => None,
+                    };
+                    if let Some(st) = self.bit_write(&p, v, span) {
+                        Self::push(out, st, span);
+                    }
+                    return;
+                }
                 if p.bit.is_some() {
                     let st = match name.as_str() {
                         "high" => St::SetBit(p, true),
@@ -1529,6 +1754,10 @@ impl<'a> Lowerer<'a> {
                     };
                     Self::push(out, st, span);
                 } else {
+                    if p.idx.as_ref().is_some_and(|i| i.has_call()) {
+                        self.unsupported(span, "a call inside the index of High/Low/Toggle");
+                        return;
+                    }
                     // A Boolean or Bit variable holds 0 or 1 in a byte.
                     let v = match name.as_str() {
                         "high" => Ex::konst(1, 8, false),
@@ -1648,5 +1877,122 @@ impl<'a> Lowerer<'a> {
         }
         let o = otherwise.map(|b| self.block(b, ui)).unwrap_or_default();
         Self::push(out, St::If(arms, o), span);
+    }
+}
+
+/// Drops the hidden length argument of every array parameter whose routine never asks for
+/// `Bound`, and gives the parameters that do keep it room for it (address, then length).
+fn strip_unused_lengths(vars: &mut [Var], used: &HashSet<VarId>, fwd: &[(VarId, VarId)], funcs: &mut [Func], main: &mut Func) {
+    // A length that is passed on to a routine that reads it is itself read.
+    let mut used = used.clone();
+    loop {
+        let before = used.len();
+        for &(callee, caller) in fwd {
+            if used.contains(&callee) {
+                used.insert(caller);
+            }
+        }
+        if used.len() == before {
+            break;
+        }
+    }
+    for &v in &used {
+        vars[v].bytes = 4;
+    }
+    let is_len = |p: &Place| matches!(p.base, Base::Var(v) if p.off == 2 && vars[v].by_ref && matches!(vars[v].ty, Ty::Array(..)) && !used.contains(&v));
+    for f in funcs.iter_mut().chain(std::iter::once(main)) {
+        strip_block(&mut f.body, &is_len);
+    }
+}
+
+type LenTest<'a> = &'a dyn Fn(&Place) -> bool;
+
+fn strip_block(b: &mut [S], is_len: LenTest) {
+    for s in b {
+        match &mut s.st {
+            St::Assign(p, e) => {
+                strip_place(p, is_len);
+                strip_ex(e, is_len);
+            }
+            St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::Clear(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => strip_place(p, is_len),
+            St::Copy { dst, src, .. } => {
+                strip_place(dst, is_len);
+                strip_place(src, is_len);
+            }
+            St::StrSet { dst, parts, .. } => {
+                strip_place(dst, is_len);
+                for p in parts {
+                    match p {
+                        StrSrc::Ram(p) => strip_place(p, is_len),
+                        StrSrc::Char(e) => strip_ex(e, is_len),
+                        StrSrc::Lit(_) => {}
+                    }
+                }
+            }
+            St::Call(_, args) => strip_args(args, is_len),
+            St::If(arms, other) => {
+                for (c, body) in arms {
+                    strip_ex(c, is_len);
+                    strip_block(body, is_len);
+                }
+                strip_block(other, is_len);
+            }
+            St::While(c, body) | St::Repeat(body, c) => {
+                strip_ex(c, is_len);
+                strip_block(body, is_len);
+            }
+            St::For { var, from, limit, body, .. } => {
+                strip_place(var, is_len);
+                strip_ex(from, is_len);
+                strip_ex(limit, is_len);
+                strip_block(body, is_len);
+            }
+            St::Count { counter, body, step, .. } => {
+                strip_place(counter, is_len);
+                if let Some((p, _)) = step {
+                    strip_place(p, is_len);
+                }
+                strip_block(body, is_len);
+            }
+            St::DelayUs(e) | St::DelayMs(e) => strip_ex(e, is_len),
+            St::Save { body, .. } => strip_block(body, is_len),
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+        }
+    }
+}
+
+fn strip_args(args: &mut Vec<(Place, Ex)>, is_len: LenTest) {
+    args.retain(|(p, _)| !is_len(p));
+    for (p, e) in args.iter_mut() {
+        strip_place(p, is_len);
+        strip_ex(e, is_len);
+    }
+}
+
+fn strip_place(p: &mut Place, is_len: LenTest) {
+    if let Some(i) = &mut p.idx {
+        strip_ex(i, is_len);
+    }
+}
+
+fn strip_ex(e: &mut Ex, is_len: LenTest) {
+    match &mut e.k {
+        ExK::Const(_) => {}
+        ExK::Load(p) | ExK::Addr(p) => strip_place(p, is_len),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => strip_ex(x, is_len),
+        ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
+            strip_ex(a, is_len);
+            strip_ex(b, is_len);
+        }
+        ExK::Call(_, args) => strip_args(args, is_len),
+        ExK::StrEq(a, b) => {
+            for s in [a, b] {
+                match s {
+                    StrSrc::Ram(p) => strip_place(p, is_len),
+                    StrSrc::Char(e) => strip_ex(e, is_len),
+                    StrSrc::Lit(_) => {}
+                }
+            }
+        }
     }
 }

@@ -336,6 +336,15 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   so `SysClockHz` is only checked to agree with `SysClockFrom` of the live registers; its real values need hardware (D6).
 - M8 library breadth: everything on the M8 list is done (`lcd` and `oled` below).
 
+## Arrays completed (2026-10-25)
+- Array initialisers `Dim a(n) As T = (…)` (parser `dim_init`, sema `array_init`, lowering `array_init`), `E-DIM-ARRAY` for a wrong count.
+- `Const` arrays in the back end: `Base::Flash`, `FlashObj` tables emitted after the string literals, `point_tblptr` in `codegen.rs`; constant indices fold; whole-array assignment to RAM is a flash-to-RAM `St::Copy`; `ByRefConst` array parameters take a RAM copy made at start-up.
+- `Bit`/`Boolean` arrays, one byte per element (D47), including `ByRef` parameters and structure fields.
+- `Bound(a)` of an array parameter (D49); a bit of an element picked at run time, of a structure field in such an element and of a `ByRef` parameter (`bit_read`/`bit_write` in `lower.rs`, read-modify-write of the byte; the index may not contain a call).
+- Copies and clears of whole arrays and structures over 255 bytes (chunked loops in `copy_mem`/`clear_mem`).
+- Tests: `tests/exec/arrays_full.bas` (optimised and `-O0`), negative tests `array_init_*`, `const_array_write`. The old `W-BITARR` test file became `tests/valid/bit_array.bas`.
+- Still not done: arrays of strings, multi-dimensional arrays, array-returning functions, `Const` arrays of floats, a call inside the index of a bit, `Inc`/`Dec` of such a bit, a bit-array element passed `ByRef`.
+
 ## M8 — lcd and oled (done 2026-10-25)
 - `lib/lcd.bas` (module `Lcd`): HD44780U, 4-bit, from `~/Projects/HD44780.pdf` (instruction table 6, Figure 24 initialisation, DDRAM map, bus timing). No busy-flag read (fixed waits).
 - `lib/oled.bas` (module `Oled`): SSD1309 128 x 64 over I2C (8.1.5) or 4-wire SPI (8.1.3), from `~/Projects/Solomon_SSD1309_v1.1.pdf` (command tables 9-1..9-5, power-on 8.8). Relies on Reset values (8.4) for geometry/COM pins; text is a 5 x 7 font from the public domain X11 `5x7` font (not from the data sheet).

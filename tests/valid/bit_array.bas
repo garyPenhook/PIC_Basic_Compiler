@@ -1,4 +1,3 @@
-' warn: W-BITARR
 Program T
 Device = 18F27Q10
 Dim flags(16) As Bit

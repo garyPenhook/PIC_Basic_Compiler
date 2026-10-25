@@ -36,13 +36,13 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-MIX | Boolean mixed with a number (D11) |
 | E-SIGN | Signed and unsigned operands that cannot be combined (D16) |
 | E-CONST-EXPR, E-CONST-RANGE, E-CONST, E-CONST-ARRAY | Not constant; constant does not fit; bad constant declaration |
+| E-DIM-ARRAY | An array initialiser has a different number of values than the array has elements |
 | E-NARROW / W-NARROW | Value may not fit the target (error under `Strict`) |
 | E-DIV0 | Constant division by zero |
 | E-BOUNDS | Constant index, bit or modifier outside the object |
 | E-NOMEMBER, E-NOTVALUE | No such field/modifier/register bit; a type, module or interrupt used as a value |
 | E-ASSIGN, E-READONLY, E-ALIAS, E-ADDR | Bad assignment target, read-only target, bad alias or promotion, no address |
 | E-DIM, E-STRUCT, E-SYMBOL | Bad `Dim`, empty structure, bad `Symbol` |
-| W-BITARR | Bit/Boolean array indexed by a variable |
 
 ## Statements and routines
 | Code | Meaning |

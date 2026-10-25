@@ -57,7 +57,8 @@ impl Ty {
     pub fn signed(&self) -> bool {
         matches!(self, Ty::Int(_, true) | Ty::Float)
     }
-    /// RAM bytes the type occupies. Bit and Boolean arrays are packed.
+    /// RAM bytes the type occupies. A Bit or Boolean array holds one element per byte, like a
+    /// single Bit or Boolean variable, so an element is addressed like any other byte.
     pub fn size_bytes(&self, struct_size: &dyn Fn(SymId) -> u32) -> u32 {
         match self {
             Ty::Bool | Ty::Bit | Ty::Char => 1,
@@ -66,10 +67,7 @@ impl Ty {
             Ty::Str(n) => n + 1,
             Ty::Struct(s) => struct_size(*s),
             Ty::EventVar(_) | Ty::EventAny => 1,
-            Ty::Array(e, n) => match **e {
-                Ty::Bit | Ty::Bool => n.div_ceil(8),
-                _ => e.size_bytes(struct_size) * n,
-            },
+            Ty::Array(e, n) => e.size_bytes(struct_size) * n,
             Ty::Void => 0,
         }
     }
