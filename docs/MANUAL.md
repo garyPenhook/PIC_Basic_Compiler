@@ -1081,7 +1081,7 @@ You set up the bus first (`I2cInit` at no more than 400 kHz, or `SpiInit` mode 0
 | `OledTextGoto(x, line)` | character cell 0..20, line 0..7 (6 x 8 cells) |
 | `OledData(b)` / `OledFill(pattern)` / `OledClear()` | one column / whole RAM / clear |
 | `OledWriteChar(ch)` / `OledWrite(s)` / `OledWriteWord(v)` / `OledWriteHex(v)` | text in a 5 x 7 font (ASCII 32..126) |
-| `FontByte(i)` | byte `i` (0..474) of the font table (public name is `FontByte`; `docs/LIBRARY.md` calls it `OledFontByte`) |
+| `FontByte(i)` | byte `i` (0..474) of the font table |
 
 No pixel, line or bitmap drawing yet.
 

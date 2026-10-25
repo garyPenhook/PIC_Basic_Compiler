@@ -202,7 +202,7 @@ Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tab
 | `OledTextGoto(x, line)` | character cell 0..20, line 0..7 (6 x 8 pixel cells) |
 | `OledData(b)` / `OledFill(pattern)` / `OledClear()` | one column byte / whole RAM / clear |
 | `OledWriteChar(ch)` / `OledWrite(s)` / `OledWriteWord(v)` / `OledWriteHex(v)` | text in a 5 x 7 font (X11 "5x7", public domain; ASCII 32..126) |
-| `OledFontByte(i)` | byte `i` (0..474) of the font table (kept in flash inside an `Asm` block, read with `TBLRD`) |
+| `FontByte(i)` | byte `i` (0..474) of the font table (kept in flash inside an `Asm` block, read with `TBLRD`) |
 
 ## floatlib (Float arithmetic; included automatically)
 Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
