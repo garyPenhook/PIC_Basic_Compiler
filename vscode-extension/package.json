@@ -1,0 +1,54 @@
+{
+  "name": "picbasic",
+  "displayName": "PIC BASIC (basicc)",
+  "description": "Language support for the basicc PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
+  "version": "0.1.0",
+  "publisher": "garypenhook",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages", "Formatters", "Snippets", "Linters"],
+  "main": "./src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "picbasic",
+        "aliases": ["PIC BASIC", "picbasic"],
+        "extensions": [".bas"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [{ "language": "picbasic", "scopeName": "source.picbasic", "path": "./syntaxes/picbasic.tmLanguage.json" }],
+    "snippets": [{ "language": "picbasic", "path": "./snippets/picbasic.json" }],
+    "commands": [
+      { "command": "picbasic.fixKeywordCase", "title": "Fix Keyword Case", "category": "PIC BASIC" },
+      { "command": "picbasic.check", "title": "Check (front end only)", "category": "PIC BASIC" },
+      { "command": "picbasic.build", "title": "Build (.hex)", "category": "PIC BASIC" },
+      { "command": "picbasic.report", "title": "Show Resource Report", "category": "PIC BASIC" }
+    ],
+    "menus": {
+      "editor/title": [{ "command": "picbasic.build", "when": "resourceLangId == picbasic", "group": "navigation" }]
+    },
+    "configuration": {
+      "title": "PIC BASIC",
+      "properties": {
+        "picbasic.compilerPath": { "type": "string", "default": "basicc", "description": "Path to the basicc executable." },
+        "picbasic.compilerArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra arguments for every basicc run (for example [\"-L\", \"/path/lib\", \"--pic-as\", \"/path/pic-as\"])." },
+        "picbasic.autoCorrectKeywords": { "type": "boolean", "default": true, "description": "Correct the case of a reserved word as soon as it is typed (dim becomes Dim)." },
+        "picbasic.fixKeywordCaseOnSave": { "type": "boolean", "default": true, "description": "Correct the case of all reserved words when a file is saved." },
+        "picbasic.formatIndentation": { "type": "boolean", "default": true, "description": "Formatting also re-indents blocks and trims trailing whitespace." },
+        "picbasic.diagnostics": { "type": "string", "enum": ["off", "onSave", "onType"], "default": "onSave", "description": "When to run `basicc --check` for error and warning squiggles. onType checks a temporary copy shortly after typing stops." }
+      }
+    },
+    "problemMatchers": [
+      {
+        "name": "basicc",
+        "owner": "picbasic",
+        "fileLocation": ["autoDetect", "${workspaceFolder}"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+): (error|warning)\\[([^\\]]+)\\]: (.*)$", "file": 1, "line": 2, "column": 3, "severity": 4, "code": 5, "message": 6 }
+      }
+    ],
+    "taskDefinitions": [{ "type": "picbasic", "required": ["file"], "properties": { "file": { "type": "string" }, "mode": { "type": "string", "enum": ["build", "check"] } } }]
+  },
+  "scripts": { "test": "node test/test.js", "package": "npx --yes @vscode/vsce package" }
+}

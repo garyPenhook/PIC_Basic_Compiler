@@ -1,0 +1,252 @@
+{
+ "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+ "name": "PIC BASIC",
+ "scopeName": "source.picbasic",
+ "patterns": [
+  {
+   "include": "#asm"
+  },
+  {
+   "include": "#preproc"
+  },
+  {
+   "include": "#comments"
+  },
+  {
+   "include": "#strings"
+  },
+  {
+   "include": "#numbers"
+  },
+  {
+   "include": "#declarations"
+  },
+  {
+   "include": "#keywords"
+  },
+  {
+   "include": "#functions"
+  },
+  {
+   "include": "#members"
+  },
+  {
+   "include": "#operators"
+  }
+ ],
+ "repository": {
+  "comments": {
+   "patterns": [
+    {
+     "name": "comment.block.picbasic",
+     "begin": "\\(\\*",
+     "end": "\\*\\)",
+     "patterns": [
+      {
+       "include": "#nested"
+      }
+     ]
+    },
+    {
+     "name": "comment.block.picbasic",
+     "begin": "\\{",
+     "end": "\\}",
+     "patterns": [
+      {
+       "include": "#nested"
+      }
+     ]
+    },
+    {
+     "name": "comment.line.apostrophe.picbasic",
+     "match": "'.*$"
+    },
+    {
+     "name": "comment.line.double-slash.picbasic",
+     "match": "//.*$"
+    }
+   ]
+  },
+  "nested": {
+   "patterns": [
+    {
+     "begin": "\\(\\*",
+     "end": "\\*\\)",
+     "patterns": [
+      {
+       "include": "#nested"
+      }
+     ]
+    },
+    {
+     "begin": "\\{",
+     "end": "\\}",
+     "patterns": [
+      {
+       "include": "#nested"
+      }
+     ]
+    }
+   ]
+  },
+  "strings": {
+   "name": "string.quoted.double.picbasic",
+   "begin": "\"",
+   "end": "\"|$"
+  },
+  "numbers": {
+   "patterns": [
+    {
+     "name": "constant.numeric.hex.picbasic",
+     "match": "\\$[0-9A-Fa-f]+\\b"
+    },
+    {
+     "name": "constant.numeric.binary.picbasic",
+     "match": "%[01]+\\b"
+    },
+    {
+     "name": "constant.character.picbasic",
+     "match": "#(\\$[0-9A-Fa-f]+|%[01]+|\\d+)\\b"
+    },
+    {
+     "name": "constant.numeric.float.picbasic",
+     "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+    },
+    {
+     "name": "constant.numeric.integer.picbasic",
+     "match": "\\b\\d+\\b"
+    }
+   ]
+  },
+  "preproc": {
+   "name": "meta.preprocessor.picbasic",
+   "match": "^\\s*(#[A-Za-z]+)(.*?)(?=('|//|$))",
+   "captures": {
+    "1": {
+     "name": "keyword.control.directive.picbasic"
+    },
+    "2": {
+     "name": "string.unquoted.picbasic"
+    }
+   }
+  },
+  "asm": {
+   "name": "meta.embedded.block.asm.picbasic",
+   "begin": "(?i)^\\s*(asm)\\b(?=\\s*(?:preserves\\b.*)?(?:'.*)?$)",
+   "beginCaptures": {
+    "1": {
+     "name": "keyword.control.picbasic"
+    }
+   },
+   "end": "(?i)^\\s*(end\\s+asm)\\b",
+   "endCaptures": {
+    "1": {
+     "name": "keyword.control.picbasic"
+    }
+   },
+   "patterns": [
+    {
+     "name": "comment.line.semicolon.asm",
+     "match": ";.*$"
+    },
+    {
+     "name": "entity.name.label.asm",
+     "match": "^\\s*[A-Za-z_][A-Za-z0-9_]*:"
+    },
+    {
+     "name": "constant.numeric.asm",
+     "match": "\\b(0x[0-9A-Fa-f]+|\\d+)\\b"
+    },
+    {
+     "name": "keyword.other.asm",
+     "match": "^\\s*[A-Za-z]+\\b"
+    }
+   ]
+  },
+  "declarations": {
+   "patterns": [
+    {
+     "match": "(?i)\\b(sub|function|proc|interrupt|event)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+     "captures": {
+      "1": {
+       "name": "storage.type.function.picbasic"
+      },
+      "2": {
+       "name": "entity.name.function.picbasic"
+      }
+     }
+    },
+    {
+     "match": "(?i)\\b(structure|type|module|program)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+     "captures": {
+      "1": {
+       "name": "storage.type.class.picbasic"
+      },
+      "2": {
+       "name": "entity.name.type.picbasic"
+      }
+     }
+    },
+    {
+     "match": "(?i)\\b(const|symbol)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+     "captures": {
+      "1": {
+       "name": "storage.type.picbasic"
+      },
+      "2": {
+       "name": "entity.name.constant.picbasic"
+      }
+     }
+    }
+   ]
+  },
+  "keywords": {
+   "patterns": [
+    {
+     "name": "storage.type.picbasic",
+     "match": "\\b(?i:ShortInt|LongWord|Boolean|Integer|LongInt|String|Float|Byte|Word|Char|Bit)\\b"
+    },
+    {
+     "name": "constant.language.picbasic",
+     "match": "\\b(?i:False|Null|True)\\b"
+    },
+    {
+     "name": "keyword.operator.word.picbasic",
+     "match": "\\b(?i:Not|And|Mod|Xor|Or)\\b"
+    },
+    {
+     "name": "storage.modifier.picbasic",
+     "match": "\\b(?i:ByRefConst|Interrupt|Structure|Reentrant|Absolute|NoInline|Function|Private|Program|Declare|Public|Symbol|Inline|Access|Module|Event|ByRef|ByVal|Const|Type|Proc|Dim|Sub)\\b"
+    },
+    {
+     "name": "keyword.other.header.picbasic",
+     "match": "\\b(?i:Include|Device|Config|Clock)\\b"
+    },
+    {
+     "name": "support.function.intrinsic.picbasic",
+     "match": "\\b(?i:Terminate|AddressOf|DelayMs|DelayUs|Disable|Toggle|Enable|Output|Input|Bound|BitOf|Clear|High|Dec|Low|Inc)\\b"
+    },
+    {
+     "name": "keyword.control.picbasic",
+     "match": "\\b(?i:EndSelect|Compound|Continue|ExitProc|Restore|EndProc|ElseIf|Repeat|Result|Select|Break|EndIf|Until|While|Case|Else|Exit|GoTo|Next|Save|Step|Then|Wend|Loop|Asm|End|For|As|If|To|Do)\\b"
+    }
+   ]
+  },
+  "functions": {
+   "name": "entity.name.function.call.picbasic",
+   "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+  },
+  "members": {
+   "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*",
+   "name": "variable.other.member.picbasic"
+  },
+  "operators": {
+   "patterns": [
+    {
+     "name": "keyword.operator.picbasic",
+     "match": "<<|>>|<>|<=|>=|[-+*/=<>@]"
+    }
+   ]
+  }
+ }
+}

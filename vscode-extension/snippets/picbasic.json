@@ -1,0 +1,23 @@
+{
+  "Program": { "prefix": "program", "body": ["Program ${1:Name}", "Device = ${2:18F27Q10}", "Clock = ${3:8}", "", "$0", "End"], "description": "Program skeleton" },
+  "Module": { "prefix": "module", "body": ["Module ${1:Name}", "", "$0"], "description": "Library module" },
+  "Include": { "prefix": "include", "body": "Include \"${1:Module}\"", "description": "Include a library module" },
+  "Dim": { "prefix": "dim", "body": "Dim ${1:name} As ${2|Byte,Word,Integer,LongWord,LongInt,ShortInt,Boolean,Bit,Float,Char|}", "description": "Variable" },
+  "Dim array": { "prefix": "dima", "body": "Dim ${1:name}(${2:8}) As ${3|Byte,Word,Integer,LongWord,LongInt,ShortInt,Boolean,Bit,Float,Char|}", "description": "Array" },
+  "Dim pin": { "prefix": "dimpin", "body": "Dim ${1:LED} As ${2:PORTB}.${3:0}", "description": "Pin alias" },
+  "Const": { "prefix": "const", "body": "Const ${1:Name} = ${2:0}", "description": "Constant" },
+  "Sub": { "prefix": "sub", "body": ["${1:Public }Sub ${2:Name}(${3})", "    $0", "End Sub"], "description": "Subroutine" },
+  "Function": { "prefix": "function", "body": ["${1:Public }Function ${2:Name}(${3}) As ${4:Byte}", "    $0", "End Function"], "description": "Function" },
+  "Interrupt": { "prefix": "interrupt", "body": ["Interrupt ${1:Name}(${2:0})", "    $0", "End Interrupt"], "description": "Interrupt handler" },
+  "Structure": { "prefix": "structure", "body": ["Structure ${1:Name}", "    ${2:field} As ${3:Byte}", "End Structure"], "description": "Structure" },
+  "If": { "prefix": "if", "body": ["If ${1:cond} Then", "    $0", "End If"], "description": "If" },
+  "If Else": { "prefix": "ifelse", "body": ["If ${1:cond} Then", "    $2", "Else", "    $0", "End If"], "description": "If/Else" },
+  "Select": { "prefix": "select", "body": ["Select ${1:expr}", "    Case ${2:1}", "        $3", "    Case Else", "        $0", "End Select"], "description": "Select Case" },
+  "For": { "prefix": "for", "body": ["For ${1:i} = ${2:0} To ${3:9}", "    $0", "Next"], "description": "For loop" },
+  "While": { "prefix": "while", "body": ["While ${1:cond}", "    $0", "Wend"], "description": "While loop" },
+  "Repeat": { "prefix": "repeat", "body": ["Repeat", "    $0", "Until ${1:cond}"], "description": "Repeat loop" },
+  "Do": { "prefix": "do", "body": ["Do", "    $0", "Loop"], "description": "Endless loop" },
+  "Save": { "prefix": "save", "body": ["Save(${1:variable})", "    $0", "Restore"], "description": "Save block" },
+  "Asm": { "prefix": "asm", "body": ["Asm", "    $0", "End Asm"], "description": "Inline assembly" },
+  "Main loop": { "prefix": "mainloop", "body": ["While True", "    $0", "Wend"], "description": "Main loop" }
+}
