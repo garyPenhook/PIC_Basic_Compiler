@@ -372,3 +372,7 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   divider depends on `RSTOSC`, DS40002043F Table 5-1: 1:4 for 110). `my_src/first_test` (16 MHz blink): 129 -> 98 words, 11 -> 7 RAM bytes.
 - Peephole `pass_bit_branch` (see above): the same program 98 -> 89 words. A `return` ends the dead-`WREG`/flags scan only after `WREG` was
   overwritten (it may carry the result, ABI). Unit test `bit_test_compare_becomes_skip_branch`; simulator suite passes.
+- 0.1.2: `Settle` waits for `ORDY` and `HFOR` in one bounded loop (one counter, one budget) instead of two; the liveness scan in `pass_bit_branch`
+  now follows `btfsc/btfss` + `bra` (both paths must be dead). `my_src/first_test`: 89 -> 75 words (`Settle` 41 -> 27). Test
+  `bit_branch_sees_through_a_skip_over_a_branch`.
+

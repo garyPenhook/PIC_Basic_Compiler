@@ -537,15 +537,19 @@ fn w_and_flags_dead(items: &[Item], from: usize, depth: u8) -> bool {
 }
 
 fn dead_from(items: &[Item], from: usize, depth: u8, mut w: bool, mut needed: u8) -> bool {
-    for it in &items[from..] {
+    let label_at = |target: &str| items.iter().position(|x| matches!(x, Item::Label(l) if l == target));
+    for (k, it) in items.iter().enumerate().skip(from) {
         match it {
             Item::Comment(_) | Item::Label(_) => {}
             Item::Fence => return true,
             Item::Br(Cc::Always, target) if depth > 0 => {
-                return match items.iter().position(|x| matches!(x, Item::Label(l) if l == target)) {
-                    Some(p) => dead_from(items, p + 1, depth - 1, w, needed),
-                    None => false,
-                };
+                return label_at(target).is_some_and(|p| dead_from(items, p + 1, depth - 1, w, needed));
+            }
+            // A bit skip over a branch: the branch target and the code after it must both be dead.
+            Item::Ins(t) if depth > 0 && matches!(parse(t), Some((m, _)) if m == "btfsc" || m == "btfss") => {
+                let Some(Item::Br(Cc::Always, target)) = items.get(k + 1) else { return false };
+                return label_at(target).is_some_and(|p| dead_from(items, p + 1, depth - 1, w, needed))
+                    && dead_from(items, k + 2, depth - 1, w, needed);
             }
             // The flags are clobbered across a return (docs/ABI.md); `WREG` may carry the result.
             Item::Ins(t) if matches!(parse(t), Some((m, _)) if m == "return" || m == "retlw") => return !w,
@@ -967,5 +971,21 @@ mod tests {
         let mut s = seq("xorlw 0x00", Cc::Nz);
         s[9] = ins("movwf Y, c");
         assert_eq!(run(&s).len(), s.len() - 0, "{:?}", run(&s));
+    }
+
+    #[test]
+    fn bit_branch_sees_through_a_skip_over_a_branch() {
+        // `(a Or b)`: the fall-through starts with another bit test; W and flags are dead on both paths.
+        let s = vec![
+            ins("movlw 0"), ins("btfsc R, 4, b"), ins("movlw 1"), ins("xorlw 0x00"), Item::Br(Cc::Z, "T".into()),
+            ins("btfsc R, 6, b"), Item::Br(Cc::Always, "E".into()),
+            Item::Label("T".into()), ins("movlw 0x60"), ins("subwf X, w, c"), Item::Fence, Item::Label("E".into()), Item::Fence,
+        ];
+        let r = run(&s);
+        assert_eq!(&r[..2], ["btfss R, 4, b", "brAlways T"], "{r:?}");
+        // W is read after the skip: unchanged.
+        let mut s2 = s.clone();
+        s2[8] = ins("addwf X, f, c");
+        assert_eq!(run(&s2)[0], "movlw 0");
     }
 }

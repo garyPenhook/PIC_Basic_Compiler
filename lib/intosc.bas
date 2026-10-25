@@ -95,10 +95,7 @@ Const NoscHf As Byte = 96
 Private Function Settle() As Boolean
     Dim n As Word
     n = 0
-    While OSCCON3.ORDY = 0 And n < 60000
-        Inc(n)
-    Wend
-    While OSCSTAT.HFOR = 0 And n < 60000
+    While (OSCCON3.ORDY = 0 Or OSCSTAT.HFOR = 0) And n < 60000
         Inc(n)
     Wend
     Result = OSCCON3.ORDY = 1 And OSCSTAT.HFOR = 1
