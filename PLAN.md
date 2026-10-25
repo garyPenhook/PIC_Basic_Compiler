@@ -35,7 +35,9 @@ device is a data-and-validation task, not a compiler rewrite.
 4. **Code efficiency is a top priority**: small *and* fast generated code, measured against
    XC8 on a fixed benchmark set (§7A), while staying correct. Efficiency shapes the language
    rules (§7A.2), the IR (exact bit-widths), the optimiser and the library design — it is not
-   a late polishing step. Compile-time checks (stack depth, RAM overflow, bank usage) also catch
+   a late polishing step.
+   **Every byte saved matters**: these parts have small flash and RAM, and small savings add up
+   across a program, so a one-word or one-cycle gain is worth taking whenever it is safe. Compile-time checks (stack depth, RAM overflow, bank usage) also catch
    mistakes before the chip does.
 5. A device-description mechanism so that **additional micros are added slowly over time**
    (§9) without redesigning anything.
