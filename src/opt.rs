@@ -126,7 +126,7 @@ fn w_block<V: Visit>(v: &mut V, b: &[S]) {
             }
             St::Save { body, .. } => w_block(v, body),
             St::DelayUs(e) | St::DelayMs(e) => w_ex(v, e),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
         }
     }
 }
@@ -227,7 +227,7 @@ fn m_stmt(s: &mut S, f: &mut dyn FnMut(&mut Ex)) {
         }
         St::Save { body, .. } => m_block(body, f),
         St::DelayUs(e) | St::DelayMs(e) => m_ex(e, f),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
     }
 }
 
@@ -772,6 +772,200 @@ fn drop_dead(p: &mut Program) -> bool {
     changed
 }
 
+// ---- walking a constant table ------------------------------------------------------------------
+
+/// Whether code reads or moves TBLPTR, which a table walk keeps between statements.
+struct TblUse<'a> {
+    users: &'a HashSet<FuncId>,
+    hit: bool,
+}
+
+impl Visit for TblUse<'_> {
+    fn ex(&mut self, e: &Ex) {
+        match &e.k {
+            ExK::Load(p) | ExK::Addr(p) if matches!(p.base, Base::Flash(_) | Base::FlashNext(_)) => self.hit = true,
+            ExK::StrEq(..) => self.hit = true,
+            _ => {}
+        }
+    }
+    fn place(&mut self, p: &Place, _: Acc) {
+        self.hit |= matches!(p.base, Base::Flash(_) | Base::FlashNext(_));
+    }
+    fn call(&mut self, f: FuncId, _: &[(Place, Ex)]) {
+        self.hit |= self.users.contains(&f);
+    }
+    fn stmt(&mut self, s: &S) {
+        self.hit |= matches!(s.st, St::StrSet { .. } | St::Copy { .. } | St::Asm(_) | St::FlashSeek(..));
+    }
+}
+
+/// Routines whose code, or whose callees' code, may change TBLPTR.
+fn tbl_users(p: &Program) -> HashSet<FuncId> {
+    let mut users: HashSet<FuncId> = HashSet::new();
+    loop {
+        let mut grew = false;
+        for (i, f) in p.funcs.iter().enumerate() {
+            if users.contains(&i) {
+                continue;
+            }
+            let mut v = TblUse { users: &users, hit: false };
+            w_block(&mut v, &f.body);
+            if v.hit {
+                users.insert(i);
+                grew = true;
+            }
+        }
+        if !grew {
+            return users;
+        }
+    }
+}
+
+/// `e` is `i + k` for the variable `i`: returns `k`.
+fn index_plus(e: &Ex, i: VarId) -> Option<u32> {
+    match &e.k {
+        ExK::Load(p) if matches!(p.base, Base::Var(v) if v == i) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() && !e.signed => Some(0),
+        ExK::Conv(x) if !x.signed => index_plus(x, i),
+        ExK::Bin(BinKind::Add, a, b) => match (a.as_const(), b.as_const()) {
+            (_, Some(k)) => index_plus(a, i).map(|o| o.wrapping_add(k)),
+            (Some(k), _) => index_plus(b, i).map(|o| o.wrapping_add(k)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn blocks_mut(st: &mut St) -> Vec<&mut Vec<S>> {
+    match st {
+        St::If(arms, other) => arms.iter_mut().map(|(_, b)| b).chain(std::iter::once(other)).collect(),
+        St::While(_, b) | St::Repeat(b, _) | St::For { body: b, .. } | St::Count { body: b, .. } | St::Save { body: b, .. } => vec![b],
+        _ => Vec::new(),
+    }
+}
+
+fn has_continue(s: &S) -> bool {
+    matches!(s.st, St::Continue) || sub_blocks_of(&s.st).into_iter().any(|b| b.iter().any(has_continue))
+}
+
+fn sub_blocks_of(st: &St) -> Vec<&[S]> {
+    match st {
+        St::If(arms, other) => arms.iter().map(|(_, b)| b.as_slice()).chain(std::iter::once(other.as_slice())).collect(),
+        St::While(_, b) | St::Repeat(b, _) | St::For { body: b, .. } | St::Count { body: b, .. } | St::Save { body: b, .. } => vec![b.as_slice()],
+        _ => Vec::new(),
+    }
+}
+
+/// Rewrites, in `blk` and the blocks inside it, loops of the form
+///
+/// ```text
+/// i = k
+/// While True            ' or any constant-true loop
+///     c = table(i)      ' the only mention of i besides the step
+///     ...
+///     Inc(i)
+/// Wend
+/// ```
+///
+/// to read the table through TBLPTR, which `TBLRD*+` advances: the pointer is set once before the
+/// loop and the index disappears. Returns the index variables that were replaced. (The index of a
+/// Byte would wrap after 256 characters; a table walk does not, which only differs for a loop that
+/// never meets the table's end.)
+fn walk_tables(blk: &mut Vec<S>, vars: &[Var], users: &HashSet<FuncId>, owner: FuncId, done: &mut Vec<VarId>) {
+    for s in blk.iter_mut() {
+        for b in blocks_mut(&mut s.st) {
+            walk_tables(b, vars, users, owner, done);
+        }
+    }
+    for k in 1..blk.len() {
+        let St::While(cond, body) = &blk[k].st else { continue };
+        if !cond.as_const().is_some_and(|v| v != 0) || has_jump_target(body) || body.iter().any(has_continue) {
+            continue;
+        }
+        // The last statement steps a variable by one: the index.
+        let i = match body.last() {
+            Some(S { st: St::Add(p, 1), .. }) if p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() => match p.base {
+                Base::Var(i) => i,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let var = &vars[i];
+        if !matches!(var.kind, VarKind::Local | VarKind::Hidden) || var.owner != Some(owner) || var.by_ref || !matches!(var.ty, Ty::Int(_, false)) || body.len() < 2 {
+            continue;
+        }
+        // It starts at a constant: the last statement before the loop that mentions it.
+        let Some(j) = (0..k).rev().find(|&j| mentions(std::slice::from_ref(&blk[j]), i)) else { continue };
+        let start = match &blk[j].st {
+            St::Assign(p, e) if matches!(p.base, Base::Var(v) if v == i) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() => match e.as_const() {
+                Some(c) => c,
+                None => continue,
+            },
+            St::Clear(p) if matches!(p.base, Base::Var(v) if v == i) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() => 0,
+            _ => continue,
+        };
+        // Statements in between run after the pointer is set only if they are moved; the pointer
+        // is set right before the loop instead, so only jumps into that stretch matter.
+        if blk[j + 1..k].iter().any(|s| has_jump_target(std::slice::from_ref(s))) {
+            continue;
+        }
+        // One statement reads the table at `i + k`.
+        let n = body.len() - 1;
+        let Some((t, f, at)) = body[..n].iter().enumerate().find_map(|(t, s)| match &s.st {
+            St::Assign(dst, Ex { k: ExK::Load(src), w: 8, .. }) if dst.idx.is_none() && dst.dbit.is_none() && !matches!(dst.base, Base::Flash(_)) => match (&src.base, &src.idx) {
+                (Base::Flash(f), Some(ix)) if src.bit.is_none() && src.dbit.is_none() => index_plus(ix, i).map(|o| (t, *f, src.off.wrapping_add(o))),
+                _ => None,
+            },
+            _ => None,
+        }) else {
+            continue;
+        };
+        // Nothing else in the loop mentions the index or touches TBLPTR.
+        let rest: Vec<S> = body[..n].iter().enumerate().filter(|(j, _)| *j != t).map(|(_, s)| s.clone()).collect();
+        let mut v = TblUse { users, hit: false };
+        w_block(&mut v, &rest);
+        if v.hit || mentions(&rest, i) {
+            continue;
+        }
+        let St::While(_, body) = &mut blk[k].st else { continue };
+        body.pop();
+        if let St::Assign(_, Ex { k: ExK::Load(src), .. }) = &mut body[t].st {
+            src.base = Base::FlashNext(f);
+            src.off = 0;
+            src.idx = None;
+        }
+        let span = blk[j].span;
+        blk.remove(j);
+        blk.insert(k - 1, S { st: St::FlashSeek(f, at.wrapping_add(start)), span });
+        done.push(i);
+    }
+}
+
+/// Applies [`walk_tables`] to every routine, keeping a change only when the index variable has no
+/// other use left in the routine.
+fn flash_walk(p: &mut Program) -> bool {
+    let users = tbl_users(p);
+    let vars = p.vars.clone();
+    let mut changed = false;
+    for (fi, f) in p.funcs.iter_mut().enumerate() {
+        let before = f.body.clone();
+        let mut done = Vec::new();
+        walk_tables(&mut f.body, &vars, &users, fi, &mut done);
+        if done.is_empty() {
+            continue;
+        }
+        // The index may still be cleared on entry; that store dies with it.
+        let mut probe = f.body.clone();
+        probe.retain(|s| !matches!(&s.st, St::Clear(pl) if matches!(pl.base, Base::Var(v) if done.contains(&v))));
+        if done.iter().any(|&i| mentions(&probe, i)) {
+            f.body = before;
+        } else {
+            f.body = probe;
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub fn optimize(p: &mut Program) {
     for _ in 0..8 {
         fold_all(p);
@@ -783,5 +977,9 @@ pub fn optimize(p: &mut Program) {
         if !changed {
             break;
         }
+    }
+    // Last: later passes would not know about a table walk.
+    if flash_walk(p) {
+        drop_dead(p);
     }
 }

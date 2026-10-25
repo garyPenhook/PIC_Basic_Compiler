@@ -50,6 +50,9 @@ pub enum Base {
     Abs { addr: u32, name: String },
     /// A constant table in program memory (`Program::flash[i]`), read-only.
     Flash(usize),
+    /// A byte of `Program::flash[i]` read through TBLPTR as it stands, advancing it (`TBLRD*+`).
+    /// Only loads of one byte; `St::FlashSeek` sets the pointer.
+    FlashNext(usize),
 }
 
 /// Constant data placed in program memory, labelled `asm`.
@@ -78,7 +81,7 @@ impl Place {
     /// Reached through FSR0 (a run-time array index or a `ByRef` parameter) or, for a constant
     /// table, through TBLPTR: there is no direct memory operand.
     pub fn indirect(&self) -> bool {
-        self.idx.is_some() || matches!(self.base, Base::Ptr(_) | Base::Flash(_))
+        self.idx.is_some() || matches!(self.base, Base::Ptr(_) | Base::Flash(_) | Base::FlashNext(_))
     }
     /// A single bit of a byte, fixed or chosen at run time.
     pub fn is_bit(&self) -> bool {
@@ -254,6 +257,8 @@ pub enum St {
     /// `Input`/`Output` on a port bit or a whole port: sets the matching TRIS bits.
     Direction { place: Place, output: bool },
     Call(FuncId, Vec<(Place, Ex)>),
+    /// Points TBLPTR at byte `n` of `Program::flash[i]`, for the `Base::FlashNext` loads that follow.
+    FlashSeek(usize, u32),
     If(Vec<(Ex, Vec<S>)>, Vec<S>),
     While(Ex, Vec<S>),
     Repeat(Vec<S>, Ex),
@@ -397,7 +402,7 @@ pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bo
         St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || sub(body),
         // A jump out leaves `var` unset when it is only assigned after the loop.
         St::Break | St::Return | St::Goto(_) | St::Label(_) | St::Halt => reads,
-        St::Continue | St::Int { .. } => false,
+        St::Continue | St::Int { .. } | St::FlashSeek(..) => false,
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
     })
 }
@@ -429,7 +434,7 @@ pub fn mentions(body: &[S], var: VarId) -> bool {
         St::Asm(_) => true,
         St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || mentions(body, var),
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt | St::Int { .. } => false,
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => false,
     })
 }
 
@@ -437,7 +442,11 @@ fn has_return(s: &S) -> bool {
     matches!(s.st, St::Return) || sub_blocks(&s.st).into_iter().any(|b| b.iter().any(has_return))
 }
 
-fn has_jump_target(body: &[S]) -> bool {
+fn has_break(s: &S) -> bool {
+    matches!(s.st, St::Break) || sub_blocks(&s.st).into_iter().any(|b| b.iter().any(has_break))
+}
+
+pub fn has_jump_target(body: &[S]) -> bool {
     body.iter().any(|s| matches!(s.st, St::Label(_) | St::Goto(_)) || sub_blocks(&s.st).into_iter().any(has_jump_target))
 }
 
@@ -455,6 +464,9 @@ pub fn written_first(body: &[S], var: VarId) -> bool {
     }
     let first = &body[at];
     match &first.st {
+        // A loop that always runs its body once: the write may come first inside it, provided
+        // nothing before it can leave the loop.
+        St::While(c, inner) if c.as_const().is_some_and(|v| v != 0) => !inner.iter().take_while(|s| !mentions(std::slice::from_ref(s), var)).any(has_break) && written_first(inner, var),
         St::Assign(p, e) => matches!(p.base, Base::Var(v) if v == var) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && !e.touches(var, true),
         _ => false,
     }

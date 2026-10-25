@@ -2275,7 +2275,7 @@ fn strip_block(b: &mut [S], is_len: LenTest) {
             }
             St::DelayUs(e) | St::DelayMs(e) => strip_ex(e, is_len),
             St::Save { body, .. } => strip_block(body, is_len),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
         }
     }
 }

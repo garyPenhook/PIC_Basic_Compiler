@@ -703,6 +703,156 @@ fn pass_branch_to_next(items: &mut Vec<Item>) -> bool {
     changed
 }
 
+/// `rcall f` right before `return` is a jump: the callee's own `return` goes back to our caller.
+fn pass_tail_call(items: &mut [Item]) -> bool {
+    let keep = protected(items);
+    let mut changed = false;
+    for i in 0..items.len() {
+        if keep[i] {
+            continue;
+        }
+        let Item::Call(target) = &items[i] else { continue };
+        let mut j = i + 1;
+        while matches!(items.get(j), Some(Item::Comment(_) | Item::Fence)) {
+            j += 1;
+        }
+        if matches!(items.get(j), Some(Item::Ins(t)) if t.trim() == "return") && !keep[j] {
+            items[i] = Item::Br(Cc::Always, target.clone());
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Instructions that follow a `return`, `retfie` or unconditional branch and carry no label can
+/// never run.
+fn pass_unreachable(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let mut dead = vec![false; items.len()];
+    let mut live = true;
+    for (i, it) in items.iter().enumerate() {
+        match it {
+            Item::Label(_) | Item::Raw(_) | Item::Org(_) | Item::Data(_) | Item::Keep(_) => live = true,
+            Item::Comment(_) | Item::Fence => {}
+            Item::Ins(_) | Item::Br(..) | Item::Call(_) if !live && !keep[i] => dead[i] = true,
+            Item::Ins(t) => {
+                let m = t.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+                live = !(matches!(m.as_str(), "return" | "retfie" | "goto" | "retlw") || m == "bra") || keep[i];
+            }
+            Item::Br(Cc::Always, _) => live = keep[i],
+            _ => live = true,
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// Drops the compiler's own `_L` labels that nothing names. They only split straight runs of
+/// code, which stops the other passes at them.
+fn pass_unused_labels(items: &mut Vec<Item>) -> bool {
+    let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for it in items.iter() {
+        match it {
+            Item::Br(_, t) | Item::Call(t) => {
+                used.insert(t.as_str());
+            }
+            Item::Ins(t) | Item::Raw(t) => {
+                for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                    if tok.starts_with("_L") {
+                        used.insert(tok);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let before = items.len();
+    let used: std::collections::HashSet<String> = used.into_iter().map(String::from).collect();
+    items.retain(|it| !matches!(it, Item::Label(l) if l.starts_with("_L") && !used.contains(l)));
+    items.len() != before
+}
+
+/// A polling loop `L: movlb k / … / bra L` that never changes the bank selects it once, before
+/// the loop.
+fn pass_hoist_movlb(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    for i in 0..items.len() {
+        let Item::Label(l) = &items[i] else { continue };
+        if !l.starts_with("_L") {
+            continue;
+        }
+        let mut m = i + 1;
+        while matches!(items.get(m), Some(Item::Comment(_) | Item::Fence)) {
+            m += 1;
+        }
+        let Some(Item::Ins(first)) = items.get(m) else { continue };
+        if !first.starts_with("movlb ") || keep[m] {
+            continue;
+        }
+        // The only other mention of the label is the branch that closes the loop.
+        let refs: Vec<usize> = (0..items.len())
+            .filter(|&k| match &items[k] {
+                Item::Br(_, t) | Item::Call(t) => t == l,
+                Item::Ins(t) | Item::Raw(t) => t.contains(l.as_str()),
+                _ => false,
+            })
+            .collect();
+        let [back] = refs[..] else { continue };
+        if back < m || !matches!(&items[back], Item::Br(Cc::Always, _)) {
+            continue;
+        }
+        let clean = (m + 1..back).all(|k| match &items[k] {
+            Item::Ins(t) => !t.trim_start().starts_with("movlb"),
+            Item::Br(..) | Item::Comment(_) | Item::Fence => true,
+            _ => false,
+        });
+        if !clean {
+            continue;
+        }
+        let mv = items.remove(m);
+        items.insert(i, mv);
+        return true;
+    }
+    false
+}
+
+/// `movf s,w` / `movwf x` / `movf x,f`: the flags the first load set still describe `x`, so the
+/// test of `x` repeats them. Only for compiler-placed RAM, whose read has no side effect.
+fn pass_repeat_test(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Fence | Item::Comment(_))).collect();
+    let mut dead = vec![false; items.len()];
+    for w in real.windows(3) {
+        let (i, j, k) = (w[0], w[1], w[2]);
+        let (Item::Ins(a), Item::Ins(b), Item::Ins(c)) = (&items[i], &items[j], &items[k]) else { continue };
+        if keep[j] || keep[k] {
+            continue;
+        }
+        let (Some((ma, oa)), Some((mb, ob)), Some((mc, oc))) = (parse(a), parse(b), parse(c)) else { continue };
+        let is_w = |o: &str| matches!(o, "w" | "0");
+        let is_f = |o: &str| matches!(o, "f" | "1");
+        if ma == "movf" && oa.len() >= 2 && is_w(oa[1]) && mb == "movwf" && !ob.is_empty() && mc == "movf" && oc.len() >= 2 && oc[0] == ob[0] && is_f(oc[1]) && env.is_plain(ob[0]) {
+            dead[k] = true;
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// Replaces a read of a scratch register by a read of the byte it was just copied from.
 fn pass_forward(items: &mut [Item], env: &Env) -> bool {
     let mut changed = false;
@@ -798,9 +948,14 @@ fn protected(items: &[Item]) -> Vec<bool> {
 pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     for _ in 0..8 {
         let mut changed = false;
+        changed |= pass_unused_labels(&mut items);
+        changed |= pass_tail_call(&mut items);
+        changed |= pass_unreachable(&mut items);
+        changed |= pass_hoist_movlb(&mut items);
         changed |= pass_bit_branch(&mut items);
         changed |= pass_branch_to_next(&mut items);
         changed |= pass_xorlw_zero(&mut items);
+        changed |= pass_repeat_test(&mut items, env);
         changed |= pass_forward(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
@@ -987,5 +1142,46 @@ mod tests {
         let mut s2 = s.clone();
         s2[8] = ins("addwf X, f, c");
         assert_eq!(run(&s2)[0], "movlw 0");
+    }
+    #[test]
+    fn call_before_return_becomes_a_jump() {
+        let r = run(&[Item::Call("F".into()), Item::Fence, ins("return")]);
+        assert_eq!(r, vec!["brAlways F", "--"]);
+        // A label between keeps the return for the other path.
+        let r = run(&[Item::Call("F".into()), Item::Label("M".into()), ins("return")]);
+        assert_eq!(r, vec!["?", "M:", "return"]);
+    }
+
+    #[test]
+    fn code_after_a_return_without_a_label_is_dropped() {
+        let r = run(&[ins("return"), ins("incf X, f, c"), Item::Label("K".into()), ins("incf Y, f, c")]);
+        assert_eq!(r, vec!["return", "K:", "incf Y, f, c"]);
+    }
+
+    #[test]
+    fn instruction_skipped_by_a_test_is_not_dead_after_a_branch() {
+        let r = run(&[ins("btfss X, 0, c"), Item::Br(Cc::Always, "L".into()), ins("incf Y, f, c"), Item::Label("L".into())]);
+        assert!(r.contains(&"incf Y, f, c".to_string()));
+    }
+
+    #[test]
+    fn unnamed_labels_go_and_named_ones_stay() {
+        let r = run(&[Item::Label("_L1".into()), Item::Label("F".into()), ins("incf X, f, c")]);
+        assert_eq!(r, vec!["F:", "incf X, f, c"]);
+    }
+
+    #[test]
+    fn bank_select_leaves_a_polling_loop() {
+        let r = run(&[Item::Label("_L1".into()), ins("movlb 14"), ins("btfss PIR3, 4, b"), Item::Br(Cc::Always, "_L1".into())]);
+        assert_eq!(r, vec!["movlb 14", "_L1:", "btfss PIR3, 4, b", "brAlways _L1"]);
+        // A call in the loop may change the bank: it stays.
+        let r = run(&[Item::Label("_L1".into()), ins("movlb 14"), Item::Call("F".into()), Item::Br(Cc::Always, "_L1".into())]);
+        assert_eq!(r[1], "movlb 14");
+    }
+
+    #[test]
+    fn test_of_a_value_just_stored_repeats_the_load_flags() {
+        let r = run(&[ins("movf TABLAT, w, c"), ins("movwf X, c"), ins("movf X, f, c"), Item::Br(Cc::Nz, "L".into()), Item::Label("L".into())]);
+        assert!(!r.iter().any(|t| t == "movf X, f, c"));
     }
 }

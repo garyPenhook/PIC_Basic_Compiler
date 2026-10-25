@@ -71,7 +71,9 @@ n = 0
 T0CON1 = 65
 T0CON0 = 128
 r2 = Work()
-While hits < 300
+' The handler stops the timer after the last hit. One byte cannot be read half-updated, which
+' `While hits < 300` could (the handler may land between the two byte reads).
+While T0CON0 <> 0
 Wend
 Disable(Tick)
 n = hits

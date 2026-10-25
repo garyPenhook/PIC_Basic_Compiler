@@ -411,7 +411,7 @@ fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
             }
             St::DelayUs(e) | St::DelayMs(e) => ex_calls(e, out),
             St::Save { body, .. } => stmt_calls(body, out),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
         }
     }
 }
@@ -623,7 +623,7 @@ impl<'p> Gen<'p> {
 
     fn place_mem(&self, pl: &Place, write: bool) -> Mem {
         let m = match &pl.base {
-            Base::Ptr(_) | Base::Flash(_) => unreachable!("an indirect place has no direct memory operand"),
+            Base::Ptr(_) | Base::Flash(_) | Base::FlashNext(_) => unreachable!("an indirect place has no direct memory operand"),
             Base::Var(v) => self.mem_obj(*v, self.p.vars[*v].asm.clone()),
             Base::Abs { addr, name } => {
                 // Writes to a port go to its latch (read-modify-write on PORT is unreliable).
@@ -811,7 +811,7 @@ impl<'p> Gen<'p> {
                             self.p.vars[*v].asm.clone()
                         }
                         Base::Abs { name, .. } => name.clone(),
-                        Base::Ptr(_) | Base::Flash(_) => unreachable!(),
+                        Base::Ptr(_) | Base::Flash(_) | Base::FlashNext(_) => unreachable!(),
                     };
                     let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
                     let (a0, a1) = (self.a(0), self.a(1));
@@ -1057,7 +1057,7 @@ impl<'p> Gen<'p> {
                     self.fop("addwfc", &fh, "f");
                 }
             }
-            Base::Abs { .. } | Base::Flash(_) => self.err("internal: a string in a device register or constant table"),
+            Base::Abs { .. } | Base::Flash(_) | Base::FlashNext(_) => self.err("internal: a string in a device register or constant table"),
         }
     }
 
@@ -1171,6 +1171,15 @@ impl<'p> Gen<'p> {
     }
 
     fn load_place(&mut self, p: &Place, n: u32) {
+        if matches!(p.base, Base::FlashNext(_)) {
+            if n != 1 {
+                self.err("internal: a table walk reads one byte at a time");
+            }
+            self.ins("tblrd*+");
+            let t = self.sfr_mem("TABLAT");
+            self.fop("movf", &t, "w");
+            return;
+        }
         if matches!(p.base, Base::Flash(_)) {
             self.point_tblptr(p);
             let t = self.sfr_mem("TABLAT");
@@ -2274,6 +2283,15 @@ impl<'p> Gen<'p> {
         self.label(&le);
     }
 
+    /// Two bytes that need no bank switch between them (both in the Access Bank, or in one bank).
+    fn same_bank(&self, a: &Mem, b: &Mem) -> bool {
+        match (is_access(self.tgt, a.addr), is_access(self.tgt, b.addr)) {
+            (true, true) => true,
+            (false, false) => a.addr.map(|x| x >> 8) == b.addr.map(|x| x >> 8),
+            _ => false,
+        }
+    }
+
     fn add_const(&mut self, p: &Place, delta: u32) {
         let n = p.bytes();
         let dst = self.place_mem(p, true);
@@ -2282,6 +2300,10 @@ impl<'p> Gen<'p> {
             self.fop("incf", &dst, "f");
         } else if n == 1 && k == 0xFF {
             self.fop("decf", &dst, "f");
+        } else if n == 2 && k == 1 && self.same_bank(&dst, &dst.at(1)) {
+            // The skip must jump over the second increment, so no bank switch may sit between them.
+            self.fop("infsnz", &dst, "f");
+            self.fop("incf", &dst.at(1), "f");
         } else {
             let d2 = dst.clone();
             self.chain(BinKind::Add, &move |_g: &mut Self, i| d2.at(i), &Src::Imm(k), n);
@@ -2351,6 +2373,10 @@ impl<'p> Gen<'p> {
             St::Copy { dst, src, bytes } => self.copy_mem(dst, src, *bytes),
             St::Direction { place, output } => self.direction(place, *output),
             St::Call(f, args) => self.do_call(*f, args),
+            St::FlashSeek(f, off) => {
+                let at = Place { base: Base::Flash(*f), off: *off, bit: None, idx: None, dbit: None, ty: crate::types::Ty::Int(8, false) };
+                self.point_tblptr(&at);
+            }
             St::If(arms, otherwise) => {
                 let end = self.fresh();
                 let mut done = false;

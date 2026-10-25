@@ -182,6 +182,16 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   program both ways. Interrupts (M6): a handler can change a variable between a store and a reload,
   so `W::Mem` reasoning must be revisited for variables a handler writes. Not done: bit-store
   patterns, scratch-to-scratch copy forwarding, jump threading.
+- Peephole and table walks (0.1.15): `rcall f` before `return` becomes `bra f`; code after a `return`,
+  `retfie` or `bra` with no label is dropped; unreferenced `_L` labels are dropped (they only ended
+  straight runs); `movlb` leaves a polling loop that never changes the bank; `movf s,w / movwf x /
+  movf x,f` loses the repeated test. A 16-bit `Inc` is `infsnz lo,f / incf hi,f`. In `opt.rs`
+  (`flash_walk`, run last) a constant-true loop that reads a literal table at `i + k` and steps `i`
+  by one reads it with `TBLRD*+` instead (`Base::FlashNext`, `St::FlashSeek`): the pointer is set
+  once before the loop and `i` goes away, unless the loop calls something that uses TBLPTR.
+  `written_first` also sees a write that opens a constant-true loop, so `c` in `SerialWrite` is no
+  longer cleared on entry. Test: `tests/exec/tablewalk.bas`; `isr_single.bas` now waits on `T0CON0`
+  because `While hits < 300` could read the Word half-updated.
 - Review fixes (done): passes never touch the instruction after a skip and never use it as a copy
   source; `Result` is cleared on entry unless a straight-line assignment precedes any `Return`;
   objects over 256 bytes start on a bank boundary. Test: `tests/exec/review.bas`. Known cost: the
