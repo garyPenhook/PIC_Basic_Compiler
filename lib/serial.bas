@@ -39,9 +39,14 @@ End Sub
 
 Public Sub SerialWrite(ByRefConst s As String(80))
     Dim i As Byte
+    Dim c As Byte
     i = 0
-    While s(i) <> #0
-        SerialWriteByte(Byte(s(i)))
+    While True
+        c = Byte(s(i))
+        If c = 0 Then
+            Exit
+        End If
+        SerialWriteByte(c)
         Inc(i)
     Wend
 End Sub

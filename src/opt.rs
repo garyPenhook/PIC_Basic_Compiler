@@ -10,6 +10,7 @@
 //! run-time 32-bit divide.
 
 use crate::ir::*;
+use crate::types::{Ty, WORD};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -276,6 +277,11 @@ fn fold(e: &mut Ex) {
             }
             _ => None,
         },
+        ExK::Bin(BinKind::Add, a, b) if a.w == w && b.w == w && (a.as_const() == Some(0) || b.as_const() == Some(0)) && !(a.as_const().is_some() && b.as_const().is_some()) => {
+            let keep = if a.as_const() == Some(0) { (**b).clone() } else { (**a).clone() };
+            *e = keep;
+            return;
+        }
         ExK::Bin(k, a, b) => match (a.as_const(), b.as_const()) {
             (Some(x), Some(y)) if a.w == w => {
                 let shift = matches!(k, BinKind::Shl | BinKind::Shr);
@@ -503,8 +509,9 @@ fn propagate_params(p: &mut Program) -> bool {
     changed
 }
 
-/// A `ByRef` string parameter that every caller sets to the same literal (and the routine only
-/// reads) reads the literal straight from program memory, so no RAM copy is needed.
+/// A `ByRef` string parameter that every caller sets to a string literal (and the routine only
+/// reads) becomes a Word offset into one table of those literals in program memory: no RAM
+/// copies, and the routine reads the text with `TBLRD`.
 fn specialize_literals(p: &mut Program) -> bool {
     let mut all = Facts::default();
     let mut per: Vec<Facts> = Vec::new();
@@ -513,6 +520,17 @@ fn specialize_literals(p: &mut Program) -> bool {
     }
     for (_, body) in all_bodies(p) {
         w_block(&mut all, body);
+    }
+    // The text of each literal is the argument of its start-up copy; one with no copy is empty.
+    let mut text: HashMap<VarId, Vec<u8>> = HashMap::new();
+    for s in &p.main.body {
+        if let St::StrSet { dst, parts, .. } = &s.st
+            && let Base::Var(v) = dst.base
+            && let [StrSrc::Lit(b)] = parts.as_slice()
+            && p.vars[v].name == "(string literal)"
+        {
+            text.insert(v, b.clone());
+        }
     }
     let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).collect();
     let mut changed = false;
@@ -523,47 +541,97 @@ fn specialize_literals(p: &mut Program) -> bool {
         let Some(sites) = all.sites.get(&fi) else { continue };
         for &pv in &p.funcs[fi].params.clone() {
             let var = &p.vars[pv];
-            if !var.by_ref || !matches!(var.ty, crate::types::Ty::Str(_)) || !per[fi].read.contains(&pv) || per[fi].ptr_stmt.contains(&pv) || per[fi].raw.contains(&pv) || per[fi].addr.contains(&pv) {
+            if !var.by_ref || !matches!(var.ty, Ty::Str(_)) || !per[fi].read.contains(&pv) || per[fi].ptr_stmt.contains(&pv) || per[fi].raw.contains(&pv) || per[fi].addr.contains(&pv) {
                 continue;
             }
-            let mut lit: Option<VarId> = None;
+            let mut lits: Vec<VarId> = Vec::new();
             let mut ok = true;
             for site in sites {
                 let arg = site.iter().find(|(pl, _)| matches!(pl.base, Base::Var(v) if v == pv));
                 match arg {
                     Some((_, Ex { k: ExK::Addr(a), .. })) if a.off == 0 && a.idx.is_none() => match a.base {
-                        Base::Var(l) if p.vars[l].name == "(string literal)" && lit.is_none_or(|x| x == l) => lit = Some(l),
+                        Base::Var(l) if p.vars[l].name == "(string literal)" => {
+                            if !lits.contains(&l) {
+                                lits.push(l);
+                            }
+                        }
                         _ => ok = false,
                     },
                     _ => ok = false,
                 }
             }
-            let Some(l) = lit.filter(|_| ok) else { continue };
-            // The literal's text is the argument of its start-up copy.
-            let mut text: Option<Vec<u8>> = None;
-            for s in &p.main.body {
-                if let St::StrSet { dst, parts, .. } = &s.st
-                    && matches!(dst.base, Base::Var(v) if v == l)
-                    && let [StrSrc::Lit(b)] = parts.as_slice()
-                {
-                    text = Some(b.clone());
-                }
+            // The offsets must fit the Word the parameter becomes.
+            let mut table: Vec<u8> = Vec::new();
+            let mut offset: HashMap<VarId, u32> = HashMap::new();
+            for &l in &lits {
+                offset.insert(l, table.len() as u32);
+                table.extend(text.get(&l).cloned().unwrap_or_default());
+                table.push(0);
             }
-            let Some(mut bytes) = text else { continue };
-            bytes.push(0);
+            if !ok || lits.is_empty() || table.len() > 0xFFFF {
+                continue;
+            }
             let f = p.flash.len();
-            p.flash.push(FlashObj { asm: format!("__SLIT{f}"), bytes });
+            p.flash.push(FlashObj { asm: format!("__SLIT{f}"), bytes: table });
             m_block(&mut p.funcs[fi].body, &mut |e: &mut Ex| {
                 if let ExK::Load(pl) = &mut e.k
                     && matches!(pl.base, Base::Ptr(v) if v == pv)
                 {
                     pl.base = Base::Flash(f);
+                    let at = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, dbit: None, ty: WORD };
+                    let at = Ex::new(ExK::Load(at), 16, false);
+                    let sum = match pl.idx.take() {
+                        Some(i) => Ex::new(ExK::Bin(BinKind::Add, Box::new(at), Box::new(conv16(*i))), 16, false),
+                        None => at,
+                    };
+                    pl.idx = Some(Box::new(sum));
                 }
             });
+            // Callers pass the literal's offset in the table.
+            let vars = &p.vars;
+            let _ = vars;
+            for (_, body) in all_bodies(p) {
+                m_block(body, &mut |e: &mut Ex| {
+                    if let ExK::Call(g, args) = &mut e.k
+                        && *g == fi
+                    {
+                        set_offsets(args, pv, &offset);
+                    }
+                });
+                retain_stmts(body, &mut |s: &mut S| {
+                    if let St::Call(g, args) = &mut s.st
+                        && *g == fi
+                    {
+                        set_offsets(args, pv, &offset);
+                    }
+                    true
+                });
+            }
+            let var = &mut p.vars[pv];
+            var.by_ref = false;
+            var.ty = WORD;
+            var.bytes = 2;
             changed = true;
         }
     }
     changed
+}
+
+fn conv16(e: Ex) -> Ex {
+    if e.w == 16 && !e.signed { e } else { Ex::new(ExK::Conv(Box::new(e)), 16, false) }
+}
+
+fn set_offsets(args: &mut [(Place, Ex)], pv: VarId, offset: &HashMap<VarId, u32>) {
+    for (pl, e) in args {
+        if matches!(pl.base, Base::Var(v) if v == pv)
+            && let ExK::Addr(a) = &e.k
+            && let Base::Var(l) = a.base
+            && let Some(&o) = offset.get(&l)
+        {
+            pl.ty = WORD;
+            *e = Ex::konst(o, 16, false);
+        }
+    }
 }
 
 /// Constants held in a routine's own locals flow forward through straight-line code.

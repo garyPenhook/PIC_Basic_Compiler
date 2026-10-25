@@ -339,3 +339,22 @@ fn constant_arguments_fold_into_the_callee() {
     assert!(asm.contains("movlw 0x8A"), "SP1BRGL holds the folded divisor");
     assert!(asm.contains("btfss PIR3, 4"), "TxIf = 0 is a bit test");
 }
+
+/// Several different literals passed to one routine share one flash table: still no RAM copies.
+#[test]
+fn several_literals_share_a_flash_table() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("lits");
+    let src = out.join("l.bas");
+    let prog = "Program T\nDevice = 18F27Q10\nClock = 64\nInclude \"serial\"\nSerial.SerialInit(9600)\nSerial.SerialWrite(\"one\")\nSerial.SerialWrite(\"three\")\nSerial.SerialWrite(\"one\")\n";
+    std::fs::write(&src, prog).unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-L").arg(root().join("lib")).arg("-o").arg(out.join("l.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("l.S")).unwrap();
+    assert!(!asm.contains("__STRLIT") && !asm.contains("__strf1"), "no RAM copy of any literal");
+    // "one\0three\0": one table, one copy of the repeated literal.
+    assert!(asm.contains("db 0x6F, 0x6E, 0x65, 0x00, 0x74, 0x68, 0x72, 0x65, 0x65, 0x00"), "{asm}");
+}
+
