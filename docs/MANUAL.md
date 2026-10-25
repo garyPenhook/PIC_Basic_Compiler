@@ -1,6 +1,6 @@
 # basicc Compiler User Manual
 
-Revision for **basicc 0.1.6**, target device **PIC18F27Q10**.
+Revision for **basicc 0.1.7**, target device **PIC18F27Q10**.
 
 This manual describes exactly what the compiler accepts and generates today. It is laid out like the
 Positron8 manual: an overview of the language, then one entry per command (Syntax, Overview,
@@ -497,10 +497,8 @@ Include "intosc"
 
 followed by the lines shown. `Dim` lines come first, as the language requires.
 
-**Not yet working in the back end.** `Abs` (integers), `Min`, `Max`, `AddressOf` and `@` are accepted by
-the parser and type checker, but the code generator only handles them when it can fold them at compile
-time (constant arguments, or `Abs` of a `Float`). With a variable operand the build stops with
-`E-BACKEND: the intrinsic ... is not supported by the back end yet`. Each entry says which forms work.
+**Not yet working in the back end.** `AddressOf` and `@` are accepted by the parser and type checker
+but rejected by the code generator with `E-BACKEND`. Everything else in this section builds.
 
 ---
 
@@ -510,25 +508,29 @@ time (constant arguments, or `Abs` of a `Float`). With a variable operand the bu
 ```basic
 result = Abs(value)
 ```
-**Overview** Absolute value of a constant, a `Float`, or (see Notes) an integer expression.
+**Overview** Absolute value of a number.
 
-**Parameters** `value` is a numeric expression. The result has the type of `value`.
+**Parameters** `value` is any numeric expression: a signed or unsigned integer, or a `Float`. The result
+has the type of `value`. An unsigned value is returned unchanged.
 
-**Example 1** A `Float`: the sign bit is cleared.
+**Example 1** An integer variable.
+```basic
+Dim a As Integer
+Dim b As Integer
+a = -1234
+b = Abs(a)                ' 1234
+```
+**Example 2** A `Float`: the sign bit is cleared.
 ```basic
 Dim f As Float
 Dim g As Float
 f = -2.5
 g = Abs(f)                ' 2.5
 ```
-**Example 2** A constant is folded at compile time.
-```basic
-Dim b As Integer
-b = Abs(-1234)            ' 1234
-```
-**Notes** `Abs` of an integer **variable** is `E-BACKEND` in 0.1.6. As a workaround test the sign:
-`If a < 0 Then b = -a` written as a block. `Abs(-32768)` of an `Integer` overflows, as in any
-two's-complement system.
+**Notes** A constant argument is folded at compile time. `Abs(-32768)` of an `Integer` (and the most
+negative value of any signed type) overflows and stays negative, as in any two's-complement system. The
+argument is evaluated more than once, so it must not contain a function call (a back-end error
+otherwise); assign the call to a variable first.
 
 **See also** `Min`, `Max`.
 
@@ -543,7 +545,7 @@ p = @item
 `LongWord` for `Const` arrays and routines. The argument must be a variable, array or routine
 (`E-ADDR` otherwise).
 
-**Notes** **Not usable in 0.1.6**: the back end rejects both spellings with `E-BACKEND`. Use `Asm`
+**Notes** **Not usable in 0.1.7**: the back end rejects both spellings with `E-BACKEND`. Use `Asm`
 with the symbol name if you need an address (names are in the `.map` file).
 
 ## Asm ... End Asm
@@ -653,15 +655,15 @@ Next
 
 **Syntax**
 ```basic
-Dec(variable)
+Dec(variable [, amount])
 ```
-**Overview** Subtract one from an integer variable, array element or structure field. Not for `Float`.
-On an array element with a run-time index the index is evaluated twice.
+**Overview** Subtract one from an integer variable, array element or structure field, or subtract
+`amount`. Not for `Float`.
 
-**Parameters** `variable` is the item to decrement. Positron8's second argument (`Dec Var, Amount`) is
-**not** accepted (`E-ARGS`); write `x = x - amount`.
+**Parameters** `variable` is the item to decrement. `amount` is an optional integer constant, variable
+or expression; it is converted to the type of `variable`.
 
-**Example**
+**Example 1**
 ```basic
 Dim n As Byte
 n = 10
@@ -669,6 +671,17 @@ Repeat
     Dec(n)
 Until n = 0
 ```
+**Example 2** Subtracting an amount.
+```basic
+Dim level As Word
+Dim amt As Byte
+level = 1000
+amt = 25
+Dec(level, amt)          ' 975
+Dec(level, 75)            ' 900
+```
+**Notes** On an array element with a run-time index the index is evaluated twice, so it must not
+contain a call. The result wraps like any assignment. A bit cannot take an amount.
 **See also** `Inc`.
 
 ## DelayMS / DelayUS
@@ -899,15 +912,15 @@ EndIf
 
 **Syntax**
 ```basic
-Inc(variable)
+Inc(variable [, amount])
 ```
-**Overview** Add one to an integer variable, array element or structure field. Not for `Float`. On an
-array element with a run-time index the index is evaluated twice.
+**Overview** Add one to an integer variable, array element or structure field, or add `amount`. Not for
+`Float`.
 
-**Parameters** `variable` is the item to increment. Positron8's second argument (`Inc Var, Amount`) is
-**not** accepted (`E-ARGS`); write `x = x + amount`.
+**Parameters** `variable` is the item to increment. `amount` is an optional integer constant, variable
+or expression; it is converted to the type of `variable`.
 
-**Example**
+**Example 1**
 ```basic
 Dim n As Byte
 Repeat
@@ -915,6 +928,19 @@ Repeat
 Until n > 10
 ```
 The loop above is the equivalent of `For n = 1 To 10`.
+
+**Example 2** Adding an amount.
+```basic
+Dim w As Word
+Dim amt As Byte
+w = 1
+amt = 10
+Repeat
+    Inc(w, amt)
+Until w > 100
+```
+**Notes** On an array element with a run-time index the index is evaluated twice, so it must not
+contain a call. The result wraps like any assignment. A bit cannot take an amount.
 
 **See also** `Dec`.
 
@@ -925,16 +951,25 @@ The loop above is the equivalent of `For n = 1 To 10`.
 r = Min(a, b)
 r = Max(a, b)
 ```
-**Overview** Smaller / larger of two integers (`E-TYPE` for `Float`). The result has the common type
-of the two arguments.
+**Overview** Smaller / larger of two integers (`E-TYPE` for `Float`). The result has the common type of
+the two arguments, and mixed signedness compares in that common type.
 
-**Example**
+**Example 1**
 ```basic
-Dim r As Byte
-r = Max(3, 9)             ' 9, folded at compile time
+Dim a As Word
+Dim hi As Word
+a = 500
+hi = Max(a, 1000)         ' 1000
 ```
-**Notes** With a **variable** operand both are `E-BACKEND` in 0.1.6; only constant arguments build.
-Workaround: `If a > b Then r = a Else r = b` written as a block.
+**Example 2** Limiting a value to a range.
+```basic
+Dim v As Integer
+v = -40
+v = Max(v, -10)           ' lower limit
+v = Min(v, 10)            ' upper limit
+```
+**Notes** Constant arguments are folded at compile time. Both arguments are evaluated more than once,
+so they must not contain a function call; assign the call to a variable first.
 
 **See also** `Abs`.
 
@@ -3078,7 +3113,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Positron8 feature | basicc 0.1.6 |
+| Positron8 feature | basicc 0.1.7 |
 |---|---|
 | Other devices | only PIC18F27Q10 |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -3095,7 +3130,7 @@ reports these rather than miscompiling them.
 | `Branch`, `On GoTo`, `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
-| `Sin`, `Cos`, `Sqr`, `Log`, `Exp`, `Pow`, `ISqr`, `Div32`, `Dcd`, `Ncd`, `@`, `?` | not available; `Abs` (Float or constant), `Min`/`Max` (constants only) and arithmetic only; see section 2 |
+| `Sin`, `Cos`, `Sqr`, `Log`, `Exp`, `Pow`, `ISqr`, `Div32`, `Dcd`, `Ncd`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
 | `Len`, `Left$`, `Mid$`, `Right$`, string arrays | not available |
 | `Tern`, `SizeOf` | not available |
 | `$config`, `Config` directive | `Config NAME = VALUE` with pack names |
@@ -3111,7 +3146,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basicc --version` prints `0.1.6`. `basicc --check` on a program with a deliberate error prints a
+1. `basicc --version` prints `0.1.7`. `basicc --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.
