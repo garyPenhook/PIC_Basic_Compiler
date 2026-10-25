@@ -5,7 +5,7 @@
 
 use crate::ast::{Unit, UnitKind};
 use crate::diag::{Diagnostics, SourceMap, Span};
-use crate::lexer::lex;
+use crate::lexer::{Tok, lex};
 use crate::parser::parse_unit;
 use crate::pp::{OptionDirective, Predef, preprocess, scan_header};
 use std::collections::{HashMap, HashSet};
@@ -90,10 +90,18 @@ impl Loader<'_> {
         let pp = preprocess(file, &text, &mut defined, &self.predef, diags);
         proj.options.extend(pp.options);
         let toks = lex(file, &pp.text, diags);
+        // A program that mentions Float gets the Float arithmetic module without asking for it.
+        let uses_float = toks.iter().any(|t| t.tok == Tok::Kw("float")) && path.file_stem().is_none_or(|f| f != "floatlib");
         let unit = parse_unit(file, toks, diags, &mut proj.next_id);
 
         let mut includes = Vec::new();
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        if uses_float {
+            let lib = std::iter::once(&dir).chain(self.cfg.lib_dirs.iter()).map(|d| d.join("floatlib.bas")).find(|c| c.is_file());
+            if let Some(i) = lib.and_then(|p| self.load_file(proj, diags, &p, Span::default())) {
+                includes.push(i);
+            }
+        }
         for inc in &unit.includes {
             let mut found = None;
             let fname = format!("{}.bas", inc.name);

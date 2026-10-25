@@ -204,6 +204,13 @@ Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tab
 | `OledWriteChar(ch)` / `OledWrite(s)` / `OledWriteWord(v)` / `OledWriteHex(v)` | text in a 5 x 7 font (X11 "5x7", public domain; ASCII 32..126) |
 | `OledFontByte(i)` | byte `i` (0..474) of the font table (kept in flash inside an `Asm` block, read with `TBLRD`) |
 
+## floatlib (Float arithmetic; included automatically)
+Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
+`+ - * /`, the six comparisons and the conversions into calls to `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong FToLong`
+(on `LongWord` patterns); negation and `Abs` flip and clear the sign bit inline. Only the routines a program uses are linked. Round to nearest
+even; infinities and NaN propagate; denormals are flushed to zero. Float work directly in an `Interrupt` handler is `E-ISR-CALL`: put it in a
+routine and call that inside `Save(…) … Restore`. Cost: about 700 words for `+`, 800 for `*`, 470 for `/`, plus about 250 shared. See D51.
+
 ## Tests
 `tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

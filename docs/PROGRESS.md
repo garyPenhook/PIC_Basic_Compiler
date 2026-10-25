@@ -379,3 +379,16 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - 0.1.3: every successful build ends with a flash and RAM bar against the chosen device (`driver::usage_summary`): flash bytes of
   `memory.program.size`, RAM bytes against `usable_gpr` (system RAM excluded). Colour (green / yellow from 75% / red from 90%) only on a
   terminal with `NO_COLOR` unset, so the VS Code task terminal and logs stay plain.
+
+## Float (done 2026-10-25, 0.1.4)
+- `Float` (IEEE-754 binary32) works end to end: variables, constants, arrays, parameters, results, `+ - * /`, unary minus, `Abs`, the six
+  comparisons, mixed integer and Float expressions, and `Float(x)` / `Byte(f)` / `Integer(f)` / ... conversions (truncating). D51.
+- The arithmetic is `lib/floatlib.bas`, written in the language on 32-bit patterns; the loader adds it when a source mentions `Float`
+  (`project.rs`), the lowerer calls it (`lower.rs`: `flt_call`, `to_float`, `value_for`, `float_binary`). Unused routines are not linked.
+- Verified in the simulator against Python's exact float32 results: ~1,400 random + edge arithmetic cases (add, sub, mul, div incl. ties,
+  cancellation, overflow, underflow, infinities, NaN, signed zero), 1,111 conversion and comparison checks. All bit-exact. The kept tests:
+  `tests/exec/float_basic.bas` (language level), `lib_floatlib.bas`, `lib_floatlib_conv.bas`, `lib_floatlib_cmp.bas`; build test
+  `float_programs_build_with_the_float_module`.
+- Limits: no denormals (flushed to zero), no `Str`/`Print` of a Float yet, no `Sqr` etc., not usable in `Select` / `For` / `Inc`.
+  Size: a program using `+ * /` carries roughly 2,500 words of Float code; assembly versions of the routines would be smaller (D51).
+

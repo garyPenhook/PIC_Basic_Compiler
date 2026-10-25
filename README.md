@@ -84,7 +84,7 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 ## Still to do
 
 * **Library:** program-flash self-write; OLED pixel drawing and bitmaps (`Const` arrays now exist, so a bitmap font table is possible).
-* **Language:** floating point, `Inline` functions, overloading, reentrant functions, a few remaining
+* **Language:** `Inline` functions, overloading, reentrant functions, a few remaining
   string and structure forms (the compiler reports these clearly rather than miscompiling),
   structure initialisers, arrays of strings and multi-dimensional arrays, `#if` in the preprocessor.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.

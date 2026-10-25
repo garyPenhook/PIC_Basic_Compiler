@@ -88,6 +88,7 @@ impl Place {
     pub fn width(&self) -> u8 {
         match &self.ty {
             Ty::Int(w, _) => *w,
+            Ty::Float => 32,
             _ => 8,
         }
     }

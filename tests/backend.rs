@@ -81,10 +81,38 @@ fn valid_programs_assemble_or_are_deferred() {
 fn unsupported_features_are_reported_not_miscompiled() {
     let out = scratch("unsupported");
     let src = out.join("u.bas");
-    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim f As Float\nf = 1.5\n").unwrap();
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim i As Integer\nDim j As Integer\nj = Abs(i)\n").unwrap();
     let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
+}
+
+#[test]
+fn float_programs_build_with_the_float_module() {
+    let out = scratch("floatbuild");
+    let src = out.join("f.bas");
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim f As Float\nDim n As Byte\nf = 1.5\nf = f * 2 + 1\nn = Byte(f)\n").unwrap();
+    let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("f.S")).unwrap();
+    assert!(asm.contains("FLOATLIB_FMUL") && asm.contains("FLOATLIB_FTOLONG"));
+    assert!(!asm.contains("FLOATLIB_FDIV"), "unused Float routines must not be linked");
+}
+
+#[test]
+fn float_work_in_a_handler_must_go_through_save() {
+    let out = scratch("floatisr");
+    let head = "Program T\nDevice = 18F27Q10\nDim f As Float\nDim g As Float\nFunction Work() As Float\n Result = f * 2\nEnd Function\n";
+    let bad = format!("{head}Interrupt Hi(ipHigh)\n PIR0.0 = 0\n g = f * 2\nEnd Interrupt\nf = 1.5\n");
+    let good = format!("{head}Interrupt Hi(ipHigh)\n PIR0.0 = 0\n Save(0, Work)\n  g = Work()\n Restore\nEnd Interrupt\nf = 1.5\n");
+    let src = out.join("b.bas");
+    std::fs::write(&src, bad).unwrap();
+    let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("E-ISR-CALL"));
+    std::fs::write(&src, good).unwrap();
+    let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 }
 
 #[test]

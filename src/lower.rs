@@ -9,8 +9,9 @@
 //! program memory. Structures are laid out field after field (`layout`); a field is a byte
 //! offset into the variable, so member access is the same `Place` arithmetic as arrays, and
 //! whole structures are cleared and copied with `St::ClearMem`/`St::Copy`. Interrupt handlers are
-//! routines nobody calls (`Program::isrs`); `Save` and `Enable`/`Disable` become `St::Save`/`St::Int`. Floats and
-//! events report `E-BACKEND`.
+//! routines nobody calls (`Program::isrs`); `Save` and `Enable`/`Disable` become `St::Save`/`St::Int`. A Float is a
+//! 32-bit pattern; its arithmetic, comparisons and conversions are calls into `lib/floatlib.bas`. Events
+//! report `E-BACKEND`.
 
 use crate::ast::*;
 use crate::diag::{Diagnostics, Span};
@@ -26,7 +27,18 @@ fn nat(t: &Ty) -> Option<(u8, bool)> {
     match t {
         Ty::Bool | Ty::Bit | Ty::Char | Ty::EventVar(_) | Ty::EventAny => Some((8, false)),
         Ty::Int(w, s) => Some((*w, *s)),
+        // A Float is held as its 32-bit pattern; the arithmetic is the FloatLib routines.
+        Ty::Float => Some((32, false)),
         _ => None,
+    }
+}
+
+/// The bits a constant stores as in an object of type `ty` (a Float is its binary32 pattern).
+fn cval_for(c: &CVal, ty: &Ty) -> u32 {
+    match (ty, c) {
+        (Ty::Float, CVal::Float(f)) => (*f as f32).to_bits(),
+        (Ty::Float, CVal::Int(i)) => (*i as f32).to_bits(),
+        _ => cval_u32(c),
     }
 }
 
@@ -128,6 +140,8 @@ pub struct Lowerer<'a> {
     n_saves: usize,
     /// Nesting depth of `Save` blocks being lowered.
     in_save: u32,
+    /// Lowering the body of an interrupt handler.
+    in_isr: bool,
     failed: bool,
 }
 
@@ -169,6 +183,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         isrs: Vec::new(),
         n_saves: 0,
         in_save: 0,
+        in_isr: false,
         failed: false,
     };
     for (id, s) in a.symbols.iter().enumerate() {
@@ -281,7 +296,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn unsupported(&mut self, span: Span, what: &str) {
-        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (structures, floats, and some array and by-reference forms are not implemented yet)"));
+        self.err("E-BACKEND", span, format!("{what} is not supported by the back end yet (some array and by-reference forms and a few intrinsics are not implemented yet)"));
     }
 
     fn unique(&mut self, base: String) -> String {
@@ -433,7 +448,9 @@ impl<'a> Lowerer<'a> {
         for d in &i.body.decls {
             self.decl(d, ui, &mut body);
         }
+        self.in_isr = true;
         let mut rest = self.block(&i.body.stmts, ui);
+        self.in_isr = false;
         body.append(&mut rest);
         let mut entry = self.entry_clears(id, &body, i.name.span);
         entry.append(&mut body);
@@ -467,7 +484,7 @@ impl<'a> Lowerer<'a> {
                         continue;
                     }
                     let init_e = it.init.as_ref().or(dim.trailing_init.as_ref());
-                    let init = if string || array { None } else { init_e.and_then(|e| self.a.consts.get(&e.id)).map(cval_u32) };
+                    let init = if string || array { None } else { init_e.and_then(|e| self.a.consts.get(&e.id)).map(|c| cval_for(c, &ty)) };
                     let init = init.map(|v| v & mask(nat(&ty).map_or(32, |t| t.0)));
                     let s = &self.a.symbols[sym];
                     let asm = if s.local { format!("{}__{}", self.cur_asm, sanitize(&s.name)) } else { format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&s.name)) };
@@ -494,7 +511,7 @@ impl<'a> Lowerer<'a> {
                             _ => None,
                         };
                         if let Some(list) = list {
-                            let vals: Vec<u32> = list.iter().map(|e| self.a.consts.get(&e.id).map(cval_u32).unwrap_or(0)).collect();
+                            let vals: Vec<u32> = list.iter().map(|e| self.a.consts.get(&e.id).map(|c| cval_for(c, elem)).unwrap_or(0)).collect();
                             self.array_init(v, elem, &vals, it.name.span, inits);
                         }
                     }
@@ -595,7 +612,7 @@ impl<'a> Lowerer<'a> {
                 self.sym_var.insert(psym, v);
             }
             let (w, s) = nat(&info.ty).unwrap_or((16, false));
-            let default = p.default.as_ref().and_then(|e| self.a.consts.get(&e.id)).map(|c| Ex::konst(cval_u32(c), w, s));
+            let default = p.default.as_ref().and_then(|e| self.a.consts.get(&e.id)).map(|c| Ex::konst(cval_for(c, &info.ty), w, s));
             params.push((v, default));
         }
         let result = match &ret {
@@ -799,7 +816,7 @@ impl<'a> Lowerer<'a> {
                 Some(&f) => f,
                 None => {
                     let size = self.size_of(&elem);
-                    let words: Vec<u32> = vals.iter().map(cval_u32).collect();
+                    let words: Vec<u32> = vals.iter().map(|c| cval_for(c, &elem)).collect();
                     let f = self.new_flash(&words, size);
                     self.sym_flash.insert(sym, f);
                     f
@@ -1046,6 +1063,7 @@ impl<'a> Lowerer<'a> {
             },
         };
         let v = match c {
+            CVal::Float(_) | CVal::Int(_) if ty == Ty::Float => cval_for(c, &ty),
             CVal::Int(i) => *i as u32,
             CVal::Bool(b) => *b as u32,
             CVal::Str(st) if st.len() == 1 => st.as_bytes()[0] as u32,
@@ -1086,6 +1104,17 @@ impl<'a> Lowerer<'a> {
             }
             ExprKind::Unary(op, x) => {
                 let xv = self.expr(x)?;
+                if ty == Ty::Float {
+                    return match op {
+                        UnOp::Plus => Some(xv),
+                        // Flip the sign bit.
+                        UnOp::Neg => Some(Ex::new(ExK::Bin(BinKind::Xor, Box::new(xv), Box::new(Ex::konst(0x8000_0000, 32, false))), 32, false)),
+                        _ => {
+                            self.unsupported(e.span, "this operator on a Float");
+                            None
+                        }
+                    };
+                }
                 let ex = match op {
                     UnOp::Plus => conv(xv, w, ns),
                     UnOp::Neg => Ex::new(ExK::Neg(Box::new(conv(xv, w, ns))), w, ns),
@@ -1105,6 +1134,9 @@ impl<'a> Lowerer<'a> {
                 if matches!(op, BinOp::Eq | BinOp::Ne) && matches!(self.a.types.get(&l.id), Some(Ty::Str(_))) && matches!(self.a.types.get(&r.id), Some(Ty::Str(_))) {
                     return self.str_compare(*op, l, r, e);
                 }
+                if matches!(self.a.types.get(&l.id), Some(Ty::Float)) || matches!(self.a.types.get(&r.id), Some(Ty::Float)) {
+                    return self.float_binary(*op, l, r, e);
+                }
                 let lv = self.expr(l)?;
                 let rv = self.expr(r)?;
                 self.binary(*op, lv, rv, &ty, w, ns, e)
@@ -1114,6 +1146,83 @@ impl<'a> Lowerer<'a> {
                 None
             }
         }
+    }
+
+    // ---- Float ---------------------------------------------------------------------------
+
+    /// A call of the FloatLib routine `name` on 32-bit operands.
+    fn flt_call(&mut self, name: &str, args: Vec<Ex>, span: Span) -> Option<Ex> {
+        if self.in_isr {
+            // The FloatLib routines keep their working storage in static frames, which a handler
+            // would overwrite while the main program is inside the same routine.
+            self.err("E-ISR-CALL", span, "Float arithmetic, comparison or conversion inside an interrupt handler would share the Float routines' frames with the main program; do it in a routine and call that inside Save(…) … Restore (LANGUAGE.md §8)");
+            return None;
+        }
+        let unit = self.proj.units.iter().position(|u| u.path.file_stem().is_some_and(|f| f == "floatlib"));
+        let sym = unit.and_then(|u| self.unit_syms.get(&(u, name.to_ascii_lowercase())).copied());
+        let Some(sym) = sym else {
+            self.err("E-BACKEND", span, "Float needs the FloatLib module (lib/floatlib.bas), which was not found in the library folders");
+            return None;
+        };
+        let id = self.func_of(sym, span)?;
+        let params = self.sym_func[&sym].params.clone();
+        let result = self.sym_func[&sym].result;
+        let (w, s) = result.and_then(|r| nat(&self.vars[r].ty)).unwrap_or((8, false));
+        let mut out = Vec::new();
+        for ((pv, _), a) in params.iter().zip(args) {
+            let (pw, ps) = nat(&self.vars[*pv].ty).unwrap_or((32, false));
+            out.push((Place { base: Base::Var(*pv), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[*pv].ty.clone() }, conv(a, pw, ps)));
+        }
+        Some(Ex::new(ExK::Call(id, out), w, s))
+    }
+
+    /// The Float (as bits) with the value of the integer `ex`.
+    fn to_float(&mut self, ex: Ex, span: Span) -> Option<Ex> {
+        if let ExK::Const(v) = ex.k {
+            let val = if ex.signed { sign_extend(v, ex.w) } else { v as i64 };
+            return Some(Ex::konst((val as f32).to_bits(), 32, false));
+        }
+        if !ex.signed && ex.w == 32 {
+            self.flt_call("FFromULong", vec![ex], span)
+        } else {
+            self.flt_call("FFromLong", vec![conv(ex, 32, true)], span)
+        }
+    }
+
+    /// The value of `e` as stored in an object of type `target`: an integer is converted when the
+    /// target is a Float, otherwise it is cut or extended to the target's width.
+    fn value_for(&mut self, e: &'a Expr, target: &Ty) -> Option<Ex> {
+        let v = self.expr(e)?;
+        let (w, sg) = nat(target)?;
+        if *target == Ty::Float && !matches!(self.a.types.get(&e.id), Some(Ty::Float)) {
+            return self.to_float(v, e.span);
+        }
+        Some(conv(v, w, sg))
+    }
+
+    /// An operation with a Float operand: arithmetic gives a Float, a comparison a Boolean.
+    fn float_binary(&mut self, op: BinOp, l: &'a Expr, r: &'a Expr, e: &Expr) -> Option<Ex> {
+        let name = match op {
+            BinOp::Add => "FAdd",
+            BinOp::Sub => "FSub",
+            BinOp::Mul => "FMul",
+            BinOp::Div => "FDiv",
+            BinOp::Eq => "FEq",
+            BinOp::Ne => "FNe",
+            BinOp::Lt => "FLt",
+            BinOp::Le => "FLe",
+            BinOp::Gt => "FGt",
+            BinOp::Ge => "FGe",
+            _ => {
+                self.unsupported(e.span, "this operator on a Float");
+                return None;
+            }
+        };
+        let lv = self.value_for(l, &Ty::Float)?;
+        let rv = self.value_for(r, &Ty::Float)?;
+        let ex = self.flt_call(name, vec![lv, rv], e.span)?;
+        // The FloatLib comparisons answer with a Boolean (8 bits, unsigned).
+        Some(if op.is_relational() { Ex::boolean(ex.k) } else { ex })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1256,7 +1365,10 @@ impl<'a> Lowerer<'a> {
             } else {
                 let (w, s) = nat(&pty).unwrap();
                 match args.get(i) {
-                    Some(a) => conv(self.expr(a)?, w, s),
+                    Some(a) => {
+                        let _ = (w, s);
+                        self.value_for(a, &pty)?
+                    }
                     None => def.clone()?,
                 }
             };
@@ -1426,14 +1538,23 @@ impl<'a> Lowerer<'a> {
         };
         let ty = self.a.types.get(&e.id).cloned().unwrap_or(BYTE);
         match name {
+            "float" => self.value_for(&args[0], &Ty::Float),
             "byte" | "word" | "integer" | "longword" | "longint" | "shortint" | "char" => {
                 let (w, s) = nat(&ty)?;
                 let x = self.expr(&args[0])?;
+                if matches!(self.a.types.get(&args[0].id), Some(Ty::Float)) {
+                    // Truncates toward zero, then cuts to the target like any integer conversion.
+                    let l = self.flt_call("FToLong", vec![x], e.span)?;
+                    return Some(conv(l, w, s));
+                }
                 Some(conv(x, w, s))
             }
             "boolean" | "bit" => {
                 let x = self.expr(&args[0])?;
                 let argty = self.a.types.get(&args[0].id).cloned().unwrap_or(BYTE);
+                if argty == Ty::Float && name == "boolean" {
+                    return self.flt_call("FNe", vec![x, Ex::konst(0, 32, false)], e.span).map(|c| Ex::boolean(c.k));
+                }
                 if matches!(argty, Ty::Bool | Ty::Bit) {
                     return Some(Ex { signed: false, ..x });
                 }
@@ -1463,6 +1584,11 @@ impl<'a> Lowerer<'a> {
                 self.len_used.insert(v);
                 let len = Ex::new(ExK::Load(Place { base: Base::Var(v), off: 2, bit: None, idx: None, dbit: None, ty: WORD }), 16, false);
                 Some(Ex::new(ExK::Bin(BinKind::Sub, Box::new(len), Box::new(Ex::konst(1, 16, false))), 16, false))
+            }
+            // Clear the sign bit.
+            "abs" if matches!(self.a.types.get(&args[0].id), Some(Ty::Float)) => {
+                let x = self.expr(&args[0])?;
+                Some(Ex::new(ExK::Bin(BinKind::And, Box::new(x), Box::new(Ex::konst(0x7FFF_FFFF, 32, false))), 32, false))
             }
             n => {
                 self.unsupported(e.span, &format!("the intrinsic `{n}`"));
@@ -1653,12 +1779,11 @@ impl<'a> Lowerer<'a> {
                     self.copy_assign(p, value, span, out);
                     return;
                 }
-                let Some(v) = self.expr(value) else { return };
-                let Some((w, sg)) = nat(&p.ty) else {
+                if nat(&p.ty).is_none() {
                     self.unsupported(target.span, &format!("assigning a {}", p.ty));
                     return;
-                };
-                let v = conv(v, w, sg);
+                }
+                let Some(v) = self.value_for(value, &p.ty) else { return };
                 if p.is_bit() && p.indirect() {
                     self.bit_store(&p, Some(v), span, out);
                     return;
@@ -1787,6 +1912,10 @@ impl<'a> Lowerer<'a> {
         match name.as_str() {
             "inc" | "dec" => {
                 let Some(p) = arg_place(self) else { return };
+                if p.ty == Ty::Float {
+                    self.unsupported(span, "Inc/Dec of a Float");
+                    return;
+                }
                 let delta = if name == "inc" { 1u32 } else { u32::MAX };
                 if p.is_bit() && p.indirect() {
                     self.unsupported(span, "Inc/Dec of a bit reached through a pointer or index");
@@ -1875,6 +2004,10 @@ impl<'a> Lowerer<'a> {
     #[allow(clippy::too_many_arguments)]
     fn for_stmt(&mut self, var: &'a Designator, from: &'a Expr, to: &'a Expr, step: Option<&'a Expr>, body: &'a [Stmt], ui: usize, span: Span, out: &mut Vec<S>) {
         let Some(vp) = self.place_of(var) else { return };
+        if vp.ty == Ty::Float {
+            self.unsupported(var.span, "a Float loop variable");
+            return;
+        }
         let (w, sg) = nat(&vp.ty).unwrap();
         let step_v = match step {
             None => 1i64,

@@ -74,7 +74,7 @@ module Name
 | `Integer` | 16 | −32768 … 32767 |
 | `LongWord` | 32 | 0 … 4294967295 |
 | `LongInt` | 32 | −2147483648 … 2147483647 |
-| `Float` | 32 | format fixed by decision D7 (open) |
+| `Float` | 32 | IEEE-754 binary32 (D7, D51): sign, 8-bit exponent, 23-bit fraction; about ±3.4e38, 6 to 7 digits |
 | `Char` | 8 | one character |
 | `String[(n)]` | n bytes | up to 255 characters + terminating `Null`; default size is a compiler constant (24 in the reference language) |
 | `Structure` | — | see §3.3 |
@@ -326,6 +326,10 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
   routines. For that reason (and because the dispatcher's parameter is shared) an interrupt handler
   must wrap an event call in `Save` like any other call (`E-ISR-CALL`). Event variables cannot be
   compared and there are no arrays of them.
+
+**Float in handlers.** Float arithmetic, comparisons and conversions use shared library routines with static frames, so they are
+`E-ISR-CALL` directly inside a handler; do the work in a routine and call it inside `Save(…) … Restore`. Copying a Float, `-f` and `Abs(f)`
+are plain bit operations and are allowed. A 4-byte Float is not read atomically (D45).
 
 ## 9. Modules, includes and visibility
 
