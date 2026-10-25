@@ -192,6 +192,15 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   `written_first` also sees a write that opens a constant-true loop, so `c` in `SerialWrite` is no
   longer cleared on entry. Test: `tests/exec/tablewalk.bas`; `isr_single.bas` now waits on `T0CON0`
   because `While hits < 300` could read the Word half-updated.
+- Calls and tables (0.1.16): a table walk also works when the start is a run-time Word parameter
+  (several literals sharing one table: `FlashSeek` takes an expression). A routine called from exactly
+  one place, and by no jump or address, is moved into the call (`inline_single_calls` in `codegen.rs`;
+  its `return`s become jumps to the end). A routine with one Byte parameter that only plain calls reach
+  takes the argument in `WREG` (`Gen::warg`): it starts with `movwf P`, and `pass_warg` deletes that
+  store and the one `movf P,w` when `WREG` provably survives to the read. More peephole: `bcc L1 / bra
+  L2 / L1:` becomes `b!cc L2`, and a `movlb` to the bank already selected goes. Fixed: `src_to_reg`
+  sized a scratch register for one byte while writing several, so a 16-bit compare against a constant
+  overwrote the next variable. Test: `tests/exec/callopt.bas`.
 - Review fixes (done): passes never touch the instruction after a skip and never use it as a copy
   source; `Result` is cleared on entry unless a straight-line assignment precedes any `Return`;
   objects over 256 bytes start on a bank boundary. Test: `tests/exec/review.bas`. Known cost: the

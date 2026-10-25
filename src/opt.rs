@@ -126,7 +126,12 @@ fn w_block<V: Visit>(v: &mut V, b: &[S]) {
             }
             St::Save { body, .. } => w_block(v, body),
             St::DelayUs(e) | St::DelayMs(e) => w_ex(v, e),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::FlashSeek(_, _, e) => {
+                if let Some(e) = e {
+                    w_ex(v, e);
+                }
+            }
         }
     }
 }
@@ -227,7 +232,12 @@ fn m_stmt(s: &mut S, f: &mut dyn FnMut(&mut Ex)) {
         }
         St::Save { body, .. } => m_block(body, f),
         St::DelayUs(e) | St::DelayMs(e) => m_ex(e, f),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+        St::FlashSeek(_, _, e) => {
+            if let Some(e) = e {
+                m_ex(e, f);
+            }
+        }
     }
 }
 
@@ -821,18 +831,36 @@ fn tbl_users(p: &Program) -> HashSet<FuncId> {
     }
 }
 
-/// `e` is `i + k` for the variable `i`: returns `k`.
-fn index_plus(e: &Ex, i: VarId) -> Option<u32> {
-    match &e.k {
-        ExK::Load(p) if matches!(p.base, Base::Var(v) if v == i) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() && !e.signed => Some(0),
-        ExK::Conv(x) if !x.signed => index_plus(x, i),
-        ExK::Bin(BinKind::Add, a, b) => match (a.as_const(), b.as_const()) {
-            (_, Some(k)) => index_plus(a, i).map(|o| o.wrapping_add(k)),
-            (Some(k), _) => index_plus(b, i).map(|o| o.wrapping_add(k)),
+/// `e` is `i + k` (plus, optionally, one unsigned Word parameter `x`) for the variable `i`:
+/// returns `k` and `x`.
+fn index_plus(e: &Ex, i: VarId, vars: &[Var], owner: FuncId) -> Option<(u32, Option<Ex>)> {
+    fn go(e: &Ex, i: VarId, vars: &[Var], owner: FuncId, seen_i: &mut u32) -> Option<(u32, Option<Ex>)> {
+        match &e.k {
+            ExK::Const(c) => Some((*c, None)),
+            ExK::Load(p) if matches!(p.base, Base::Var(v) if v == i) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() && !e.signed => {
+                *seen_i += 1;
+                Some((0, None))
+            }
+            ExK::Load(p) => match p.base {
+                Base::Var(v) if v != i && vars[v].kind == VarKind::Param && vars[v].owner == Some(owner) && !vars[v].by_ref && p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() && e.w == 16 && !e.signed && p.width() == 16 && !p.signed() => Some((0, Some(e.clone()))),
+                _ => None,
+            },
+            ExK::Conv(x) if !x.signed => go(x, i, vars, owner, seen_i),
+            ExK::Bin(BinKind::Add, a, b) => {
+                let (ka, xa) = go(a, i, vars, owner, seen_i)?;
+                let (kb, xb) = go(b, i, vars, owner, seen_i)?;
+                let x = match (xa, xb) {
+                    (Some(_), Some(_)) => return None,
+                    (x, None) | (None, x) => x,
+                };
+                Some((ka.wrapping_add(kb), x))
+            }
             _ => None,
-        },
-        _ => None,
+        }
     }
+    let mut seen = 0;
+    let (k, x) = go(e, i, vars, owner, &mut seen)?;
+    (seen == 1).then_some((k, x))
 }
 
 fn blocks_mut(st: &mut St) -> Vec<&mut Vec<S>> {
@@ -870,10 +898,10 @@ fn sub_blocks_of(st: &St) -> Vec<&[S]> {
 /// loop and the index disappears. Returns the index variables that were replaced. (The index of a
 /// Byte would wrap after 256 characters; a table walk does not, which only differs for a loop that
 /// never meets the table's end.)
-fn walk_tables(blk: &mut Vec<S>, vars: &[Var], users: &HashSet<FuncId>, owner: FuncId, done: &mut Vec<VarId>) {
+fn walk_tables(blk: &mut Vec<S>, vars: &[Var], users: &HashSet<FuncId>, owner: FuncId, facts: &Facts, done: &mut Vec<VarId>) {
     for s in blk.iter_mut() {
         for b in blocks_mut(&mut s.st) {
-            walk_tables(b, vars, users, owner, done);
+            walk_tables(b, vars, users, owner, facts, done);
         }
     }
     for k in 1..blk.len() {
@@ -910,15 +938,21 @@ fn walk_tables(blk: &mut Vec<S>, vars: &[Var], users: &HashSet<FuncId>, owner: F
         }
         // One statement reads the table at `i + k`.
         let n = body.len() - 1;
-        let Some((t, f, at)) = body[..n].iter().enumerate().find_map(|(t, s)| match &s.st {
+        let Some((t, f, at, x)) = body[..n].iter().enumerate().find_map(|(t, s)| match &s.st {
             St::Assign(dst, Ex { k: ExK::Load(src), w: 8, .. }) if dst.idx.is_none() && dst.dbit.is_none() && !matches!(dst.base, Base::Flash(_)) => match (&src.base, &src.idx) {
-                (Base::Flash(f), Some(ix)) if src.bit.is_none() && src.dbit.is_none() => index_plus(ix, i).map(|o| (t, *f, src.off.wrapping_add(o))),
+                (Base::Flash(f), Some(ix)) if src.bit.is_none() && src.dbit.is_none() => index_plus(ix, i, vars, owner).map(|(o, x)| (t, *f, src.off.wrapping_add(o), x)),
                 _ => None,
             },
             _ => None,
         }) else {
             continue;
         };
+        // A run-time start offset must not change while the loop runs.
+        if let Some(Ex { k: ExK::Load(Place { base: Base::Var(xv), .. }), .. }) = &x
+            && (facts.written.contains(xv) || facts.addr.contains(xv))
+        {
+            continue;
+        }
         // Nothing else in the loop mentions the index or touches TBLPTR.
         let rest: Vec<S> = body[..n].iter().enumerate().filter(|(j, _)| *j != t).map(|(_, s)| s.clone()).collect();
         let mut v = TblUse { users, hit: false };
@@ -935,7 +969,7 @@ fn walk_tables(blk: &mut Vec<S>, vars: &[Var], users: &HashSet<FuncId>, owner: F
         }
         let span = blk[j].span;
         blk.remove(j);
-        blk.insert(k - 1, S { st: St::FlashSeek(f, at.wrapping_add(start)), span });
+        blk.insert(k - 1, S { st: St::FlashSeek(f, at.wrapping_add(start), x), span });
         done.push(i);
     }
 }
@@ -949,7 +983,8 @@ fn flash_walk(p: &mut Program) -> bool {
     for (fi, f) in p.funcs.iter_mut().enumerate() {
         let before = f.body.clone();
         let mut done = Vec::new();
-        walk_tables(&mut f.body, &vars, &users, fi, &mut done);
+        let facts = scan(&f.body);
+        walk_tables(&mut f.body, &vars, &users, fi, &facts, &mut done);
         if done.is_empty() {
             continue;
         }
@@ -964,6 +999,36 @@ fn flash_walk(p: &mut Program) -> bool {
         }
     }
     changed
+}
+
+/// Routines something other than a plain call can reach: their address is taken, or an `Asm`
+/// block names them. They keep the standard argument passing.
+pub fn reachable_otherwise(p: &Program) -> HashSet<FuncId> {
+    let mut out: HashSet<FuncId> = HashSet::new();
+    let mut all = Facts::default();
+    let mut lines: Vec<&String> = Vec::new();
+    for f in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut all, f);
+        collect_asm(f, &mut lines);
+    }
+    out.extend(all.faddr.iter().copied());
+    for (i, f) in p.funcs.iter().enumerate() {
+        if lines.iter().any(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|t| t == f.asm)) {
+            out.insert(i);
+        }
+    }
+    out
+}
+
+fn collect_asm<'a>(b: &'a [S], out: &mut Vec<&'a String>) {
+    for s in b {
+        if let St::Asm(ls) = &s.st {
+            out.extend(ls.iter());
+        }
+        for sub in sub_blocks_of(&s.st) {
+            collect_asm(sub, out);
+        }
+    }
 }
 
 pub fn optimize(p: &mut Program) {

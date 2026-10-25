@@ -323,6 +323,31 @@ fn parse_lit(s: &str) -> Option<u8> {
     (v <= 0xFF).then_some(v as u8)
 }
 
+/// Like [`flags_live`], for code inside a user routine: its `return` hands no flags back.
+fn flags_live_in_routine(items: &[Item], i: usize, mut needed: u8) -> bool {
+    for it in &items[i + 1..] {
+        match it {
+            Item::Comment(_) => {}
+            Item::Fence => return false,
+            Item::Ins(t) if t.trim() == "return" => return false,
+            Item::Ins(t) => match effect(t) {
+                None => return true,
+                Some(e) => {
+                    if e.flags_r & needed != 0 {
+                        return true;
+                    }
+                    needed &= !e.flags_w;
+                    if needed == 0 {
+                        return false;
+                    }
+                }
+            },
+            _ => return true,
+        }
+    }
+    true
+}
+
 /// Whether any of the `needed` flags may be read after item `i` (before being overwritten).
 fn flags_live(items: &[Item], i: usize, mut needed: u8) -> bool {
     for it in &items[i + 1..] {
@@ -853,6 +878,171 @@ fn pass_repeat_test(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// `bcc L1 / bra L2 / L1:` is `b!cc L2`.
+fn pass_branch_over_branch(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Fence | Item::Comment(_))).collect();
+    let mut changed = false;
+    for w in real.windows(3) {
+        let (i, j, k) = (w[0], w[1], w[2]);
+        if keep[i] || keep[j] {
+            continue;
+        }
+        if let (Item::Br(cc, l1), Item::Br(Cc::Always, l2), Item::Label(l)) = (&items[i], &items[j], &items[k])
+            && *cc != Cc::Always
+            && l1 == l
+            && l2 != l1
+        {
+            let (cc, l2) = (cc.invert(), l2.clone());
+            items[i] = Item::Br(cc, l2);
+            // Emptied rather than removed so the indices stay valid until the next round.
+            items[j] = Item::Comment(String::new());
+            changed = true;
+            break;
+        }
+    }
+    if changed {
+        items.retain(|it| !matches!(it, Item::Comment(t) if t.is_empty()));
+    }
+    changed
+}
+
+/// `movlb k` when the bank is already `k` along the straight run before it.
+fn pass_redundant_movlb(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let mut known: Option<String> = None;
+    let mut dead = vec![false; items.len()];
+    for (i, it) in items.iter().enumerate() {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Ins(t) if t.trim_start().starts_with("movlb ") => {
+                let k = t.trim_start()[6..].trim().to_string();
+                if keep[i] {
+                    known = None;
+                } else if known.as_deref() == Some(k.as_str()) {
+                    dead[i] = true;
+                } else {
+                    known = Some(k);
+                }
+            }
+            // A conditional branch falls through with the bank unchanged; the rest ends the run.
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) if parse(t).is_some_and(|(m, _)| !matches!(m.as_str(), "return" | "retfie" | "goto" | "bra" | "call" | "rcall")) => {
+                if keep[i] {
+                    known = None;
+                }
+            }
+            _ => known = None,
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// Instructions that leave `WREG` alone.
+fn keeps_w(t: &str) -> bool {
+    let Some((mn, ops)) = parse(t) else { return false };
+    match mn.as_str() {
+        "nop" | "movlb" | "movwf" | "movff" | "clrf" | "setf" | "bsf" | "bcf" | "btg" | "btfss" | "btfsc" | "tblrd*" | "tblrd*+" | "tblrd*-" | "tblrd+*" | "lfsr" | "bra" | "bz" | "bnz" | "bc" | "bnc" | "bn" | "bnn" | "bov" | "bnov" => true,
+        // Byte instructions that put their result back in the file register.
+        "incf" | "decf" | "comf" | "swapf" | "rlcf" | "rrcf" | "rlncf" | "rrncf" | "addwf" | "addwfc" | "subwf" | "subwfb" | "andwf" | "iorwf" | "xorwf" | "movf" | "decfsz" | "incfsz" | "infsnz" | "dcfsnz" => {
+            ops.get(1).is_some_and(|d| matches!(*d, "f" | "1"))
+        }
+        _ => false,
+    }
+}
+
+/// A routine that takes its argument in `WREG` starts with `movwf P` (marked by a `warg` comment).
+/// When `P` is read once, by `movf P,w`, and `WREG` is certainly unchanged until then, both go:
+/// the argument is used straight from `WREG`. When `P` is never read the store goes.
+fn pass_warg(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    for c in 0..items.len() {
+        if !matches!(&items[c], Item::Comment(t) if t == "warg") {
+            continue;
+        }
+        let Some(m) = (c + 1..items.len().min(c + 4)).find(|&k| matches!(&items[k], Item::Ins(t) if t.trim_start().starts_with("movwf "))) else { continue };
+        if (c + 1..m).any(|k| !matches!(&items[k], Item::Ins(t) if t.trim_start().starts_with("movlb "))) || keep[m] {
+            continue;
+        }
+        let Item::Ins(store) = &items[m] else { continue };
+        let Some((_, ops)) = parse(store) else { continue };
+        let sym = ops[0].to_string();
+        let mentions = |t: &str| t.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')).any(|tok| tok == sym);
+        let mut others = Vec::new();
+        let mut opaque = false;
+        for (k, it) in items.iter().enumerate() {
+            match it {
+                Item::Ins(t) if k != m && mentions(t) => others.push(k),
+                Item::Raw(t) if mentions(t) => opaque = true,
+                _ => {}
+            }
+        }
+        if opaque {
+            continue;
+        }
+        let mut gone = vec![m];
+        if let [r] = others[..] {
+            let Item::Ins(rd) = &items[r] else { continue };
+            let reads_w = parse(rd).is_some_and(|(mn, o)| mn == "movf" && o.len() >= 2 && o[0] == sym && matches!(o[1], "w" | "0"));
+            if !reads_w || r < m || keep[r] || flags_live_in_routine(items, r, Z | N) {
+                continue;
+            }
+            // Every instruction between keeps W, and the only ways in are from inside.
+            let mut labels: Vec<&str> = Vec::new();
+            let mut ok = true;
+            for it in &items[m + 1..r] {
+                match it {
+                    Item::Comment(_) | Item::Fence => {}
+                    Item::Label(l) => labels.push(l),
+                    Item::Ins(t) => ok &= keeps_w(t),
+                    Item::Br(..) => {}
+                    _ => ok = false,
+                }
+            }
+            if !ok {
+                continue;
+            }
+            for (k, it) in items.iter().enumerate() {
+                match it {
+                    Item::Br(_, t) | Item::Call(t) if labels.contains(&t.as_str()) && !(m < k && k < r) => ok = false,
+                    Item::Ins(t) | Item::Raw(t) if labels.iter().any(|l| t.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')).any(|tok| tok == *l)) => ok = false,
+                    _ => {}
+                }
+            }
+            // Branches inside the stretch may only go to labels inside it (or to `r` itself).
+            for it in &items[m + 1..r] {
+                if let Item::Br(_, t) = it
+                    && !labels.contains(&t.as_str())
+                {
+                    ok = false;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            gone.push(r);
+        } else if !others.is_empty() {
+            continue;
+        }
+        gone.push(c);
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !gone.contains(&(k - 1))
+        });
+        return true;
+    }
+    false
+}
+
 /// Replaces a read of a scratch register by a read of the byte it was just copied from.
 fn pass_forward(items: &mut [Item], env: &Env) -> bool {
     let mut changed = false;
@@ -952,8 +1142,11 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_tail_call(&mut items);
         changed |= pass_unreachable(&mut items);
         changed |= pass_hoist_movlb(&mut items);
+        changed |= pass_redundant_movlb(&mut items);
+        changed |= pass_warg(&mut items);
         changed |= pass_bit_branch(&mut items);
         changed |= pass_branch_to_next(&mut items);
+        changed |= pass_branch_over_branch(&mut items);
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_forward(&mut items, env);
@@ -963,6 +1156,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
             break;
         }
     }
+    items.retain(|it| !matches!(it, Item::Comment(t) if t == "warg"));
     items
 }
 
@@ -1183,5 +1377,36 @@ mod tests {
     fn test_of_a_value_just_stored_repeats_the_load_flags() {
         let r = run(&[ins("movf TABLAT, w, c"), ins("movwf X, c"), ins("movf X, f, c"), Item::Br(Cc::Nz, "L".into()), Item::Label("L".into())]);
         assert!(!r.iter().any(|t| t == "movf X, f, c"));
+    }
+    #[test]
+    fn conditional_branch_over_a_jump_is_inverted() {
+        let r = run(&[Item::Br(Cc::Nz, "A".into()), Item::Br(Cc::Always, "B".into()), Item::Label("A".into()), ins("incf X, f, c")]);
+        assert_eq!(r, vec!["brZ B", "A:", "incf X, f, c"]);
+    }
+    #[test]
+    fn second_bank_select_is_dropped() {
+        let r = run(&[ins("movlb 15"), ins("clrf ANSELA, b"), ins("movlb 15"), ins("clrf ANSELB, b"), Item::Label("K".into()), ins("movlb 15")]);
+        assert_eq!(r, vec!["movlb 15", "clrf ANSELA, b", "clrf ANSELB, b", "K:", "movlb 15"]);
+    }
+    #[test]
+    fn argument_in_w_is_used_in_place() {
+        let r = run(&[
+            Item::Label("F".into()),
+            Item::Comment("warg".into()),
+            ins("movwf P, c"),
+            Item::Label("_L1".into()),
+            ins("btfss PIR3, 4, b"),
+            Item::Br(Cc::Always, "_L1".into()),
+            ins("movf P, w, c"),
+            ins("movwf TX1REG, c"),
+            ins("return"),
+        ]);
+        assert!(!r.iter().any(|t| t.contains("P,")), "{r:?}");
+    }
+
+    #[test]
+    fn argument_in_w_is_stored_when_w_is_clobbered() {
+        let r = run(&[Item::Label("F".into()), Item::Comment("warg".into()), ins("movwf P, c"), ins("movlw 3"), ins("movwf Q, c"), ins("movf P, w, c"), ins("movwf TX1REG, c"), ins("return")]);
+        assert!(r.iter().any(|t| t == "movwf P, c"), "{r:?}");
     }
 }

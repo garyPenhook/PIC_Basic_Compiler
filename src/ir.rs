@@ -258,7 +258,8 @@ pub enum St {
     Direction { place: Place, output: bool },
     Call(FuncId, Vec<(Place, Ex)>),
     /// Points TBLPTR at byte `n` of `Program::flash[i]`, for the `Base::FlashNext` loads that follow.
-    FlashSeek(usize, u32),
+    /// With an expression (16 bits, unsigned) its value is added to the offset at run time.
+    FlashSeek(usize, u32, Option<Ex>),
     If(Vec<(Ex, Vec<S>)>, Vec<S>),
     While(Ex, Vec<S>),
     Repeat(Vec<S>, Ex),
@@ -402,7 +403,8 @@ pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bo
         St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || sub(body),
         // A jump out leaves `var` unset when it is only assigned after the loop.
         St::Break | St::Return | St::Goto(_) | St::Label(_) | St::Halt => reads,
-        St::Continue | St::Int { .. } | St::FlashSeek(..) => false,
+        St::Continue | St::Int { .. } => false,
+        St::FlashSeek(_, _, e) => e.as_ref().is_some_and(ex),
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
     })
 }
@@ -434,7 +436,8 @@ pub fn mentions(body: &[S], var: VarId) -> bool {
         St::Asm(_) => true,
         St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || mentions(body, var),
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => false,
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt | St::Int { .. } => false,
+        St::FlashSeek(_, _, e) => e.as_ref().is_some_and(ex),
     })
 }
 

@@ -411,7 +411,12 @@ fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
             }
             St::DelayUs(e) | St::DelayMs(e) => ex_calls(e, out),
             St::Save { body, .. } => stmt_calls(body, out),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } | St::FlashSeek(..) => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::FlashSeek(_, _, e) => {
+                if let Some(e) = e {
+                    ex_calls(e, out);
+                }
+            }
         }
     }
 }
@@ -519,6 +524,8 @@ struct Gen<'p> {
     isr_end: Option<String>,
     /// `Save` blocks being generated: loop depth at entry and the code that restores them.
     save_stack: Vec<(usize, Vec<String>)>,
+    /// Routines with one Byte parameter, called only by plain calls: the argument travels in WREG.
+    warg: BTreeSet<FuncId>,
 }
 
 /// The second factor of a partial product in `mul_partials`: a literal byte or byte `j` of `__B`.
@@ -563,7 +570,25 @@ impl<'p> Gen<'p> {
             save_max: vec![0; p.n_saves + p.isrs.len()],
             isr_end: None,
             save_stack: Vec::new(),
+            warg: Self::warg_set(p, tgt),
         }
+    }
+
+    /// Routines that take their one Byte argument in WREG (optimised builds only).
+    fn warg_set(p: &Program, tgt: &Target) -> BTreeSet<FuncId> {
+        if !tgt.opt {
+            return BTreeSet::new();
+        }
+        let other = crate::opt::reachable_otherwise(p);
+        (0..p.funcs.len())
+            .filter(|f| {
+                let func = &p.funcs[*f];
+                !other.contains(f)
+                    && !p.isrs.iter().any(|x| x.0 == *f)
+                    && func.params.len() == 1
+                    && matches!(&p.vars[func.params[0]], v if !v.by_ref && v.bytes == 1 && matches!(v.ty, crate::types::Ty::Int(8, _) | crate::types::Ty::Bool | crate::types::Ty::Char))
+            })
+            .collect()
     }
 
     fn err(&mut self, msg: impl Into<String>) {
@@ -1278,6 +1303,8 @@ impl<'p> Gen<'p> {
     }
 
     fn src_to_reg(&mut self, r: usize, s: &Src, n: u32) {
+        // All `n` bytes of the register are written: it must be sized for them.
+        self.scr(r, n.max(1) - 1);
         let m = self.scr(r, 0);
         self.store_src(&m, n, s);
     }
@@ -2316,7 +2343,17 @@ impl<'p> Gen<'p> {
         // Arguments that contain calls are evaluated first, so a nested call cannot overwrite
         // a parameter that was already stored.
         let nested = args.len() > 1 && args.iter().any(|(_, e)| e.has_call());
-        if nested {
+        if self.warg.contains(&f) {
+            // The one argument goes in WREG; the routine stores it itself.
+            if let [(_, e)] = args {
+                if e.w == 8 {
+                    self.gen_val(e);
+                } else {
+                    let conv = Ex::new(ExK::Conv(Box::new(e.clone())), 8, false);
+                    self.gen_val(&conv);
+                }
+            }
+        } else if nested {
             let mut temps = Vec::new();
             for (_, e) in args {
                 let t = self.spill(e);
@@ -2373,8 +2410,8 @@ impl<'p> Gen<'p> {
             St::Copy { dst, src, bytes } => self.copy_mem(dst, src, *bytes),
             St::Direction { place, output } => self.direction(place, *output),
             St::Call(f, args) => self.do_call(*f, args),
-            St::FlashSeek(f, off) => {
-                let at = Place { base: Base::Flash(*f), off: *off, bit: None, idx: None, dbit: None, ty: crate::types::Ty::Int(8, false) };
+            St::FlashSeek(f, off, idx) => {
+                let at = Place { base: Base::Flash(*f), off: *off, bit: None, idx: idx.clone().map(Box::new), dbit: None, ty: crate::types::Ty::Int(8, false) };
                 self.point_tblptr(&at);
             }
             St::If(arms, otherwise) => {
@@ -3249,6 +3286,11 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
         g.items.push(Item::Comment(format!("Sub/Function {}", func.name)));
         let start = g.items.len();
         g.label(&func.asm);
+        if g.warg.contains(&f) {
+            let m = g.mem_obj(func.params[0], p.vars[func.params[0]].asm.clone());
+            g.items.push(Item::Comment("warg".into()));
+            g.fo("movwf", &m);
+        }
         g.block(&func.body);
         g.ranges.push((f, start, g.items.len()));
     }
@@ -3373,6 +3415,83 @@ impl<'p> Gen<'p> {
     }
 }
 
+/// A routine called from exactly one place, and from nowhere else (not by address, not by a jump),
+/// is moved into the call: the `rcall` and the `return` go. Its `return`s other than the last
+/// become jumps to the end. `ranges` are the routines' item ranges (label first).
+fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usize)>) -> Vec<Item> {
+    let mut serial = 0;
+    'again: loop {
+        for r in 0..ranges.len() {
+            let (label, s, e) = ranges[r].clone();
+            if !matches!(items.get(s), Some(Item::Label(l)) if *l == label) {
+                continue;
+            }
+            let mut calls = Vec::new();
+            let mut other = 0;
+            for (i, it) in items.iter().enumerate() {
+                match it {
+                    Item::Call(t) if *t == label => calls.push(i),
+                    Item::Br(_, t) if *t == label => other += 1,
+                    Item::Ins(t) | Item::Raw(t) if t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == label) => other += 1,
+                    _ => {}
+                }
+            }
+            if calls.len() != 1 || other > 0 || (s..e).contains(&calls[0]) {
+                continue;
+            }
+            let body = &items[s + 1..e];
+            if body.iter().any(|it| matches!(it, Item::Raw(_) | Item::Org(_) | Item::Data(_))) {
+                continue;
+            }
+            let is_ret = |it: &Item| matches!(it, Item::Ins(t) if t.trim() == "return");
+            let last = body.iter().rposition(|it| !matches!(it, Item::Comment(_) | Item::Fence));
+            let end = format!("_Lr{serial}");
+            serial += 1;
+            let mut inl: Vec<Item> = Vec::new();
+            let mut jumps = false;
+            for (k, it) in body.iter().enumerate() {
+                if is_ret(it) {
+                    if Some(k) != last {
+                        inl.push(Item::Br(Cc::Always, end.clone()));
+                        jumps = true;
+                    }
+                } else {
+                    inl.push(it.clone());
+                }
+            }
+            if jumps {
+                inl.push(Item::Label(end));
+            }
+            // Drop the routine (and its heading comment), put the body at the call.
+            let from = if s > 0 && matches!(&items[s - 1], Item::Comment(t) if t.starts_with("Sub/Function ")) { s - 1 } else { s };
+            let c = calls[0];
+            let mut map = vec![0usize; items.len() + 1];
+            let mut out: Vec<Item> = Vec::with_capacity(items.len());
+            for (i, it) in std::mem::take(&mut items).into_iter().enumerate() {
+                map[i] = out.len();
+                if (from..e).contains(&i) {
+                    continue;
+                }
+                if i == c {
+                    out.extend(inl.iter().cloned());
+                } else {
+                    out.push(it);
+                }
+            }
+            let last_ix = map.len() - 1;
+            map[last_ix] = out.len();
+            ranges.remove(r);
+            for rg in ranges.iter_mut() {
+                rg.1 = map[rg.1];
+                rg.2 = map[rg.2];
+            }
+            items = out;
+            continue 'again;
+        }
+        return items;
+    }
+}
+
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
     // Pass 1 sizes the objects; later passes emit code against the layout and repeat with the
     // sizes they actually needed until the two agree.
@@ -3441,17 +3560,19 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         errors.extend(g2.errors.iter().cloned());
         let helpers: Vec<String> = g2.helpers.iter().cloned().collect();
         let levels = stack_depth(&g2, &items);
-        result = Some((objs, layout, items, helpers, levels));
+        let ranges: Vec<(String, usize, usize)> = g2.ranges.iter().filter(|(f, _, _)| !isr_mask[*f]).map(|(f, s, e)| (p.funcs[*f].asm.clone(), *s, *e)).collect();
+        result = Some((objs, layout, items, helpers, levels, ranges));
         break;
     }
     if errors.is_empty() && result.is_none() {
         errors = pass1_errors;
     }
-    let Some((objs, layout, items, helpers, stack_levels)) = result else {
+    let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
         return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors };
     };
     let items = if tgt.opt {
+        let items = inline_single_calls(items, ranges);
         let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
         for (i, o) in objs.iter().enumerate() {
             if let Some(a) = layout.addr[i] {

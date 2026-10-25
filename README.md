@@ -66,7 +66,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * Compared with Microchip XC8 on a set of small kernels, the output is typically about a third smaller
   and about as fast (see `docs/BENCHMARKS.md`, including an interrupt-plus-multiply-and-divide case).
 * Optimisations include constant folding, narrowing, Access Bank placement, overlapping of
-  routines' variables that are never live together, counted-loop forms, tail calls and a peephole pass, and literal strings read through
+  routines' variables that are never live together, counted-loop forms, tail calls, inlining of routines called once, a Byte argument passed in
+  `WREG` and a peephole pass, and literal strings read through
   `TBLRD*+` with the table pointer set once per loop.
   Every test program is also built unoptimised (`-O0`) and checked to give the same results.
 
