@@ -68,6 +68,9 @@ pub struct Place {
     pub bit: Option<u8>,
     /// Array element selected at run time: the unsigned 16-bit byte offset from `base + off`.
     pub idx: Option<Box<Ex>>,
+    /// Bit of the selected byte chosen at run time (0 to 7), for an element of a packed bit
+    /// array; `bit` is then None.
+    pub dbit: Option<Box<Ex>>,
     pub ty: Ty,
 }
 
@@ -76,6 +79,10 @@ impl Place {
     /// table, through TBLPTR: there is no direct memory operand.
     pub fn indirect(&self) -> bool {
         self.idx.is_some() || matches!(self.base, Base::Ptr(_) | Base::Flash(_))
+    }
+    /// A single bit of a byte, fixed or chosen at run time.
+    pub fn is_bit(&self) -> bool {
+        self.bit.is_some() || self.dbit.is_some()
     }
     /// Width in bits of the value the place holds (a bit place reads as 0/1 in 8 bits).
     pub fn width(&self) -> u8 {

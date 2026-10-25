@@ -125,6 +125,12 @@ pub struct Analysis {
     pub decl_syms: HashMap<Span, SymId>,
     /// The `Interrupt` each `Enable`/`Disable` names, keyed by the span of the name.
     pub enables: HashMap<Span, SymId>,
+    /// `Bit`/`Boolean` arrays that are used as a whole somewhere (passed, copied, cleared,
+    /// initialised, given a bit or byte view). They keep one byte per element; every other
+    /// `Dim`med bit array is packed eight to a byte (D47).
+    pub unpackable: HashSet<SymId>,
+    /// Global `Bit`/`Boolean` arrays with their element counts, for the RAM check.
+    pub global_bit_arrays: Vec<(SymId, u32)>,
 }
 
 /// Parsed device descriptions by path. The 18F27Q10 file is large, and tests and tools analyse
@@ -240,6 +246,8 @@ pub struct Sema<'p, 'd> {
     enabled: HashMap<Option<i64>, SymId>,
     interrupts: Vec<SymId>,
     reentrant_ok: HashSet<SymId>,
+    /// True while the operand of `Bound` is checked: it only needs the array's type.
+    in_bound: bool,
 }
 
 pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Analysis {
@@ -261,6 +269,7 @@ pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Ana
         enabled: HashMap::new(),
         interrupts: Vec::new(),
         reentrant_ok: HashSet::new(),
+        in_bound: false,
     };
     s.run();
     s.a
@@ -779,8 +788,21 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             let bytes = self.size_of(&vty);
             let is_global = self.scopes.is_empty();
-            if self.declare(&it.name, vis, SymKind::Var { ty: vty }).is_some() && is_global {
-                self.a.global_ram += bytes;
+            let bit_array = match &vty {
+                Ty::Array(e, n) if matches!(**e, Ty::Bit | Ty::Bool) => Some(*n),
+                _ => None,
+            };
+            let initialised = list.is_some() || init.is_some();
+            if let Some(id) = self.declare(&it.name, vis, SymKind::Var { ty: vty }) {
+                if bit_array.is_some() && initialised {
+                    self.a.unpackable.insert(id);
+                }
+                if is_global {
+                    self.a.global_ram += bytes;
+                    if let Some(n) = bit_array {
+                        self.a.global_bit_arrays.push((id, n));
+                    }
+                }
             }
         }
     }
@@ -1917,9 +1939,17 @@ impl<'p, 'd> Sema<'p, 'd> {
         Some(RegInfo { name: j.name.clone(), ty: Self::reg_value_ty(j.bytes * 8), fields: vec![] })
     }
 
-    fn cur_from_symbol(&mut self, id: SymId, d: &Designator, addr_mode: bool) -> Option<Cur> {
+    fn cur_from_symbol(&mut self, id: SymId, d: &Designator, addr_mode: bool, module: bool) -> Option<Cur> {
         self.a.resolved.insert(d.id, Res::Sym(id));
         let sym = self.a.symbols[id].clone();
+        if !self.in_bound && matches!(&sym.kind, SymKind::Var { ty: Ty::Array(e, _) } if matches!(**e, Ty::Bit | Ty::Bool)) {
+            // Only `a(i)` (or `Module.a(i)`) leaves the layout free to be packed.
+            let lead = usize::from(module);
+            let indexed = d.parts.len() == lead + 1 && matches!(d.parts.last(), Some(Part::Args(..)));
+            if !indexed {
+                self.a.unpackable.insert(id);
+            }
+        }
         Some(match sym.kind {
             SymKind::Const { ty, val, typed } => Cur::Val(EI { ty, val: Some(val), lit: !typed, place: Place::ReadOnly, call: false, in_array: false }),
             SymKind::ConstArray { elem, vals } => Cur::Val(EI::place(Ty::Array(Box::new(elem), vals.len() as u32), Place::ReadOnly)),
@@ -1944,7 +1974,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             };
         }
         if let Some(found) = self.lookup(&key, d.head.span)? {
-            return self.cur_from_symbol(found, d, addr_mode);
+            return self.cur_from_symbol(found, d, addr_mode, false);
         }
         if let Some(m) = self.module_by_name(&key) {
             self.a.resolved.insert(d.id, Res::Module(m));
@@ -1979,7 +2009,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                     if self.a.symbols[id].vis != Vis::Public {
                         return self.err("E-PRIVATE", n.span, format!("`{}` is Private to its module", n.name));
                     }
-                    self.cur_from_symbol(id, d, addr_mode)?
+                    self.cur_from_symbol(id, d, addr_mode, true)?
                 }
                 (Cur::Module(_), _) => return self.err("E-SYNTAX", d.span, "a module name must be followed by `.name`"),
                 (Cur::Reg(r), Part::Member(n)) => {
@@ -2300,7 +2330,10 @@ impl<'p, 'd> Sema<'p, 'd> {
                 if !want(self, 1) {
                     return None;
                 }
-                let v = self.check_expr(&args[0])?;
+                self.in_bound = true;
+                let v = self.check_expr(&args[0]);
+                self.in_bound = false;
+                let v = v?;
                 match v.ty {
                     Ty::Array(_, 0) => Some(EI::new(WORD)),
                     Ty::Array(_, n) => Some(EI::int_lit(n as i128 - 1)),
@@ -2453,9 +2486,12 @@ impl<'p, 'd> Sema<'p, 'd> {
     fn check_ram(&mut self) {
         let Some(dev) = &self.a.device else { return };
         let usable = dev.memory.data.usable_gpr;
-        if self.a.global_ram > usable {
+        // Packed bit arrays take n/8 bytes, not n.
+        let saved: u32 = self.a.global_bit_arrays.iter().filter(|(id, _)| !self.a.unpackable.contains(id)).map(|(_, n)| n - n.div_ceil(8)).sum();
+        let ram = self.a.global_ram - saved;
+        if ram > usable {
             let sp = Span { file: self.proj.units.last().map(|u| u.unit.file).unwrap_or(0), line: 1, col: 1 };
-            let msg = format!("global variables need {} bytes but {} has only {} bytes of usable RAM", self.a.global_ram, dev.device.name, usable);
+            let msg = format!("global variables need {} bytes but {} has only {} bytes of usable RAM", ram, dev.device.name, usable);
             self.diags.error("E-RAM", sp, msg);
         }
     }

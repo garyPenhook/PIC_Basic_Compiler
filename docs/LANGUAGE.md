@@ -104,8 +104,12 @@ assigned a number. A `Bit` is a numeric 0/1. Converting between them is explicit
   elements, each known at compile time. A global array is filled once at start-up, a local one on
   every entry. Element types are the integers, `Char`, `Boolean` and `Bit`. (NEW)
 * Multi-dimensional arrays are not supported in 0.1. (SF)
-* A `Bit` or `Boolean` array uses one byte per element (like a single `Bit` or `Boolean` variable),
-  so indexing it costs the same as any other array, and it can be passed `ByRef`. (NEW, D47)
+* A `Bit` or `Boolean` array that is only ever indexed (`a(i)`) is packed eight elements to a byte.
+  A constant index is a single bit instruction; a run-time index costs a shift and a mask. An array
+  that is used as a whole (passed `ByRef`, copied, cleared, given initial values) or is a structure
+  field uses one byte per element instead, so it can be addressed like any other array. As the
+  elements of a packed array share bytes, assigning one through a run-time index is a
+  read-modify-write: do not write other elements of the same array from an interrupt. (NEW, D47)
 * A bit of an element picked at run time (`a(i).3`, `p(i).Flag`) or of a `ByRef` parameter
   (`x.5`) is read and written with a read-modify-write of its byte. The index must not contain a
   call, and, as with `Inc` on an element, it is evaluated twice, so an index changed by an interrupt

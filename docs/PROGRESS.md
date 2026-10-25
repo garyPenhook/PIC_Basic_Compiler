@@ -339,7 +339,7 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 ## Arrays completed (2026-10-25)
 - Array initialisers `Dim a(n) As T = (…)` (parser `dim_init`, sema `array_init`, lowering `array_init`), `E-DIM-ARRAY` for a wrong count.
 - `Const` arrays in the back end: `Base::Flash`, `FlashObj` tables emitted after the string literals, `point_tblptr` in `codegen.rs`; constant indices fold; whole-array assignment to RAM is a flash-to-RAM `St::Copy`; `ByRefConst` array parameters take a RAM copy made at start-up.
-- `Bit`/`Boolean` arrays, one byte per element (D47), including `ByRef` parameters and structure fields.
+- `Bit`/`Boolean` arrays: packed eight to a byte when only indexed, one byte per element when used as a whole (`ByRef`, copy, initialiser, structure field) (D47). Test: `tests/exec/bit_packed.bas`.
 - `Bound(a)` of an array parameter (D49); a bit of an element picked at run time, of a structure field in such an element and of a `ByRef` parameter (`bit_read`/`bit_write` in `lower.rs`, read-modify-write of the byte; the index may not contain a call).
 - Copies and clears of whole arrays and structures over 255 bytes (chunked loops in `copy_mem`/`clear_mem`).
 - Tests: `tests/exec/arrays_full.bas` (optimised and `-O0`), negative tests `array_init_*`, `const_array_write`. The old `W-BITARR` test file became `tests/valid/bit_array.bas`.

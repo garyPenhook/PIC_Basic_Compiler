@@ -120,6 +120,8 @@ pub struct Lowerer<'a> {
     flash_copies: HashMap<usize, VarId>,
     /// Array parameters whose run-time length (`Bound`) the routine reads.
     len_used: HashSet<VarId>,
+    /// Bit and Boolean arrays stored eight elements to a byte (D47).
+    packed: HashSet<VarId>,
     /// `(callee parameter, caller parameter)`: an array parameter passed on to another one.
     len_fwd: Vec<(VarId, VarId)>,
     isrs: Vec<(FuncId, Level)>,
@@ -162,6 +164,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         sym_flash: HashMap::new(),
         flash_copies: HashMap::new(),
         len_used: HashSet::new(),
+        packed: HashSet::new(),
         len_fwd: Vec::new(),
         isrs: Vec::new(),
         n_saves: 0,
@@ -322,7 +325,7 @@ impl<'a> Lowerer<'a> {
             let AsClause::Designator(d) = &ast.as_clause else { return None };
             let head = lay.iter().find(|x| x.name == d.head.key())?;
             // Followed on a stand-in place; only the offset, bit and type it ends on are used.
-            let start = Place { base: Base::Abs { addr: 0, name: String::new() }, off: head.off, bit: head.bit, idx: None, ty: head.ty.clone() };
+            let start = Place { base: Base::Abs { addr: 0, name: String::new() }, off: head.off, bit: head.bit, idx: None, dbit: None, ty: head.ty.clone() };
             let end = self.apply_parts(start, &d.parts, 0, d.span)?;
             lay.push(FieldLay { name: key, off: end.off, bit: end.bit, ty: end.ty });
         }
@@ -376,20 +379,20 @@ impl<'a> Lowerer<'a> {
                 self.cur_func = saved;
                 self.flash_copies.insert(f, v);
                 let bytes = self.flash[f].bytes.len() as u32;
-                let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
-                let src = Place { base: Base::Flash(f), off: 0, bit: None, idx: None, ty: ty.clone() };
+                let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
+                let src = Place { base: Base::Flash(f), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
                 self.startup.push(S { st: St::Copy { dst, src, bytes }, span });
                 v
             }
         };
-        Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() }
     }
 
     fn hidden_var(&mut self, ty: Ty) -> Place {
         self.hidden += 1;
         let asm = format!("{}__H{}", self.cur_asm, self.hidden);
         let v = self.new_var(asm, "(hidden)", ty.clone(), VarKind::Hidden, None);
-        Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty }
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty }
     }
 
     // ---- declarations --------------------------------------------------------------------
@@ -473,8 +476,15 @@ impl<'a> Lowerer<'a> {
                     let kind = if local { VarKind::Local } else { VarKind::Global };
                     let v = self.new_var(asm, &name, ty.clone(), kind, init.filter(|&i| i != 0 || local));
                     self.sym_var.insert(sym, v);
+                    if let Ty::Array(e, n) = &ty
+                        && matches!(**e, Ty::Bit | Ty::Bool)
+                        && !self.a.unpackable.contains(&sym)
+                    {
+                        self.packed.insert(v);
+                        self.vars[v].bytes = n.div_ceil(8);
+                    }
                     if let (Ty::Str(cap), Some(e)) = (&ty, init_e) {
-                        let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
+                        let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
                         self.str_assign(dst, *cap, e, it.name.span, inits);
                     }
                     if let Ty::Array(elem, _) = &ty {
@@ -489,7 +499,7 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                     if local && !array && !record && let Some(i) = init {
-                        inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
+                        inits.push(S { st: St::Assign(Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() }, Ex::konst(i, nat(&ty).unwrap().0, nat(&ty).unwrap().1)), span: it.name.span });
                     }
                 }
                 SymKind::Alias { .. } => {
@@ -518,7 +528,7 @@ impl<'a> Lowerer<'a> {
         if nonzero * size <= 8 {
             for (i, &x) in vals.iter().enumerate() {
                 if x & mask(w) != 0 {
-                    let dst = Place { base: Base::Var(v), off: i as u32 * size, bit: None, idx: None, ty: elem.clone() };
+                    let dst = Place { base: Base::Var(v), off: i as u32 * size, bit: None, idx: None, dbit: None, ty: elem.clone() };
                     inits.push(S { st: St::Assign(dst, Ex::konst(x, w, sg)), span });
                 }
             }
@@ -526,8 +536,8 @@ impl<'a> Lowerer<'a> {
         }
         let f = self.new_flash(vals, size);
         let bytes = self.flash[f].bytes.len() as u32;
-        let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
-        let src = Place { base: Base::Flash(f), off: 0, bit: None, idx: None, ty };
+        let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
+        let src = Place { base: Base::Flash(f), off: 0, bit: None, idx: None, dbit: None, ty };
         inits.push(S { st: St::Copy { dst, src, bytes }, span });
     }
 
@@ -665,7 +675,7 @@ impl<'a> Lowerer<'a> {
             }
         };
         let _ = span;
-        let param = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, ty: BYTE };
+        let param = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, dbit: None, ty: BYTE };
         (id, vec![(param, Ex::new(ExK::Load(held), 8, false))])
     }
 
@@ -674,7 +684,7 @@ impl<'a> Lowerer<'a> {
     fn finish_event_dispatch(&mut self) {
         let Some((id, pv)) = self.event_disp else { return };
         let sp = Span::default();
-        let param = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, ty: BYTE };
+        let param = Place { base: Base::Var(pv), off: 0, bit: None, idx: None, dbit: None, ty: BYTE };
         let mut arms = Vec::new();
         for (n, sym) in self.event_order.clone().into_iter().enumerate() {
             let fid = self.sym_func[&sym].id;
@@ -750,7 +760,7 @@ impl<'a> Lowerer<'a> {
             if var.kind == VarKind::Local && !mentions(body, v) {
                 continue;
             }
-            let place = |off: u32, ty: Ty| Place { base: Base::Var(v), off, bit: None, idx: None, ty };
+            let place = |off: u32, ty: Ty| Place { base: Base::Var(v), off, bit: None, idx: None, dbit: None, ty };
             if scalar {
                 out.push(S { st: St::Clear(place(0, ty)), span });
             } else if matches!(ty, Ty::Str(_)) {
@@ -773,9 +783,9 @@ impl<'a> Lowerer<'a> {
     fn var_place(&mut self, sym: usize, span: Span) -> Option<Place> {
         if let Some(&v) = self.sym_var.get(&sym) {
             if self.vars[v].by_ref {
-                return Some(Place { base: Base::Ptr(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() });
+                return Some(Place { base: Base::Ptr(v), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[v].ty.clone() });
             }
-            return Some(Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() });
+            return Some(Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[v].ty.clone() });
         }
         if let Some(p) = self.sym_alias.get(&sym) {
             return Some(p.clone());
@@ -795,7 +805,7 @@ impl<'a> Lowerer<'a> {
                     f
                 }
             };
-            return Some(Place { base: Base::Flash(f), off: 0, bit: None, idx: None, ty: Ty::Array(Box::new(elem), vals.len() as u32) });
+            return Some(Place { base: Base::Flash(f), off: 0, bit: None, idx: None, dbit: None, ty: Ty::Array(Box::new(elem), vals.len() as u32) });
         }
         let name = self.a.symbols[sym].name.clone();
         match self.unsupported.get(&sym).cloned() {
@@ -812,7 +822,7 @@ impl<'a> Lowerer<'a> {
                 self.unsupported(span, &format!("the {}-bit register `{}`", s.width, s.name));
                 return None;
             }
-            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, idx: None, ty: BYTE });
+            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, idx: None, dbit: None, ty: BYTE });
         }
         if let Some(j) = dev.joined.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
             let ty = match j.bytes {
@@ -824,7 +834,7 @@ impl<'a> Lowerer<'a> {
                     return None;
                 }
             };
-            return Some(Place { base: Base::Abs { addr: j.addr, name: j.name.clone() }, off: 0, bit: None, idx: None, ty });
+            return Some(Place { base: Base::Abs { addr: j.addr, name: j.name.clone() }, off: 0, bit: None, idx: None, dbit: None, ty });
         }
         None
     }
@@ -875,7 +885,7 @@ impl<'a> Lowerer<'a> {
                     self.unsupported(d.span, &format!("`{}`", d.head.name));
                     return None;
                 }
-                Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: self.vars[v].ty.clone() }
+                Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[v].ty.clone() }
             }
         };
         self.apply_parts(place, parts, i, d.span)
@@ -980,6 +990,16 @@ impl<'a> Lowerer<'a> {
                     if place.bit.is_some() || args.len() != 1 {
                         self.unsupported(*sp, "this array access");
                         return None;
+                    }
+                    if let Base::Var(v) = place.base
+                        && self.packed.contains(&v)
+                        && place.off == 0
+                        && place.idx.is_none()
+                        && matches!(*elem, Ty::Bit | Ty::Bool)
+                    {
+                        place = self.packed_element(place, &elem, n, &args[0])?;
+                        i += 1;
+                        continue;
                     }
                     let size = self.size_of(&elem);
                     if let Some(CVal::Int(c)) = self.a.consts.get(&args[0].id) {
@@ -1203,7 +1223,7 @@ impl<'a> Lowerer<'a> {
                         return None;
                     };
                     let pl = self.place_idx_of(dd)?;
-                    if pl.bit.is_some() {
+                    if pl.is_bit() {
                         self.unsupported(dd.span, "a bit passed ByRef");
                         return None;
                     }
@@ -1223,14 +1243,14 @@ impl<'a> Lowerer<'a> {
                         (Ty::Array(_, n), _) if *n > 0 => Ex::konst(*n, 16, false),
                         (Ty::Array(_, 0), Base::Ptr(src)) if pl.off == 0 && pl.idx.is_none() => {
                             self.len_fwd.push((*pv, *src));
-                            Ex::new(ExK::Load(Place { base: Base::Var(*src), off: 2, bit: None, idx: None, ty: WORD }), 16, false)
+                            Ex::new(ExK::Load(Place { base: Base::Var(*src), off: 2, bit: None, idx: None, dbit: None, ty: WORD }), 16, false)
                         }
                         _ => {
                             self.unsupported(span, "this array argument");
                             return None;
                         }
                     };
-                    lens.push((Place { base: Base::Var(*pv), off: 2, bit: None, idx: None, ty: WORD }, len));
+                    lens.push((Place { base: Base::Var(*pv), off: 2, bit: None, idx: None, dbit: None, ty: WORD }, len));
                 }
                 Ex::new(ExK::Addr(pl), 16, false)
             } else {
@@ -1240,7 +1260,7 @@ impl<'a> Lowerer<'a> {
                     None => def.clone()?,
                 }
             };
-            out.push((Place { base: Base::Var(*pv), off: 0, bit: None, idx: None, ty: pty }, ex));
+            out.push((Place { base: Base::Var(*pv), off: 0, bit: None, idx: None, dbit: None, ty: pty }, ex));
         }
         out.append(&mut lens);
         Some((id, out))
@@ -1274,10 +1294,33 @@ impl<'a> Lowerer<'a> {
             self.unsupported(d.span, &format!("a value of type {}", place.ty));
             return None;
         };
-        if place.bit.is_some() && place.indirect() {
+        if place.is_bit() && place.indirect() {
             return self.bit_read(&place, d.span);
         }
         Some(Ex::new(ExK::Load(place), w, s))
+    }
+
+    /// Element `ix` of a packed bit array: bit `ix % 8` of byte `ix / 8`. A constant index is
+    /// folded into the place; otherwise the byte comes from `idx` and the bit from `dbit`.
+    fn packed_element(&mut self, mut place: Place, elem: &Ty, n: u32, ix: &'a Expr) -> Option<Place> {
+        if let Some(CVal::Int(c)) = self.a.consts.get(&ix.id) {
+            if *c < 0 || (n > 0 && *c >= n as i128) {
+                self.err("E-BOUNDS", ix.span, format!("index {c} is outside the array (0 to {})", n.saturating_sub(1)));
+                return None;
+            }
+            place.off = *c as u32 / 8;
+            place.bit = Some((*c % 8) as u8);
+        } else {
+            let e = self.expr(ix)?;
+            let e16 = conv(e, 16, false);
+            let byte = Ex::new(ExK::Bin(BinKind::Shr, Box::new(e16.clone()), Box::new(Ex::konst(3, 8, false))), 16, false);
+            let e8 = conv(e16, 8, false);
+            let bit = Ex::new(ExK::Bin(BinKind::And, Box::new(e8), Box::new(Ex::konst(7, 8, false))), 8, false);
+            place.idx = Some(Box::new(byte));
+            place.dbit = Some(Box::new(bit));
+        }
+        place.ty = elem.clone();
+        Some(place)
     }
 
     /// The value (0 or 1) of a bit of a byte that is reached through FSR0 or TBLPTR: an element of
@@ -1287,9 +1330,13 @@ impl<'a> Lowerer<'a> {
             self.unsupported(span, "a call inside the index of a bit");
             return None;
         }
-        let b = p.bit?;
-        let byte = Place { bit: None, ty: BYTE, ..p.clone() };
+        let byte = Place { bit: None, dbit: None, ty: BYTE, ..p.clone() };
         let load = Ex::new(ExK::Load(byte), 8, false);
+        if let Some(n) = &p.dbit {
+            let shifted = Ex::new(ExK::Bin(BinKind::Shr, Box::new(load), n.clone()), 8, false);
+            return Some(Ex::new(ExK::Bin(BinKind::And, Box::new(shifted), Box::new(Ex::konst(1, 8, false))), 8, false));
+        }
+        let b = p.bit?;
         let masked = Ex::new(ExK::Bin(BinKind::And, Box::new(load), Box::new(Ex::konst(1 << b, 8, false))), 8, false);
         Some(if b == 0 { masked } else { Ex::new(ExK::Bin(BinKind::Shr, Box::new(masked), Box::new(Ex::konst(b as u32, 8, false))), 8, false) })
     }
@@ -1301,11 +1348,27 @@ impl<'a> Lowerer<'a> {
             self.unsupported(span, "a call inside the index of a bit");
             return None;
         }
-        let b = p.bit?;
-        let mask = 1u32 << b;
-        let byte = Place { bit: None, ty: BYTE, ..p.clone() };
+        let byte = Place { bit: None, dbit: None, ty: BYTE, ..p.clone() };
         let load = Ex::new(ExK::Load(byte.clone()), 8, false);
         let bin = |k: BinKind, l: Ex, r: Ex| Ex::new(ExK::Bin(k, Box::new(l), Box::new(r)), 8, false);
+        if let Some(n) = &p.dbit {
+            let mask = bin(BinKind::Shl, Ex::konst(1, 8, false), (**n).clone());
+            let cleared = |load: Ex, mask: Ex| bin(BinKind::And, load, Ex::new(ExK::Com(Box::new(mask)), 8, false));
+            let new = match v {
+                None => bin(BinKind::Xor, load, mask),
+                Some(v) => match v.as_const() {
+                    Some(0) => cleared(load, mask),
+                    Some(_) => bin(BinKind::Or, load, mask),
+                    None => {
+                        let shifted = bin(BinKind::Shl, v, (**n).clone());
+                        bin(BinKind::Or, cleared(load, mask), shifted)
+                    }
+                },
+            };
+            return Some(St::Assign(byte, new));
+        }
+        let b = p.bit?;
+        let mask = 1u32 << b;
         let new = match v {
             // Toggle.
             None => bin(BinKind::Xor, load, Ex::konst(mask, 8, false)),
@@ -1363,7 +1426,7 @@ impl<'a> Lowerer<'a> {
                     return None;
                 }
                 self.len_used.insert(v);
-                let len = Ex::new(ExK::Load(Place { base: Base::Var(v), off: 2, bit: None, idx: None, ty: WORD }), 16, false);
+                let len = Ex::new(ExK::Load(Place { base: Base::Var(v), off: 2, bit: None, idx: None, dbit: None, ty: WORD }), 16, false);
                 Some(Ex::new(ExK::Bin(BinKind::Sub, Box::new(len), Box::new(Ex::konst(1, 16, false))), 16, false))
             }
             n => {
@@ -1425,7 +1488,7 @@ impl<'a> Lowerer<'a> {
             self.unsupported(span, &format!("{what} of a {} of unknown size", p.ty));
             return None;
         }
-        if p.bit.is_some() || p.idx.as_ref().is_some_and(|i| i.has_call()) {
+        if p.is_bit() || p.idx.as_ref().is_some_and(|i| i.has_call()) {
             self.unsupported(span, &format!("{what} of this place"));
             return None;
         }
@@ -1508,13 +1571,13 @@ impl<'a> Lowerer<'a> {
                 self.cur_func = saved;
                 self.lits.insert(bytes.clone(), v);
                 if !bytes.is_empty() {
-                    let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty: ty.clone() };
+                    let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
                     self.startup.push(S { st: St::StrSet { dst, cap: len, parts: vec![StrSrc::Lit(bytes)], keep: false }, span });
                 }
                 v
             }
         };
-        Place { base: Base::Var(v), off: 0, bit: None, idx: None, ty }
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty }
     }
 
     // ---- statements ----------------------------------------------------------------------
@@ -1561,7 +1624,7 @@ impl<'a> Lowerer<'a> {
                     return;
                 };
                 let v = conv(v, w, sg);
-                if p.bit.is_some() && p.indirect() {
+                if p.is_bit() && p.indirect() {
                     if let Some(st) = self.bit_write(&p, Some(v), span) {
                         Self::push(out, st, span);
                     }
@@ -1692,7 +1755,7 @@ impl<'a> Lowerer<'a> {
             "inc" | "dec" => {
                 let Some(p) = arg_place(self) else { return };
                 let delta = if name == "inc" { 1u32 } else { u32::MAX };
-                if p.bit.is_some() && p.indirect() {
+                if p.is_bit() && p.indirect() {
                     self.unsupported(span, "Inc/Dec of a bit reached through a pointer or index");
                     return;
                 }
@@ -1712,7 +1775,7 @@ impl<'a> Lowerer<'a> {
             }
             "clear" => {
                 let Some(p) = arg_place(self) else { return };
-                if p.bit.is_some() && p.indirect() {
+                if p.is_bit() && p.indirect() {
                     if let Some(st) = self.bit_write(&p, Some(Ex::konst(0, 8, false)), span) {
                         Self::push(out, st, span);
                     }
@@ -1735,7 +1798,7 @@ impl<'a> Lowerer<'a> {
             }
             "high" | "low" | "toggle" => {
                 let Some(p) = arg_place(self) else { return };
-                if p.bit.is_some() && p.indirect() {
+                if p.is_bit() && p.indirect() {
                     let v = match name.as_str() {
                         "high" => Some(Ex::konst(1, 8, false)),
                         "low" => Some(Ex::konst(0, 8, false)),
@@ -1971,6 +2034,9 @@ fn strip_args(args: &mut Vec<(Place, Ex)>, is_len: LenTest) {
 
 fn strip_place(p: &mut Place, is_len: LenTest) {
     if let Some(i) = &mut p.idx {
+        strip_ex(i, is_len);
+    }
+    if let Some(i) = &mut p.dbit {
         strip_ex(i, is_len);
     }
 }
