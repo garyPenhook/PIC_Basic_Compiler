@@ -1,5 +1,8 @@
 Module Timer
-' Timer0, Timer1 and Timer2 helpers (DS40002043F, chapters 19, 20, 21). The module only configures the timer and reads its
+' Timer0, Timer1 and Timer2 helpers (PIC18F27/47Q10: DS40002043F chapters 19, 20, 21; PIC16F17126/46:
+' DS40002343F chapters 22, 23, 24). The control registers have the same layout on both; the interrupt flag
+' registers and the source-selection constants below differ, and are chosen with `#if _has(PIR1.TMR1IF)`
+' (true for the PIC16F171xx, whose Timer1 and Timer2 flags are in PIR1 and PIR2). The module only configures the timer and reads its
 ' flag. It declares no interrupt handler, so it never claims a vector: to be interrupted, call
 ' Timer0EnableInterrupt, write your own `Interrupt` and call Timer0Ack in it (flags are not
 ' cleared by hardware).
@@ -7,6 +10,28 @@ Module Timer
 ' Clock source is FOSC/4 [Table 19-1, T0CS = 010]. In 8-bit mode the timer counts 0..period and
 ' then restarts, so one overflow takes (period + 1) * 2^prescale instruction cycles
 ' (prescale 0..15 selects 1:1 to 1:32768 [T0CON1]).
+#if _has(PIR1.TMR1IF)
+' Timer1 clock sources, the CS field of T1CLK [DS40002343F Table 23-4]. T1ClkPin counts rising edges on the
+' pin selected by T1CKIPPS; T1ClkSosc needs the secondary oscillator enabled and time to stabilise.
+Public Const T1ClkPin = 0
+Public Const T1ClkFosc4 = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkHfIntOsc = 3
+Public Const T1ClkLfIntOsc = 4
+Public Const T1ClkSfIntOsc = 5
+Public Const T1ClkMfIntOsc = 6
+Public Const T1ClkSosc = 8
+Public Const T1ClkTmr0 = 11
+
+' Timer1 gate sources, the GSS field of T1GATE [DS40002343F Table 23-5]. T1GatePin is the pin selected by T1GPPS.
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateTmr2 = 3
+Public Const T1GateCcp1 = 7
+Public Const T1GateCcp2 = 8
+Public Const T1GateCmp1 = 18
+Public Const T1GateCmp2 = 19
+#else
 ' Timer1 clock sources, the CS field of T1CLK [Table 20-2]. T1ClkPin counts rising edges on the
 ' T1CKI pin (RC0 at reset, T1CKIPPS); T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise.
 Public Const T1ClkPin = 0
@@ -27,6 +52,7 @@ Public Const T1GateCcp1 = 8
 Public Const T1GateCcp2 = 9
 Public Const T1GateCmp1 = 12
 Public Const T1GateCmp2 = 13
+#endif
 
 ' Timer2 operating modes, the MODE field of T2HLT [Table 21-3]. The "Gate" and "Reset" modes
 ' keep the free-running period; the "OneShot" modes stop at the period match and clear ON;
@@ -54,6 +80,16 @@ Public Const T2ModeMonoAnyEdge = 19
 Public Const T2ModeOneShotLevelHigh = 22
 Public Const T2ModeOneShotLevelLow = 23
 
+#if _has(PIR1.TMR1IF)
+' Timer2 external reset sources, the RSEL field of T2RST [DS40002343F Table 24-4]. T2RstPin is the pin
+' selected by T2INPPS.
+Public Const T2RstPin = 0
+Public Const T2RstTmr4 = 2
+Public Const T2RstCcp1 = 4
+Public Const T2RstCcp2 = 5
+Public Const T2RstCmp1 = 14
+Public Const T2RstCmp2 = 15
+#else
 ' Timer2 external reset sources, the RSEL field of T2RST [Table 21-2]. T2RstPin is the T2IN pin
 ' (RC3 at reset, T2INPPS).
 Public Const T2RstPin = 0
@@ -65,13 +101,21 @@ Public Const T2RstPwm3 = 6
 Public Const T2RstPwm4 = 7
 Public Const T2RstCmp1 = 8
 Public Const T2RstCmp2 = 9
+#endif
 
 Dim Tmr0If As PIR0.5
 Dim Tmr0Ie As PIE0.5
+#if _has(PIR1.TMR1IF)
+Dim Tmr1If As PIR1.6
+Dim Tmr1Ie As PIE1.6
+Dim Tmr2If As PIR2.2
+Dim Tmr2Ie As PIE2.2
+#else
 Dim Tmr1If As PIR4.0
 Dim Tmr1Ie As PIE4.0
 Dim Tmr2If As PIR4.1
 Dim Tmr2Ie As PIE4.1
+#endif
 Dim T1GoDone As T1GCON.3
 Dim T1GateVal As T1GCON.2
 Dim Tmr2On As T2CON.7

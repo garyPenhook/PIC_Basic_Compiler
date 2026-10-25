@@ -2,17 +2,32 @@ Module Serial
 ' EUSART1 in asynchronous 8N1 mode, TX on RC6 and RX on RC7 (DS40002043F, chapter 29, and the
 ' PPS chapter 18). The pins are routed through PPS: RC6PPS = 0x09 selects EUSART1 TX [Table 18-2];
 ' RX1PPS = 0x17 selects RC7 as the input (port C = 10b, pin 7) [p.285, p.292].
+' PIC16F17126/46 (DS40002343F, chapters 18 and 32): TX on RC4 and RX on RC5, which exist on the 14-pin part too.
+' RC4PPS = 0x13 selects TX1/CK1 [Table 18-2]; RX1PPS = PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [18.8.1].
+' The EUSART1 registers and the baud-rate formula are the same on both families.
 '
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP1BRGH:SP1BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
+#if _has(PIR4.TX1IF)
+Dim TxIf As PIR4.6
+Dim RxIf As PIR4.7
+Dim TxPin As TRISC.4
+Dim RxPin As TRISC.5
+Dim RxAnalog As ANSELC.5
+Const SerTxCode = 19
+Const SerRxCode = 21
+#else
 Dim TxIf As PIR3.4
 Dim RxIf As PIR3.5
-Dim OverrunErr As RC1STA.1
-Dim RxEnable As RC1STA.4
 Dim TxPin As TRISC.6
 Dim RxPin As TRISC.7
 Dim RxAnalog As ANSELC.7
+Const SerTxCode = 9
+Const SerRxCode = 23
+#endif
+Dim OverrunErr As RC1STA.1
+Dim RxEnable As RC1STA.4
 Public Const FoscHz = LongWord(_Clock * 1000000)
 
 Public Sub SerialInit(ByVal baud As LongWord)
@@ -21,8 +36,12 @@ Public Sub SerialInit(ByVal baud As LongWord)
     RxAnalog = 0
     RxPin = 1
     TxPin = 0
-    RC6PPS = 9
-    RX1PPS = 23
+#if _has(PIR4.TX1IF)
+    RC4PPS = SerTxCode
+#else
+    RC6PPS = SerTxCode
+#endif
+    RX1PPS = SerRxCode
     SP1BRGL = Byte(n)
     SP1BRGH = Byte(n >> 8)
     BAUD1CON = 8

@@ -1,5 +1,12 @@
 Module Adc
-' 10-bit ADC with computation (ADCC), basic mode, right-justified results (DS40002043F, chapter 33).
+' 10-bit ADC with computation (ADCC), basic mode, right-justified results (PIC18F27/47Q10: DS40002043F,
+' chapter 33; PIC16F17126/46: DS40002343F, chapter 33). ADCON0, ADCLK, ADREF, ADPCH, ADACQ and FVRCON are used
+' with the same bit layout on both. What differs is chosen with `#if _has(ADREF.ADPREF)` (true for the Q10):
+' the channel numbers of the internal sources, the pins that exist, and the errata workarounds. The
+' PIC16F171xx has no errata for the channel change or the FVR reference (DS80001009E), so it carries neither
+' workaround. Its erratum 1.1.2 (ADACQ/ADPRE only delay the next conversion and do not lengthen the sample
+' time of the current one) applies to the 5 us acquisition below: for a high-impedance source slow the
+' conversion clock or the oscillator, or use the ADCRC clock, as the erratum says.
 ' Conversions are started by software and the clock is derived from FOSC, so `Clock` must be FOSC
 ' in MHz. The module is not reentrant: do not call it from a handler and from the main program.
 '
@@ -20,10 +27,21 @@ Module Adc
 ' pin may have been changed by `Gpio.GpioAllDigital`).
 ' ADC channel numbers, the ADPCH values of Table 33-1. Pins: RA0..RA7 = 0..7, RB0..RB7 = 8..15,
 ' RC0..RC7 = 16..23.
+#if _has(ADREF.ADPREF)
 Public Const AdcChVss = 60
 Public Const AdcChTemp = 61
 Public Const AdcChDac = 62
 Public Const AdcChFvr = 63
+#else
+' PIC16F17126/46, ADPCH [DS40002343F Table 33-6]: RA0, RA1, RA2, RA4, RA5 = 0, 1, 2, 4, 5 (3 is the guard
+' ring ADCG1, not a pin); RB4..RB7 = 12..15 and RC0..RC7 = 16..23 (RB and RC6, RC7 on the 20-pin part only).
+' AdcChFvr is FVR buffer 1, the one the ADC reference uses (ADFVR).
+Public Const AdcChVss = 58
+Public Const AdcChTemp = 59
+Public Const AdcChDac = 60
+Public Const AdcChDac2 = 61
+Public Const AdcChFvr = 62
+#endif
 
 Dim AdcGo As ADCON0.0
 Dim FvrReady As FVRCON.6
@@ -75,9 +93,11 @@ Public Sub AdcPin(ByVal ch As Byte)
     If ch < 8 Then
         TRISA = TRISA Or m
         ANSELA = ANSELA Or m
+#if _has(TRISB)
     ElseIf ch < 16 Then
         TRISB = TRISB Or m
         ANSELB = ANSELB Or m
+#endif
     ElseIf ch < 24 Then
         TRISC = TRISC Or m
         ANSELC = ANSELC Or m
@@ -105,7 +125,11 @@ Public Sub AdcRefFvr(ByVal gain As Byte)
     While FvrReady = 0
     Wend
     ADREF = 3
+#if _has(ADREF.ADPREF)
     SetClock(8000)
+#else
+    SetClock(1000)
+#endif
 End Sub
 
 ' One conversion on the currently selected channel; returns the 10-bit result.
@@ -120,11 +144,15 @@ End Function
 
 ' Converts channel `ch` (0..63, see the AdcCh constants) and returns 0..1023.
 Public Function AdcRead(ByVal ch As Byte) As Word
+#if _has(ADREF.ADPREF)
     Dim dummy As Word
+#endif
     ch = ch And 63
     If ch <> lastCh Then
         ADPCH = ch
+#if _has(ADREF.ADPREF)
         dummy = Convert()
+#endif
         lastCh = ch
     End If
     Result = Convert()

@@ -137,7 +137,7 @@ pub struct Analysis {
 
 /// Parsed device descriptions by path. The 18F27Q10 file is large, and tests and tools analyse
 /// many programs against it.
-fn load_device_cached(path: &std::path::Path) -> Result<Device, devdesc::Error> {
+pub(crate) fn load_device_cached(path: &std::path::Path) -> Result<Device, devdesc::Error> {
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Device>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));

@@ -567,11 +567,16 @@ tool; its design may be reused as a reference.
    * new family (e.g. enhanced mid-range PIC16, classic PIC16, PIC12) → new code-generator
      module and a family spec of its own (instruction set, banking, paging, stack rules).
 4. Read that device's errata; update flags/warnings.
-5. Library: confirm each peripheral module compiles for the new device; fix register-name
-   differences via the device file, not by editing library code per device.
+5. Library: **needs attention for every new device and family.** The modules were written for the
+   PIC18F27/47Q10 and only some are ported (table in `docs/LIBRARY.md`, "Device support"). Confirm each
+   peripheral module compiles and is correct for the new device; register-name differences are handled
+   with `#if _has(REG)` / `_has(REG.FIELD)` in the module (one branch per register layout, not per part
+   number), and pins, channel numbers and errata workarounds are decided per part and cited from its
+   data sheet. A module not yet ported must fail with `#error`, not silently use the Q10 registers.
 6. Add the regression set: compile the standard test programs for the new device and (where
    possible) run them in a simulator or on hardware.
-7. Only then mark the device "supported" in `docs/DEVICES.md`.
+7. Only then mark the device "supported" in `docs/DEVICES.md` **and in `docs/MANUAL.md`, "Supported device"**
+   (also the library table in `docs/LIBRARY.md`).
 
 ### 9.4 Rough order (a proposal — Gary decides the real order, device by device)
 

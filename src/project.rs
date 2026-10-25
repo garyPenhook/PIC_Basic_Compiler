@@ -30,6 +30,8 @@ pub struct Project {
 pub struct LoadConfig {
     pub lib_dirs: Vec<PathBuf>,
     pub defines: Vec<String>,
+    /// Folders searched for `<part>.toml`, so `#if _has(REG)` can see the device's registers.
+    pub devices_dirs: Vec<PathBuf>,
 }
 
 pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
@@ -41,8 +43,28 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
         // `#if` in any file sees the main program's `Clock` and `Device`.
         predef: std::fs::read_to_string(main).map(|t| scan_header(&t)).unwrap_or_default(),
     };
+    ld.predef.registers = ld.predef.device.as_deref().and_then(|d| device_registers(d, &cfg.devices_dirs));
     ld.load_file(&mut proj, diags, main, Span::default());
     proj
+}
+
+/// Lower-case names of the registers (and aliases) of `device`, from the first matching description.
+fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<HashSet<String>> {
+    let bare = device.strip_prefix("pic").unwrap_or(device);
+    // The header scan lower-cases the name, the files are upper-case.
+    let want = format!("{bare}.toml");
+    let path = dirs.iter().find_map(|d| {
+        std::fs::read_dir(d).ok()?.flatten().map(|e| e.path()).find(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case(&want)))
+    })?;
+    let d = crate::sema::load_device_cached(&path).ok()?;
+    let mut set = HashSet::new();
+    for s in &d.sfr {
+        set.insert(s.name.to_ascii_lowercase());
+        set.extend(s.aliases.iter().map(|a| a.to_ascii_lowercase()));
+        set.extend(s.fields.iter().chain(&s.legacy).map(|f| format!("{}.{}", s.name, f.name).to_ascii_lowercase()));
+    }
+    set.extend(d.joined.iter().map(|j| j.name.to_ascii_lowercase()));
+    Some(set)
 }
 
 /// Parses source text that is already in memory (tests and tools). No includes are followed.

@@ -34,11 +34,16 @@ Module IntOsc
 ' `Clock`. A run-time SetClock changes the hardware but not that timing, so they are wrong
 ' until the clock is back at `Clock`. Use it for phases that need no timed library.
 
-#if not(_device in (18F24Q10, 18F25Q10, 18F26Q10, 18F27Q10, 18F45Q10, 18F46Q10, 18F47Q10, 18LF24Q10, 18LF25Q10, 18LF26Q10, 18LF27Q10, 18LF45Q10, 18LF46Q10, 18LF47Q10))
-#error "intosc supports the PIC18(L)F2x/4xQ10 only"
+' HFINTOSC frequency codes: OSCFRQ.HFFRQ (Q10: 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz = codes 0..8) or
+' OSCFRQ.FRQ (PIC16F171xx: 1, 2, 4, 8, 16, 32 MHz = codes 0..5, DS40002343F 11.5.6).
+#if _has(OSCFRQ.HFFRQ)
+#elseif _has(OSCFRQ.FRQ)
+#else
+#error "intosc needs a part with an OSCFRQ register (HFFRQ or FRQ field)"
 #endif
 
-' OSCFRQ code (HFFRQ) and divider code (NDIV, a power of two: 0 = 1:1 .. 5 = 1:32) for `Clock`.
+' OSCFRQ code and divider code (NDIV, a power of two: 0 = 1:1 .. 5 = 1:32) for `Clock`.
+#if _has(OSCFRQ.HFFRQ)
 #if _clock = 64
 Const ClockFrq As Byte = 8
 Const ClockDiv As Byte = 0
@@ -86,6 +91,46 @@ Const ClockDiv As Byte = 5
 Const ClockFrq As Byte = 0
 Const ClockDiv As Byte = 0
 #endif
+#else
+#if _clock = 32
+Const ClockFrq As Byte = 5
+Const ClockDiv As Byte = 0
+#elseif _clock = 16
+Const ClockFrq As Byte = 4
+Const ClockDiv As Byte = 0
+#elseif _clock = 8
+Const ClockFrq As Byte = 3
+Const ClockDiv As Byte = 0
+#elseif _clock = 4
+Const ClockFrq As Byte = 2
+Const ClockDiv As Byte = 0
+#elseif _clock = 2
+Const ClockFrq As Byte = 1
+Const ClockDiv As Byte = 0
+#elseif _clock = 1
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 0
+#elseif _clock = 0.5
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 1
+#elseif _clock = 0.25
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 2
+#elseif _clock = 0.125
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 3
+#elseif _clock = 0.0625
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 4
+#elseif _clock = 0.03125
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 5
+#else
+#error "Clock is not an internal oscillator speed: use 32, 16, 8, 4, 2, 1, 0.5, 0.25, 0.125, 0.0625 or 0.03125"
+Const ClockFrq As Byte = 0
+Const ClockDiv As Byte = 0
+#endif
+#endif
 
 ' NOSC = 110 (HFINTOSC) in OSCCON1 bits 6:4 [Table 5-2].
 Const NoscHf As Byte = 96
@@ -120,7 +165,7 @@ Private Function Apply(ByVal frq As Byte, ByVal shift As Byte) As Boolean
     End If
 End Function
 
-' The OSCFRQ code for `mhz` (1, 2, 4, 8, 12, 16, 32, 48 or 64), or 255 for any other value.
+' The OSCFRQ code for `mhz` (Q10: 1, 2, 4, 8, 12, 16, 32, 48 or 64; PIC16F171xx: 1, 2, 4, 8, 16 or 32), or 255 for any other value.
 Private Function FrqCode(ByVal mhz As Byte) As Byte
     Result = 255
     If mhz = 1 Then
@@ -131,6 +176,7 @@ Private Function FrqCode(ByVal mhz As Byte) As Byte
         Result = 2
     ElseIf mhz = 8 Then
         Result = 3
+#if _has(OSCFRQ.HFFRQ)
     ElseIf mhz = 12 Then
         Result = 4
     ElseIf mhz = 16 Then
@@ -141,6 +187,12 @@ Private Function FrqCode(ByVal mhz As Byte) As Byte
         Result = 7
     ElseIf mhz = 64 Then
         Result = 8
+#else
+    ElseIf mhz = 16 Then
+        Result = 4
+    ElseIf mhz = 32 Then
+        Result = 5
+#endif
     End If
 End Function
 
@@ -155,7 +207,7 @@ Public Function SetClockDiv(ByVal mhz As Byte, ByVal shift As Byte) As Boolean
     End If
 End Function
 
-' Runs HFINTOSC at `mhz` (1, 2, 4, 8, 12, 16, 32, 48 or 64) with no divider. False, and nothing
+' Runs HFINTOSC at `mhz` (see FrqCode) with no divider. False, and nothing
 ' changed, for any other value; False too when the clock did not switch (see the header).
 Public Function SetClock(ByVal mhz As Byte) As Boolean
     Result = SetClockDiv(mhz, 0)

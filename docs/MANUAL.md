@@ -50,14 +50,33 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 
 ## Supported device
 
-| Device | Core | Flash | RAM | Notes |
-|---|---|---|---|---|
-| PIC18F27Q10 | PIC18 (8-bit), legacy instruction set (`XINST = 0`) | 128 KB (65,536 words) | 3,359 usable GPR bytes (as reported by the build summary) | Device file `devices/18F27Q10.toml`, generated from pack `PIC18F-Q_DFP 1.31.492` |
+<!-- MAINTENANCE: update this section, the library table in docs/LIBRARY.md ("Device support") and
+     the Status column below whenever a device or family is added or changes status. A device is
+     "Supported" only when it compiles, its standard test programs pass, and every library module is
+     either ported for it or fails with #error (docs/DEVICE-FORMAT.md, "Adding a device", steps 7 and 8). -->
 
-`Device = 18F27Q10` (or `PIC18F27Q10`) is the only value accepted. A second device is added only
-after it has its own description file and passes its own tests. Every register and register bit of
-the device is available by its pack name (`PORTB`, `LATA`, `T0CON0`, `PIE0.5`, `SSP1CON1.SSPEN`
-...), case-insensitively.
+| Device | Core | Program memory | RAM | Status |
+|---|---|---|---|---|
+| PIC18F27Q10 | PIC18 (8-bit), legacy instruction set (`XINST = 0`) | 128 KB (65,536 words) | 3,359 usable GPR bytes (as reported by the build summary) | **Supported.** Device file `devices/18F27Q10.toml`, generated from pack `PIC18F-Q_DFP 1.31.492`. All library modules |
+| PIC16F17126 (14/16-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | **Described, not compilable yet.** Device file `devices/16F17126.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002343F). There is no `pic16e` code generator, so `Device = 16F17126` stops with `E-DEVICE`. Library modules `gpio`, `intosc`, `system`, `timer`, `serial` and `adc` are prepared for it; the others are not |
+| PIC16F17146 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | As the PIC16F17126 (`devices/16F17146.toml`) |
+
+`Device = 18F27Q10` (or `PIC18F27Q10`) is the only value that compiles today. A device is added only
+after it has its own description file and passes its own tests, and **adding one means more than the
+description file**:
+
+* a new core family needs its own code generator (PLAN §9.3);
+* every library module must be reviewed for the new part: the modules were written for the
+  PIC18F27/47Q10 and each one names registers, interrupt flags, pins and channel numbers that can differ
+  or not exist. The state of each module per device is in the table in `docs/LIBRARY.md`, "Device
+  support: work still to do". A module that is not ported must stop with `#error`, not use the
+  Q10 registers;
+* this section and that table must be updated, and the new part listed here.
+
+Every register and register bit of the device is available by its pack name (`PORTB`, `LATA`,
+`T0CON0`, `PIE0.5`, `SSP1CON1.SSPEN` ...), case-insensitively. A program or library module can ask
+whether the chosen device has a register or bit field with `#if _has(REG)` / `#if _has(REG.FIELD)`
+(Preprocessor, below), which is how one module serves several layouts.
 
 ## Running the compiler
 
@@ -472,7 +491,7 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 |---|---|
 | `#define NAME [value]`, `#undefine NAME` | scoped to the file that defines them (only `-D` names are shared) |
 | `#ifdef`, `#ifndef`, `#else`, `#endif` | |
-| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
+| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
 | `#error "text"`, `#warning "text"` | |
 | `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `Warn.<id> = true\|false` | |
 

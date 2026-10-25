@@ -424,3 +424,14 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   `devices/16F17126.toml` and `16F17146.toml` are generated from PIC16F1xxxx_DFP 1.32.471 and cross-checked by `scripts/check-devices.sh`
   against hand-written `*.expect.toml` files (Table 1 p.1, Table 9-1 p.36, Sec. 8.1/8.4 p.24).
 - Not compilable yet: no `pic16e` code generator, so `Device = 16F17146` reports `E-DEVICE` saying so. Errata (DS80001009) not yet reviewed.
+
+
+## Library made device-independent, step one (0.1.18 - 0.1.20)
+
+- `#if _has(REG)` and `_has(REG.FIELD)`: true when the device description defines that register or bit field. The loader reads the
+  register list from the file named by `Device =`, so a new part gets it with no compiler change.
+- Ported: `gpio`, `intosc`, `system`, `timer`, `serial`, `adc` (PIC18F27/47Q10 output byte-identical; the PIC16F17126/46 branches are
+  checked against DS40002343F / DS80001009E and by preprocessing only, because there is no `pic16e` code generator).
+- **Still to do** (listed with the reasons in `docs/LIBRARY.md`, "Device support"): `serial2`, `i2c`, `spi`, `pwm`, `lcd`, `oled`
+  (PIC18 table reads), `eeprom` (different NVM registers). **Every new device or family must review that table** (DEVICE-FORMAT.md
+  checklist step 8, PLAN §9.3 step 5).

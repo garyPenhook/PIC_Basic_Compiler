@@ -3,17 +3,58 @@
 Written in the language, found by `Include "name"` in the project's `lib/` folder (LANGUAGE.md §9).
 A routine is called as `Module.Routine(...)` or, when the name is unambiguous, by its own name.
 Only what a program calls is compiled in. Each module cites the data sheet pages its register
-values come from (DS40002043F, PIC18F27/47Q10); the values were checked against that document.
+values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F where the module is
+ported, see "Device support" below); the values were checked against those documents.
 
 `DelayUs`, `DelayMs`, `Input`, `Output`, `High`, `Low` and `Toggle` are compiler intrinsics
 (LANGUAGE.md §12), so there is no module for them. No library module declares an `Interrupt`
 handler: that would take a vector away from the program. Modules configure peripherals and read
 flags; the program writes its own handler.
 
+## Device support: work still to do (read this when adding a device or a family)
+
+The modules were written for the PIC18F27/47Q10 and are being made device-independent one by one.
+A module adapts with `#if _has(REG)` / `#if _has(REG.FIELD)` (MANUAL §Preprocessor), which asks the
+device description whether a register or bit field exists, so most of a new part in a known layout
+needs no module change. **A new device or family needs this table reviewed**, because a module that
+is not listed as ported either does not compile on the new part or, worse, compiles and writes the
+wrong register. Nothing here can be built for the PIC16F171xx until a `pic16e` code generator exists,
+so the 16F column is checked against the data sheet and the preprocessing only, not run on hardware.
+
+| Module | PIC18F27/47Q10 | PIC16F17126/46 (DS40002343F) | Still to do |
+|---|---|---|---|
+| `delay` | done | portable (no device registers) | none |
+| `gpio` | done | done (`_has` on `ANSELx`, `WPUx`, `ODCONx`) | none |
+| `intosc` | done | done (`OSCFRQ.FRQ`: 1..32 MHz) | none |
+| `system` | done | done | none |
+| `timer` | done | done (flags in PIR1/PIR2, own source constants) | `T1Gate*` / `T2Rst*` lists on the 16F hold only the sources checked so far |
+| `serial` | done (TX RC6, RX RC7) | done (TX RC4, RX RC5) | an override for other pins |
+| `adc` | done | done (channels 58..62; erratum 1.1.2 noted) | none |
+| `serial2` | done | **not ported** | pins (`RB6PPS` missing on the 14-pin part, no port B), `RX2PPS` encoding, flags in another PIR |
+| `i2c`, `spi` | done | **not ported** | default pins for MSSP1, `RxyPPS` codes and `SSP1xPPS` for the 16F, `RB*PPS` missing on the 14-pin part |
+| `pwm` | done | **not ported** | the 16F has CCP1/CCP2 and PWM1/PWM2 of a different kind, no PWM3/PWM4, no `CCPTMRS`; pin routing |
+| `lcd` | done | **not ported** | port B does not exist on the 14-pin part; choose the pins |
+| `oled` | done | **not ported** | uses `TBLPTR` / `TABLAT` (PIC18 table reads); needs an alternative for the enhanced mid-range core |
+| `eeprom` | done | **not ported** | different NVM registers (no `NVMCON0`, `NVMADRU`); different unlock and access sequence |
+| `aht30`, `floatlib` | done | portable if the core generator supports them | check once `pic16e` code generation exists |
+
+How to port a module (the pattern used so far):
+
+1. List the registers and bit fields the module names and compare them with the new part's device
+   description (`devices/<part>.toml`); a name that is missing, or has different fields, is a difference.
+2. Confirm each difference in the part's data sheet and errata, and cite the section in the module.
+3. Gate the difference with `_has(...)` (one branch per layout, never a list of part numbers, so a future
+   part with the same layout works without an edit). Add a pin default per part where the module owns a pin.
+4. Check that the Q10 output is **byte-identical** to before (every byte counts), then run `cargo test`.
+5. Update this table.
+
+A module that does not support a part should say so with `#error` (as `intosc` does for a clock it cannot
+make), never fall through to the Q10 registers.
+
 ## gpio
 | Routine | Effect |
 |---|---|
-| `GpioAllDigital()` | `ANSELA/B/C = 0` (they reset to analog) |
+| `GpioAllDigital()` | `ANSELA/B/C = 0` (they reset to analog); a register the part lacks is skipped (`#if _has(REG)`) |
 | `GpioPullUps(maskA, maskB, maskC)` | `WPUx`: a 1 bit enables that pin's pull-up |
 | `GpioOpenDrain(maskA, maskB, maskC)` | `ODCONx`: a 1 bit makes that pin drive low only |
 
@@ -48,10 +89,10 @@ flags; the program writes its own handler.
 | `Timer2Expired()`, `Timer2Ack()`, `Timer2Stop()` | as for Timer0 (`PIR4.TMR2IF`) |
 | `Timer2EnableInterrupt()` / `Timer2DisableInterrupt()` | `PIE4.TMR2IE` |
 
-## serial (EUSART1, 8N1, TX on RC6, RX on RC7)
+## serial (EUSART1, 8N1, TX on RC6, RX on RC7; PIC16F17126/46: TX on RC4, RX on RC5)
 | Routine | Effect |
 |---|---|
-| `SerialInit(baud)` | PPS (`RC6PPS = 9`, `RX1PPS = 23`), pin directions, `BRG16 = BRGH = 1`, enables TX and RX. `n = round(FOSC / (4 * baud)) - 1`, computed at run time from `Clock` (a 32-bit divide, executed once) |
+| `SerialInit(baud)` | PPS (`RC6PPS = 9`, `RX1PPS = 23`; PIC16F17126/46: `RC4PPS = 19`, `RX1PPS = 21`), pin directions, `BRG16 = BRGH = 1`, enables TX and RX. `n = round(FOSC / (4 * baud)) - 1`, computed at run time from `Clock` (a 32-bit divide, executed once) |
 | `SerialWriteByte(b)`, `SerialWrite(text)`, `SerialNewLine()` | blocking send (`text` up to 80 characters) |
 | `SerialWriteWord(v)`, `SerialWriteHex(v)` | unsigned decimal, two hex digits |
 | `SerialAvailable()`, `SerialRead()` | receive; `SerialRead` waits and clears an overrun |
@@ -72,7 +113,7 @@ disconnect the programmer while using them. Both modules can be included and run
 |---|---|
 | `AdcInit()` | ADC on, VDD/VSS reference, FOSC clock with the smallest TAD >= 1 us (ADCLK), hardware acquisition (`ADACQ`) of 5 us; runs a 32-bit calculation once from `Clock` |
 | `AdcPin(ch)` | `TRISx`/`ANSELx` bit of channel 0..23 (RA0-7 = 0..7, RB = 8..15, RC = 16..23) |
-| `AdcRead(ch)` | one conversion, 0..1023. Channels `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63 are internal |
+| `AdcRead(ch)` | one conversion, 0..1023. Channels `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63 are internal (PIC16F17126/46: 58, 59, 60, 62; `AdcChDac2` 61; its pins are RA0..RA5, RB4..RB7, RC0..RC7 and there is no first-conversion workaround) |
 | `AdcReadAvg(ch, n)` | mean of n (1..64) conversions |
 | `AdcMillivolts(raw, vrefMv)` | `raw * vref / 1023` |
 | `AdcRefVdd()` / `AdcRefFvr(gain)` | reference VDD, or FVR at gain 1, 2, 4 (any value >= 4 is taken as 4, 0 as 1; waits for `FVRRDY`) |

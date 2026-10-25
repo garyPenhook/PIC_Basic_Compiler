@@ -28,6 +28,9 @@ pub struct Preprocessed {
 pub struct Predef {
     pub clock: Option<f64>,
     pub device: Option<String>,
+    /// Lower-case names of the registers (and their aliases) the device description defines;
+    /// `None` when no description could be loaded. `_has(NAME)` tests this set. Bit fields are listed as `reg.field`.
+    pub registers: Option<std::collections::HashSet<String>>,
 }
 
 /// Reads `Clock = n` (or `Declare Xtal = n`) and `Device = name` from the program text. The header
@@ -203,6 +206,20 @@ impl Eval<'_> {
             "true" => Ok(Val::Bool(true)),
             "false" => Ok(Val::Bool(false)),
             "_clock" => self.predef.clock.map(Val::Num).ok_or_else(|| "_clock is used but the program has no `Clock = n` line".into()),
+            "_has" => {
+                if !self.eat("(") {
+                    return Err("`_has` needs a register name in parentheses: `_has(ANSELB)`".into());
+                }
+                let Some(name) = self.peek().map(str::to_string) else { return Err("`_has(` needs a register name".into()) };
+                self.pos += 1;
+                if !self.eat(")") {
+                    return Err("missing `)` after the register name in `_has`".into());
+                }
+                match &self.predef.registers {
+                    Some(set) => Ok(Val::Bool(set.contains(&name))),
+                    None => Err("_has is used but the device description could not be loaded (is there a `Device = name` line?)".into()),
+                }
+            }
             "_device" => self
                 .predef
                 .device
@@ -219,7 +236,7 @@ impl Eval<'_> {
                 } else if t.starts_with("pic18") {
                     Ok(Val::Str(t[3..].to_string()))
                 } else {
-                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device)"))
+                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device, _has)"))
                 }
             }
         }

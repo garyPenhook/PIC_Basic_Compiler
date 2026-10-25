@@ -1,5 +1,6 @@
 Module System
-' Reset cause and clock check, DS40002043F chapters 5 and 9.
+' Reset cause and clock check, DS40002043F chapters 5 and 9 (PIC16F17126/46: DS40002343F
+' sections 10.14.2 and 11.5; PCON0 and OSCCON1/2 have the same layout).
 '
 ' Reset cause: PCON0 flags [9.12, 9.14.2]. Hardware sets one to its active state on a Reset and never
 ' clears it again, so the program should read the cause at start and then call SysClearResetFlags.
@@ -68,6 +69,7 @@ Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq
         mhz = 4
     ElseIf hffrq = 3 Then
         mhz = 8
+#if _has(OSCFRQ.HFFRQ)
     ElseIf hffrq = 4 Then
         mhz = 12
     ElseIf hffrq = 5 Then
@@ -78,6 +80,12 @@ Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq
         mhz = 48
     ElseIf hffrq = 8 Then
         mhz = 64
+#else
+    ElseIf hffrq = 4 Then
+        mhz = 16
+    ElseIf hffrq = 5 Then
+        mhz = 32
+#endif
     End If
     If mhz <> 0 Then
         Result = (LongWord(mhz) * 1000000) >> cdiv
