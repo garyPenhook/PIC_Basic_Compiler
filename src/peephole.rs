@@ -5,6 +5,7 @@
 //! leaves behind, using only facts it can read off the instruction stream:
 //!
 //! * **Branch to the next instruction** is deleted.
+//! * **Bit test into a Boolean, then compared** becomes the bit-skip branch (`btfsc R,b` / `bra L`).
 //! * **`xorlw 0`** (the generator's "is it zero" test) after an instruction that already set Z
 //!   and N from `WREG` is deleted.
 //! * **Redundant `WREG` loads**: `movlw k` when `WREG` already holds `k`, and `movf m, w` when
@@ -27,7 +28,7 @@
 //! loop that polls such a variable starts with a label, which ends the run. The scratch registers
 //! the pass deletes stores to are saved by every handler that uses them.
 
-use crate::asm::Item;
+use crate::asm::{Cc, Item};
 use std::collections::HashMap;
 
 /// What the pass may assume about symbols.
@@ -529,6 +530,143 @@ fn pass_xorlw_zero(items: &mut Vec<Item>) -> bool {
     changed
 }
 
+/// Whether `WREG` and every flag are dead from item `from` on: each path overwrites them, or ends
+/// the statement, before anything could read them. Anything it cannot follow counts as a read.
+fn w_and_flags_dead(items: &[Item], from: usize, depth: u8) -> bool {
+    dead_from(items, from, depth, true, ALL)
+}
+
+fn dead_from(items: &[Item], from: usize, depth: u8, mut w: bool, mut needed: u8) -> bool {
+    for it in &items[from..] {
+        match it {
+            Item::Comment(_) | Item::Label(_) => {}
+            Item::Fence => return true,
+            Item::Br(Cc::Always, target) if depth > 0 => {
+                return match items.iter().position(|x| matches!(x, Item::Label(l) if l == target)) {
+                    Some(p) => dead_from(items, p + 1, depth - 1, w, needed),
+                    None => false,
+                };
+            }
+            // The flags are clobbered across a return (docs/ABI.md); `WREG` may carry the result.
+            Item::Ins(t) if matches!(parse(t), Some((m, _)) if m == "return" || m == "retlw") => return !w,
+            Item::Ins(t) => match effect(t) {
+                None => return false,
+                Some(e) => {
+                    if (w && e.reads.contains(&Loc::W)) || e.flags_r & needed != 0 {
+                        return false;
+                    }
+                    if e.writes.contains(&Loc::W) {
+                        w = false;
+                    }
+                    needed &= !e.flags_w;
+                    if !w && needed == 0 {
+                        return true;
+                    }
+                }
+            },
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// A bit test turned into a Boolean and compared (`movlw 0 ; btfsc R,b ; movlw 1 ; xorlw K ; bnz L`)
+/// becomes the bit-skip branch itself (`btfsc R,b ; bra L`), when nothing reads `WREG` or the flags
+/// on either path.
+fn pass_bit_branch(items: &mut Vec<Item>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i < items.len() {
+        let keep = protected(items);
+        if let Some((n, new)) = match_bit_branch(items, i, &keep) {
+            // `n` items from `i`, minus an optional `movlb` between them that is kept.
+            items.splice(i..i + n, new);
+            changed = true;
+        }
+        i += 1;
+    }
+    changed
+}
+
+fn match_bit_branch(items: &[Item], i: usize, keep: &[bool]) -> Option<(usize, Vec<Item>)> {
+    let ins = |k: usize| -> Option<(String, Vec<&str>)> {
+        match items.get(k)? {
+            Item::Ins(t) if !keep[k] => parse(t),
+            _ => None,
+        }
+    };
+    let (m, o) = ins(i)?;
+    if m != "movlw" || o.len() != 1 || parse_lit(o[0]) != Some(0) {
+        return None;
+    }
+    let mut k = i + 1;
+    let mut bank = None;
+    if let Some((m, _)) = ins(k) {
+        if m == "movlb" {
+            bank = Some(items[k].clone());
+            k += 1;
+        }
+    }
+    let (skip, bit) = ins(k)?;
+    if skip != "btfsc" && skip != "btfss" {
+        return None;
+    }
+    let bit_text = match &items[k] {
+        Item::Ins(t) => t.clone(),
+        _ => return None,
+    };
+    let _ = bit;
+    // The instruction after a skip is flagged protected; look at it directly.
+    let (m, o) = match items.get(k + 1)? {
+        Item::Ins(t) => parse(t)?,
+        _ => return None,
+    };
+    if m != "movlw" || o.len() != 1 || parse_lit(o[0]) != Some(1) {
+        return None;
+    }
+    let (m, o) = match items.get(k + 2)? {
+        Item::Ins(t) => parse(t)?,
+        _ => return None,
+    };
+    if m != "xorlw" || o.len() != 1 {
+        return None;
+    }
+    let kv = parse_lit(o[0])?;
+    if kv > 1 || keep[i] || keep[k] || keep[k + 2] {
+        return None;
+    }
+    let Item::Br(cc, target) = items.get(k + 3)? else { return None };
+    let taken_when_equal = match cc {
+        Cc::Z => true,
+        Cc::Nz => false,
+        _ => return None,
+    };
+    if keep[k + 3] {
+        return None;
+    }
+    // W is the bit (btfsc) or its complement (btfss); the branch is taken when W == K is `taken_when_equal`.
+    let w_is_bit = skip == "btfsc";
+    // Bit value at which the branch is taken.
+    let bit_when_taken = (kv == 1) == (w_is_bit == taken_when_equal);
+    if !w_and_flags_dead(items, k + 4, 4) {
+        return None;
+    }
+    let target_at = items.iter().position(|x| matches!(x, Item::Label(l) if l == target))?;
+    if !w_and_flags_dead(items, target_at + 1, 4) {
+        return None;
+    }
+    // `btfsc` runs the branch when the bit is set.
+    let mn = if bit_when_taken { "btfsc" } else { "btfss" };
+    let rest = bit_text.trim().split_once(char::is_whitespace)?.1.to_string();
+    let mut new = Vec::new();
+    if let Some(b) = bank {
+        new.push(b);
+    }
+    new.push(Item::Ins(format!("{mn} {rest}")));
+    new.push(Item::Br(Cc::Always, target.clone()));
+    Some((k + 4 - i, new))
+}
+
 fn pass_branch_to_next(items: &mut Vec<Item>) -> bool {
     let mut dead = vec![false; items.len()];
     let keep = protected(items);
@@ -656,6 +794,7 @@ fn protected(items: &[Item]) -> Vec<bool> {
 pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     for _ in 0..8 {
         let mut changed = false;
+        changed |= pass_bit_branch(&mut items);
         changed |= pass_branch_to_next(&mut items);
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_forward(&mut items, env);
@@ -805,5 +944,28 @@ mod tests {
         // A conditional copy is not a supplier.
         let r = run(&[ins("btfsc X, 0, c"), ins("movff Y, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c"), Item::Fence]);
         assert!(r.contains(&"movf __A0, w, c".to_string()), "{r:?}");
+    }
+
+    #[test]
+    fn bit_test_compare_becomes_skip_branch() {
+        let seq = |x: &str, cc: Cc| {
+            vec![ins("movlw 0"), ins("movlb 14"), ins("btfsc R, 4, b"), ins("movlw 1"), ins(x), Item::Br(cc, "L".into()), ins("movlw 0"), ins("movwf X, c"), Item::Label("L".into()), ins("movlw 0"), ins("movwf Y, c"), Item::Fence]
+        };
+        // Boolean = 0 is "bit clear": branch when W (the bit) is non-zero.
+        let r = run(&seq("xorlw 0x00", Cc::Nz));
+        assert_eq!(&r[..3], ["movlb 14", "btfsc R, 4, b", "brAlways L"], "{r:?}");
+        let r = run(&seq("xorlw 0x00", Cc::Z));
+        assert_eq!(&r[..3], ["movlb 14", "btfss R, 4, b", "brAlways L"], "{r:?}");
+        let r = run(&seq("xorlw 0x01", Cc::Nz));
+        assert_eq!(&r[1], "btfss R, 4, b", "{r:?}");
+        // btfss complements the Boolean.
+        let mut s = seq("xorlw 0x01", Cc::Z);
+        s[2] = ins("btfss R, 4, b");
+        let r = run(&s);
+        assert_eq!(&r[1], "btfss R, 4, b", "{r:?}");
+        // W is read at the target: unchanged.
+        let mut s = seq("xorlw 0x00", Cc::Nz);
+        s[9] = ins("movwf Y, c");
+        assert_eq!(run(&s).len(), s.len() - 0, "{:?}", run(&s));
     }
 }

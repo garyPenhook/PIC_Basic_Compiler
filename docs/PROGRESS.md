@@ -172,7 +172,8 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
 - Read-modify-write (done): `x = x op <expr>` and `x = <expr> op x` (commutative ops) work the operand
   out first and fold it into `x` (`addwf x,f` / `addwf A,w` chains) when the operand contains no
   call. Test: `tests/exec/rmw.bas`.
-- Peephole (done, `src/peephole.rs`): branch to the next instruction, `xorlw 0` after an instruction
+- Peephole (done, `src/peephole.rs`): bit test into a Boolean then compared (`movlw 0 / btfsc R,b / movlw 1 / xorlw K / bz L`)
+  becomes `btfsc`/`btfss R,b` + `bra L` when `WREG` and the flags are dead on both paths (`pass_bit_branch`); branch to the next instruction, `xorlw 0` after an instruction
   that set Z/N, redundant `WREG` loads, copy forwarding from `movff s, __X`, and dead stores to
   `WREG`/`__A`..`__D` (dead at a statement end, `Item::Fence`). Local to straight runs; status flags
   are tracked, so a flag-setting instruction is only deleted when nothing can read the flags; only
@@ -364,3 +365,10 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   compiler rejects a `Clock` / `RSTOSC` mismatch; nothing checked it. This warning is that check.
 - Tests: `tests/exec/lib_intosc.bas`, `lib_intosc_div.bas`, `pp_if.bas`; `tests/negative/intosc_bad_clock.bas`; `tests/valid/clock_*.bas`. The simulator does not model
   `ORDY`, `HFOR`, `OSCCON2`; the switch itself needs hardware (D6).
+
+## IntOsc start-up trimmed, bit-branch peephole (done 2026-10-25)
+- `lib/intosc.bas` start-up no longer calls `Apply`: it writes `OSCCON1` / `OSCFRQ` with the constants and calls `Settle` twice, so `Apply` and its
+  five variables are linked only when the program calls `SetClock` / `SetClockDiv`. `OSCCON2` is still read to pick the write order (the reset
+  divider depends on `RSTOSC`, DS40002043F Table 5-1: 1:4 for 110). `my_src/first_test` (16 MHz blink): 129 -> 98 words, 11 -> 7 RAM bytes.
+- Peephole `pass_bit_branch` (see above): the same program 98 -> 89 words. A `return` ends the dead-`WREG`/flags scan only after `WREG` was
+  overwritten (it may carry the result, ABI). Unit test `bit_test_compare_becomes_skip_branch`; simulator suite passes.

@@ -164,5 +164,15 @@ Public Function SetClock(ByVal mhz As Byte) As Boolean
     Result = SetClockDiv(mhz, 0)
 End Function
 
-' Start-up: put the oscillator on `Clock`.
-Apply(ClockFrq, ClockDiv)
+' Start-up: put the oscillator on `Clock`. The same steps as Apply with the constants written in, so a
+' program that never calls SetClock or SetClockDiv does not carry Apply (nor its variables); the order
+' rule is the same, and OSCCON2 is read because the reset divider depends on RSTOSC [Table 5-1].
+If ClockDiv > (OSCCON2 And 15) Then
+    OSCCON1 = NoscHf + ClockDiv
+    Settle()
+    OSCFRQ = ClockFrq
+Else
+    OSCFRQ = ClockFrq
+    OSCCON1 = NoscHf + ClockDiv
+End If
+Settle()
