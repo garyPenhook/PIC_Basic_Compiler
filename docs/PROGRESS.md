@@ -352,6 +352,10 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - The compiler has no `Const` arrays yet, so the font lives in an `Asm` block (`db` data read with `TBLRD`). That exposed a bug in `asm.rs::words_of`: a raw `db` line counted as one word, so the call/branch range selection was wrong for programs over 1K words. It now counts operands.
 - Tests `tests/exec/lib_lcd.bas`, `lib_oled.bas` (optimised and `-O0`): refusals, pin set-up, final pin levels, font bytes read from flash. Nothing runs on a panel (D6); there is no pin model in the simulator.
 
+## aht30 module (done 2026-10-25, 0.1.11)
+- `lib/aht30.bas` (module `Aht30`): AHT30 over the `I2c` module, from the Aosong data sheet (Sep 2023). `Aht30Start` / `Aht30Fetch` / `Aht30Measure`, CRC8 over the 6 data bytes, results in 1/100 degree C (`Integer`) and 1/100 %RH (`Word`) using 32-bit integer maths (no Float).
+- Test `tests/exec/lib_aht30.bas`: status 4 without a bus, outputs untouched. The conversion was checked in the simulator against Python for raw values 0, 0xFFFFF and a mid-range frame. Nothing runs on a sensor (D6).
+
 ## Clock set-up in source (done 2026-10-25)
 - Decision: `Clock` stays informational (as with `Declare Xtal`); the hardware is set in source. Written up in `docs/CLOCK.md`.
 - `lib/intosc.bas` (module `IntOsc`): start-up writes `OSCFRQ` / `OSCCON1` for `Clock` (64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and 1 MHz / 2..32), bounded

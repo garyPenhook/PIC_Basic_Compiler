@@ -16,8 +16,11 @@ Include "spi"
 Include "system"
 Include "lcd"
 Include "oled"
+Include "aht30"
 Dim x As Word
 Dim r As Byte
+Dim ti As Integer
+Dim rhw As Word
 Gpio.GpioAllDigital()
 Gpio.GpioPullUps(0, 3, 0)
 Delay.DelaySeconds(1)
@@ -118,3 +121,7 @@ Oled.OledWrite("hi")
 Oled.OledWriteWord(123)
 Oled.OledWriteHex(171)
 r = Oled.FontByte(0)
+Aht30.Aht30Init()
+r = Aht30.Aht30Start()
+r = Aht30.Aht30Fetch(ti, rhw)
+r = Aht30.Aht30Measure(ti, rhw)

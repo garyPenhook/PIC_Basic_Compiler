@@ -3091,6 +3091,30 @@ b = FontByte(0)
 
 ---
 
+## aht30  (`Include "aht30"`, AHT30 temperature and humidity sensor, I2C)
+
+Set up the bus first: `I2cInit` at no more than 400 kHz, with pull-ups of 2.0 to 4.7 kOhm. The sensor is at
+7-bit address 0x38. A reading is two steps: `Aht30Start` triggers a measurement, and `Aht30Fetch` reads it
+at least 80 ms later; `Aht30Measure` does both and waits. Sample at most once a second, or the sensor's
+self-heating passes 0.1 C. The temperature comes back as an `Integer` in 1/100 degree C (2512 = 25.12 C)
+and the humidity as a `Word` in 1/100 %RH (4560 = 45.60 %RH); they are written only when the status is 0.
+
+**Status codes** 0 ok; 1 timeout; 2 bus collision; 3 no acknowledge; 4 `I2c` not initialised; 5 busy
+(`Aht30Fetch` was called before the measurement finished); 6 CRC mismatch.
+
+**Example**
+```basic
+Dim t As Integer
+Dim rh As Word
+Dim st As Byte
+st = I2cInit(100000, 19, 20)
+Aht30Init()
+st = Aht30Measure(t, rh)
+If st = 0 Then
+    ' t = 2512 and rh = 4560 mean 25.12 C and 45.60 %RH
+End If
+```
+
 ## floatlib  (automatic)
 
 Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong

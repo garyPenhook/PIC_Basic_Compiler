@@ -85,6 +85,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
 | `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), fill, contrast, invert, flip |
+| `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
 
 ## Still to do

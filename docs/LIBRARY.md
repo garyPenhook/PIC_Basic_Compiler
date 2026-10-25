@@ -204,6 +204,18 @@ Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tab
 | `OledWriteChar(ch)` / `OledWrite(s)` / `OledWriteWord(v)` / `OledWriteHex(v)` | text in a 5 x 7 font (X11 "5x7", public domain; ASCII 32..126) |
 | `FontByte(i)` | byte `i` (0..474) of the font table (kept in flash inside an `Asm` block, read with `TBLRD`) |
 
+## aht30 (AHT30 temperature and humidity sensor, I2C)
+Source: the Aosong AHT30 data sheet (Sep 2023): address 0x38 (5.1), measurement command 0xAC 0x33 0x00 and 80 ms wait (5.2), status word (Table 9), CRC8 (5.2), conversion formulas (5.2), I2C timing (Table 8). The caller sets up the bus first (`I2cInit` at no more than 400 kHz, external pull-ups); sample at most once a second to keep self-heating under 0.1 C (2.4). Results: temperature `Integer` in 1/100 degree C, humidity `Word` in 1/100 %RH, rounded to nearest, written only on status 0.
+
+| Routine | Effect |
+|---|---|
+| `Aht30Init()` | waits 5 ms (power-up time) |
+| `Aht30Start()` | sends 0xAC 0x33 0x00; returns the status |
+| `Aht30Fetch(temp, rh)` | reads the 7-byte frame at least 80 ms after `Aht30Start`, checks busy and CRC8, converts; returns the status |
+| `Aht30Measure(temp, rh)` | `Aht30Start`, `DelayMs(80)`, `Aht30Fetch` |
+
+Status: 0 ok, 1..4 as `I2cStatus` (timeout, collision, no acknowledge, I2c not initialised), 5 busy (fetched too early), 6 CRC mismatch. The calibration and CRC_flag bits of the status byte are not checked.
+
 ## floatlib (Float arithmetic; included automatically)
 Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
 `+ - * /`, the six comparisons and the conversions into calls to `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong FToLong`
@@ -212,5 +224,5 @@ even; infinities and NaN propagate; denormals are flushed to zero. Float work di
 routine and call that inside `Save(…) … Restore`. Cost: about 700 words for `+`, 800 for `*`, 470 for `/`, plus about 250 shared. See D51.
 
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` and `lib_aht30.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).
