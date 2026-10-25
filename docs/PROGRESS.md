@@ -319,3 +319,10 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Test `tests/exec/lib_i2c.bas` (optimised and `-O0`): divider, SMP, PPS, TRIS, refusals, `I2cOff`, and that all routines return
   with no bus. The simulator has no pin model, so no transfer is exercised; nothing runs on hardware (D6).
 - Bit aliases cannot be used as conditions (`E-COND`): compare with `= 1`.
+
+## M8 — spi (done 2026-10-25)
+- `lib/spi.bas` (module `Spi`): host mode on MSSP1, see `docs/LIBRARY.md`. Values from DS40002043F §28.2 (pin/TRIS rules, BF/WCOL),
+  §28.9.1-28.9.2 (SMP, CKE, CKP, SSPM = 0000 / 1010, SSPxADD = 0 unsupported), PPS Tables 18-1/18-2 (SCK 0x0F, SDO 0x10, SDI via SSP1DATPPS).
+  The errata sheet has no MSSP entry. Mode numbers follow from the CKP (idle level) and CKE (transmit on active-to-idle) definitions.
+- Test `tests/exec/lib_spi.bas` (optimised and `-O0`): divider, SSPM/CKP/CKE per mode, PPS, TRIS, receive-only, refusals, `SpiOff`, and bounded
+  return of every routine. The simulator has no pin model, so no waveform or data exchange is checked; nothing runs on hardware (D6).

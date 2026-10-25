@@ -12,6 +12,7 @@ Include "adc"
 Include "eeprom"
 Include "pwm"
 Include "i2c"
+Include "spi"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -70,3 +71,9 @@ If I2c.I2cPing(80) Then
     r = I2c.I2cReadReg(80, 1)
 End If
 I2c.I2cOff(19, 20)
+r = Spi.SpiInit(1000000, 0, 19, 20, 21)
+r = Spi.SpiTransfer(1)
+Spi.SpiWrite(2)
+r = Spi.SpiRead()
+r = Spi.SpiStatus()
+Spi.SpiOff(19, 20)

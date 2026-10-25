@@ -132,6 +132,18 @@ or unpulled bus gives status 1, after which the hardware may still be mid-operat
 interrupt disabled. `SMP` (slew rate) is cleared for clocks between 100 kHz and 1 MHz. External pull-ups are
 needed. Single host only; not reentrant.
 
+## spi (MSSP1 host)
+| Routine | Effect |
+|---|---|
+| `SpiInit(hz, mode, sck, sdo, sdi)` | MSSP1 as SPI host, mode 0..3 (CKP = CPOL; CKE = 1 for modes 0 and 2). Pins 8..23 (ports B and C, as the `Adc` channels); `sdo` = 255 for receive only. Clock `FOSC / 4` for `hz` of `FOSC / 4` or more, else `FOSC / (4 * (SSPxADD + 1))` with `SSPxADD` 1..255, rounded to at or below `hz` (lowest `FOSC / 1024`). Input sampled mid-bit (`SMP` = 0). Returns 1, or 0 for a bad pin or mode, a pin used twice, or a clock out of range |
+| `SpiTransfer(b)` | sends `b`, returns the byte received at the same time |
+| `SpiWrite(b)` / `SpiRead()` | send ignoring the reply / receive (sends 255) |
+| `SpiStatus()` | 0 ok, 1 timeout (bounded wait for `BF`), 4 not initialised |
+| `SpiOff(sck, sdo)` | MSSP off, `SCK` and `SDO` back to `LATxy`; call before `SpiInit` on other pins |
+
+The chip select is not part of the module (use `Gpio` or a port bit). The module owns MSSP1 (not together with `I2c`),
+does not use its interrupt, and is not reentrant.
+
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas` (set-up only), `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas` and `lib_spi.bas` (set-up only), `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).
