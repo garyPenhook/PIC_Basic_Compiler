@@ -1384,6 +1384,41 @@ impl<'a> Lowerer<'a> {
         Some(St::Assign(byte, new))
     }
 
+    /// `bit_write` as it is emitted. The write is a read-modify-write of a byte that other bits
+    /// may share (neighbouring elements of a packed bit array, other fields of a structure), so
+    /// when the program has an interrupt handler it runs with the global interrupt enable off:
+    /// a handler that changed another bit of the byte between the read and the write would have
+    /// its change overwritten. The enable is put back only if it was set on entry, so a write
+    /// made in a handler or in code that disabled interrupts leaves them as they were. A value
+    /// that is not trivially cheap is worked out first so the window stays short.
+    fn bit_store(&mut self, p: &Place, v: Option<Ex>, span: Span, out: &mut Vec<S>) {
+        let has_isr = self.a.symbols.iter().any(|s| matches!(s.kind, SymKind::Interrupt { .. }));
+        let intcon = if has_isr { self.reg_place("INTCON", span) } else { None };
+        let Some(intcon) = intcon else {
+            if let Some(st) = self.bit_write(p, v, span) {
+                Self::push(out, st, span);
+            }
+            return;
+        };
+        let v = match v {
+            Some(x) if !matches!(x.k, ExK::Const(_) | ExK::Load(_)) || x.has_call() => {
+                let t = self.hidden_var(BYTE);
+                Self::push(out, St::Assign(t.clone(), x), span);
+                Some(Ex::new(ExK::Load(t), 8, false))
+            }
+            other => other,
+        };
+        let Some(write) = self.bit_write(p, v, span) else { return };
+        let saved = self.hidden_var(BYTE);
+        Self::push(out, St::Assign(saved.clone(), Ex::new(ExK::Load(intcon), 8, false)), span);
+        Self::push(out, St::Int { level: Level::High, on: false }, span);
+        Self::push(out, write, span);
+        let was_on = Ex::new(ExK::Bin(BinKind::And, Box::new(Ex::new(ExK::Load(saved), 8, false)), Box::new(Ex::konst(0x80, 8, false))), 8, false);
+        let cond = Ex::boolean(ExK::Cmp(CmpKind::Ne, Box::new(was_on), Box::new(Ex::konst(0, 8, false))));
+        let on = vec![S { st: St::Int { level: Level::High, on: true }, span }];
+        Self::push(out, St::If(vec![(cond, on)], Vec::new()), span);
+    }
+
     fn intrinsic_value(&mut self, name: &str, d: &'a Designator, e: &'a Expr) -> Option<Ex> {
         let args: &[Expr] = match d.parts.first() {
             Some(Part::Args(a, _)) => a,
@@ -1625,9 +1660,7 @@ impl<'a> Lowerer<'a> {
                 };
                 let v = conv(v, w, sg);
                 if p.is_bit() && p.indirect() {
-                    if let Some(st) = self.bit_write(&p, Some(v), span) {
-                        Self::push(out, st, span);
-                    }
+                    self.bit_store(&p, Some(v), span, out);
                     return;
                 }
                 Self::push(out, St::Assign(p, v), span);
@@ -1776,9 +1809,7 @@ impl<'a> Lowerer<'a> {
             "clear" => {
                 let Some(p) = arg_place(self) else { return };
                 if p.is_bit() && p.indirect() {
-                    if let Some(st) = self.bit_write(&p, Some(Ex::konst(0, 8, false)), span) {
-                        Self::push(out, st, span);
-                    }
+                    self.bit_store(&p, Some(Ex::konst(0, 8, false)), span, out);
                     return;
                 }
                 match nat(&p.ty) {
@@ -1804,9 +1835,7 @@ impl<'a> Lowerer<'a> {
                         "low" => Some(Ex::konst(0, 8, false)),
                         _ => None,
                     };
-                    if let Some(st) = self.bit_write(&p, v, span) {
-                        Self::push(out, st, span);
-                    }
+                    self.bit_store(&p, v, span, out);
                     return;
                 }
                 if p.bit.is_some() {
