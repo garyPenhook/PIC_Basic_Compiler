@@ -241,6 +241,9 @@ running.
 * Applies to a variable, not an alias (`E-DIM`). It can be combined with `Volatile`, in either order.
 * It may be used in an interrupt handler (the value then persists between interrupts). `Save ...
   Restore` does not save or restore it, because it is not part of the routine's overlaid frame.
+* There is one copy of it, shared by every caller. If a routine with a `Static` local is called
+  from both the main program and an interrupt handler, they update the same variable, exactly as
+  with a module-level variable; mark it `Volatile` as well if either side polls it.
 
 **Example.**
 
