@@ -310,3 +310,12 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Not specified by the data sheet and therefore documented, not relied on: whether a CCP duty of exactly `PwmSteps`
   holds the pin high (PWM3/PWM4 text says "greater than or equal"); with `T2PR` = 255 100 % is unreachable.
 
+
+## M8 — i2c (done 2026-10-25)
+- `lib/i2c.bas` (module `I2c`): host mode on MSSP1, see `docs/LIBRARY.md`. Register values from DS40002043F §28.6, §28.7
+  (Equation 28-1, SSPxADD 0..2 invalid), §28.9 (SSPM = 1000, SMP, SSPxCON2 sequence bits), PPS Tables 18-1 (MSSP1 inputs on
+  ports B and C) and 18-2 (output codes 0x0F SCL, 0x10 SDA). The errata sheet (DS80000832G) has no MSSP entry.
+- Every wait is bounded and the module polls SSP1IF/BCL1IF itself (no interrupt use), so a missing pull-up gives status 1.
+- Test `tests/exec/lib_i2c.bas` (optimised and `-O0`): divider, SMP, PPS, TRIS, refusals, `I2cOff`, and that all routines return
+  with no bus. The simulator has no pin model, so no transfer is exercised; nothing runs on hardware (D6).
+- Bit aliases cannot be used as conditions (`E-COND`): compare with `= 1`.

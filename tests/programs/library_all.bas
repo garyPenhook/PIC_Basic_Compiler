@@ -11,6 +11,7 @@ Include "serial2"
 Include "adc"
 Include "eeprom"
 Include "pwm"
+Include "i2c"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -57,3 +58,15 @@ x = Word(Pwm.PwmFrequency())
 x = Pwm.PwmSteps()
 Pwm.PwmStop(1)
 Pwm.PwmStop(3)
+r = I2c.I2cInit(100000, 19, 20)
+r = I2c.I2cStart()
+r = I2c.I2cSend(160)
+r = I2c.I2cReceive(True)
+r = I2c.I2cRestart()
+r = I2c.I2cStop()
+r = I2c.I2cStatus()
+If I2c.I2cPing(80) Then
+    r = I2c.I2cWriteReg(80, 1, 2)
+    r = I2c.I2cReadReg(80, 1)
+End If
+I2c.I2cOff(19, 20)
