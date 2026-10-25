@@ -411,7 +411,7 @@ Confirmed against the Positron8 manual in M3 (`Proc`/`EndProc` p.453, `Do…Loop
 | `Declare Xtal = n` | `Clock = n` |
 | `Device = 18F27Q10` / `PIC18F27Q10` | same |
 | `Symbol LED = PORTB.0` / `Symbol cMax = 100` (the `=` is optional) | alias or constant, chosen by what the value is |
-| `SByte`, `SWord`, `Dword` | `ShortInt`, `Integer`, `LongWord` (type names and conversions; diagnostics print the native name) |
+| `SByte`, `SWord`, `Long`, `Dword` | `ShortInt`, `Integer`, `LongInt`, `LongWord` (type names and conversions; diagnostics print the native name) |
 | `Dim x As Byte` | same (it is also the native form) |
 | `Proc Name(p As T)` … `EndProc` | `Sub Name(p As T)` … `End Sub` |
 | `Proc Name(p As T), RetType` … `EndProc` | `Function Name(p As T) As RetType` … `End Function` (return value in `Result`) |
@@ -469,6 +469,6 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
 
 * Float format (D7).
 * Exact interrupt context-save behaviour and vector registers for the 18F27Q10 (M1).
-* Positron's other type names (`Long`, …), `ByValue`/`BycRef`, `Static` and command
+* Positron's other type names, `ByValue`/`BycRef`, `Static` and command
   statements without parentheses (`High LED`) are not accepted; only the spellings in §14 are.
 * Overloading and compound subroutines (M9).

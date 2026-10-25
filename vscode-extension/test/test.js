@@ -23,7 +23,7 @@ assert.deepStrictEqual(CANONICAL.map((k) => k.toLowerCase()).sort(), rust, 'keyw
 const aliasBlock = /const TYPE_ALIASES[^=]*=\s*&\[([\s\S]*?)\];/.exec(lexer)[1];
 assert.deepStrictEqual([...aliasBlock.matchAll(/\("(\w+)",/g)].map((m) => m[1]).sort(), ALIASES.map((k) => k.toLowerCase()).sort(), 'ALIASES differs from TYPE_ALIASES in src/lexer.rs');
 assert.ok(ALIASES.every((k) => TYPES.has(k)));
-assert.strictEqual(fix('dim a as sbyte, b as sword, c as dword'), 'Dim a As SByte, b As SWord, c As Dword');
+assert.strictEqual(fix('dim a as sbyte, b as sword, c as dword, d as long'), 'Dim a As SByte, b As SWord, c As Dword, d As Long');
 
 // Basic correction.
 assert.strictEqual(fix('dim x as byte'), 'Dim x As Byte');

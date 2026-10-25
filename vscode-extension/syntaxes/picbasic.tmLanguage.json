@@ -204,7 +204,7 @@
    "patterns": [
     {
      "name": "storage.type.picbasic",
-     "match": "\\b(?i:ShortInt|LongWord|SByte|SWord|Dword|Boolean|Integer|LongInt|String|Float|Byte|Word|Char|Bit)\\b"
+     "match": "\\b(?i:ShortInt|LongWord|SByte|SWord|Long|Dword|Boolean|Integer|LongInt|String|Float|Byte|Word|Char|Bit)\\b"
     },
     {
      "name": "constant.language.picbasic",

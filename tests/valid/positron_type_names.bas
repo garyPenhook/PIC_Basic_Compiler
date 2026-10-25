@@ -4,6 +4,8 @@ Clock = 16
 Dim a As SByte
 Dim b As SWord
 Dim c As Dword
+Dim g As Long
+Dim h As LongInt
 Dim d As ShortInt
 Dim e As Integer
 Dim f As LongWord
@@ -15,3 +17,6 @@ d = a
 e = SWord(b)
 f = DWord(c)
 b = SWord(a)
+g = -70000
+h = Long(g)
+g = Long(b)

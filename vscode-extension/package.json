@@ -2,7 +2,7 @@
   "name": "picbasic",
   "displayName": "PIC BASIC (basicc)",
   "description": "Language support for the basicc PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "garypenhook",
   "license": "UNLICENSED",
   "engines": { "vscode": "^1.80.0" },

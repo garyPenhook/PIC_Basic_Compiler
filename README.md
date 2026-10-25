@@ -47,7 +47,7 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 ## What works today
 
 **Language**
-* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Dword` for the signed 8, signed 16 and unsigned 32-bit types), strings, arrays (with initialisers and program-memory `Const` tables), structures
+* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), strings, arrays (with initialisers and program-memory `Const` tables), structures
   and unions, constants.
 * Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
   short-circuit conditions.

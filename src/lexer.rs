@@ -40,7 +40,7 @@ pub const KEYWORDS: &[&str] = &[
 ];
 
 /// Positron type names, read as the native type of the same width and signedness (`LANGUAGE.md` §14).
-const TYPE_ALIASES: &[(&str, &str)] = &[("sbyte", "shortint"), ("sword", "integer"), ("dword", "longword")];
+const TYPE_ALIASES: &[(&str, &str)] = &[("sbyte", "shortint"), ("sword", "integer"), ("dword", "longword"), ("long", "longint")];
 
 pub fn keyword(lower: &str) -> Option<&'static str> {
     let lower = TYPE_ALIASES.iter().find(|(a, _)| *a == lower).map_or(lower, |(_, k)| k);

@@ -19,11 +19,11 @@ const CANONICAL = [
 
 // Positron type names the lexer reads as a native type (TYPE_ALIASES in ../src/lexer.rs). They are
 // not in the compiler's KEYWORDS list, so they are kept apart from CANONICAL.
-const ALIASES = ['SByte', 'SWord', 'Dword'];
+const ALIASES = ['SByte', 'SWord', 'Long', 'Dword'];
 
 const KEYWORDS = new Map(CANONICAL.concat(ALIASES).map((k) => [k.toLowerCase(), k]));
 
-const TYPES = new Set(['SByte', 'SWord', 'Dword', 'Bit', 'Boolean', 'Byte', 'Char', 'Float', 'Integer', 'LongInt', 'LongWord', 'ShortInt', 'String', 'Word']);
+const TYPES = new Set(['SByte', 'SWord', 'Long', 'Dword', 'Bit', 'Boolean', 'Byte', 'Char', 'Float', 'Integer', 'LongInt', 'LongWord', 'ShortInt', 'String', 'Word']);
 
 // Short descriptions for hover and completion.
 const DOCS = {
@@ -114,6 +114,7 @@ const DOCS = {
   Word: 'Unsigned 16-bit integer.',
   SByte: 'Signed 8-bit integer (Positron spelling of `ShortInt`).',
   SWord: 'Signed 16-bit integer (Positron spelling of `Integer`).',
+  Long: 'Signed 32-bit integer (Positron spelling of `LongInt`).',
   Dword: 'Unsigned 32-bit integer (Positron spelling of `LongWord`).',
   Xor: 'Exclusive or.',
   Declare: 'Positron-style header, e.g. `Declare Xtal = 8`.',
