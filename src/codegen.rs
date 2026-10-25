@@ -86,6 +86,22 @@ struct Region {
     placed: Vec<(u32, u32, Option<usize>)>,
 }
 
+/// For `bit = c`, `c = bit` or `bit <> c` with `c` 0 or 1: the bit's place and whether the
+/// comparison is true when the bit is set.
+fn bit_compare<'a>(k: CmpKind, l: &'a Ex, r: &'a Ex) -> Option<(&'a Place, bool)> {
+    if !matches!(k, CmpKind::Eq | CmpKind::Ne) {
+        return None;
+    }
+    let (bit, c) = match (&l.k, &r.k) {
+        (ExK::Load(p), ExK::Const(c)) | (ExK::Const(c), ExK::Load(p)) => (p, *c),
+        _ => return None,
+    };
+    if bit.bit.is_none() || bit.indirect() || c > 1 {
+        return None;
+    }
+    Some((bit, (k == CmpKind::Eq) == (c == 1)))
+}
+
 impl Region {
     /// The lowest start where `n` bytes fit without clobbering a block that can be live at the
     /// same time as `owner`. With `one_bank` the bytes stay inside one 256-byte bank, so a single
@@ -1902,6 +1918,13 @@ impl<'p> Gen<'p> {
                 }
             }
             ExK::Cmp(k, l, r) => {
+                // `bit = 0` / `bit = 1` / `bit <> 0` is a bit test, not a compare.
+                if let Some((p, set)) = bit_compare(*k, l, r) {
+                    let m = self.place_mem(p, false);
+                    self.fbit(if set == when { "btfsc" } else { "btfss" }, &m, p.bit.unwrap());
+                    self.br(Cc::Always, target);
+                    return;
+                }
                 let kind = if when { *k } else { k.negate() };
                 self.cmp_jump(kind, l, r, target);
             }

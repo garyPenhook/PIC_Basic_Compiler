@@ -101,6 +101,9 @@ fn main() -> ExitCode {
     if front_errors == 0 && !check_only {
         program = lower(&project, &analysis, &mut diags);
     }
+    if optimise && let Some(p) = &mut program {
+        basil::opt::optimize(p);
+    }
     let mut generated = None;
     if let Some(p) = &program {
         let dev = analysis.device.as_ref().unwrap();

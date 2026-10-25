@@ -176,7 +176,8 @@ fn handler_frames_are_never_shared() {
     // at any time. (A and B are siblings and may share; H may not share with either.)
     let prog = "Program T\nDevice = 18F27Q10\nDim g As Byte\nSub A()\n Dim x As Byte\n x = 1\n g = x\nEnd Sub\nSub B()\n Dim y As Byte\n y = 2\n g = y\nEnd Sub\nInterrupt H()\n Dim z As Byte\n z = 3\n g = z\nEnd Interrupt\nA()\nB()\nEnable(H)\n";
     std::fs::write(&src, prog).unwrap();
-    let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("h.hex")).output().unwrap();
+    // -O0: the optimiser folds these toy locals away, and the test is about frame layout.
+    let r = Command::new(basil()).arg(&src).arg("-O0").arg("-o").arg(out.join("h.hex")).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let a = data_addrs(&std::fs::read_to_string(out.join("h.S")).unwrap());
     assert_eq!(a["T_A__X"], a["T_B__Y"], "siblings should still overlay");
@@ -244,7 +245,7 @@ fn frames_overlay_only_when_never_live_together() {
     }
     let out = scratch("overlay");
     let hex = out.join("overlay.hex");
-    let r = Command::new(basil()).arg(root().join("tests/exec/overlay.bas")).arg("-S").arg("-o").arg(&hex).output().unwrap();
+    let r = Command::new(basil()).arg(root().join("tests/exec/overlay.bas")).arg("-O0").arg("-S").arg("-o").arg(&hex).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let a = data_addrs(&std::fs::read_to_string(out.join("overlay.S")).unwrap());
     // Siblings (neither calls the other) share storage.
@@ -317,4 +318,24 @@ fn hardware_stack_depth_is_checked() {
             assert!(err.contains("E-STACK"), "{err}");
         }
     }
+}
+
+/// A constant baud rate and a literal passed to one routine fold away: no run-time divide, no RAM
+/// copy of the string, and the transmit-ready wait is a bit test rather than a compare.
+#[test]
+fn constant_arguments_fold_into_the_callee() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("constfold");
+    let src = out.join("c.bas");
+    let prog = "Program T\nDevice = 18F27Q10\nClock = 64\nInclude \"serial\"\nSerial.SerialInit(115200)\nSerial.SerialWrite(\"tick\")\n";
+    std::fs::write(&src, prog).unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-L").arg(root().join("lib")).arg("-o").arg(out.join("c.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("c.S")).unwrap();
+    assert!(!asm.contains("__div4"), "the baud divisor is a constant");
+    assert!(!asm.contains("__strf1") && !asm.contains("__STRLIT"), "the literal is read from flash");
+    assert!(asm.contains("movlw 0x8A"), "SP1BRGL holds the folded divisor");
+    assert!(asm.contains("btfss PIR3, 4"), "TxIf = 0 is a bit test");
 }
