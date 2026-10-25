@@ -19,7 +19,7 @@ pub enum Ty {
     /// A variable of an `Event()` type.
     EventVar(SymId),
     /// The type of an event handler name; assignable to any `EventVar`.
-    EventAny,
+    EventAny(SymId),
     Array(Box<Ty>, u32),
     /// No value: the result of a subroutine call.
     Void,
@@ -66,7 +66,7 @@ impl Ty {
             Ty::Float => 4,
             Ty::Str(n) => n + 1,
             Ty::Struct(s) => struct_size(*s),
-            Ty::EventVar(_) | Ty::EventAny => 1,
+            Ty::EventVar(_) | Ty::EventAny(_) => 1,
             Ty::Array(e, n) => e.size_bytes(struct_size) * n,
             Ty::Void => 0,
         }
@@ -99,7 +99,7 @@ impl fmt::Display for Ty {
             Ty::Str(n) => write!(f, "String({n})"),
             Ty::Struct(_) => write!(f, "structure"),
             Ty::EventVar(_) => write!(f, "event variable"),
-            Ty::EventAny => write!(f, "event handler"),
+            Ty::EventAny(_) => write!(f, "event handler"),
             Ty::Array(e, n) => write!(f, "array of {n} {e}"),
             Ty::Void => write!(f, "no value"),
         }

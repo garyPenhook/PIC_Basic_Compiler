@@ -86,7 +86,7 @@ See `docs/LIBRARY.md` for every module and `docs/LANGUAGE.md` for the language.
 
 ```
 cd vscode-extension && npm test && npx @vscode/vsce package
-code --install-extension picbasic-0.1.2.vsix
+code --install-extension picbasic-0.1.6.vsix
 ```
 
 Highlighting, keyword case correction, formatting, error squiggles from `basil --check`, go to

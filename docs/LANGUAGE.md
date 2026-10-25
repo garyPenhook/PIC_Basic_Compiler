@@ -329,13 +329,23 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
   priorities, set its `IPRx` bit (they reset to *high*). Clearing the global bit inside a handler
   is undone by the return. Wide variables shared with a handler are not accessed atomically.
   Cycle-counted delays (`DelayUs`/`DelayMs`) run longer when interrupted.
-* **Events (M6).** An event variable is one byte: 0 until assigned, then the number of the handler
-  assigned to it (numbered in order of first use; only handlers named in an assignment are compiled).
-  `Cb()` calls a shared dispatcher that compares the byte and calls that handler; an unassigned
-  variable does nothing. Handler frames are ordinary frames, overlaid by the same call-graph rule as
-  routines. For that reason (and because the dispatcher's parameter is shared) an interrupt handler
-  must wrap an event call in `Save` like any other call (`E-ISR-CALL`). Event variables cannot be
-  compared and there are no arrays of them.
+* **Events (M6, extended 0.1.23).** An event variable is one byte: 0 until assigned, then the number of the
+  handler assigned to it (numbered in order of first use; only handlers named in an assignment are compiled).
+  `Cb(args)` calls a shared dispatcher (one per parameter list) that compares the byte and calls that handler;
+  an unassigned variable does nothing. Handler frames are ordinary frames, overlaid by the same call-graph
+  rule as routines.
+  * An event type and its handlers may take `ByVal` integer, Boolean or Char parameters
+    (`Type TRx = Event(ByVal c As Byte)`). A handler is assignable to a variable only if the parameter
+    types are identical (`E-TYPE`); the call checks the argument count (`E-ARGS`) and types.
+  * Event variables are compared with `=` and `<>` against another variable of the same type or against a
+    handler name (`If Cb = OnTick`). They can be elements of an array (`Dim Tbl(4) As TCb`, called
+    `Tbl(i)(args)`); an array of events starts empty and has no initialiser list.
+  * **Calling an event inside an interrupt handler needs no `Save`.** The dispatcher's parameters and the
+    handlers' frames are shared with main-line code, so the compiler wraps the call as
+    `Save(0) … Restore` itself: it saves the working registers and, as `Save` always does inside a
+    handler, the frames of everything the call can reach. (An explicit `Save` around it is still
+    allowed and then no second one is added.) A high- and a low-priority handler must still not call
+    the same event handler. Other calls from a handler still need `Save` (`E-ISR-CALL`).
 
 **Float in handlers.** Float arithmetic, comparisons and conversions use shared library routines with static frames, so they are
 `E-ISR-CALL` directly inside a handler; do the work in a routine and call it inside `Save(…) … Restore`. Copying a Float, `-f` and `Abs(f)`

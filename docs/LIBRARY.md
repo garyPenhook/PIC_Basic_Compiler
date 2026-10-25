@@ -88,6 +88,8 @@ make), never fall through to the Q10 registers.
 | `Timer2Read()` | `T2TMR` |
 | `Timer2Expired()`, `Timer2Ack()`, `Timer2Stop()` | as for Timer0 (`PIR4.TMR2IF`) |
 | `Timer2EnableInterrupt()` / `Timer2DisableInterrupt()` | `PIE4.TMR2IE` |
+| `Timer0OnExpire`, `Timer1OnExpire`, `Timer2OnExpire` | event variables of type `TTimerEvent` (`Event()`); assign a handler (`Timer0OnExpire = Tick`) |
+| `Timer0Service()`, `Timer1Service()`, `Timer2Service()` | if the timer has overflowed (clearing the flag), call its `OnExpire` handler; call from the main loop, or from your own `Interrupt` inside `Save(0, Timer0Service)` |
 
 ## serial (EUSART1, 8N1, TX on RC6, RX on RC7; PIC16F17126/46: TX on RC4, RX on RC5)
 | Routine | Effect |
@@ -97,6 +99,8 @@ make), never fall through to the Q10 registers.
 | `SerialWriteWord(v)`, `SerialWriteHex(v)` | unsigned decimal, two hex digits |
 | `SerialAvailable()`, `SerialRead()` | receive; `SerialRead` waits and clears an overrun |
 | `SerialFlush()` | wait for the shift register to empty (`TRMT`) |
+| `SerialOnRx` | event variable of type `TRxEvent` (`Event(ByVal c As Byte)`); assign a handler `Event OnByte(ByVal c As Byte)` |
+| `SerialRxService()` | clear an overrun, and if a byte has arrived read it and call `SerialOnRx(byte)`; call from the main loop, or from your own `Interrupt` inside `Save(0, SerialRxService)` |
 
 `Clock` must be FOSC in MHz. Baud accuracy follows the oscillator; the internal oscillator drifts
 with voltage and temperature (data sheet 29.1.3), so use a crystal for anything beyond casual use.

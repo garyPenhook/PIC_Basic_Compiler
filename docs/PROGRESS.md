@@ -294,8 +294,8 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   ordinary calls built once all referenced handlers are known), so call graph, overlay and stack-depth
   analysis need no special cases. Only handlers named in an assignment are compiled.
 - Deviation from the LANGUAGE.md §8 wording ("own non-overlaid frame"): handler frames overlay by the
-  normal call-graph rule, and a handler must call an event inside `Save` (`E-ISR-CALL`), because the
-  dispatcher's parameter byte is shared. Safe either way; revisit if modules need unwrapped calls.
+  normal call-graph rule, and a handler had to call an event inside `Save` (`E-ISR-CALL`), because the
+  dispatcher's parameter byte is shared (superseded in 0.1.23: see "Event extensions").
 - Tests: `tests/exec/events.bas` (simulator, optimised and `-O0`: reassignment, unassigned call, two
   variables, locals zeroed per call, handler calling a routine), `tests/negative/event_in_isr.bas`,
   `tests/valid/event_in_isr_save.bas`.
@@ -435,3 +435,22 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - **Still to do** (listed with the reasons in `docs/LIBRARY.md`, "Device support"): `serial2`, `i2c`, `spi`, `pwm`, `lcd`, `oled`
   (PIC18 table reads), `eeprom` (different NVM registers). **Every new device or family must review that table** (DEVICE-FORMAT.md
   checklist step 8, PLAN §9.3 step 5).
+
+## Event extensions (done 2026-10-25, 0.1.23)
+- Comparison: `=`/`<>` between event variables of one type, or an event variable and a handler (`sema.rs` `relational`;
+  the lowerer already compared the bytes).
+- Arrays of events: the `E-DIM` refusal is gone (initialisers are still refused); `Tbl(i)(args)` calls through the
+  indexed element (`lower.rs` `call_stmt` no longer requires a plain variable).
+- Parameters: `Event(ByVal ...)` types and handlers (`ast.rs` `EventType(Ident, Vec<Param>)`, `EventDecl.params`; `sema.rs`
+  `event_params`, `event_sig`, `Ty::EventAny(handler)`). One dispatcher per parameter list (`lower.rs` `EvDisp`), its first
+  parameter the handler number; each arm copies the dispatcher's parameters into the handler's.
+- Implicit `Save`: an event call directly in an `Interrupt` body outside `Save` is wrapped in `St::Save` of the working
+  registers (`call_stmt`, `in_isr`); the codegen adds the frames of everything the dispatcher reaches. `E-ISR-CALL` no longer
+  applies to events; `tests/negative/event_in_isr.bas` was removed.
+- `Module.Variable`: sema resolves it to the symbol and leaves the member in `parts`; `place_inner_parts` now skips it
+  (it had been `E-BACKEND`, "the member ... is not supported").
+- Library: `Timer0/1/2OnExpire` + `Timer0/1/2Service`, `SerialOnRx` + `SerialRxService` (modules still declare no `Interrupt`; unused,
+  they cost no flash or RAM).
+- Tests: `tests/exec/events_array_cmp.bas`, `events_params.bas`, `events_isr.bas`, `lib_timer_event.bas` (simulator); negative
+  `event_arg_count`, `event_sig_mismatch`, `event_byref_param`; valid `event_params`. The result variables of the exec tests are
+  `Volatile`: a program-level variable nothing reads is a dead store, which had made `events.bas` fail since it was added.

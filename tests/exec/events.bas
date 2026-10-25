@@ -8,13 +8,13 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 Type TCallback = Event()
 Dim Cb As TCallback
 Dim Cb2 As TCallback
-Dim a As Byte
-Dim b As Byte
-Dim c As Byte
-Dim d As Byte
-Dim e As Byte
-Dim f As Byte
-Dim total As Byte
+Volatile Dim a As Byte
+Volatile Dim b As Byte
+Volatile Dim c As Byte
+Volatile Dim d As Byte
+Volatile Dim e As Byte
+Volatile Dim f As Byte
+Volatile Dim total As Byte
 
 Sub Add(ByVal x As Byte)
     total = total + x

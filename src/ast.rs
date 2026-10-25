@@ -87,7 +87,7 @@ pub enum DeclKind {
     Dim(DimDecl),
     Structure(StructDecl),
     /// `Type TName = Event()`
-    EventType(Ident),
+    EventType(Ident, Vec<Param>),
     /// `Symbol Name [=] Value`: a constant or an alias, decided by the semantic pass.
     Symbol(Ident, Expr),
     Routine(Routine),
@@ -221,6 +221,7 @@ pub struct InterruptDecl {
 #[derive(Debug)]
 pub struct EventDecl {
     pub name: Ident,
+    pub params: Vec<Param>,
     pub body: Body,
 }
 

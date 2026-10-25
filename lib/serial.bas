@@ -123,6 +123,22 @@ Public Function SerialRead() As Byte
     Result = RC1REG
 End Function
 
+' Event hook: assign a handler to SerialOnRx, then call SerialRxService regularly (from the main loop, or from
+' your own Interrupt inside Save(0, SerialRxService)). When a byte has arrived it is read, which clears RCIF,
+' and passed to the handler. An overrun is cleared as SerialRead does. An unassigned SerialOnRx still reads
+' (and drops) the byte.
+Public Type TRxEvent = Event(ByVal c As Byte)
+Public Dim SerialOnRx As TRxEvent
+Public Sub SerialRxService()
+    If OverrunErr = 1 Then
+        RxEnable = 0
+        RxEnable = 1
+    End If
+    If RxIf = 1 Then
+        SerialOnRx(RC1REG)
+    End If
+End Sub
+
 ' Waits until the last byte has left the shift register (TRMT, TX1STA bit 1).
 Public Sub SerialFlush()
     While TX1STA.1 = 0

@@ -37,7 +37,7 @@ fn bas_files(dir: &Path) -> Vec<PathBuf> {
 /// `E-BACKEND` and nothing else. Anything not listed here must build.
 const DEFERRED: &[&str] = &[
     "conversions",
-    "events", "float_math", "modifiers",
+    "float_math", "modifiers",
 ];
 
 #[test]

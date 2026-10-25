@@ -432,10 +432,9 @@ impl<'a> Parser<'a> {
                 let name = self.ident()?;
                 self.expect_punct("=")?;
                 self.expect_kw("event")?;
-                self.expect_punct("(")?;
-                self.expect_punct(")")?;
+                let params = self.event_params()?;
                 self.end_stmt()?;
-                DeclKind::EventType(name)
+                DeclKind::EventType(name, params)
             }
             Tok::Kw("symbol") => {
                 self.bump();
@@ -458,11 +457,10 @@ impl<'a> Parser<'a> {
             Tok::Kw("event") => {
                 self.bump();
                 let name = self.ident()?;
-                self.expect_punct("(")?;
-                self.expect_punct(")")?;
+                let params = self.event_params()?;
                 self.end_stmt()?;
                 let body = self.body("endevent")?;
-                DeclKind::Event(EventDecl { name, body })
+                DeclKind::Event(EventDecl { name, params, body })
             }
             Tok::Kw("sub" | "function" | "proc" | "inline" | "noinline" | "reentrant") => DeclKind::Routine(self.routine()?),
             _ => return self.expected("a declaration"),
@@ -676,6 +674,22 @@ impl<'a> Parser<'a> {
         };
         let body = self.body(end)?;
         Ok(Routine { name, is_function, inlining, reentrant, params, ret, body })
+    }
+
+    /// `( [param {, param}] )` of an event type or handler.
+    fn event_params(&mut self) -> PResult<Vec<Param>> {
+        self.expect_punct("(")?;
+        let mut params = Vec::new();
+        if !self.at_punct(")") {
+            loop {
+                params.push(self.param()?);
+                if !self.eat_punct(",") {
+                    break;
+                }
+            }
+        }
+        self.expect_punct(")")?;
+        Ok(params)
     }
 
     fn param(&mut self) -> PResult<Param> {

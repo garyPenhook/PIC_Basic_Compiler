@@ -515,39 +515,235 @@ EndProc
 
 ## Interrupts, events and context saving
 
+### Interrupts
+
 ```basic
 Interrupt Name([priority])
     ' handler body
 End Interrupt
+```
 
-Enable(Name)        ' commit the handler and set the global enable
+An interrupt handler is a routine the hardware calls when an enabled source raises its flag. It has
+no parameters, no result, and is never called by name.
+
+* With one handler, write no priority: the compiler picks the vector. With two handlers, the low one
+  is `Interrupt Name(ipLow)` (`ipLow = 1`) and the high one `Interrupt Name(ipHigh)` (`ipHigh = 2`).
+  More handlers than vectors may be *declared*, but only one per priority can be *enabled*.
+* The 18F27Q10 has fixed vectors. A handler is not attached to its vector until `Enable` commits it.
+* Library modules never declare an `Interrupt`; they set up peripherals and read flags, and your
+  program writes its own handler.
+* A handler declares its own locals, which have their own storage and are never overlaid with
+  main-line routines.
+* **Clear the source's flag inside the handler.** Hardware never clears it, so a handler that forgets
+  re-enters forever.
+* The handler runs between any two instructions of the main program. Keep it short; a wide
+  variable (Word, LongWord, Float) shared with the main program is **not** read or written atomically,
+  so copy it with the interrupt disabled or use a Byte flag. Cycle-counted delays (`DelayMS`,
+  `DelayUS`) run longer when interrupted.
+* `Exit` leaves the handler early; its end restores the context and returns.
+
+### Enabling and disabling
+
+```basic
+Enable(Name)        ' commit the handler to its vector and set the global enable
 Disable(Name)       ' clear the global enable bit(s)
 ```
 
-* A handler has no parameters. With one handler no priority is written. With two priorities, the
-  low one is `ipLow = 1` and the high one `ipHigh = 2`. The 18F27Q10 has fixed vectors.
-* `Enable` and `Disable` set or clear only the **global** bits (`GIE/GIEH`, `PEIE/GIEL`). Enabling a
-  particular source is the program's job: set its `PIEx` bit, **clear its flag inside the handler**
-  (hardware never clears it), and with two priorities set its `IPRx` bit (they reset to high).
-* **Context saving** is automatic. The fast register stack is used for one handler; with two
-  priorities the high handler uses it and the low handler saves in software.
-* **Calls from a handler** must be wrapped: `Save(...) ... Restore`; otherwise `E-ISR-CALL`.
+`Enable` and `Disable` touch only the **global** bits (`GIE/GIEH`, `PEIE/GIEL`). Turning on one
+source is the program's job, in this order:
+
+1. configure the peripheral;
+2. clear its flag (`PIRx`);
+3. set its enable bit (`PIEx`);
+4. with two priorities, set its priority bit (`IPRx`; they reset to *high*);
+5. `Enable(Name)`.
+
+`Disable` does not remove the handler from its vector; `Enable` can turn it back on. Enabling two
+handlers of the same priority is an error (`E-ENABLE`). Clearing the global bit inside a handler is
+undone by the return from it.
+
+### Context saving
+
+The compiler saves what a handler needs, but a handler is not a normal routine.
+
+* **Hardware shadow registers.** `STATUS`, `WREG` and `BSR` are saved in the fast register stack for
+  a lone handler. With two priorities the high one uses the shadow registers, and the low one saves
+  and restores the same three in software (a high interrupt would overwrite the shadow copies).
+  `#option ISR_SHADOW = false` forces software saving for both.
+* **Nothing else is saved.** Any statement that needs a library routine, a helper, or a routine's
+  frame (a call, or Float arithmetic) would use
+  storage the interrupted main program may be using. The compiler refuses it with `E-ISR-CALL` unless
+  you protect it with `Save`.
 
 ```basic
-Save(0, SomeRoutine)           ' 0 = the compiler's working registers; a routine covers its callees
-    SomeRoutine()
+Save(item {, item})
+    ' statements
 Restore
 ```
 
-`Exit`, `Break`, `Continue` inside a `Save` block restore first; `GoTo` and labels inside it are not
-supported.
-* Wide variables shared with a handler are not read or written atomically. `DelayMS`/`DelayUS` run
-  longer if interrupted.
-* **Events**: `Event Name() ... End Event` declares a handler callable through a variable of an event
-  type (`Type TEvent = Event()`), one byte per variable; an unassigned variable does nothing when
-  called. An event call inside an interrupt must also be wrapped in `Save`.
-* Library modules never declare an `Interrupt`; they set up peripherals and read flags, and your program
-  writes its own handler.
+Each `item` is a variable, a routine, or the constant `0`. `0` saves the compiler's working
+registers (including `FSR0` and `FSR1`). A routine item saves that routine's storage **and that of
+everything it calls**. Inside a handler the compiler also adds the storage of every routine the
+block calls, so the usual form is `Save(0, Routine)` around a call to `Routine`.
+
+```basic
+Dim total As Word
+Function Cube(ByVal v As Byte) As LongWord
+    Result = v * v * v
+End Function
+
+Interrupt MyInt()
+    Dim big As LongWord
+    Save(0, Cube)              ' working registers + Cube's parameter, temporaries and result
+        big = Cube(10)
+    Restore
+End Interrupt
+```
+
+Without the `Save`, `Cube` would overwrite RAM the main program's own routines share with it, and
+the interrupted routine would resume with damaged data. Decide what to save by reading the
+datasheet, by looking at the routine you call, and by reading the generated `.S` file for registers
+it touches.
+
+`Exit`, `Break` and `Continue` that leave a `Save` block restore first. `GoTo` and labels inside it
+are not supported. Float arithmetic, comparisons and conversions in a handler are `E-ISR-CALL`
+directly: do them in a routine and call it inside `Save`. Copying a Float, `-f` and `Abs(f)` are
+plain bit operations and are allowed.
+
+### Events
+
+An **event** lets one piece of code (a library module, say) run a handler that *another* piece of
+code supplies, without either knowing about the other. It is the safe way to "plug code into" an
+interrupt: the module owns the interrupt and its hardware, and the program supplies what happens.
+
+```basic
+Type TEvent = Event()            ' 1. a type of handler
+Event Beep()                     ' 2. a handler
+    Toggle(PORTB.0)
+End Event
+Dim OnTick As TEvent             ' 3. a variable that can hold one
+OnTick = Beep                    ' 4. point it at the handler
+OnTick()                         ' 5. call through the variable
+```
+
+```basic
+Type TName = Event([ByVal param As Type {, ByVal param As Type}])
+[Public|Private] Event Name([ByVal param As Type {, ByVal param As Type}])
+    ' declarations and statements
+End Event
+```
+
+* **An event cannot be called by its name.** Only through a variable of an event type
+  (`Beep()` is `E-CALL`). The variable is what you hand to a module as a parameter.
+* **Parameters.** An event type and its handlers can take `ByVal` parameters of an integer type,
+  `Boolean` or `Char` (nothing else: no `ByRef`, arrays, strings, structures or default values, `E-PARAM`).
+  A handler fits a variable only if its parameter types are exactly those of the type
+  (`Type TRx = Event(ByVal c As Byte)` takes `Event OnByte(ByVal c As Byte)` but not
+  `Event OnByte(ByVal c As Word)`; the assignment is `E-TYPE`). The parameter names may differ. A
+  call gives the right number of arguments (`E-ARGS`), each converted as for a routine.
+* An event has no result. To get data back, use a variable both sides can see.
+* A handler name is assigned to a variable of an event type (`OnTick = Beep`). A variable that has
+  never been assigned does nothing when called, so a module can call its event without testing it.
+  Assign again to change the handler at run time.
+* **Comparing.** `=` and `<>` compare two event variables of one type, or a variable and a handler
+  name: `If OnTick = Beep Then ...`. Nothing else compares (`<`, `>` and so on are `E-TYPE`).
+* **Arrays.** `Dim Table(4) As TEvent` makes five event variables, called through an index:
+  `Table(i)()` or, with arguments, `Table(i)(3)`. An array of events starts empty: assign its elements one by one
+  (`Table(0) = Beep`); an initialiser list is refused (`E-DIM`). Unassigned elements do nothing.
+* A variable of an event type holds **one byte**: 0 for none, otherwise the number of a handler. It
+  is not an address.
+* Event variables can be copied (`B = A`), passed `ByVal` to a routine, and be module-level or
+  local variables.
+* Only handlers that are named in an assignment or comparison are compiled. An event nobody assigns
+  costs nothing.
+* `Event` is `Private` by default; mark it `Public` to use it from another module. The type, the
+  variable and the parameter use the same `Public`/`Private` rules as any other name.
+* `Exit` leaves the handler early.
+
+**How a call works.** A call through a variable is a call to one shared dispatcher routine (one
+per parameter list), which compares the byte and calls the matching handler, passing the arguments
+on. Handlers are ordinary routines to the compiler: they get frames laid out by the call graph and
+overlaid like those of any routine, and are only reachable through the dispatcher.
+
+**Events and interrupts.** Calling an event from an interrupt handler is the intended use, and it
+needs no `Save`: the compiler wraps the call as `Save(0) ... Restore` itself, which preserves the
+working registers and the storage of the dispatcher and every handler (and what they call). Writing
+your own `Save` around it is allowed; then no second one is added. Keep two things in mind:
+
+* A handler that runs from an interrupt gets the same respect as the interrupt itself. It
+  interrupts the main program at any point, so keep it short, and do not make it call routines the
+  main program also uses unless you save them (those calls still need `Save`, `E-ISR-CALL`).
+* A **high and a low priority interrupt must never call the same event handler**, because one could
+  interrupt the other halfway through it.
+
+**Example: a module that raises an event from an interrupt.** `MyRX.bas` owns the interrupt and
+the receive hardware; the program decides what a received byte means. The handler gets the byte as
+an argument.
+
+```basic
+Module MyRX
+
+Public Type TRxEvent = Event(ByVal c As Byte)
+Dim FOnData As TRxEvent
+
+Interrupt OnRX()
+    FOnData(RC1REG)            ' the module reads the byte and passes it on
+End Interrupt
+
+Public Sub Initialize(ByVal pOnData As TRxEvent)
+    FOnData = pOnData
+    ' ... set up the receiver and its PIEx bit here ...
+    Enable(OnRX)
+End Sub
+```
+
+```basic
+Program MyRXProgram
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+Include "myrx"
+
+Event GotChar(ByVal c As Byte)
+    If c = 32 Then
+        High(PORTB.0)
+    ElseIf c = 42 Then
+        High(PORTB.1)
+    EndIf
+End Event
+
+MyRX.Initialize(GotChar)
+While True
+Wend
+```
+
+The program reacts to every received byte without containing or knowing about the interrupt, and the
+module can be reused with a different handler (or none: an unassigned `FOnData` does nothing).
+
+**Events and the library.** The library modules never declare an `Interrupt` themselves, because
+a vector can be claimed only once and a handler without a priority would clash with a program that
+uses two priorities. The `timer` and `serial` modules instead provide an event variable and a
+`...Service` routine: assign your handler, then call the service routine from the main loop, or from
+your own interrupt (`Save(0, Timer0Service)` around the call). See `Timer0OnExpire` and
+`SerialOnRx` in section 3.
+
+```basic
+Include "timer"
+Dim ticks As Byte
+Event Tick()
+    Inc(ticks)
+End Event
+Timer0OnExpire = Tick
+Timer0Start(15, 255)
+While True
+    Timer0Service()          ' calls Tick once per Timer0 overflow
+Wend
+```
+
+**Differences from Swordfish.** Swordfish gives every event its own frame that is never shared;
+here handler frames overlay by the call graph, which saves RAM, and the compiler's implicit `Save`
+(above) is what makes the call from an interrupt safe. Event parameters, comparison and arrays are
+additions.
 
 ## Modules and Include
 
@@ -1143,8 +1339,8 @@ Save(item {, item})
 Restore
 ```
 **Overview** Preserves the named variables, routines' storage (including what those routines call)
-and, with `0`, the compiler's working registers around the block. Required around any call made from
-an interrupt handler (otherwise `E-ISR-CALL`).
+and, with `0`, the compiler's working registers around the block. Required around any call to a routine made
+from an interrupt handler (otherwise `E-ISR-CALL`); a call through an event variable adds its own.
 
 **Parameters** Each `item` is a variable, a routine, or `0`.
 
@@ -1659,6 +1855,34 @@ Timer0EnableInterrupt()
 Timer0DisableInterrupt()
 ```
 
+### Timer0OnExpire / Timer0Service
+
+**Syntax**
+```basic
+Timer0OnExpire = Handler          ' Type TTimerEvent = Event()
+Timer0Service()
+```
+**Overview** `Timer0OnExpire` is an event variable (type `TTimerEvent`, declared by the module).
+`Timer0Service` checks the Timer0 flag; if the timer has overflowed it clears the flag and calls
+the handler once. `Timer1OnExpire`/`Timer1Service` and `Timer2OnExpire`/`Timer2Service` do the same for
+Timer1 and Timer2. With no handler assigned nothing is called, but the flag is still cleared.
+Call the service routine from the main loop, or from your own interrupt (wrap it in
+`Save(0, Timer0Service)`). The module declares no `Interrupt`, so it never claims a vector.
+
+**Example**
+```basic
+Dim ticks As Byte
+Event Tick()
+    Inc(ticks)
+End Event
+Timer0OnExpire = Tick
+Timer0Start(15, 255)
+While ticks < 10
+    Timer0Service()
+Wend
+```
+**See also** *Events* (section 1), `Timer0Expired`, `Timer0EnableInterrupt`.
+
 ### Timer0Stop
 
 **Syntax**
@@ -2058,6 +2282,32 @@ Dim b As Byte
 b = SerialRead()
 SerialWriteByte(b)                ' echo
 ```
+
+### SerialOnRx / SerialRxService
+
+**Syntax**
+```basic
+SerialOnRx = Handler              ' Type TRxEvent = Event(ByVal c As Byte)
+SerialRxService()
+```
+**Overview** `SerialOnRx` is an event variable whose handler receives each byte. `SerialRxService`
+clears an overrun (as `SerialRead` does) and, if a byte has arrived, reads it (which clears `RCIF`)
+and calls the handler with it. With no handler assigned the byte is read and dropped. Call it from
+the main loop, or from your own interrupt wrapped in `Save(0, SerialRxService)`.
+
+**Example**
+```basic
+Dim last As Byte
+Event OnByte(ByVal c As Byte)
+    last = c
+End Event
+SerialInit(115200)
+SerialOnRx = OnByte
+While True
+    SerialRxService()
+Wend
+```
+**See also** *Events* (section 1), `SerialAvailable`, `SerialRead`.
 
 ### SerialFlush
 

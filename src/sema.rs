@@ -59,10 +59,10 @@ pub enum SymKind {
     Param { ty: Ty, mode: ParamMode },
     Alias { ty: Ty },
     Struct { fields: Vec<FieldInfo>, size: u32 },
-    EventType,
+    EventType { params: Vec<Ty> },
     Routine { params: Vec<ParamInfo>, ret: Option<Ty>, reentrant: bool, inlining: Inlining },
     Interrupt { priority: Option<i64> },
-    Event,
+    Event { params: Vec<Ty> },
 }
 
 #[derive(Clone, Debug)]
@@ -202,7 +202,7 @@ enum Cur {
     Routine(SymId),
     Intrinsic(String),
     Reg(RegInfo),
-    Handler,
+    Handler(SymId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -611,15 +611,18 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             DeclKind::Dim(dim) => self.dim_decl(dim, vis),
             DeclKind::Structure(sd) => self.struct_decl(sd, vis),
-            DeclKind::EventType(n) => {
-                self.declare(n, vis, SymKind::EventType);
+            DeclKind::EventType(n, params) => {
+                let Some(infos) = self.event_params(params) else { return };
+                self.declare(n, vis, SymKind::EventType { params: infos.into_iter().map(|p| p.ty).collect() });
             }
             DeclKind::Symbol(n, e) => self.symbol_decl(n, e, vis),
             DeclKind::Routine(r) => self.routine_decl(r, vis, d.span),
             DeclKind::Interrupt(i) => self.interrupt_decl(i, vis),
             DeclKind::Event(e) => {
-                let Some(id) = self.declare(&e.name, vis, SymKind::Event) else { return };
-                self.body(&e.body, Kind::Event, Some(id), None, None, &[]);
+                let Some(infos) = self.event_params(&e.params) else { return };
+                let kind = SymKind::Event { params: infos.iter().map(|p| p.ty.clone()).collect() };
+                let Some(id) = self.declare(&e.name, vis, kind) else { return };
+                self.body(&e.body, Kind::Event, Some(id), None, None, &params_with_ast(&e.params, &infos));
             }
         }
     }
@@ -729,7 +732,7 @@ impl<'p, 'd> Sema<'p, 'd> {
         match self.lookup(&id.key(), id.span)? {
             Some(s) => match &self.a.symbols[s].kind {
                 SymKind::Struct { .. } => Some(Ty::Struct(s)),
-                SymKind::EventType => Some(Ty::EventVar(s)),
+                SymKind::EventType { .. } => Some(Ty::EventVar(s)),
                 _ => self.err("E-TYPE", id.span, format!("`{}` is not a type", id.name)),
             },
             None => self.err("E-UNDECLARED", id.span, format!("unknown type `{}`", id.name)),
@@ -744,7 +747,7 @@ impl<'p, 'd> Sema<'p, 'd> {
         match self.lookup(&d.head.key(), d.head.span)? {
             Some(s) => match &self.a.symbols[s].kind {
                 SymKind::Struct { .. } => Some(Some(Ty::Struct(s))),
-                SymKind::EventType => Some(Some(Ty::EventVar(s))),
+                SymKind::EventType { .. } => Some(Some(Ty::EventVar(s))),
                 _ => Some(None),
             },
             None => Some(None),
@@ -795,8 +798,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                     self.diags.error("E-CONST-RANGE", sz.span, "array size must be 1 to 65535");
                     continue;
                 }
-                if matches!(vty, Ty::EventVar(_)) {
-                    self.diags.error("E-DIM", it.name.span, "arrays of events are not supported");
+                if matches!(vty, Ty::EventVar(_)) && (it.list.is_some() || dim.trailing_list.is_some() || it.init.is_some() || dim.trailing_init.is_some()) {
+                    self.diags.error("E-DIM", it.name.span, "an array of events starts empty; assign its handlers with `Name(i) = Handler`");
                     continue;
                 }
                 vty = Ty::Array(Box::new(vty), n as u32);
@@ -967,6 +970,33 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.diags.error("E-STRUCT", sd.name.span, format!("structure `{}` has no fields", sd.name.name));
         }
         self.declare(&sd.name, vis, SymKind::Struct { fields, size });
+    }
+
+    /// The parameters of an event type or handler: plain `ByVal` integers, Booleans and Chars.
+    fn event_params(&mut self, params: &'p [Param]) -> Option<Vec<ParamInfo>> {
+        let mut out = Vec::new();
+        let mut ok = true;
+        for p in params {
+            let Some(base) = self.resolve_type(&p.ty) else {
+                ok = false;
+                continue;
+            };
+            if p.is_array || p.mode != ParamMode::ByVal || p.default.is_some() || !matches!(base, Ty::Int(..) | Ty::Bool | Ty::Char) {
+                self.diags.error("E-PARAM", p.name.span, format!("`{}`: an event parameter is a ByVal integer, Boolean or Char without a default value", p.name.name));
+                ok = false;
+                continue;
+            }
+            out.push(ParamInfo { name: p.name.name.clone(), ty: base, mode: ParamMode::ByVal, is_array: false, has_default: false });
+        }
+        ok.then_some(out)
+    }
+
+    /// The parameter types of an event type, or of a handler.
+    fn event_sig(&self, sym: SymId) -> &[Ty] {
+        match &self.a.symbols[sym].kind {
+            SymKind::EventType { params } | SymKind::Event { params } => params,
+            _ => &[],
+        }
     }
 
     fn routine_decl(&mut self, r: &'p Routine, vis: Vis, _span: Span) {
@@ -1534,7 +1564,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             (Ty::Str(_), Ty::Char) => true,
             (Ty::Struct(a), Ty::Struct(b)) if a == b => true,
-            (Ty::EventVar(_), Ty::EventAny) => true,
+            (Ty::EventVar(t), Ty::EventAny(h)) if self.event_sig(*t) == self.event_sig(*h) => true,
             (Ty::EventVar(a), Ty::EventVar(b)) if a == b => true,
             (Ty::Array(a, n), Ty::Array(b, m)) if a == b && n == m => true,
             _ => {
@@ -1950,6 +1980,9 @@ impl<'p, 'd> Sema<'p, 'd> {
                 };
                 Some(result(v, a.lit && b.lit))
             }
+            (Ty::EventVar(x), Ty::EventVar(y)) if eq && x == y => Some(result(None, false)),
+            (Ty::EventVar(t), Ty::EventAny(h)) | (Ty::EventAny(h), Ty::EventVar(t)) if eq && self.event_sig(*t) == self.event_sig(*h) => Some(result(None, false)),
+            (Ty::EventVar(_) | Ty::EventAny(_), Ty::EventVar(_) | Ty::EventAny(_)) => self.err("E-TYPE", span, "event variables and handlers can only be compared with `=` and `<>`, and only an event variable with a handler or a variable of its own type and parameters"),
             (Ty::Bool, Ty::Bool) => self.err("E-TYPE", span, "Booleans can only be compared with `=` and `<>`"),
             (x, y) if (matches!(x, Ty::Bool) && y.is_numeric()) || (matches!(y, Ty::Bool) && x.is_numeric()) => {
                 self.err("E-MIX", span, format!("cannot compare a Boolean with a number ({x} and {y})"))
@@ -1996,9 +2029,9 @@ impl<'p, 'd> Sema<'p, 'd> {
             SymKind::Var { ty } | SymKind::Alias { ty } => Cur::Val(EI::place(ty, Place::Var)),
             SymKind::Param { ty, mode } => Cur::Val(EI::place(ty, if mode == ParamMode::ByRefConst { Place::ReadOnly } else { Place::Var })),
             SymKind::Routine { .. } => Cur::Routine(id),
-            SymKind::Event => Cur::Handler,
+            SymKind::Event { .. } => Cur::Handler(id),
             SymKind::Interrupt { .. } => return self.err("E-NOTVALUE", d.head.span, format!("`{}` is an Interrupt; it can only be used with Enable and Disable", sym.name)),
-            SymKind::Struct { .. } | SymKind::EventType => return self.err("E-NOTVALUE", d.head.span, format!("`{}` is a type, not a value", sym.name)),
+            SymKind::Struct { .. } | SymKind::EventType { .. } => return self.err("E-NOTVALUE", d.head.span, format!("`{}` is a type, not a value", sym.name)),
         })
         .inspect(|_| {
             let _ = addr_mode;
@@ -2125,12 +2158,20 @@ impl<'p, 'd> Sema<'p, 'd> {
                         }
                         Cur::Val(EI { ty: Ty::Char, place: v.place, in_array: true, ..EI::new(Ty::Void) })
                     }
-                    Ty::EventVar(_) => {
-                        if !args.is_empty() {
-                            return self.err("E-ARGS", *sp, "an event takes no arguments");
+                    Ty::EventVar(t) => {
+                        let sig = self.event_sig(t).to_vec();
+                        if args.len() != sig.len() {
+                            return self.err("E-ARGS", *sp, format!("this event takes {} argument(s), {} given", sig.len(), args.len()));
                         }
-                        if self.ctx.kind == Kind::Interrupt && self.ctx.saves == 0 {
-                            self.diags.error("E-ISR-CALL", *sp, "an interrupt handler cannot call an event directly; the call goes through a shared dispatcher. Wrap the call in Save(…) … Restore (LANGUAGE.md §8)");
+                        let mut ok = true;
+                        for (arg, pty) in args.iter().zip(&sig) {
+                            match self.check_expr(arg) {
+                                Some(ei) if self.assign_ok(pty, &ei, arg.span, "event argument") => self.annotate_assignment(pty, &ei, arg),
+                                _ => ok = false,
+                            }
+                        }
+                        if !ok {
+                            return None;
                         }
                         Cur::Val(EI { call: true, ..EI::new(Ty::Void) })
                     }
@@ -2140,8 +2181,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                 (Cur::Routine(_), _) => return self.err("E-CALL", d.span, "a routine can only be followed by its arguments"),
                 (Cur::Intrinsic(name), Part::Args(args, sp)) => Cur::Val(self.check_intrinsic(&name, args, *sp, d)?),
                 (Cur::Intrinsic(name), _) => return self.err("E-CALL", d.span, format!("`{name}` needs its arguments in parentheses")),
-                (Cur::Handler, Part::Args(..)) => return self.err("E-CALL", d.span, "an event handler is called through a variable of an event type, not by name"),
-                (Cur::Handler, _) => return self.err("E-SYNTAX", d.span, "unexpected name or index after an event handler"),
+                (Cur::Handler(_), Part::Args(..)) => return self.err("E-CALL", d.span, "an event handler is called through a variable of an event type, not by name"),
+                (Cur::Handler(_), _) => return self.err("E-SYNTAX", d.span, "unexpected name or index after an event handler"),
             };
             i += 1;
         }
@@ -2154,7 +2195,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             Cur::Routine(id) => Some((self.check_call(id, &[], d.span)?, false)),
             Cur::Reg(r) => Some((EI::place(r.ty, Place::Var), false)),
-            Cur::Handler => Some((EI::new(Ty::EventAny), false)),
+            Cur::Handler(h) => Some((EI::new(Ty::EventAny(h)), false)),
             Cur::Intrinsic(name) => {
                 if name == "terminate" {
                     Some((self.check_intrinsic(&name, &[], d.span, d)?, false))

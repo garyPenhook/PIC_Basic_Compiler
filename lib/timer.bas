@@ -5,11 +5,14 @@ Module Timer
 ' (true for the PIC16F171xx, whose Timer1 and Timer2 flags are in PIR1 and PIR2). The module only configures the timer and reads its
 ' flag. It declares no interrupt handler, so it never claims a vector: to be interrupted, call
 ' Timer0EnableInterrupt, write your own `Interrupt` and call Timer0Ack in it (flags are not
-' cleared by hardware).
+' cleared by hardware). To run your own code on each overflow instead, use the TimerNOnExpire event
+' and TimerNService below.
 '
 ' Clock source is FOSC/4 [Table 19-1, T0CS = 010]. In 8-bit mode the timer counts 0..period and
 ' then restarts, so one overflow takes (period + 1) * 2^prescale instruction cycles
 ' (prescale 0..15 selects 1:1 to 1:32768 [T0CON1]).
+' The handler type of the TimerNOnExpire hooks.
+Public Type TTimerEvent = Event()
 #if _has(PIR1.TMR1IF)
 ' Timer1 clock sources, the CS field of T1CLK [DS40002343F Table 23-4]. T1ClkPin counts rising edges on the
 ' pin selected by T1CKIPPS; T1ClkSosc needs the secondary oscillator enabled and time to stabilise.
@@ -173,6 +176,16 @@ Public Sub Timer0DisableInterrupt()
     Tmr0Ie = 0
 End Sub
 
+' Event hook: assign a handler to Timer0OnExpire, start the timer, and call Timer0Service regularly (from the
+' main loop, or from your own Interrupt inside Save(0, Timer0Service)). Each overflow acknowledges the flag and
+' calls the handler once. An unassigned Timer0OnExpire does nothing.
+Public Dim Timer0OnExpire As TTimerEvent
+Public Sub Timer0Service()
+    If Timer0Expired() Then
+        Timer0OnExpire()
+    End If
+End Sub
+
 ' Timer1: 16-bit, FOSC/4 clock [Table 20-2, T1CLK CS = 00001], T1CON = CKPS[5:4] | RD16 | ON
 ' [20.14.1]; no gate [T1GCON = 0]. It overflows every 65536 * 2^prescale instruction cycles
 ' (prescale 0..3 selects 1:1 to 1:8). With RD16 set, reading TMR1L latches TMR1H.
@@ -296,6 +309,16 @@ Public Sub Timer1DisableInterrupt()
     Tmr1Ie = 0
 End Sub
 
+' Event hook: assign a handler to Timer1OnExpire, start the timer, and call Timer1Service regularly (from the
+' main loop, or from your own Interrupt inside Save(0, Timer1Service)). Each overflow acknowledges the flag and
+' calls the handler once. An unassigned Timer1OnExpire does nothing.
+Public Dim Timer1OnExpire As TTimerEvent
+Public Sub Timer1Service()
+    If Timer1Expired() Then
+        Timer1OnExpire()
+    End If
+End Sub
+
 ' Timer2: 8-bit, FOSC/4 clock [Table 21-1, T2CLKCON CS = 00001], free-running period mode
 ' [T2HLT MODE = 00000, Table 21-3], T2CON = ON | CKPS[6:4] | OUTPS[3:0] [21.9.3]. T2TMR counts
 ' 0..period and restarts; the flag is set on every (postscale + 1)th match, so it is set every
@@ -369,4 +392,14 @@ End Sub
 
 Public Sub Timer2DisableInterrupt()
     Tmr2Ie = 0
+End Sub
+
+' Event hook: assign a handler to Timer2OnExpire, start the timer, and call Timer2Service regularly (from the
+' main loop, or from your own Interrupt inside Save(0, Timer2Service)). Each overflow acknowledges the flag and
+' calls the handler once. An unassigned Timer2OnExpire does nothing.
+Public Dim Timer2OnExpire As TTimerEvent
+Public Sub Timer2Service()
+    If Timer2Expired() Then
+        Timer2OnExpire()
+    End If
 End Sub

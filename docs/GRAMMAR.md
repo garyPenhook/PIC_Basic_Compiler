@@ -77,7 +77,9 @@ alias_target= designator ;                        (* alias form: Dim LED As PORT
 struct_decl = "Structure" IDENT EOL { field EOL } "End" "Structure" ;
 field       = IDENT [ "(" const_expr ")" ] "As" ( type | designator ) ;
 
-type_decl   = "Type" IDENT "=" ( "Event" "(" ")" ) ;
+type_decl   = "Type" IDENT "=" "Event" "(" [ event_params ] ")" ;
+event_params= event_param { "," event_param } ;
+event_param = [ "ByVal" ] IDENT "As" ( "Boolean" | "Char" | integer_type ) ;     (* no default, no array *)
 
 type        = "Boolean" | "Bit" | "Byte" | "ShortInt" | "Word" | "Integer"
             | "LongWord" | "LongInt" | "Float" | "Char"
@@ -93,7 +95,7 @@ body        = { local_decl } { stmt } ;
 local_decl  = ( const_decl | dim_decl | struct_decl ) EOL ;       (* as decl, but no vis prefix *)
 
 interrupt_decl = "Interrupt" IDENT "(" [ const_expr ] ")" EOL body "End" "Interrupt" ;
-event_decl     = "Event" IDENT "(" ")" EOL body "End" "Event" ;
+event_decl     = "Event" IDENT "(" [ event_params ] ")" EOL body "End" "Event" ;
 ```
 
 ## Statements
