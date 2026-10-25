@@ -14,6 +14,8 @@ Include "pwm"
 Include "i2c"
 Include "spi"
 Include "system"
+Include "lcd"
+Include "oled"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -84,3 +86,35 @@ System.SysClearResetFlags()
 If System.SysClockOk() Then
     x = Word(System.SysClockHz() / 1000)
 End If
+r = Lcd.LcdInit(16, 17, 18, 19, 20, 21, 2)
+Lcd.LcdClear()
+Lcd.LcdHome()
+Lcd.LcdDisplay(True, False, False)
+Lcd.LcdShift(False, True)
+Lcd.LcdSetAddress(0)
+Lcd.LcdGoto(0, 1)
+Lcd.LcdWrite("hi")
+Lcd.LcdWriteChar(65)
+Lcd.LcdWriteWord(123)
+Lcd.LcdWriteHex(171)
+Lcd.LcdCustomRow(0, 0, 31)
+Lcd.LcdCommand(1)
+r = Oled.OledInitI2c(60, 255)
+r = Oled.OledInitSpi(16, 17, 18)
+r = Oled.OledStatus()
+Oled.OledClearStatus()
+Oled.OledOn(True)
+Oled.OledContrast(100)
+Oled.OledInvert(False)
+Oled.OledAllOn(False)
+Oled.OledFlip(False)
+Oled.OledGoto(0, 0)
+Oled.OledTextGoto(0, 1)
+Oled.OledData(1)
+Oled.OledFill(0)
+Oled.OledClear()
+Oled.OledWriteChar(65)
+Oled.OledWrite("hi")
+Oled.OledWriteWord(123)
+Oled.OledWriteHex(171)
+r = Oled.FontByte(0)

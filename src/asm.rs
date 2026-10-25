@@ -81,6 +81,8 @@ pub fn words_of(text: &str) -> u32 {
     match m.as_str() {
         "goto" | "call" | "movff" | "lfsr" | "movsf" | "movss" => 2,
         "" => 0,
+        // Byte data in a raw block: two bytes to a word (a lone byte is padded).
+        "db" => (t[2..].split(',').count() as u32).div_ceil(2),
         _ if m.ends_with(':') => 0,
         _ if m.starts_with(';') || m.starts_with('#') => 0,
         // Directives and data defined in raw blocks; counted as one word each when unknown.

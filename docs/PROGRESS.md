@@ -334,4 +334,10 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Test `tests/exec/lib_system.bas` (optimised and `-O0`): every PCON0 pattern -> cause, the clear value, the clock table through
   `SysClockFrom`. The simulator leaves OSCCON1/2, OSCFRQ and OSCSTAT at 0 (Table 5-1 reset values are not modelled) and OSCCON2 is read-only,
   so `SysClockHz` is only checked to agree with `SysClockFrom` of the live registers; its real values need hardware (D6).
-- M8 library breadth: `lcd` is not done (no HD44780 data sheet available to source from); everything else on the M8 list is.
+- M8 library breadth: everything on the M8 list is done (`lcd` and `oled` below).
+
+## M8 — lcd and oled (done 2026-10-25)
+- `lib/lcd.bas` (module `Lcd`): HD44780U, 4-bit, from `~/Projects/HD44780.pdf` (instruction table 6, Figure 24 initialisation, DDRAM map, bus timing). No busy-flag read (fixed waits).
+- `lib/oled.bas` (module `Oled`): SSD1309 128 x 64 over I2C (8.1.5) or 4-wire SPI (8.1.3), from `~/Projects/Solomon_SSD1309_v1.1.pdf` (command tables 9-1..9-5, power-on 8.8). Relies on Reset values (8.4) for geometry/COM pins; text is a 5 x 7 font from the public domain X11 `5x7` font (not from the data sheet).
+- The compiler has no `Const` arrays yet, so the font lives in an `Asm` block (`db` data read with `TBLRD`). That exposed a bug in `asm.rs::words_of`: a raw `db` line counted as one word, so the call/branch range selection was wrong for programs over 1K words. It now counts operands.
+- Tests `tests/exec/lib_lcd.bas`, `lib_oled.bas` (optimised and `-O0`): refusals, pin set-up, final pin levels, font bytes read from flash. Nothing runs on a panel (D6); there is no pin model in the simulator.

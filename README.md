@@ -77,12 +77,13 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 | `serial`, `serial2` | EUSART1 and EUSART2: send/receive bytes, strings and numbers |
 | `adc` | 10-bit ADC reads, averaging, millivolts, FVR reference (silicon errata worked around) |
 | `eeprom` | data EEPROM read/write (bytes and words) |
+| `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
+| `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), fill, contrast, invert, flip |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
 
 ## Still to do
 
-* **Library:** `lcd` (HD44780; needs its data sheet), program-flash
-  self-write.
+* **Library:** program-flash self-write; OLED pixel drawing and bitmaps (no frame buffer or `Const` arrays yet).
 * **Language:** floating point, `Inline` functions, overloading, reentrant functions, a few remaining
   array, string and structure forms (the compiler reports these clearly rather than miscompiling),
   array/structure initialisers, `#if` in the preprocessor.
