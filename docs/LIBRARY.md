@@ -144,6 +144,21 @@ needed. Single host only; not reentrant.
 The chip select is not part of the module (use `Gpio` or a port bit). The module owns MSSP1 (not together with `I2c`),
 does not use its interrupt, and is not reentrant.
 
+## system (reset cause, clock check)
+| Routine | Effect |
+|---|---|
+| `SysResetCause()` | cause of the latest Reset not yet cleared, from `PCON0`, tested in this order: 1 power-on, 2 brown-out, 7 stack overflow, 8 stack underflow, 5 watchdog window violation, 4 watchdog time-out, 3 MCLR pin, 6 `RESET` instruction, 0 none |
+| `SysResetFlags()` | the raw `PCON0` value |
+| `SysClearResetFlags()` | all `PCON0` flags to their inactive state (`PCON0` = 63); call it after reading the cause, because hardware never clears a flag |
+| `SysClockHz()` | system clock in Hz from `OSCCON2` and `OSCFRQ`: HFINTOSC (1, 2, 4, 8, 12, 16, 32, 48 or 64 MHz) divided by 1..512; 0 for any other source or a reserved code. Nominal frequency (`OSCTUNE` ignored) |
+| `SysClockFrom(cosc, cdiv, hffrq)` | the same conversion from given field values |
+| `SysClockOk()` | True when `SysClockHz()` equals `Clock` |
+
+A flag left from an earlier Reset is reported until it is cleared; after a power-on Reset the brown-out flag is
+unknown, so power-on is tested first. The module does not change the clock at run time: `DelayUs`/`DelayMs`, `Serial`,
+`Pwm`, `I2c`, `Spi` and `Adc` compute from the compile-time `Clock`, so a run-time change would make them wrong.
+`SysClockOk` is the check that `Clock` and the `Config` `RSTOSC` setting agree.
+
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas` and `lib_spi.bas` (set-up only), `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas` and `lib_spi.bas` (set-up only), `lib_system.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

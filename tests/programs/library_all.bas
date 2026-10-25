@@ -13,6 +13,7 @@ Include "eeprom"
 Include "pwm"
 Include "i2c"
 Include "spi"
+Include "system"
 Dim x As Word
 Dim r As Byte
 Gpio.GpioAllDigital()
@@ -77,3 +78,9 @@ Spi.SpiWrite(2)
 r = Spi.SpiRead()
 r = Spi.SpiStatus()
 Spi.SpiOff(19, 20)
+r = System.SysResetCause()
+r = System.SysResetFlags()
+System.SysClearResetFlags()
+If System.SysClockOk() Then
+    x = Word(System.SysClockHz() / 1000)
+End If

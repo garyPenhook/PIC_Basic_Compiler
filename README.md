@@ -81,7 +81,7 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 
 ## Still to do
 
-* **Library:** `lcd` (HD44780), `system` (reset cause, clock set-up), program-flash
+* **Library:** `lcd` (HD44780; needs its data sheet), program-flash
   self-write.
 * **Language:** floating point, `Inline` functions, overloading, reentrant functions, a few remaining
   array, string and structure forms (the compiler reports these clearly rather than miscompiling),

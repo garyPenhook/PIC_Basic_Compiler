@@ -326,3 +326,12 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   The errata sheet has no MSSP entry. Mode numbers follow from the CKP (idle level) and CKE (transmit on active-to-idle) definitions.
 - Test `tests/exec/lib_spi.bas` (optimised and `-O0`): divider, SSPM/CKP/CKE per mode, PPS, TRIS, receive-only, refusals, `SpiOff`, and bounded
   return of every routine. The simulator has no pin model, so no waveform or data exchange is checked; nothing runs on hardware (D6).
+
+## M8 — system (done 2026-10-25)
+- `lib/system.bas` (module `System`): reset cause from PCON0 (DS40002043F §9.11, §9.12, §9.14.2, Table 9-3) and clock check from
+  OSCCON2 / OSCFRQ (§5.6.2, §5.6.5, Table 5-1). No run-time clock change on purpose: every cycle-counted routine and library baud/period
+  calculation uses the compile-time `Clock` (a run-time switch would need that to become a variable; not planned).
+- Test `tests/exec/lib_system.bas` (optimised and `-O0`): every PCON0 pattern -> cause, the clear value, the clock table through
+  `SysClockFrom`. The simulator leaves OSCCON1/2, OSCFRQ and OSCSTAT at 0 (Table 5-1 reset values are not modelled) and OSCCON2 is read-only,
+  so `SysClockHz` is only checked to agree with `SysClockFrom` of the live registers; its real values need hardware (D6).
+- M8 library breadth: `lcd` is not done (no HD44780 data sheet available to source from); everything else on the M8 list is.
