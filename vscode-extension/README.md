@@ -15,7 +15,8 @@ Editor support for the `basil` PIC BASIC compiler (`.bas` files).
 * **Highlighting**, snippets, bracket/comment configuration (`'`, `//`, `(* *)`, `{ }`).
 * **Diagnostics** — runs `basil --check` on open/save (or while typing with `picbasic.diagnostics = onType`).
   Library `Module` files are skipped because they have no `Device`.
-* **Navigation** — outline, go to definition (own file, `Include`d modules, `lib/`), hover, completion, signature help.
+* **Navigation** — outline, go to definition (own file, `Include`d modules, `lib/`), signature help.
+* **Hover and completion everywhere** — hover shows documentation for: reserved words; your own and library routines (parameters, return type, doc comment, where defined); `Module.Member` and `Include "name"` (what the library does and its public routines); parameters and locals; registers and bits of the program's `Device` (address, width, bit fields, mask, datasheet) including what a `Dim x As PORTB.0` alias points at; `Config` fields and their allowed values; and numeric literals (decimal, hex, binary). Completion offers the same, plus registers, bits and `Module.` members after a dot, and `Config` fields and values.
 * **Build** — *PIC BASIC: Build / Check / Show Resource Report* commands and a `picbasic` task type with the `$basil` problem matcher.
 
 ## Settings

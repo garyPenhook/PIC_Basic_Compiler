@@ -7,7 +7,8 @@ const cp = require('child_process');
 const { scan, caseEdits, indentLevels } = require('./scanner');
 const { parseSymbols, parseIncludes } = require('./symbols');
 const { CANONICAL, ALIASES, KEYWORDS, TYPES, DOCS } = require('./keywords');
-const { deviceOf, loadNames, devicesAbove } = require('./devicenames');
+const { deviceOf, loadNames, loadInfo, devicesAbove } = require('./devicenames');
+const docs = require('./hoverdocs');
 
 const LANG = 'picbasic';
 const cfg = () => vscode.workspace.getConfiguration('picbasic');
@@ -17,11 +18,8 @@ const cfg = () => vscode.workspace.getConfiguration('picbasic');
 const toRange = (e) => new vscode.Range(e.line, e.s, e.line, e.e);
 const toEdit = (e) => vscode.TextEdit.replace(toRange(e), e.text);
 
-/** Register and bit names of the document's `Device`, or undefined when off or not found. */
-function deviceNames(doc, lines) {
-  if (!cfg().get('autoCorrectDeviceNames')) return undefined;
-  const device = deviceOf(lines);
-  if (!device) return undefined;
+/** Directories that may hold the device descriptions for `doc`, best first. */
+function deviceDirs(doc) {
   const dirs = [];
   const extra = cfg().get('devicesPath');
   if (extra) dirs.push(extra);
@@ -30,7 +28,21 @@ function deviceNames(doc, lines) {
   // A development build lives in <repo>/target/<profile>/basil, next to <repo>/devices.
   const exe = cfg().get('compilerPath');
   if (exe && path.isAbsolute(exe)) dirs.push(...devicesAbove(path.dirname(exe)));
-  return loadNames(device, dirs) || undefined;
+  return dirs;
+}
+
+/** Register and bit names of the document's `Device`, or undefined when off or not found. */
+function deviceNames(doc, lines) {
+  if (!cfg().get('autoCorrectDeviceNames')) return undefined;
+  const device = deviceOf(lines);
+  if (!device) return undefined;
+  return loadNames(device, deviceDirs(doc)) || undefined;
+}
+
+/** Registers, bits and configuration fields of the document's `Device` (for hover and completion). */
+function deviceInfo(doc) {
+  const device = deviceOf(scan(doc.getText()));
+  return device ? loadInfo(device, deviceDirs(doc)) : null;
 }
 
 /** Keyword and device-name corrections for a whole document. */
@@ -261,33 +273,218 @@ const definition = {
   },
 };
 
+const md = (text, lang) => {
+  const m = new vscode.MarkdownString();
+  if (lang) m.appendCodeblock(text, LANG);
+  else m.appendMarkdown(text);
+  return m;
+};
+
+/** The library file whose module is called `name` and is visible from `doc`, with its parse. */
+function moduleNamed(doc, name) {
+  const low = name.toLowerCase();
+  const { included, all } = visibleFiles(doc);
+  for (const f of [...included, ...all]) {
+    const rec = indexFile(f);
+    const mod = rec && rec.syms.find((x) => x.kind === 'module' && x.name.toLowerCase() === low);
+    if (mod) return { file: f, rec, mod };
+  }
+  return null;
+}
+
+function moduleHover(doc, name) {
+  const m = moduleNamed(doc, name);
+  if (!m) return null;
+  const lines = [`**Module ${m.mod.name}**`, docs.moduleDoc(m.rec.text)];
+  const pub = m.rec.syms.filter((x) => x.vis === 'public' && !x.local);
+  if (pub.length) lines.push(pub.map((x) => '- `' + (x.signature || x.name) + '`').join('\n'));
+  lines.push(`*${path.basename(m.file)}*`);
+  return md(lines.filter(Boolean).join('\n\n'));
+}
+
+/** Symbol hover: signature, parameter list, doc comment, where it is defined. */
+function symbolHover(s) {
+  const m = md(s.signature || `${s.kind} ${s.name}`, true);
+  if (['sub', 'function', 'proc', 'interrupt', 'event'].includes(s.kind)) {
+    const ps = docs.parseParams(s.params);
+    const bits = [];
+    if (ps.length) bits.push('**Parameters**\n' + ps.map((p) => '- `' + p.name + (p.type ? ' As ' + p.type : '') + '` — ' + docs.paramMode(p)).join('\n'));
+    if (s.returns) bits.push(`**Returns** \`${s.returns}\``);
+    if (bits.length) m.appendMarkdown(bits.join('\n\n') + '\n\n');
+  }
+  if (s.doc) m.appendMarkdown(s.doc.replace(/\n/g, '  \n'));
+  const where = s.own ? `line ${s.line + 1}` : `${s.module || path.basename(s.file)}, ${path.basename(s.file)}:${s.line + 1}`;
+  m.appendMarkdown(`\n\n*${s.vis === 'public' ? 'public ' : ''}${s.kind}, ${where}*`);
+  return m;
+}
+
+/** The sub/function/proc/interrupt/event of `own` that contains `line`. */
+function routineAt(doc, line) {
+  return parseSymbols(doc.getText()).filter((x) => ['sub', 'function', 'proc', 'interrupt', 'event'].includes(x.kind) && x.line <= line && line <= x.endLine).pop();
+}
+
 const hover = {
   provideHover(doc, pos) {
+    const lineText = doc.lineAt(pos.line).text;
+    const prefix = lineText.slice(0, pos.character);
+    if (/'|\/\//.test(prefix.replace(/"[^"]*"/g, ''))) return null; // inside a comment
+
+    // Include "name" -> the module's description.
+    const inc = /^\s*Include\s+"([^"]*)"/i.exec(lineText);
+    if (inc && pos.character > lineText.indexOf('"') && pos.character <= lineText.indexOf('"') + inc[1].length + 1) {
+      const r = new vscode.Range(pos.line, lineText.indexOf('"') + 1, pos.line, lineText.indexOf('"') + 1 + inc[1].length);
+      const h = moduleHover(doc, inc[1]);
+      return h ? new vscode.Hover(h, r) : new vscode.Hover(md(`No library module \`${inc[1]}\` found in a \`lib\` folder or next to this file.`), r);
+    }
+
+    // Numeric literal: all radixes.
+    const numR = doc.getWordRangeAtPosition(pos, /(0[xX][0-9A-Fa-f_]+|0[bB][01_]+|\$[0-9A-Fa-f]+|%[01]+|\b[0-9][0-9_]*\b)/);
+    if (numR) {
+      const t = doc.getText(numR);
+      const nd = docs.numberDoc(t);
+      if (nd && !/[A-Za-z_]/.test(lineText[numR.start.character - 1] || '')) return new vscode.Hover(md(nd), numR);
+    }
+
     const w = wordAt(doc, pos);
     if (!w) return null;
-    // Not a member access: `x.Word` would be a field, not the keyword.
-    const before = w.range.start.character > 0 ? doc.getText(new vscode.Range(pos.line, w.range.start.character - 1, pos.line, w.range.start.character)) : '';
-    const canon = before === '.' ? undefined : KEYWORDS.get(w.word.toLowerCase());
-    const s = canon ? null : resolve(doc, w.word, pos.line);
-    const md = new vscode.MarkdownString();
+    const startCh = w.range.start.character;
+    const before = startCh > 0 ? lineText[startCh - 1] : '';
+    const qualM = before === '.' ? /([A-Za-z_][A-Za-z0-9_]*)\.$/.exec(lineText.slice(0, startCh)) : null;
+    const qualifier = qualM && qualM[1];
+    const low = w.word.toLowerCase();
+    const info = deviceInfo(doc);
+    const out = [];
+
+    // Config FIELD = SETTING
+    if (/^\s*Config\b/i.test(lineText) && info) {
+      const eq = lineText.slice(0, startCh).lastIndexOf('=');
+      const comma = lineText.slice(0, startCh).lastIndexOf(',');
+      if (eq > comma) {
+        const fm = /([A-Za-z_][A-Za-z0-9_]*)\s*=\s*$/.exec(lineText.slice(0, startCh));
+        const f = fm && info.config.get(fm[1].toLowerCase());
+        const st = f && f.settings.find((x) => x.name.toLowerCase() === low);
+        if (st) return new vscode.Hover(md(docs.settingDoc(info, f, st)), w.range);
+      } else if (info.config.has(low)) return new vscode.Hover(md(docs.configDoc(info, info.config.get(low))), w.range);
+    }
+
+    // Module.Member and the module name itself.
+    if (qualifier) {
+      const m = moduleNamed(doc, qualifier);
+      const mem = m && m.rec.syms.find((x) => x.vis === 'public' && !x.local && x.name.toLowerCase() === low);
+      if (mem) return new vscode.Hover(symbolHover({ ...mem, file: m.file, module: m.mod.name }), w.range);
+    } else if (!KEYWORDS.has(low) && lineText[w.range.end.character] === '.') {
+      const mh = moduleHover(doc, w.word);
+      if (mh && !resolve(doc, w.word, pos.line)) return new vscode.Hover(mh, w.range);
+    }
+
+    // Keywords and intrinsics.
+    const canon = qualifier ? undefined : KEYWORDS.get(low);
     if (canon) {
-      md.appendCodeblock(canon, LANG);
-      if (DOCS[canon]) md.appendMarkdown(DOCS[canon]);
-    } else if (s) {
-      md.appendCodeblock(s.signature || `${s.kind} ${s.name}`, LANG);
-      if (s.doc) md.appendMarkdown(s.doc.replace(/\n/g, '  \n'));
-      if (!s.own) md.appendMarkdown(`\n\n*${s.module || path.basename(s.file)}*`);
-    } else return null;
-    return new vscode.Hover(md, w.range);
+      const m = md(canon, true);
+      if (DOCS[canon]) m.appendMarkdown(DOCS[canon]);
+      return new vscode.Hover(m, w.range);
+    }
+
+    // The program's own declarations, then library ones.
+    if (!qualifier) {
+      const rt = routineAt(doc, pos.line);
+      const p = rt && docs.parseParams(rt.params).find((x) => x.name.toLowerCase() === low);
+      const s = resolve(doc, w.word, pos.line);
+      if (s && s.local && rt && s.line >= rt.line && s.line <= rt.endLine) return new vscode.Hover(symbolHover({ ...s, kind: 'local ' + s.kind, own: true }), w.range);
+      if (p) return new vscode.Hover(md(docs.paramDoc(rt, p)), w.range);
+      if (s) {
+        const h = symbolHover(s);
+        // `Dim led As PORTB.0`: also describe the register behind the alias.
+        const am = info && s.signature && /\bAs\s+([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+))?\s*$/i.exec(s.signature);
+        const ar = am && info.regs.get(am[1].toLowerCase());
+        if (ar) h.appendMarkdown(`\n\n---\n\n${am[2] !== undefined ? `Alias for bit ${am[2]} of ` : 'Alias for '}**${ar.name}** at \`${docs.hex(ar.addr, 3)}\`.`);
+        return new vscode.Hover(h, w.range);
+      }
+    }
+
+    // Device registers and bits (`PORTB`, `RB0`, `PORTB.3`).
+    if (info) {
+      const reg = !qualifier && info.regs.get(low);
+      if (reg) out.push(docs.regDoc(info, reg));
+      const bit = info.bits.get(low);
+      if (bit && !reg) out.push(docs.bitDoc(info, qualifier ? bit.filter((b) => info.regs.get(qualifier.toLowerCase()) === info.regs.get(b.reg.toLowerCase())) : bit));
+    }
+    if (out.length && out[0]) return new vscode.Hover(md(out.join('\n\n')), w.range);
+    return null;
   },
 };
 
 const CK = vscode.CompletionItemKind;
+
+function memberItem(s) {
+  const kind = { sub: CK.Method, proc: CK.Method, function: CK.Function, interrupt: CK.Event, event: CK.Event, structure: CK.Struct, type: CK.Class, const: CK.Constant, symbol: CK.Constant, dim: CK.Variable }[s.kind] || CK.Text;
+  const it = new vscode.CompletionItem(s.name, kind);
+  it.detail = s.signature || s.kind;
+  it.documentation = symbolHover(s);
+  return it;
+}
+
+function bitItem(info, f, regName) {
+  const it = new vscode.CompletionItem(f.name, CK.EnumMember);
+  it.detail = `${regName} ${f.width === 1 ? 'bit ' + f.pos : 'bits ' + (f.pos + f.width - 1) + ':' + f.pos}`;
+  return it;
+}
+
 const completion = {
   provideCompletionItems(doc, pos) {
     const prefix = doc.lineAt(pos.line).text.slice(0, pos.character);
     if (/'|\/\/|"[^"]*$/.test(prefix)) return []; // comment or string
+    const info = deviceInfo(doc);
+
+    // After `Module.` offer only that module's public members.
+    const qm = /([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z0-9_]*$/.exec(prefix);
+    if (qm) {
+      const m = moduleNamed(doc, qm[1]);
+      if (m) {
+        return m.rec.syms.filter((x) => x.vis === 'public' && !x.local).map((x) => memberItem({ ...x, file: m.file, module: m.mod.name, included: true }));
+      }
+      const reg = info && info.regs.get(qm[1].toLowerCase());
+      if (reg) return reg.fields.filter((f) => !f.legacy).map((f) => bitItem(info, f, reg.name));
+    }
+
+    // Config FIELD = SETTING: the fields, or the values of the field just before `=`.
+    if (/^\s*Config\b/i.test(prefix) && info) {
+      const fm = /([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z0-9_]*$/.exec(prefix);
+      const f = fm && info.config.get(fm[1].toLowerCase());
+      if (f) {
+        return f.settings.map((x) => {
+          const it = new vscode.CompletionItem(x.name, CK.EnumMember);
+          it.detail = `${f.name} = ${x.value}`;
+          it.documentation = md(docs.settingDoc(info, f, x));
+          return it;
+        });
+      }
+      return [...info.config.values()].map((f) => {
+        const it = new vscode.CompletionItem(f.name, CK.Property);
+        it.detail = `${f.reg}, ${f.settings.length} values`;
+        it.documentation = md(docs.configDoc(info, f));
+        return it;
+      });
+    }
+
     const items = [];
+    if (info) {
+      for (const r of new Set(info.regs.values())) {
+        const it = new vscode.CompletionItem(r.name, CK.Field);
+        it.detail = `register ${docs.hex(r.addr, 3)}, ${r.width} bits`;
+        it.documentation = md(docs.regDoc(info, r));
+        it.sortText = '3' + r.name;
+        items.push(it);
+      }
+      for (const list of info.bits.values()) {
+        const b = list[0];
+        const it = new vscode.CompletionItem(b.name, CK.EnumMember);
+        it.detail = `${b.reg} ${b.width === 1 ? 'bit ' + b.pos : 'bits ' + (b.pos + b.width - 1) + ':' + b.pos}`;
+        it.documentation = md(docs.bitDoc(info, list));
+        it.sortText = '4' + b.name;
+        items.push(it);
+      }
+    }
     for (const k of CANONICAL.concat(ALIASES)) {
       const it = new vscode.CompletionItem(k, TYPES.has(k) ? CK.TypeParameter : CK.Keyword);
       it.documentation = DOCS[k] && new vscode.MarkdownString(DOCS[k]);
@@ -303,7 +500,7 @@ const completion = {
       const kind = { sub: CK.Method, proc: CK.Method, function: CK.Function, interrupt: CK.Event, event: CK.Event, structure: CK.Struct, type: CK.Class, const: CK.Constant, symbol: CK.Constant, dim: CK.Variable, module: CK.Module }[s.kind] || CK.Text;
       const it = new vscode.CompletionItem(s.name, kind);
       it.detail = s.signature || s.kind;
-      it.documentation = s.doc ? new vscode.MarkdownString(s.doc) : undefined;
+      it.documentation = symbolHover(s);
       it.sortText = (s.own ? '0' : '1') + s.name;
       if (!s.own && !s.included) it.detail += `  (Include "${s.module || path.basename(s.file, '.bas')}")`;
       items.push(it);
@@ -459,7 +656,7 @@ function activate(ctx) {
   reg(vscode.languages.registerDocumentSymbolProvider(sel, outline));
   reg(vscode.languages.registerDefinitionProvider(sel, definition));
   reg(vscode.languages.registerHoverProvider(sel, hover));
-  reg(vscode.languages.registerCompletionItemProvider(sel, completion));
+  reg(vscode.languages.registerCompletionItemProvider(sel, completion, '.'));
   reg(vscode.languages.registerSignatureHelpProvider(sel, signatureHelp, '(', ','));
 
   reg(vscode.commands.registerCommand('picbasic.fixKeywordCase', () => {

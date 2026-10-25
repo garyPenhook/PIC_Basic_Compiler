@@ -169,4 +169,26 @@ for (const f of fs.readdirSync(path.join(root, 'lib')).filter((x) => x.endsWith(
   const s = parseSymbols(text);
   assert.ok(s.some((x) => x.kind === 'module'), f + ' has no Module');
 }
+
+// Hover and completion documentation.
+{
+  const { parseDevice } = require('../src/devicenames');
+  const hd = require('../src/hoverdocs');
+  const info = parseDevice(fs.readFileSync(path.join(root, 'devices', '18F27Q10.toml'), 'utf8'));
+  assert.strictEqual(info.device, 'PIC18F27Q10');
+  assert.strictEqual(info.regs.get('latb').addr, 3971);
+  assert.deepStrictEqual(info.bits.get('rb0').map((b) => [b.reg, b.pos, b.width]), [['PORTB', 0, 1]]);
+  assert.ok(info.config.get('rstosc').settings.some((x) => x.name === 'HFINTOSC_64MHZ'));
+  assert.deepStrictEqual(info.regs.get('sp2brg').members, ['SP2BRGL', 'SP2BRGH']);
+  assert.ok(hd.regDoc(info, info.regs.get('portb')).includes('0xF8D'));
+  assert.ok(hd.bitDoc(info, info.bits.get('rb0')).includes('bit 0 of `PORTB`'));
+  assert.ok(hd.configDoc(info, info.config.get('rstosc')).includes('HFINTOSC_64MHZ'));
+  assert.ok(hd.numberDoc('0x1F').includes('= 31 ='));
+  assert.ok(hd.numberDoc('$FF').includes('0b11111111'));
+  assert.ok(hd.numberDoc('300').includes('2 bytes'));
+  assert.strictEqual(hd.numberDoc('18F27Q10'), null);
+  assert.deepStrictEqual(hd.parseParams('ByVal a As Byte, ByRefConst s As String(80), n'), [
+    { name: 'a', mode: 'ByVal', type: 'Byte' }, { name: 's', mode: 'ByRefConst', type: 'String(80)' }, { name: 'n', mode: '', type: '' }]);
+  assert.ok(hd.moduleDoc(fs.readFileSync(path.join(root, 'lib', 'serial.bas'), 'utf8')).includes('EUSART1'));
+}
 console.log('ok');
