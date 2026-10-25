@@ -44,7 +44,7 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 - `basil` is now a library plus a binary: `src/{diag,pp,lexer,ast,parser,types,project,sema}.rs`.
   `basil --check prog.bas` runs the whole front end and prints `file:line:col: error[CODE]: message`
   with the source line and a caret.
-- Lexer: case-insensitive keywords, `$FF` `%101` `#13` `1.5e3` literals, `'` `//` `(* *)` `{ }` comments
+- Lexer: case-insensitive keywords, `$FF` `0xFF` `%101` `0b101` `#13` `1.5e3` literals, `'` `//` `(* *)` `{ }` comments
   (nesting), ` _` continuation, raw `Asm` bodies. Preprocessor: `#define/#ifdef/#option/#error…` (D25).
 - Parser: the full `GRAMMAR.md` including headers, includes, declarations, structures and unions, routines,
   interrupts, events, `Save`, `Asm`, `Select`, loops and the alternative spellings (D20). Errors are

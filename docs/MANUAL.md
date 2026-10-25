@@ -163,8 +163,8 @@ A `Proc ... EndProc` flat/procedural layout is accepted (see *Procedures*).
 | Form | Example | Notes |
 |---|---|---|
 | Decimal | `100` | |
-| Hexadecimal | `$FF` | `0x`-style is **not** accepted |
-| Binary | `%1010` | `0b` is **not** accepted |
+| Hexadecimal | `$FF`, `0xFF` | `0x` or `0X`; digits in either case |
+| Binary | `%1010`, `0b1010` | `0b` or `0B` |
 | Floating point | `3.14`, `1.0e3`, `1.5E-2` | |
 | Character | `"A"` | a Char, or a one-character String, by context |
 | Character code | `#65`, `#13 + #10` | Char with the given code; can be concatenated |
@@ -3273,7 +3273,7 @@ reports these rather than miscompiling them.
 ## Accepted alternative spellings
 
 `Declare Xtal = n`; `Symbol`; `Proc`/`EndProc`/`ExitProc`; `Do`/`Loop` forms; type names `SByte`, `SWord`,
-`Dword`, `Long` (and conversions); `$FF`, `%1010`; `:` between statements; `'` and `(* *)` comments;
+`Dword`, `Long` (and conversions); `$FF`/`0xFF`, `%1010`/`0b1010`; `:` between statements; `'` and `(* *)` comments;
 ` _` continuation; `Dim x As Type`; `Toggle`, `Inc`, `Dec`, `DelayMS`, `DelayUS`, `High`, `Low`,
 `Input`, `Output` **with parentheses**; `Abs`; `Bound`.
 
@@ -3302,7 +3302,7 @@ reports these rather than miscompiling them.
 | `$config`, `Config` directive | `Config NAME = VALUE` with pack names |
 | `$include`, `$asm`, `Asm` | `Include "name"`, `Asm ... End Asm` (pic-as syntax) |
 | Interrupt via `On_Hardware_Interrupt` | `Interrupt Name() ... End Interrupt` plus `Enable` |
-| `0x` and `0b` literals | `$` and `%` only |
+| `0x` and `0b` literals | accepted, as are `$` and `%` |
 | Overloading, `Reentrant` routines | not yet |
 
 ---

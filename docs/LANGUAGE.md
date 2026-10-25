@@ -56,8 +56,8 @@ module Name
   styles cannot be mixed to close each other but may be nested inside one another. (SF)
 * **Line continuation**: a line ending in ` _` (space, underscore) continues (D14). `:` may
   separate several statements on one line. (P8)
-* **Numeric literals**: decimal `100`, binary `%1010`, hexadecimal `$FF`, floating point
-  `3.14` / `1.0e3`. (SF/P8: both reference languages use `%` and `$`.)
+* **Numeric literals**: decimal `100`, binary `%1010` or `0b1010`, hexadecimal `$FF` or `0xFF`, floating point
+  `3.14` / `1.0e3`. (SF/P8: both reference languages use `%` and `$`; the C-style prefixes are an addition.)
 * **Characters and strings**: `"A"` is a Char or a one-character String depending on context;
   `#65` is the Char with code 65; `#13 + #10` concatenates control characters. (SF)
 * **Constants** `True`, `False`, `Null` (string terminator / empty string). (SF)
@@ -427,7 +427,7 @@ Anything not listed here is not accepted.
 | `Do … Loop` | `While True … Wend` |
 | `Do While c … Loop`, `Do Until c … Loop` | `While c … Wend`, `While Not c … Wend` |
 | `Do … Loop Until c`, `Do … Loop While c` | `Repeat … Until c`, `Repeat … Until Not c` |
-| `$FF`, `%1010` | native |
+| `$FF`, `%1010`, `0xFF`, `0b1010` | native |
 | `:` between statements | native |
 | `HRSOut`, `HRSIn`, `Toggle`, `Inc`, `Dec`, `DelayMS`, `DelayUS` | library or intrinsic with the same name where the behaviour matches |
 

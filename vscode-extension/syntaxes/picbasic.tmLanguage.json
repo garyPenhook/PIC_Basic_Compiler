@@ -98,11 +98,11 @@
    "patterns": [
     {
      "name": "constant.numeric.hex.picbasic",
-     "match": "\\$[0-9A-Fa-f]+\\b"
+     "match": "\\$[0-9A-Fa-f]+\\b|\\b0[xX][0-9A-Fa-f]+\\b"
     },
     {
      "name": "constant.numeric.binary.picbasic",
-     "match": "%[01]+\\b"
+     "match": "%[01]+\\b|\\b0[bB][01]+\\b"
     },
     {
      "name": "constant.character.picbasic",

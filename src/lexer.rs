@@ -62,6 +62,16 @@ pub fn is_end_asm(line: &str) -> bool {
     words.next() == Some("end") && words.next() == Some("asm")
 }
 
+/// `0x` / `0b` at `i` followed by at least one digit of that radix.
+fn prefixed_radix(chars: &[char], i: usize) -> Option<(u32, fn(char) -> bool)> {
+    let (radix, ok): (u32, fn(char) -> bool) = match chars.get(i + 1)? {
+        'x' | 'X' => (16, |d| d.is_ascii_hexdigit()),
+        'b' | 'B' => (2, |d| d == '0' || d == '1'),
+        _ => return None,
+    };
+    (chars.get(i) == Some(&'0') && chars.get(i + 2).is_some_and(|d| ok(*d))).then_some((radix, ok))
+}
+
 pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
     let chars: Vec<char> = src.chars().collect();
     let mut toks: Vec<Token> = Vec::new();
@@ -192,6 +202,20 @@ pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
                     None => toks.push(Token { tok: Tok::Ident(word), span: sp }),
                 }
             }
+            '0' if prefixed_radix(&chars, i).is_some() => {
+                let (radix, ok) = prefixed_radix(&chars, i).unwrap();
+                adv!();
+                adv!();
+                let st = i;
+                while i < chars.len() && ok(chars[i]) {
+                    adv!();
+                }
+                let text: String = chars[st..i].iter().collect();
+                match u64::from_str_radix(&text, radix) {
+                    Ok(v) => toks.push(Token { tok: Tok::Int(v), span: sp }),
+                    Err(_) => diags.error("E-LEX", sp, format!("integer `0{}{text}` is too large", if radix == 16 { 'x' } else { 'b' })),
+                }
+            }
             c if c.is_ascii_digit() => {
                 let st = i;
                 while i < chars.len() && chars[i].is_ascii_digit() {
@@ -262,6 +286,12 @@ pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
                     Some('%') => {
                         adv!();
                         (2, |d| d == '0' || d == '1')
+                    }
+                    Some('0') if prefixed_radix(&chars, i).is_some() => {
+                        let r = prefixed_radix(&chars, i).unwrap();
+                        adv!();
+                        adv!();
+                        r
                     }
                     _ => (10, |d| d.is_ascii_digit()),
                 };
@@ -335,4 +365,49 @@ fn continuation(chars: &[char], at: usize) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ints(src: &str) -> (Vec<u64>, bool) {
+        let mut d = Diagnostics::default();
+        let v = lex(0, src, &mut d)
+            .into_iter()
+            .filter_map(|t| if let Tok::Int(n) = t.tok { Some(n) } else { None })
+            .collect();
+        (v, d.has_errors())
+    }
+
+    #[test]
+    fn radix_prefixes_agree() {
+        let (v, err) = ints("$A5 0xA5 0Xa5 %101 0b101 0B101 10");
+        assert!(!err);
+        assert_eq!(v, [0xA5, 0xA5, 0xA5, 5, 5, 5, 10]);
+    }
+
+    #[test]
+    fn char_codes_take_prefixes() {
+        let mut d = Diagnostics::default();
+        let codes: Vec<u32> = lex(0, "#$41 #0x41 #0b1000001 #65", &mut d)
+            .into_iter()
+            .filter_map(|t| if let Tok::CharCode(n) = t.tok { Some(n) } else { None })
+            .collect();
+        assert!(!d.has_errors());
+        assert_eq!(codes, [65; 4]);
+    }
+
+    #[test]
+    fn bare_prefix_is_zero_then_identifier() {
+        let (v, err) = ints("0x 0b 0b2 0xg");
+        assert!(!err);
+        assert_eq!(v, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn oversized_literals_are_errors() {
+        assert!(ints("0x1FFFFFFFFFFFFFFFF").1);
+        assert!(ints(&format!("0b{}", "1".repeat(65))).1);
+    }
 }
