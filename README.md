@@ -47,12 +47,14 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 ## What works today
 
 **Language**
-* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), strings, arrays (with initialisers and program-memory `Const` tables), structures
+* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), `Float` (IEEE-754 binary32), strings, one-dimensional arrays (with initialisers and program-memory `Const` tables), structures
   and unions, constants.
 * Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
   short-circuit conditions.
 * `If`, `Select Case`, `While`, `Repeat`, `For` (with `Break`/`Continue`/`Exit`), `GoTo`.
-* Subroutines and functions with by-value, `ByRef` and `ByRefConst` parameters; modules and `Include`.
+* Subroutines and functions with by-value, `ByRef` and `ByRefConst` parameters; `Inline`/`NoInline`; modules and `Include`.
+* `Abs`, `Min`, `Max`, `Inc`/`Dec` (with an optional amount), `AddressOf` / `@`.
+* Preprocessor: `#define`, `#ifdef`, `#if` with `_clock` and `_device`.
 * Interrupt handlers (one or two priorities) with automatic context saving and `Save … Restore`
   blocks; `Enable`/`Disable`; event handlers.
 * Direct access to every device register and register bit by name, inline assembly, exact
@@ -67,16 +69,20 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
   routines' variables that are never live together, counted-loop forms and a peephole pass.
   Every test program is also built unoptimised (`-O0`) and checked to give the same results.
 
-**Library** (`docs/LIBRARY.md`)
+**Library** (`docs/LIBRARY.md`; `Float` support comes from `floatlib`, included automatically)
 
 | Module | What it gives you |
 |---|---|
+| `intosc` | sets the internal oscillator to `Clock` (just `Include` it) |
+| `system` | reset cause and clock check |
 | `gpio` | port set-up, pull-ups, open-drain |
 | `delay` | millisecond/microsecond/second delays |
 | `timer` | Timer0, Timer1 (external clock, gate, pulse measurement), Timer2 (hardware-limit and one-shot modes) |
 | `serial`, `serial2` | EUSART1 and EUSART2: send/receive bytes, strings and numbers |
 | `adc` | 10-bit ADC reads, averaging, millivolts, FVR reference (silicon errata worked around) |
 | `eeprom` | data EEPROM read/write (bytes and words) |
+| `i2c` | I2C host on MSSP1: write, read, register access, bus ping, bounded waits |
+| `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
 | `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), fill, contrast, invert, flip |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
@@ -84,15 +90,24 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 ## Still to do
 
 * **Library:** program-flash self-write; OLED pixel drawing and bitmaps (`Const` arrays now exist, so a bitmap font table is possible).
-* **Language:** `Inline` functions, overloading, reentrant functions, a few remaining
-  string and structure forms (the compiler reports these clearly rather than miscompiling),
-  structure initialisers, arrays of strings and multi-dimensional arrays, `#if` in the preprocessor.
+* **Language:** overloading, `Reentrant` routines (parsed, rejected by the back end), a few remaining
+  string and structure forms (the compiler reports these clearly rather than miscompiling them),
+  structure initialisers, arrays of strings and multi-dimensional arrays.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
-  Serial output, PWM waveforms, external timer inputs and the second EUSART are the main things
-  that need a hardware run.
-* **Tooling:** editor support (syntax highlighting, a build task), more golden-output tests.
+  Serial output, PWM waveforms, I2C and SPI traffic, external timer inputs and the second EUSART
+  are the main things that need a hardware run. `docs/MANUAL.md` Appendix B is the bench checklist.
 * **More devices:** only the PIC18F27Q10 is supported; each further device is added only after it
   passes its own tests.
+
+## Tools
+
+* **VS Code extension** (`vscode-extension/`): highlighting, snippets, keyword and register-name
+  case correction, formatting, diagnostics from `basicc --check`, outline, go to definition, hover,
+  completion, signature help, and Build / Check / Report commands.
+* **pic-config** (`tools/pic-config/`): a Qt 6 helper that turns drop-down choices into a `Config`
+  line (or XC8 `#pragma config` lines) to paste into a program. Changed settings are marked and
+  can be reverted one by one or all at once.
+* **devgen** (`tools/devgen/`): generates a device description (`devices/*.toml`) from a Microchip device pack and cross-checks it against numbers read from the data sheet.
 
 ## Using it
 
@@ -107,7 +122,7 @@ target/release/basicc prog.bas
 Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-check only), `-O0`
 (no optimisation).
 
-Documentation: language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
+Documentation: the user manual `docs/MANUAL.md` (also `docs/MANUAL.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
 diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
 `BASICC_MDB=1 cargo test --test backend` for the simulator suite.
