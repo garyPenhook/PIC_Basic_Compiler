@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { scan, caseEdits, indentLevels } = require('../src/scanner');
 const { parseSymbols, parseIncludes } = require('../src/symbols');
-const { CANONICAL } = require('../src/keywords');
+const { CANONICAL, ALIASES, TYPES } = require('../src/keywords');
+const { parseNames, deviceOf, loadNames, devicesAbove } = require('../src/devicenames');
 
 function fix(src) {
   const lines = src.split('\n');
@@ -19,6 +20,11 @@ const block = /pub const KEYWORDS: &\[&str\] = &\[([\s\S]*?)\];/.exec(lexer)[1];
 const rust = [...block.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
 assert.deepStrictEqual(CANONICAL.map((k) => k.toLowerCase()).sort(), rust, 'keywords.js differs from src/lexer.rs');
 
+const aliasBlock = /const TYPE_ALIASES[^=]*=\s*&\[([\s\S]*?)\];/.exec(lexer)[1];
+assert.deepStrictEqual([...aliasBlock.matchAll(/\("(\w+)",/g)].map((m) => m[1]).sort(), ALIASES.map((k) => k.toLowerCase()).sort(), 'ALIASES differs from TYPE_ALIASES in src/lexer.rs');
+assert.ok(ALIASES.every((k) => TYPES.has(k)));
+assert.strictEqual(fix('dim a as sbyte, b as sword, c as dword'), 'Dim a As SByte, b As SWord, c As Dword');
+
 // Basic correction.
 assert.strictEqual(fix('dim x as byte'), 'Dim x As Byte');
 assert.strictEqual(fix('IF a THEN\nendif'), 'If a Then\nEndIf');
@@ -26,6 +32,26 @@ assert.strictEqual(fix('end if'), 'End If');
 assert.strictEqual(fix('dim a as longword'), 'Dim a As LongWord');
 assert.strictEqual(fix('delayms(5)'), 'DelayMs(5)');
 assert.strictEqual(fix('goto done'), 'GoTo done');
+// Device register and bit names.
+const devNames = loadNames('PIC18F27Q10', devicesAbove(__dirname));
+assert.ok(devNames && devNames.get("lata") === "LATA" && devNames.get("lata0") === 'LATA0', 'device names load');
+assert.strictEqual(deviceOf(scan('Program T\nDevice = 18F27Q10')), '18F27Q10');
+assert.strictEqual(deviceOf(scan("device = pic18f27q10 ' x")), 'pic18f27q10');
+assert.strictEqual(deviceOf(scan('Dim device2 As Byte')), null);
+const fixd = (src) => {
+  const lines = src.split('\n');
+  for (const e of caseEdits(scan(src), devNames).sort((a, b) => b.line - a.line || b.s - a.s)) lines[e.line] = lines[e.line].slice(0, e.s) + e.text + lines[e.line].slice(e.e);
+  return lines.join('\n');
+};
+assert.strictEqual(fixd("lata = 0 ' set all port A pins low"), "LATA = 0 ' set all port A pins low");
+assert.strictEqual(fixd('trisb = 0 : portb.0 = 1'), 'TRISB = 0 : PORTB.0 = 1');
+assert.strictEqual(fixd('lata.lata0 = 1'), 'LATA.LATA0 = 1');
+assert.strictEqual(fixd('dim led as lata.0'), 'Dim led As LATA.0');
+assert.strictEqual(fixd('x.lata = 1'), 'x.lata = 1'); // a field of something else
+assert.strictEqual(fixd('dim lata as byte\nlata = 1'), 'Dim lata As Byte\nlata = 1'); // the program's own name wins
+assert.strictEqual(fixd('print "lata"'), 'print "lata"');
+assert.strictEqual(fixd('config lvp = on'), 'Config lvp = on');
+assert.strictEqual(fixd('lata = 0'), fixd(fixd('lata = 0'))); // idempotent
 // Left alone: identifiers, strings, comments, literals, members, config values, asm, preprocessor.
 assert.strictEqual(fix('dimension = 1'), 'dimension = 1');
 assert.strictEqual(fix('x = _Clock'), 'x = _Clock');

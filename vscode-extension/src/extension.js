@@ -6,7 +6,8 @@ const cp = require('child_process');
 
 const { scan, caseEdits, indentLevels } = require('./scanner');
 const { parseSymbols, parseIncludes } = require('./symbols');
-const { CANONICAL, KEYWORDS, TYPES, DOCS } = require('./keywords');
+const { CANONICAL, ALIASES, KEYWORDS, TYPES, DOCS } = require('./keywords');
+const { deviceOf, loadNames, devicesAbove } = require('./devicenames');
 
 const LANG = 'picbasic';
 const cfg = () => vscode.workspace.getConfiguration('picbasic');
@@ -16,8 +17,30 @@ const cfg = () => vscode.workspace.getConfiguration('picbasic');
 const toRange = (e) => new vscode.Range(e.line, e.s, e.line, e.e);
 const toEdit = (e) => vscode.TextEdit.replace(toRange(e), e.text);
 
+/** Register and bit names of the document's `Device`, or undefined when off or not found. */
+function deviceNames(doc, lines) {
+  if (!cfg().get('autoCorrectDeviceNames')) return undefined;
+  const device = deviceOf(lines);
+  if (!device) return undefined;
+  const dirs = [];
+  const extra = cfg().get('devicesPath');
+  if (extra) dirs.push(extra);
+  if (doc.uri.scheme === 'file') dirs.push(...devicesAbove(path.dirname(doc.uri.fsPath)));
+  for (const f of vscode.workspace.workspaceFolders || []) dirs.push(path.join(f.uri.fsPath, 'devices'));
+  // A development build lives in <repo>/target/<profile>/basicc, next to <repo>/devices.
+  const exe = cfg().get('compilerPath');
+  if (exe && path.isAbsolute(exe)) dirs.push(...devicesAbove(path.dirname(exe)));
+  return loadNames(device, dirs) || undefined;
+}
+
+/** Keyword and device-name corrections for a whole document. */
+function docCaseEdits(doc, lines) {
+  lines = lines || scan(doc.getText());
+  return caseEdits(lines, deviceNames(doc, lines));
+}
+
 function allCaseEdits(doc) {
-  return caseEdits(scan(doc.getText())).map(toEdit);
+  return docCaseEdits(doc).map(toEdit);
 }
 
 let applying = false;
@@ -41,7 +64,7 @@ function onTyped(ev) {
   }
   if (lines.size === 0) return;
 
-  const edits = caseEdits(scan(doc.getText())).filter((e) => lines.has(e.line));
+  const edits = docCaseEdits(doc).filter((e) => lines.has(e.line));
   // Only a word that ends at or before the typed separator; never one the cursor is inside.
   const sel = editor.selections.map((s) => s.active);
   const safe = edits.filter((e) => !sel.some((p) => p.line === e.line && p.character > e.s && p.character < e.e));
@@ -57,7 +80,7 @@ function onTyped(ev) {
 function formatEdits(doc, options) {
   const text = doc.getText();
   const lines = scan(text);
-  const edits = caseEdits(lines).map(toEdit);
+  const edits = docCaseEdits(doc, lines).map(toEdit);
   if (cfg().get('formatIndentation')) {
     const unit = options.insertSpaces ? ' '.repeat(options.tabSize) : '\t';
     const levels = indentLevels(lines);
@@ -265,7 +288,7 @@ const completion = {
     const prefix = doc.lineAt(pos.line).text.slice(0, pos.character);
     if (/'|\/\/|"[^"]*$/.test(prefix)) return []; // comment or string
     const items = [];
-    for (const k of CANONICAL) {
+    for (const k of CANONICAL.concat(ALIASES)) {
       const it = new vscode.CompletionItem(k, TYPES.has(k) ? CK.TypeParameter : CK.Keyword);
       it.documentation = DOCS[k] && new vscode.MarkdownString(DOCS[k]);
       it.sortText = '2' + k;
@@ -442,11 +465,11 @@ function activate(ctx) {
   reg(vscode.commands.registerCommand('picbasic.fixKeywordCase', () => {
     const ed = vscode.window.activeTextEditor;
     if (!ed || ed.document.languageId !== LANG) return;
-    const edits = caseEdits(scan(ed.document.getText()));
+    const edits = docCaseEdits(ed.document);
     applying = true;
     ed.edit((b) => edits.forEach((e) => b.replace(toRange(e), e.text))).then(() => {
       applying = false;
-      vscode.window.setStatusBarMessage(`PIC BASIC: ${edits.length} keyword(s) corrected`, 3000);
+      vscode.window.setStatusBarMessage(`PIC BASIC: ${edits.length} name(s) corrected`, 3000);
     });
   }));
   for (const mode of ['check', 'build', 'report']) {

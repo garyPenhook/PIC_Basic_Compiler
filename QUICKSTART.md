@@ -48,7 +48,7 @@ Wend
   `RSTOSC = HFINTOSC_64MHZ` starts the part at 64 MHz, so use `Clock = 64`. For another speed add
   `CSWEN = ON` to `Config` and `Include "intosc"` (it sets the oscillator to `Clock`), or write `OSCFRQ` yourself.
   See `docs/CLOCK.md`. A mismatch gives the warning `W-CLOCK`.
-* Keywords are case-insensitive; the VS Code extension rewrites them to `Dim`, `While`, ….
+* Keywords are case-insensitive; the VS Code extension rewrites them to `Dim`, `While`, …, and with a `Device` line it also rewrites register and bit names to the device file's spelling (`lata` becomes `LATA`).
 
 ## 4. Compile
 
@@ -86,7 +86,7 @@ See `docs/LIBRARY.md` for every module and `docs/LANGUAGE.md` for the language.
 
 ```
 cd vscode-extension && npm test && npx @vscode/vsce package
-code --install-extension picbasic-0.1.0.vsix
+code --install-extension picbasic-0.1.1.vsix
 ```
 
 Highlighting, keyword case correction, formatting, error squiggles from `basicc --check`, go to

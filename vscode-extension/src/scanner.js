@@ -155,24 +155,47 @@ function code(line) {
 
 const lower = (t) => (t && t.t === 'word' ? t.text.toLowerCase() : '');
 
+// Words after these name something the program declares, which then shadows a device name.
+const DECLARERS = new Set(['dim', 'const', 'symbol', 'sub', 'function', 'proc', 'event', 'interrupt', 'structure']);
+
 /**
- * Edits that put every reserved word in its canonical spelling.
+ * Edits that put every reserved word in its canonical spelling, and, given `names` (lower-case to
+ * canonical, from the device description), every register and bit name too. A name the program
+ * declares itself is left as typed.
  * Returns [{ line, s, e, text }] (0-based line, column offsets).
  */
-function caseEdits(lines) {
+function caseEdits(lines, names) {
   const edits = [];
+  const own = new Set();
+  if (names) {
+    for (const line of lines) {
+      if (line.raw) continue;
+      const toks = code(line);
+      toks.forEach((t, i) => {
+        if (t.t === 'word' && !t.member && DECLARERS.has(t.text.toLowerCase()) && toks[i + 1] && toks[i + 1].t === 'word') own.add(toks[i + 1].text.toLowerCase());
+      });
+    }
+  }
   lines.forEach((line, ln) => {
     if (line.raw) return;
     const toks = code(line);
     let inConfig = false; // after `Config`, words are setting names and values, not keywords
-    for (const tok of toks) {
+    toks.forEach((tok, ti) => {
       if (tok.t === 'punct' && tok.text === ':') inConfig = false;
-      if (tok.t !== 'word' || tok.member) continue;
-      const canon = KEYWORDS.get(tok.text.toLowerCase());
-      if (inConfig || !canon) continue;
+      if (tok.t !== 'word') return;
+      const low = tok.text.toLowerCase();
+      if (tok.member) {
+        // `lata.lata0`: a bit of a register is corrected only after a device name.
+        const owner = toks[ti - 2];
+        const canonBit = names && !inConfig && owner && owner.t === 'word' && names.has(owner.text.toLowerCase()) && !own.has(owner.text.toLowerCase()) ? names.get(low) : undefined;
+        if (canonBit && tok.text !== canonBit) edits.push({ line: ln, s: tok.s, e: tok.e, text: canonBit });
+        return;
+      }
+      const canon = KEYWORDS.get(low) || (names && !own.has(low) ? names.get(low) : undefined);
+      if (inConfig || !canon) return;
       if (canon === 'Config' && tok.stmtStart) inConfig = true;
       if (tok.text !== canon) edits.push({ line: ln, s: tok.s, e: tok.e, text: canon });
-    }
+    });
   });
   return edits;
 }

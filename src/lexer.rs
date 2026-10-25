@@ -39,7 +39,11 @@ pub const KEYWORDS: &[&str] = &[
     "declare", "do", "endproc", "exitproc", "loop", "proc", "symbol",
 ];
 
+/// Positron type names, read as the native type of the same width and signedness (`LANGUAGE.md` §14).
+const TYPE_ALIASES: &[(&str, &str)] = &[("sbyte", "shortint"), ("sword", "integer"), ("dword", "longword")];
+
 pub fn keyword(lower: &str) -> Option<&'static str> {
+    let lower = TYPE_ALIASES.iter().find(|(a, _)| *a == lower).map_or(lower, |(_, k)| k);
     KEYWORDS.iter().find(|k| **k == lower).copied()
 }
 

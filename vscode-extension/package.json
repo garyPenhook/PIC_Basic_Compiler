@@ -2,7 +2,7 @@
   "name": "picbasic",
   "displayName": "PIC BASIC (basicc)",
   "description": "Language support for the basicc PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "garypenhook",
   "license": "UNLICENSED",
   "engines": { "vscode": "^1.80.0" },
@@ -36,6 +36,8 @@
         "picbasic.compilerArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra arguments for every basicc run (for example [\"-L\", \"/path/lib\", \"--pic-as\", \"/path/pic-as\"])." },
         "picbasic.autoCorrectKeywords": { "type": "boolean", "default": true, "description": "Correct the case of a reserved word as soon as it is typed (dim becomes Dim)." },
         "picbasic.fixKeywordCaseOnSave": { "type": "boolean", "default": true, "description": "Correct the case of all reserved words when a file is saved." },
+        "picbasic.autoCorrectDeviceNames": { "type": "boolean", "default": true, "description": "Also correct the case of register and bit names from the device description (lata becomes LATA). The device comes from the program's `Device` line." },
+        "picbasic.devicesPath": { "type": "string", "default": "", "description": "Directory holding the device descriptions (for example 18F27Q10.toml). Empty: the nearest `devices` folder above the file, then the workspace and the compiler's own folder." },
         "picbasic.formatIndentation": { "type": "boolean", "default": true, "description": "Formatting also re-indents blocks and trims trailing whitespace." },
         "picbasic.diagnostics": { "type": "string", "enum": ["off", "onSave", "onType"], "default": "onSave", "description": "When to run `basicc --check` for error and warning squiggles. onType checks a temporary copy shortly after typing stops." }
       }

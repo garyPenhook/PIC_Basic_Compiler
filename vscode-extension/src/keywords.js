@@ -17,9 +17,13 @@ const CANONICAL = [
   'Declare', 'Do', 'EndProc', 'ExitProc', 'Loop', 'Proc', 'Symbol',
 ];
 
-const KEYWORDS = new Map(CANONICAL.map((k) => [k.toLowerCase(), k]));
+// Positron type names the lexer reads as a native type (TYPE_ALIASES in ../src/lexer.rs). They are
+// not in the compiler's KEYWORDS list, so they are kept apart from CANONICAL.
+const ALIASES = ['SByte', 'SWord', 'Dword'];
 
-const TYPES = new Set(['Bit', 'Boolean', 'Byte', 'Char', 'Float', 'Integer', 'LongInt', 'LongWord', 'ShortInt', 'String', 'Word']);
+const KEYWORDS = new Map(CANONICAL.concat(ALIASES).map((k) => [k.toLowerCase(), k]));
+
+const TYPES = new Set(['SByte', 'SWord', 'Dword', 'Bit', 'Boolean', 'Byte', 'Char', 'Float', 'Integer', 'LongInt', 'LongWord', 'ShortInt', 'String', 'Word']);
 
 // Short descriptions for hover and completion.
 const DOCS = {
@@ -108,6 +112,9 @@ const DOCS = {
   Wend: 'Closes a `While` loop.',
   While: '`While cond` … `Wend`.',
   Word: 'Unsigned 16-bit integer.',
+  SByte: 'Signed 8-bit integer (Positron spelling of `ShortInt`).',
+  SWord: 'Signed 16-bit integer (Positron spelling of `Integer`).',
+  Dword: 'Unsigned 32-bit integer (Positron spelling of `LongWord`).',
   Xor: 'Exclusive or.',
   Declare: 'Positron-style header, e.g. `Declare Xtal = 8`.',
   Do: '`Do [While|Until cond]` … `Loop [While|Until cond]`.',
@@ -118,4 +125,4 @@ const DOCS = {
   Symbol: '`Symbol Name = value` — alias or constant.',
 };
 
-module.exports = { CANONICAL, KEYWORDS, TYPES, DOCS };
+module.exports = { CANONICAL, ALIASES, KEYWORDS, TYPES, DOCS };
