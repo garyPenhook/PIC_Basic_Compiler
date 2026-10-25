@@ -6,3 +6,4 @@
 *.elf
 # vendor manuals are for personal reference only: never commit them
 *.pdf
+!docs/MANUAL.pdf

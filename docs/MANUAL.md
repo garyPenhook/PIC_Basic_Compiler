@@ -483,28 +483,54 @@ and `_device` exist in `#if`. Directives inside `(* *)` or `{ }` comments are ig
 
 # 2. Language commands
 
-Entries are alphabetical. In the syntax lines `[x]` is optional, `{x}` is repeated.
+Entries are alphabetical. In the syntax lines `[x]` is optional and `{x}` is repeated. Every command
+is written with parentheses where it takes arguments (`High(led)`, not `High led`). Keywords are
+case-insensitive. The examples are fragments that assume the program header
+
+```basic
+Program Demo
+Device = 18F27Q10
+Clock = 16
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, CSWEN = ON, WDTE = OFF, LVP = ON
+Include "intosc"
+```
+
+followed by the lines shown. `Dim` lines come first, as the language requires.
+
+**Not yet working in the back end.** `Abs` (integers), `Min`, `Max`, `AddressOf` and `@` are accepted by
+the parser and type checker, but the code generator only handles them when it can fold them at compile
+time (constant arguments, or `Abs` of a `Float`). With a variable operand the build stops with
+`E-BACKEND: the intrinsic ... is not supported by the back end yet`. Each entry says which forms work.
+
+---
 
 ## Abs
 
 **Syntax**
 ```basic
-Result = Abs(value)
+result = Abs(value)
 ```
-**Overview** Absolute value of a constant, variable or expression. Works on every signed integer type
-and on `Float` (clears the sign bit).
+**Overview** Absolute value of a constant, a `Float`, or (see Notes) an integer expression.
 
-**Parameters** `value` is any numeric expression. The result has the type of `value`.
+**Parameters** `value` is a numeric expression. The result has the type of `value`.
 
-**Example**
+**Example 1** A `Float`: the sign bit is cleared.
 ```basic
-Dim a As Integer
-Dim b As Integer
-a = -1234
-b = Abs(a)              ' 1234
+Dim f As Float
+Dim g As Float
+f = -2.5
+g = Abs(f)                ' 2.5
 ```
-**Notes** Like Positron8, wrap functions inside larger expressions in parentheses for clarity:
-`x = (Abs(a)) + 1`. `Abs(-32768)` of an `Integer` overflows as in any two's-complement system.
+**Example 2** A constant is folded at compile time.
+```basic
+Dim b As Integer
+b = Abs(-1234)            ' 1234
+```
+**Notes** `Abs` of an integer **variable** is `E-BACKEND` in 0.1.6. As a workaround test the sign:
+`If a < 0 Then b = -a` written as a block. `Abs(-32768)` of an `Integer` overflows, as in any
+two's-complement system.
+
+**See also** `Min`, `Max`.
 
 ## AddressOf  (and `@`)
 
@@ -514,25 +540,34 @@ p = AddressOf(item)
 p = @item
 ```
 **Overview** Address of a variable, array or routine. The type is `Word` for RAM objects and
-`LongWord` for `Const` arrays and routines.
+`LongWord` for `Const` arrays and routines. The argument must be a variable, array or routine
+(`E-ADDR` otherwise).
 
-**Notes** The argument must be a variable, array or routine (`E-ADDR`).
+**Notes** **Not usable in 0.1.6**: the back end rejects both spellings with `E-BACKEND`. Use `Asm`
+with the symbol name if you need an address (names are in the `.map` file).
 
 ## Asm ... End Asm
 
 **Syntax**
 ```basic
 Asm [Preserves(W, STATUS, BSR)]
-    movlw 0x55            ; pic-as syntax
-    xorwf PORTB, f, c
+    instruction ...
 End Asm
 ```
 **Overview** Raw `pic-as` source, passed through unchanged. The compiler assumes the block changes
-`WREG`, `STATUS` and `BSR` unless the optional `Preserves(...)` says otherwise, and will not move its
-own code across it. A variable that is used only inside `Asm` still gets storage. Variables are
-referred to by their emitted symbol names (see `docs/ABI.md`; the names are in the `.S` and `.map`
-files).
+`WREG`, `STATUS` and `BSR` unless `Preserves(...)` says otherwise, and will not move its own code across
+it. A variable used only inside `Asm` still gets storage. Variables are referred to by their emitted
+symbol names (see `docs/ABI.md`; the names are in the `.S` and `.map` files).
 
+**Parameters** `Preserves(...)` is optional and lists the registers the block leaves unchanged.
+
+**Example**
+```basic
+Asm Preserves(W, STATUS, BSR)
+    nop
+    nop
+End Asm
+```
 **Notes** Comments inside the block are assembler comments (`;`). The block ends at a line holding
 `End Asm`. Stack use of `call` in raw `Asm` is counted by the `E-STACK` check.
 
@@ -543,14 +578,38 @@ files).
 n = Bound(array)
 ```
 **Overview** Highest valid index of an array. For a declared array it is a constant (`Dim a(5)` gives
-4). For an array **parameter** it is a run-time `Word`.
+4, because an array of 5 has indexes 0..4). For an array **parameter** it is a run-time `Word`.
+
+**Example**
+```basic
+Dim a(5) As Byte
+Dim i As Byte
+For i = 0 To Bound(a)
+    a(i) = i
+Next
+```
+**See also** `For ... Next`, `Clear`.
 
 ## Break
 
-**Syntax** `Break`
-
+**Syntax**
+```basic
+Break
+```
 **Overview** Leaves the innermost `For`, `While`, `Repeat` or `Do` loop. Outside a loop it is an error
 (`E-LOOP`).
+
+**Example**
+```basic
+Dim x As Byte
+While True
+    Inc(x)
+    If x > 3 Then
+        Break
+    EndIf
+Wend
+```
+**See also** `Continue`, `Exit`.
 
 ## Clear
 
@@ -560,11 +619,35 @@ Clear(variable)
 ```
 **Overview** Sets a variable, array, string or structure to zero.
 
+**Example**
+```basic
+Dim a(4) As Byte
+Dim w As Word
+Clear(a)
+Clear(w)
+```
+
 ## Continue
 
-**Syntax** `Continue`
+**Syntax**
+```basic
+Continue
+```
+**Overview** Jumps to the next iteration of the innermost loop (`E-LOOP` outside a loop). In a `For`
+loop the variable is stepped first.
 
-**Overview** Jumps to the next iteration of the innermost loop (`E-LOOP` outside a loop).
+**Example**
+```basic
+Dim i As Byte
+Dim n As Byte
+For i = 0 To 9
+    If i = 5 Then
+        Continue
+    EndIf
+    Inc(n)
+Next
+```
+**See also** `Break`.
 
 ## Dec
 
@@ -572,8 +655,21 @@ Clear(variable)
 ```basic
 Dec(variable)
 ```
-**Overview** Subtract one from a variable (integer types, array elements, structure fields).
-Not available for `Float`.
+**Overview** Subtract one from an integer variable, array element or structure field. Not for `Float`.
+On an array element with a run-time index the index is evaluated twice.
+
+**Parameters** `variable` is the item to decrement. Positron8's second argument (`Dec Var, Amount`) is
+**not** accepted (`E-ARGS`); write `x = x - amount`.
+
+**Example**
+```basic
+Dim n As Byte
+n = 10
+Repeat
+    Dec(n)
+Until n = 0
+```
+**See also** `Inc`.
 
 ## DelayMS / DelayUS
 
@@ -600,8 +696,9 @@ While True
 Wend
 ```
 **Notes** Interrupts lengthen a delay. The simulator suite checks exact cycle counts (for example
-1,600, 16,000 and 8,000,000 cycles for the test delays). Keywords are case-insensitive, so `DelayMs`
-and `DelayMS` are the same word. `DelaySeconds` is in the `delay` module.
+1,600, 16,000 and 8,000,000 cycles for the test delays). `DelaySeconds` is in the `delay` module.
+
+**See also** `Clock` (section 1), `delay` module.
 
 ## Disable / Enable
 
@@ -610,8 +707,27 @@ and `DelayMS` are the same word. `DelaySeconds` is in the `delay` module.
 Enable(HandlerName)
 Disable(HandlerName)
 ```
-**Overview** `Enable` assigns the handler to its vector and sets the global interrupt bits; `Disable`
-clears them. See *Interrupts*. Enabling two handlers of the same priority is an error (`E-ENABLE`).
+**Overview** `Enable` assigns the handler to its vector and sets the global interrupt bits (`GIE/GIEH`,
+`PEIE/GIEL`); `Disable` clears them. They do not enable a particular source: set its `PIEx` bit
+yourself. Enabling two handlers of the same priority is an error (`E-ENABLE`).
+
+**Example**
+```basic
+Dim ticks As Byte
+Sub Count()
+    Inc(ticks)
+End Sub
+Interrupt Tick()
+    Save(0, Count)
+        Count()
+    Restore
+    ' clear the flag of your interrupt source here
+End Interrupt
+' set up the source and its PIEx enable bit first (the timer module has TimerNEnableInterrupt)
+Enable(Tick)
+Disable(Tick)
+```
+**See also** *Interrupts, events and context saving* (section 1), `Save`.
 
 ## Do ... Loop  (Positron form)
 
@@ -626,15 +742,45 @@ Do Until condition ... Loop
 Do ... Loop While condition
 Do ... Loop Until condition
 ```
-**Overview** Accepted as spellings of `While`/`Repeat`:
-`Do...Loop` = `While True`; `Do While c` = `While c`; `Do Until c` = `While Not c`;
-`Loop While c` = `Repeat ... Until Not c`; `Loop Until c` = `Repeat ... Until c`.
+**Overview** Accepted as spellings of `While`/`Repeat`: `Do...Loop` = `While True`; `Do While c` =
+`While c`; `Do Until c` = `While Not c`; `Loop While c` = `Repeat ... Until Not c`; `Loop Until c` =
+`Repeat ... Until c`.
+
+**Example**
+```basic
+Dim x As Byte
+Do
+    Inc(x)
+Loop Until x > 3
+Do While x > 0
+    Dec(x)
+Loop
+```
+**See also** `While`, `Repeat`.
 
 ## Exit / ExitProc
 
-**Syntax** `Exit`   (Positron: `ExitProc`)
+**Syntax**
+```basic
+Exit
+ExitProc                     ' Positron spelling
+```
+**Overview** Leaves the current `Sub`, `Function` or `Proc`. For a `Function` the current `Result` is
+returned.
 
-**Overview** Leaves the current Sub or Function. For a Function the current `Result` is returned.
+**Example**
+```basic
+Function Clamp(ByVal a As Byte) As Byte
+    Result = 100
+    If a >= 100 Then
+        Exit
+    EndIf
+    Result = a
+End Function
+Dim x As Byte
+x = Clamp(42)
+```
+**See also** `Break`.
 
 ## For ... Next ... Step
 
@@ -644,22 +790,27 @@ For variable = start To end [Step constant]
     ...
 Next
 ```
-**Overview** `variable` must be an integer variable (not `Float`, not a Bit). `end` is evaluated once.
-`Step` must be a constant (negative counts down). After a loop that ran, the variable holds the last
-value it took. The variable must not be changed inside the loop (`E-LOOPVAR`). A `Byte` loop to 255 is
-safe (it does not wrap forever).
+**Overview** `variable` must be an integer variable (not `Float`, not a bit). `end` is evaluated once.
+`Step` must be a constant; a negative `Step` counts down. After a loop that ran, the variable holds
+the last value it took. The variable must not be changed inside the loop (`E-LOOPVAR`). A `Byte`
+loop to 255 is safe (it does not wrap forever).
 
-**Example**
+**Example 1**
 ```basic
 Dim i As Byte
 Dim a(8) As Byte
 For i = 0 To Bound(a)
     a(i) = i * 2
 Next
+```
+**Example 2** Counting down by two.
+```basic
+Dim i As Byte
 For i = 10 To 0 Step -2
     DelayMS(1)
 Next
 ```
+**See also** `Break`, `Continue`, `Bound`.
 
 ## GoTo
 
@@ -668,8 +819,17 @@ Next
 GoTo label
 If condition GoTo label
 ```
-**Overview** Jump to a label in the same routine. `GoSub`/`Return`, `Call` and computed `On GoTo` are not
-supported.
+**Overview** Jump to a label in the same routine. A label is a name followed by a colon at the start
+of a line. `GoSub`/`Return`, `Call` and computed `On GoTo` are not supported.
+
+**Example**
+```basic
+Dim x As Byte
+Again:
+Inc(x)
+If x < 5 GoTo Again
+```
+**Notes** `GoTo` and labels are not allowed inside a `Save` block.
 
 ## High / Low / Toggle / Input / Output
 
@@ -681,25 +841,27 @@ Toggle(bit)       ' invert
 Input(bit)        ' make an input (TRIS = 1)
 Output(bit)       ' make an output (TRIS = 0)
 ```
-**Overview** `bit` is a `Bit`/`Boolean` variable or alias, or a register bit such as `PORTB.4` or an
-alias `LED`. `High`/`Low`/`Toggle` act on the **latch** (`LATx`), and `Input`/`Output` on `TRISx`,
-so a pin set high is not disturbed by read-modify-write of other pins (verified in the generated
-assembly: `High(led)` on `PORTB.0` gives `bsf LATB,0`). To set a whole port direction or value, write the
-register: `TRISB = 0`, `LATB = $FF`.
+**Overview** `bit` is a `Bit`/`Boolean` variable or alias, or a register bit such as `PORTB.4`. `High`,
+`Low` and `Toggle` act on the **latch** (`LATx`), and `Input`/`Output` on `TRISx`, so a pin set high is
+not disturbed by read-modify-write of other pins (`High(led)` on `PORTB.0` generates `bsf LATB,0`).
+To set a whole port direction or value, write the register: `TRISB = 0`, `LATB = $FF`.
 
 **Example**
 ```basic
-Dim LED As PORTB.0
-ANSELB = 0               ' pins reset to analog; make port B digital
-Output(LED)
-High(LED)
-Toggle(LED)
-If LED = 1 Then          ' a bit alias is compared, not used bare
-    Low(LED)
+Dim led As PORTB.0
+GpioAllDigital()          ' needs Include "gpio"; or write ANSELB = 0
+Output(led)
+High(led)
+Toggle(led)
+If led = 1 Then           ' a bit alias is compared, not used bare
+    Low(led)
 EndIf
 ```
-**Notes** Parentheses are required: `High LED` and `High 1` (pin numbers) are **not** accepted. Pin
-numbers for the library routines are 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16).
+**Notes** Parentheses are required: `High LED` and `High 1` (pin numbers) are **not** accepted. Pins
+reset to analog, so make them digital first. Pin numbers for the library routines are 0..23 (`RA0` = 0,
+`RB0` = 8, `RC0` = 16).
+
+**See also** `gpio` module.
 
 ## If ... Then ... ElseIf ... Else ... EndIf
 
@@ -715,9 +877,21 @@ EndIf
 
 If condition GoTo label
 ```
-**Overview** The condition must be Boolean (`E-COND`); `And`/`Or` short-circuit. Bit aliases are
+**Overview** The condition must be Boolean (`E-COND`); `And` and `Or` short-circuit. Bit aliases are
 compared: `If led = 1 Then`.
 
+**Example**
+```basic
+Dim x As Byte
+x = 7
+If x < 5 Then
+    x = 0
+ElseIf x < 10 Then
+    x = 1
+Else
+    x = 2
+EndIf
+```
 **Notes** The single-line form `If x Then y = 2` is rejected with a message; use a block or
 `If c GoTo label`.
 
@@ -730,6 +904,20 @@ Inc(variable)
 **Overview** Add one to an integer variable, array element or structure field. Not for `Float`. On an
 array element with a run-time index the index is evaluated twice.
 
+**Parameters** `variable` is the item to increment. Positron8's second argument (`Inc Var, Amount`) is
+**not** accepted (`E-ARGS`); write `x = x + amount`.
+
+**Example**
+```basic
+Dim n As Byte
+Repeat
+    Inc(n)
+Until n > 10
+```
+The loop above is the equivalent of `For n = 1 To 10`.
+
+**See also** `Dec`.
+
 ## Min / Max
 
 **Syntax**
@@ -737,8 +925,18 @@ array element with a run-time index the index is evaluated twice.
 r = Min(a, b)
 r = Max(a, b)
 ```
-**Overview** Smaller / larger of two integers. Integers only (`E-TYPE` for Float). The result has the
-common type of the two arguments.
+**Overview** Smaller / larger of two integers (`E-TYPE` for `Float`). The result has the common type
+of the two arguments.
+
+**Example**
+```basic
+Dim r As Byte
+r = Max(3, 9)             ' 9, folded at compile time
+```
+**Notes** With a **variable** operand both are `E-BACKEND` in 0.1.6; only constant arguments build.
+Workaround: `If a > b Then r = a Else r = b` written as a block.
+
+**See also** `Abs`.
 
 ## Repeat ... Until
 
@@ -748,7 +946,16 @@ Repeat
     ...
 Until condition
 ```
-**Overview** Body runs at least once; ends when the condition is true.
+**Overview** The body runs at least once; the loop ends when the condition is true.
+
+**Example**
+```basic
+Dim x As Byte
+Repeat
+    Inc(x)
+Until x = 3
+```
+**See also** `While`, `Do`.
 
 ## Save ... Restore
 
@@ -758,9 +965,28 @@ Save(item {, item})
     ...
 Restore
 ```
-**Overview** Preserves the named variables, routines' storage (including what those routines call) and,
-with `0`, the compiler's working registers around the block. Required around any call made from an
-interrupt handler. See *Interrupts*.
+**Overview** Preserves the named variables, routines' storage (including what those routines call)
+and, with `0`, the compiler's working registers around the block. Required around any call made from
+an interrupt handler (otherwise `E-ISR-CALL`).
+
+**Parameters** Each `item` is a variable, a routine, or `0`.
+
+**Example**
+```basic
+Dim count As Byte
+Sub Bump()
+    Inc(count)
+End Sub
+Interrupt Tick()
+    Save(0, Bump)
+        Bump()
+    Restore
+End Interrupt
+```
+**Notes** `Exit`, `Break` and `Continue` inside a `Save` block restore first; `GoTo` and labels inside
+it are not supported.
+
+**See also** *Interrupts, events and context saving* (section 1).
 
 ## Select ... Case ... EndSelect
 
@@ -779,18 +1005,44 @@ Select expression
         ...
 EndSelect
 ```
-**Overview** `Select` takes an integer expression. Case values are constants; they can be a list, a
+**Overview** `Select` takes an integer expression. Case values are constants; a case can be a list, a
 range (`lo To hi`) or a relation (`< v`, `> v`, ...). Overlapping cases are an error
 (`E-CASE-OVERLAP`); an `Else` that can never run is the warning `W-CASE-ELSE`.
 
+**Example**
+```basic
+Dim x As Byte
+x = 7
+Select x
+    Case 1
+        x = 10
+    Case 2, 3
+        x = 20
+    Case 5 To 9
+        x = 30
+    Case > 100
+        x = 40
+    Case Else
+        x = 0
+EndSelect
+```
 **Notes** The Positron form `Select Case x` is **not** accepted: write `Select x`. Strings and
-Floats cannot be selected on.
+`Float`s cannot be selected on.
 
 ## Terminate
 
-**Syntax** `Terminate()`
-
+**Syntax**
+```basic
+Terminate()
+```
 **Overview** Stops the program: it falls into the halt loop (a self-branch).
+
+**Example**
+```basic
+Dim x As Byte
+x = 1
+Terminate()
+```
 
 ## While ... Wend
 
@@ -800,65 +1052,164 @@ While condition
     ...
 Wend
 ```
-**Overview** Test first. `While True ... Wend` is the usual main loop.
+**Overview** The condition is tested first. `While True ... Wend` is the usual main loop.
+
+**Example**
+```basic
+Dim led As PORTB.0
+ANSELB = 0
+Output(led)
+While True
+    Toggle(led)
+    DelayMS(250)
+Wend
+```
+**See also** `Repeat`, `Do`, `Break`.
 
 ---
 
 # 3. Library modules
 
-Modules are in `lib/` and loaded with `Include "name"`. Call as `Module.Routine(...)` or by the
-bare routine name when unambiguous. Only the routines a program calls are linked. All modules
-cite the PIC18F27Q10 data sheet (DS40002043F) and errata (DS80000832G) for their register values.
+Modules are in `lib/` and loaded with `Include "name"`. Call as `Module.Routine(...)` or by the bare
+routine name when unambiguous. **A routine is only known after its module is included**: without
+`Include "gpio"`, `GpioAllDigital()` is `E-UNDECLARED`. Only the routines a program calls are linked.
+All modules cite the PIC18F27Q10 data sheet (DS40002043F) and errata (DS80000832G) for their register
+values.
+
+Each entry below has a **Syntax**, an **Overview**, **Parameters**, what it **Returns** (functions),
+and a short **Example**. The examples are fragments: they assume the program header
+
+```basic
+Program Demo
+Device = 18F27Q10
+Clock = 16
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, CSWEN = ON, WDTE = OFF, LVP = ON
+Include "intosc"
+```
+
+followed by the `Include` named in the module heading, and then the lines shown. `Dim` lines come
+first, as the language requires.
 
 **Common rules**
 
 * **Pins** are given by number: `RA0..RA7` = 0..7, `RB0..RB7` = 8..15, `RC0..RC7` = 16..23.
 * **Return codes**: functions that can fail return a `Byte`: 1 = success, 0 = refused (bad pin, bad
   argument, conflict), unless the entry says otherwise. Bus modules also keep a status code.
-* The reset state of port pins is **analog** (`ANSELx = 1`). Call `GpioAllDigital()` (or write
-  `ANSELx`) before using pins digitally.
+* The reset state of port pins is **analog** (`ANSELx = 1`). Call `GpioAllDigital()` (after
+  `Include "gpio"`) or write `ANSELx` before using pins digitally.
 * **No module is reentrant.** Do not call a module routine from an interrupt handler and from the main
   program, or from two handlers, without `Save`.
 * Library timing is computed from the compile-time `Clock`. If you change the oscillator at run time
   (`SetClock`) the library timing is then wrong (by design).
 * **Not yet checked on hardware** for any module.
 
-## gpio
+---
 
-| Routine | Effect |
-|---|---|
-| `GpioAllDigital()` | `ANSELA/B/C = 0` |
-| `GpioPullUps(maskA, maskB, maskC)` | `WPUx`: a 1 bit enables that pin's weak pull-up |
-| `GpioOpenDrain(maskA, maskB, maskC)` | `ODCONx`: a 1 bit makes the pin drive low only |
+## gpio  (`Include "gpio"`)
 
+Port-level helpers for ports A, B and C. Single pins need no library: `Input`, `Output`, `High`,
+`Low`, `Toggle` are language commands and `Dim led As PORTB.0` names a pin.
+
+### GpioAllDigital
+
+**Syntax**
 ```basic
-Include "gpio"
-Gpio.GpioAllDigital()
-Gpio.GpioPullUps(0, 0, %00000001)        ' pull-up on RC0
+GpioAllDigital()
+```
+**Overview** Makes every pin of ports A, B and C a digital pin (`ANSELA/B/C = 0`). `ANSELx` resets to
+1 (analog, input buffer off), so a pin read as digital stays 0 until this runs [DS40002043F p.247].
+
+**Example**
+```basic
+Dim led As PORTB.0
+GpioAllDigital()
+Output(led)
+High(led)
+```
+**Notes** Call it before `AdcPin` if the same program also uses analog inputs, then re-select those
+pins with `AdcPin`.
+
+### GpioPullUps
+
+**Syntax**
+```basic
+GpioPullUps(maskA, maskB, maskC)
+```
+**Overview** Writes `WPUA/B/C`. A 1 bit enables the weak pull-up of that pin [p.251].
+
+**Parameters** `maskA`, `maskB`, `maskC` are `Byte` constants or variables, bit n = pin Rx*n*.
+
+**Example**
+```basic
+GpioAllDigital()
+GpioPullUps(0, 0, %00000001)      ' pull-up on RC0
+```
+**Notes** The mask replaces the whole register: pins not set in the mask lose their pull-up.
+
+### GpioOpenDrain
+
+**Syntax**
+```basic
+GpioOpenDrain(maskA, maskB, maskC)
+```
+**Overview** Writes `ODCONA/B/C`. A 1 bit makes the pin drive low only (open drain) [p.256].
+
+**Parameters** As `GpioPullUps`.
+
+**Example**
+```basic
+GpioOpenDrain(0, %00000010, 0)    ' RB1 open drain
 ```
 
-## delay
+---
 
-| Routine | Effect |
-|---|---|
-| `DelaySeconds(s)` | `s` x `DelayMS(1000)`; `s` is a `Byte` |
-| `DelayNop()` | exactly one instruction cycle |
+## delay  (`Include "delay"`)
 
-`DelayMS` and `DelayUS` are built into the language (section 2).
+`DelayMS` and `DelayUS` are language commands (section 2). The module adds:
 
-## intosc  (internal oscillator set-up)
+### DelaySeconds
 
-`Include "intosc"` makes the hardware run at `Clock`. Its start-up code (run before the main program)
-writes `OSCFRQ` and `OSCCON1` and waits, each wait bounded, for `OSCCON3.ORDY` and `OSCSTAT.HFOR`.
-Include it **first**. `Config` needs `CSWEN = ON` unless `Clock` already equals the `RSTOSC` speed.
+**Syntax**
+```basic
+DelaySeconds(s)
+```
+**Overview** Waits `s` seconds, as `s` calls of `DelayMS(1000)`.
+
+**Parameters** `s` is a `Byte` (0..255).
+
+**Example**
+```basic
+DelaySeconds(5)
+```
+**Notes** Interrupts lengthen the delay.
+
+### DelayNop
+
+**Syntax**
+```basic
+DelayNop()
+```
+**Overview** Waits exactly one instruction cycle.
+
+**Example**
+```basic
+Dim p As PORTB.0
+Output(p)
+High(p) : DelayNop() : Low(p)
+```
+
+---
+
+## intosc  (`Include "intosc"`, internal oscillator set-up)
+
+`Clock` only tells the compiler what speed to expect; it does not touch the hardware. Including
+`intosc` makes the hardware match it. Its start-up code (run before the main program) writes
+`OSCFRQ` and `OSCCON1` and waits, each wait bounded, for `OSCCON3.ORDY` and `OSCSTAT.HFOR`. Include
+it **first**: module start-up code runs in include order.
 
 Accepted `Clock` values (anything else is a compile error): 64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and
-0.5, 0.25, 0.125, 0.0625, 0.03125 MHz (1 MHz divided by 2 to 32).
-
-| Routine | Effect |
-|---|---|
-| `SetClock(mhz)` | HFINTOSC at `mhz` (1, 2, 4, 8, 12, 16, 32, 48 or 64), divider 1:1. Returns True when the switch completed and read back; False (nothing written) for another value |
-| `SetClockDiv(mhz, shift)` | the same divided by 2^`shift` (`shift` 0..9) |
+0.5, 0.25, 0.125, 0.0625, 0.03125 MHz (1 MHz divided by 2 to 32). `Config` needs `CSWEN = ON` unless
+`Clock` already equals the `RSTOSC` speed. If a write is ignored, `SysClockOk()` is False.
 
 ```basic
 Program Blink
@@ -868,227 +1219,1821 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, CSWEN = ON, WDTE = OFF, LVP = ON
 Include "intosc"
 ```
 
-## system  (reset cause, clock check)
+### SetClock
 
-| Routine | Effect |
-|---|---|
-| `SysResetCause()` | 1 power-on, 2 brown-out, 3 MCLR pin, 4 watchdog time-out, 5 watchdog window violation, 6 `RESET` instruction, 7 stack overflow, 8 stack underflow, 0 none |
-| `SysResetFlags()` | raw `PCON0` |
-| `SysClearResetFlags()` | set `PCON0` flags inactive (call after reading the cause) |
-| `SysClockHz()` | system clock in Hz from `OSCCON2`/`OSCFRQ` (HFINTOSC only; 0 for other sources) |
-| `SysClockFrom(cosc, cdiv, hffrq)` | the same conversion from given field values |
-| `SysClockOk()` | True when `SysClockHz()` equals `Clock` |
-
-## timer  (Timer0, Timer1, Timer2)
-
-All timers count FOSC/4 unless a Timer1 source says otherwise. `prescale` ranges are per timer.
-
-| Routine | Effect |
-|---|---|
-| `Timer0Start(prescale, period)` | 8-bit; one overflow per `(period+1) * 2^prescale` cycles; `prescale` 0..15 |
-| `Timer0Start16(prescale)` | 16-bit free-running |
-| `Timer0Read()` | 16-bit count |
-| `Timer0Expired()` | True once per overflow, clearing the flag |
-| `Timer0Ack()` | clear the flag (call from your handler) |
-| `Timer0EnableInterrupt()` / `Timer0DisableInterrupt()` | `PIE0.TMR0IE`; also `Enable(handler)` |
-| `Timer0Stop()` | |
-| `Timer1Start(prescale)` | 16-bit; `prescale` 0..3 = 1:1..1:8 |
-| `Timer1StartSource(clk, prescale)` | any clock `T1Clk*`: `T1ClkPin` (T1CKI, default RC0), `T1ClkFosc4`, `T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkMfIntOsc`, `T1ClkSosc`, `T1ClkTmr0` |
-| `Timer1StartCounter(prescale)` | `Timer1StartSource(T1ClkPin, prescale)` |
-| `Timer1StartGated(clk, prescale, source, activeHigh)` | counts only while the gate source is active. Sources `T1GatePin` (RB5), `T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GateCmp1`, `T1GateCmp2` |
-| `Timer1StartPulse(clk, prescale, source, activeHigh, fullCycle)` | single-pulse gate: times the first gate pulse, then holds; poll `Timer1PulseDone()`, then `Timer1Read()` |
-| `Timer1GateState()` | live gate (`T1GCON.GVAL`) |
-| `Timer1Read()`, `Timer1Expired()`, `Timer1Ack()`, `Timer1Stop()` | as Timer0 (`PIR4.TMR1IF`) |
-| `Timer1EnableInterrupt()` / `Timer1DisableInterrupt()` | `PIE4.TMR1IE` |
-| `Timer2Start(prescale, postscale, period)` | free-running 8-bit; flag every `(period+1) * 2^prescale * (postscale+1)` cycles; `prescale` 0..7 = 1:1..1:128, `postscale` 0..15 |
-| `Timer2StartLimit(prescale, postscale, period, mode, source)` | hardware-limit mode `T2Mode*` (software, gate, reset, one-shot, mono-stable, level; 20 constants) and reset source `T2Rst*` (`T2RstPin` = T2IN, default RC3; `T2RstTmr4`, `Tmr6`, `Ccp1`, `Ccp2`, `Pwm3`, `Pwm4`, `Cmp1`, `Cmp2`) |
-| `Timer2Running()` | `T2CON.ON`; use this (not the flag) to detect the end of a one-shot |
-| `Timer2Read()`, `Timer2Expired()`, `Timer2Ack()`, `Timer2Stop()` | as Timer0 (`PIR4.TMR2IF`) |
-| `Timer2EnableInterrupt()` / `Timer2DisableInterrupt()` | `PIE4.TMR2IE` |
-
-External pins (T1CKI, T1G, T2IN) must be digital inputs; the module does not set them up. The first
-pulse after a Timer1 start may be missed. **Hardware untested** for external clock, gate and pulse use.
-
+**Syntax**
 ```basic
-Include "timer"
-Timer.Timer1Start(3)                  ' 16 MHz / 4 / 8 = 500 kHz
-While Timer.Timer1Expired() = False
+ok = SetClock(mhz)
+```
+**Overview** Runs HFINTOSC at `mhz` with no divider, at run time.
+
+**Parameters** `mhz` is a `Byte`: 1, 2, 4, 8, 12, 16, 32, 48 or 64.
+
+**Returns** `Boolean`: True when the switch completed and read back; False (nothing written) for
+another value, or when the clock did not switch.
+
+**Example**
+```basic
+Dim ok As Boolean
+ok = SetClock(4)
+```
+**Notes** `DelayMS`, `DelayUS` and the serial, I2C, SPI and PWM modules keep timing for the
+compile-time `Clock`, so they are wrong until the clock is back at `Clock`.
+
+### SetClockDiv
+
+**Syntax**
+```basic
+ok = SetClockDiv(mhz, shift)
+```
+**Overview** As `SetClock`, with the clock divided by 2^`shift`.
+
+**Parameters** `mhz` as `SetClock`; `shift` is 0..9 (1:1 to 1:512).
+
+**Returns** `Boolean`, as `SetClock`.
+
+**Example**
+```basic
+Dim ok As Boolean
+ok = SetClockDiv(16, 2)           ' 16 MHz / 4 = 4 MHz
+```
+
+---
+
+## system  (`Include "system"`, reset cause and clock check)
+
+### SysResetCause
+
+**Syntax**
+```basic
+cause = SysResetCause()
+```
+**Overview** Reports the cause of the latest Reset whose `PCON0` flags are not yet cleared.
+
+**Returns** `Byte`: 1 power-on, 2 brown-out, 3 MCLR pin, 4 watchdog time-out, 5 watchdog window
+violation, 6 `RESET` instruction, 7 stack overflow, 8 stack underflow, 0 none. Tested in the order
+1, 2, 7, 8, 5, 4, 3, 6.
+
+**Example**
+```basic
+Dim c As Byte
+c = SysResetCause()
+SysClearResetFlags()
+```
+**Notes** Hardware never clears the flags, so read the cause at start and then call
+`SysClearResetFlags`; otherwise an old cause is reported again.
+
+### SysResetFlags
+
+**Syntax**
+```basic
+raw = SysResetFlags()
+```
+**Overview** Returns the raw `PCON0` value.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim f As Byte
+f = SysResetFlags()
+```
+
+### SysClearResetFlags
+
+**Syntax**
+```basic
+SysClearResetFlags()
+```
+**Overview** Puts every `PCON0` flag to its inactive state so the next Reset shows only its own cause.
+
+**Example**
+```basic
+SysClearResetFlags()
+```
+
+### SysClockHz
+
+**Syntax**
+```basic
+hz = SysClockHz()
+```
+**Overview** The system clock in Hz as the oscillator is set now (from `OSCCON2` and `OSCFRQ`).
+
+**Returns** `LongWord`; 0 when the source is not HFINTOSC (external and low-frequency sources have no
+frequency the module knows). The nominal HFINTOSC frequency is used; `OSCTUNE` is not applied.
+
+**Example**
+```basic
+Dim hz As LongWord
+hz = SysClockHz()
+```
+
+### SysClockFrom
+
+**Syntax**
+```basic
+hz = SysClockFrom(cosc, cdiv, hffrq)
+```
+**Overview** The same conversion from given field values.
+
+**Parameters** `cosc` is `OSCCON2` bits 6:4 (6 = HFINTOSC); `cdiv` is `OSCCON2` bits 3:0 (divider
+code 0..9); `hffrq` is `OSCFRQ` bits 3:0 (codes 0..8 = 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz).
+
+**Returns** `LongWord`; 0 for any other source or a reserved code.
+
+**Example**
+```basic
+Dim hz As LongWord
+hz = SysClockFrom(6, 0, 5)        ' HFINTOSC, 1:1, 16 MHz
+```
+
+### SysClockOk
+
+**Syntax**
+```basic
+ok = SysClockOk()
+```
+**Overview** True when the oscillator runs at the frequency the program was compiled for (`Clock`).
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+If SysClockOk() = False Then
+    Terminate()
+EndIf
+```
+
+---
+
+## timer  (`Include "timer"`, Timer0, Timer1, Timer2)
+
+The module configures a timer and reads its flag. It declares no interrupt handler: to be
+interrupted, call `TimerNEnableInterrupt`, write your own `Interrupt`, and call `TimerNAck` in it
+(flags are not cleared by hardware). All timers count FOSC/4 unless a Timer1 source says otherwise.
+`prescale` ranges are per timer. External pins (T1CKI, T1G, T2IN) must be digital inputs; the
+module does not set them up.
+
+### Timer0Start
+
+**Syntax**
+```basic
+Timer0Start(prescale, period)
+```
+**Overview** Starts Timer0 as an 8-bit periodic timer counting 0..`period`. One overflow takes
+`(period + 1) * 2^prescale` instruction cycles.
+
+**Parameters** `prescale` 0..15 (1:1 to 1:32768); `period` 0..255.
+
+**Example**
+```basic
+Timer0Start(7, 124)               ' 16 MHz: 125 * 128 cycles = 4 ms
+```
+
+### Timer0Start16
+
+**Syntax**
+```basic
+Timer0Start16(prescale)
+```
+**Overview** Starts Timer0 as a 16-bit free-running timer, read with `Timer0Read`.
+
+**Parameters** `prescale` 0..15.
+
+**Example**
+```basic
+Timer0Start16(4)
+```
+
+### Timer0Read
+
+**Syntax**
+```basic
+count = Timer0Read()
+```
+**Overview** Reads the 16-bit count (`TMR0L` first, which latches `TMR0H`).
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim t As Word
+Timer0Start16(4)
+t = Timer0Read()
+```
+
+### Timer0Expired
+
+**Syntax**
+```basic
+flag = Timer0Expired()
+```
+**Overview** True once per overflow; clears the flag when it reports it.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim led As PORTB.0
+ANSELB = 0
+Output(led)
+Timer0Start(15, 244)
+While True
+    If Timer0Expired() Then
+        Toggle(led)
+    EndIf
 Wend
 ```
 
-## serial  (EUSART1, 8N1, TX = RC6, RX = RC7)
+### Timer0Ack
 
-| Routine | Effect |
-|---|---|
-| `SerialInit(baud)` | PPS, pin directions, `BRG16 = BRGH = 1`, enables TX and RX. Baud divisor computed from `Clock` (one 32-bit divide at run time) |
-| `SerialWriteByte(b)` | one byte, blocking |
-| `SerialWrite(text)` | a string or literal, up to 80 characters |
-| `SerialNewLine()` | CR + LF |
-| `SerialWriteWord(v)` | `Word` as unsigned decimal |
-| `SerialWriteHex(v)` | `Byte` as two hex digits |
-| `SerialAvailable()` | True when a byte is waiting |
-| `SerialRead()` | wait for and return a byte; clears an overrun |
-| `SerialFlush()` | wait for the shift register to empty |
+**Syntax**
+```basic
+Timer0Ack()
+```
+**Overview** Clears the Timer0 flag. Call it from your own interrupt handler, wrapped in `Save`
+(a call from a handler is otherwise `E-ISR-CALL`).
+
+**Example**
+```basic
+Interrupt Tick()
+    Save(0, Timer0Ack)
+        Timer0Ack()
+    Restore
+End Interrupt
+Timer0Start(15, 244)
+Timer0EnableInterrupt()
+Enable(Tick)
+```
+
+### Timer0EnableInterrupt / Timer0DisableInterrupt
+
+**Syntax**
+```basic
+Timer0EnableInterrupt()
+Timer0DisableInterrupt()
+```
+**Overview** Set or clear `PIE0.TMR0IE`. Global interrupts are enabled separately with `Enable`.
+
+**Example**
+```basic
+Timer0EnableInterrupt()
+Timer0DisableInterrupt()
+```
+
+### Timer0Stop
+
+**Syntax**
+```basic
+Timer0Stop()
+```
+**Overview** Stops Timer0.
+
+**Example**
+```basic
+Timer0Stop()
+```
+
+### Timer1Start
+
+**Syntax**
+```basic
+Timer1Start(prescale)
+```
+**Overview** Starts Timer1 as a 16-bit timer on FOSC/4, ungated. It overflows every
+`65536 * 2^prescale` cycles.
+
+**Parameters** `prescale` 0..3 (1:1 to 1:8).
+
+**Example**
+```basic
+Timer1Start(3)                    ' 16 MHz / 4 / 8 = 500 kHz
+While Timer1Expired() = False
+Wend
+```
+
+### Timer1StartSource
+
+**Syntax**
+```basic
+Timer1StartSource(clk, prescale)
+```
+**Overview** Timer1 from any clock source, free-running and ungated. External sources are
+synchronised to the system clock (`SYNC = 0`), so pulses must be longer than a system clock cycle;
+asynchronous operation is not offered.
+
+**Parameters** `clk` is one of `T1ClkPin` (T1CKI pin, rising edges, default RC0), `T1ClkFosc4`,
+`T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkMfIntOsc`, `T1ClkSosc`, `T1ClkTmr0`.
+`prescale` 0..3.
+
+**Example**
+```basic
+Timer1StartSource(T1ClkFosc, 0)
+```
+**Notes** `T1ClkSosc` needs `OSCEN.SOSCEN` set and time to stabilise. In counter mode a falling edge
+must be seen before the first rising edge counts, so the first pulse after a start may be missed
+(data sheet 20.2.2).
+
+### Timer1StartCounter
+
+**Syntax**
+```basic
+Timer1StartCounter(prescale)
+```
+**Overview** Counts rising edges on the T1CKI pin; the same as `Timer1StartSource(T1ClkPin, prescale)`.
+
+**Example**
+```basic
+Dim n As Word
+Dim t1cki As PORTC.0
+GpioAllDigital()
+Input(t1cki)
+Timer1StartCounter(0)
+n = Timer1Read()
+```
+
+### Timer1StartGated
+
+**Syntax**
+```basic
+Timer1StartGated(clk, prescale, source, activeHigh)
+```
+**Overview** Counts only while the gate source is at the given level. The gate is set up before the
+timer is switched on, so no count is taken ungated.
+
+**Parameters** `clk` and `prescale` as `Timer1StartSource`. `source` is `T1GatePin` (T1G, RB5),
+`T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GateCmp1` or `T1GateCmp2`. `activeHigh`
+is True to count while the gate is high, False while low.
+
+**Example**
+```basic
+Timer1StartGated(T1ClkFosc4, 0, T1GatePin, True)
+```
+
+### Timer1StartPulse
+
+**Syntax**
+```basic
+Timer1StartPulse(clk, prescale, source, activeHigh, fullCycle)
+```
+**Overview** Times the first pulse of the gate source after the call, then holds. Poll
+`Timer1PulseDone`, then read `Timer1Read` for the length in clock counts.
+
+**Parameters** As `Timer1StartGated`, plus `fullCycle`: True toggles the gate on every rising edge, so
+the measured time is a whole period of the source instead of its high (or low) time.
+
+**Example**
+```basic
+Dim w As Word
+Timer1StartPulse(T1ClkFosc4, 0, T1GatePin, True, False)
+While Timer1PulseDone() = False
+Wend
+w = Timer1Read()
+```
+
+### Timer1PulseDone
+
+**Syntax**
+```basic
+flag = Timer1PulseDone()
+```
+**Overview** True once the pulse started by `Timer1StartPulse` has ended.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+While Timer1PulseDone() = False
+Wend
+```
+
+### Timer1GateState
+
+**Syntax**
+```basic
+level = Timer1GateState()
+```
+**Overview** The live state of the gate (`T1GCON.GVAL`); it is not affected by the gate enable.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim g As Boolean
+g = Timer1GateState()
+```
+
+### Timer1Read / Timer1Expired / Timer1Ack / Timer1Stop
+
+**Syntax**
+```basic
+count = Timer1Read()
+flag  = Timer1Expired()
+Timer1Ack()
+Timer1Stop()
+```
+**Overview** As the Timer0 routines, on `PIR4.TMR1IF`. `Timer1Read` returns a `Word` (with `RD16` set,
+reading `TMR1L` latches `TMR1H`).
+
+**Example**
+```basic
+Dim t As Word
+Timer1Start(0)
+t = Timer1Read()
+Timer1Stop()
+```
+
+### Timer1EnableInterrupt / Timer1DisableInterrupt
+
+**Syntax**
+```basic
+Timer1EnableInterrupt()
+Timer1DisableInterrupt()
+```
+**Overview** Set or clear `PIE4.TMR1IE`.
+
+**Example**
+```basic
+Timer1EnableInterrupt()
+```
+
+### Timer2Start
+
+**Syntax**
+```basic
+Timer2Start(prescale, postscale, period)
+```
+**Overview** Starts Timer2 as a free-running 8-bit timer on FOSC/4, counting 0..`period`. The flag
+is set every `(period + 1) * 2^prescale * (postscale + 1)` cycles.
+
+**Parameters** `prescale` 0..7 (1:1 to 1:128); `postscale` 0..15 (1:1 to 1:16); `period` 0..255.
+
+**Example**
+```basic
+Timer2Start(7, 0, 249)            ' 16 MHz: 250 * 128 cycles = 8 ms
+```
+**Notes** `T2TMR` is not cleared by a `T2CON` write. The `pwm` module owns Timer2 while a channel runs.
+
+### Timer2StartLimit
+
+**Syntax**
+```basic
+Timer2StartLimit(prescale, postscale, period, mode, source)
+```
+**Overview** Timer2 with a hardware-limit mode. Writing `ON` arms the timer: in the edge and level
+modes it waits for the reset source; in the one-shot modes it runs once and clears `ON`.
+
+**Parameters** `prescale`, `postscale`, `period` as `Timer2Start`. `mode` is one of `T2ModeSoftware`,
+`T2ModeGateHigh`, `T2ModeGateLow`, `T2ModeResetAnyEdge`, `T2ModeResetRising`, `T2ModeResetFalling`,
+`T2ModeResetLow`, `T2ModeResetHigh`, `T2ModeOneShot`, `T2ModeOneShotRising`, `T2ModeOneShotFalling`,
+`T2ModeOneShotAnyEdge`, `T2ModeOneShotRisingReset`, `T2ModeOneShotFallingReset`,
+`T2ModeOneShotRisingLow`, `T2ModeOneShotFallingHigh`, `T2ModeMonoRising`, `T2ModeMonoFalling`,
+`T2ModeMonoAnyEdge`, `T2ModeOneShotLevelHigh`, `T2ModeOneShotLevelLow`. `source` is `T2RstPin` (T2IN,
+default RC3), `T2RstTmr4`, `T2RstTmr6`, `T2RstCcp1`, `T2RstCcp2`, `T2RstPwm3`, `T2RstPwm4`,
+`T2RstCmp1`, `T2RstCmp2`.
+
+**Example**
+```basic
+Timer2StartLimit(7, 0, 249, T2ModeOneShot, T2RstPin)
+While Timer2Running()
+Wend
+```
+**Notes** Edge-triggered modes need six timer clocks between triggers, level modes a level of at least
+three (data sheet 21.5).
+
+### Timer2Running
+
+**Syntax**
+```basic
+flag = Timer2Running()
+```
+**Overview** True while the timer is on (`T2CON.ON`). Use this, not the flag, to detect the end of a
+one-shot: the data sheet does not say `TMR2IF` is set when `ON` clears.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim r As Boolean
+r = Timer2Running()
+```
+
+### Timer2Read / Timer2Expired / Timer2Ack / Timer2Stop
+
+**Syntax**
+```basic
+count = Timer2Read()
+flag  = Timer2Expired()
+Timer2Ack()
+Timer2Stop()
+```
+**Overview** As the Timer0 routines, on `PIR4.TMR2IF`. `Timer2Read` returns a `Byte`. Stopping the timer
+also resets its counters.
+
+**Example**
+```basic
+Dim t As Byte
+Timer2Start(0, 0, 255)
+t = Timer2Read()
+Timer2Stop()
+```
+
+### Timer2EnableInterrupt / Timer2DisableInterrupt
+
+**Syntax**
+```basic
+Timer2EnableInterrupt()
+Timer2DisableInterrupt()
+```
+**Overview** Set or clear `PIE4.TMR2IE`.
+
+**Example**
+```basic
+Timer2EnableInterrupt()
+```
+
+**Hardware untested** for external clock, gate and pulse use.
+
+---
+
+## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
 
 `Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a
 crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
-above (for a signed number or a Float, convert in your own code).
+below (for a signed number or a `Float`, convert in your own code).
 
+### SerialInit
+
+**Syntax**
 ```basic
-Include "serial"
-Serial.SerialInit(115200)
-Serial.SerialWrite("hello")
-Serial.SerialNewLine()
-Serial.SerialWriteWord(1234)
+SerialInit(baud)
+```
+**Overview** Routes EUSART1 through PPS (TX on RC6, RX on RC7), sets the pin directions and
+`BRG16 = BRGH = 1`, computes the baud divisor from `Clock` (one 32-bit divide at run time, rounded to
+the nearest value) and enables TX and RX.
+
+**Parameters** `baud` is a `LongWord`, for example 9600 or 115200.
+
+**Example**
+```basic
+SerialInit(115200)
 ```
 
-## serial2  (EUSART2, TX = RB6, RX = RB7)
+### SerialWriteByte
 
-Same routines with the prefix `Serial2`: `Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
+**Syntax**
+```basic
+SerialWriteByte(b)
+```
+**Overview** Sends one byte, waiting until the transmit register is free.
+
+**Example**
+```basic
+SerialWriteByte(65)               ' "A"
+```
+
+### SerialWrite
+
+**Syntax**
+```basic
+SerialWrite(text)
+```
+**Overview** Sends a string or literal, up to 80 characters.
+
+**Example**
+```basic
+SerialWrite("hello")
+```
+
+### SerialNewLine
+
+**Syntax**
+```basic
+SerialNewLine()
+```
+**Overview** Sends CR + LF.
+
+**Example**
+```basic
+SerialWrite("done")
+SerialNewLine()
+```
+
+### SerialWriteWord
+
+**Syntax**
+```basic
+SerialWriteWord(v)
+```
+**Overview** Sends a `Word` as unsigned decimal, without leading zeros.
+
+**Example**
+```basic
+SerialWriteWord(1234)
+```
+
+### SerialWriteHex
+
+**Syntax**
+```basic
+SerialWriteHex(v)
+```
+**Overview** Sends a `Byte` as two hexadecimal digits.
+
+**Example**
+```basic
+SerialWriteHex($A5)               ' "A5"
+```
+
+### SerialAvailable
+
+**Syntax**
+```basic
+flag = SerialAvailable()
+```
+**Overview** True when a received byte is waiting.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim b As Byte
+If SerialAvailable() Then
+    b = SerialRead()
+EndIf
+```
+
+### SerialRead
+
+**Syntax**
+```basic
+b = SerialRead()
+```
+**Overview** Waits for a byte and returns it. An overrun stops the receiver until `CREN` is cycled; this
+routine cycles it.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim b As Byte
+b = SerialRead()
+SerialWriteByte(b)                ' echo
+```
+
+### SerialFlush
+
+**Syntax**
+```basic
+SerialFlush()
+```
+**Overview** Waits until the last byte has left the shift register (`TRMT`).
+
+**Example**
+```basic
+SerialWrite("bye")
+SerialFlush()
+```
+
+---
+
+## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
+
+The same nine routines with the prefix `Serial2`: `Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
 `Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`,
-`Serial2Flush`. RB6/RB7 are the ICSP pins: disconnect the programmer while using them. Both serial
-modules can be used together. **Set-up verified only** (the simulator does not set TX2IF); a real
-transmit is unproven.
+`Serial2Flush`. Syntax, parameters and returns are as in `serial`.
 
-## adc  (ADCC, 10-bit, right-justified)
+**Example**
+```basic
+Serial2Init(9600)
+Serial2Write("hi")
+Serial2NewLine()
+```
+**Notes** RB6/RB7 are the ICSP pins: disconnect the programmer while using them. Both serial modules can
+be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
+unproven.
 
-| Routine | Effect |
-|---|---|
-| `AdcInit()` | ADC on, VDD/VSS reference, FOSC clock giving TAD of at least 1 us, hardware acquisition of 5 us |
-| `AdcPin(ch)` | make channel 0..23 an analog input (RA0..RC7) |
-| `AdcRead(ch)` | one conversion, 0..1023. Internal channels: `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63 |
-| `AdcReadAvg(ch, n)` | mean of `n` (1..64) conversions |
-| `AdcMillivolts(raw, vrefMv)` | `raw * vref / 1023` |
-| `AdcRefVdd()` | VDD reference |
-| `AdcRefFvr(gain)` | FVR reference, gain 1, 2 or 4 (4 or more is taken as 4, 0 as 1); waits for `FVRRDY` |
+---
+
+## adc  (`Include "adc"`, ADCC, 10-bit, right-justified)
+
+Software-started conversions with the clock derived from FOSC (`Clock` must be FOSC in MHz). Channel
+numbers 0..23 are pins (`RA0..RA7` = 0..7, `RB0..RB7` = 8..15, `RC0..RC7` = 16..23). Internal
+channels: `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63.
 
 Errata handling: (1.4.4) the first conversion after a channel change is run and dropped; code that
-writes `ADPCH` itself bypasses this. (1.4.1) `AdcRefFvr` needs TAD of at least 8 us, which `ADCS` allows
-only up to `Clock` = 16 MHz; above that use the VDD reference. Source impedance above 10 kohm needs a
-larger `ADACQ`. The temperature indicator needs `FVRCON.TSEN`, which the module does not set.
+writes `ADPCH` itself bypasses this. (1.4.1) `AdcRefFvr` needs TAD of at least 8 us, which `ADCS`
+allows only up to `Clock` = 16 MHz; above that use the VDD reference.
 
+### AdcInit
+
+**Syntax**
 ```basic
-Include "adc"
+AdcInit()
+```
+**Overview** Turns the ADC on with VDD/VSS references and the FOSC clock chosen so TAD is at least
+1 us (and at most 9 us). Hardware acquisition is set to 5 us, which suits a source impedance up to
+10 kohm.
+
+**Example**
+```basic
+AdcInit()
+```
+**Notes** A higher source impedance needs a longer time: write `ADACQ` after `AdcInit`.
+
+### AdcPin
+
+**Syntax**
+```basic
+AdcPin(ch)
+```
+**Overview** Makes the pin of channel `ch` an analog input (`TRISx = 1`, `ANSELx = 1`).
+
+**Parameters** `ch` 0..23. Other channel numbers are internal and need no pin.
+
+**Example**
+```basic
+AdcPin(0)                         ' RA0
+```
+
+### AdcRead
+
+**Syntax**
+```basic
+raw = AdcRead(ch)
+```
+**Overview** Converts channel `ch` once.
+
+**Parameters** `ch` 0..63.
+
+**Returns** `Word`, 0..1023.
+
+**Example**
+```basic
 Dim v As Word
-Adc.AdcInit()
-Adc.AdcPin(0)                 ' RA0
-v = Adc.AdcRead(0)
+AdcInit()
+AdcPin(0)
+v = AdcRead(0)
 ```
 
-## eeprom  (data EEPROM, 1024 bytes)
+### AdcReadAvg
 
-| Routine | Effect |
-|---|---|
-| `EepromRead(addr)` | byte at 0..1023 (255 for a larger address) |
-| `EepromWrite(addr, value)` | skips the write if the byte already holds `value`; otherwise unlock sequence and wait. Returns 1 when the byte reads back as `value`, 0 for a bad address or failed write |
-| `EepromReadWord(addr)` / `EepromWriteWord(addr, value)` | 16-bit, low byte first at `addr` and `addr + 1` |
-| `EepromSize` | constant 1024 |
-
-Global interrupts are held off for the unlock sequence and the previous state is restored. Success
-is judged by read-back (errata 1.6.1). Reading stored values is **not verifiable in the simulator**
-(it does not model DFM reads); test on hardware.
-
-## pwm  (CCP1, CCP2, PWM3, PWM4 on Timer2)
-
-| Routine | Effect |
-|---|---|
-| `PwmInit(hz)` | choose Timer2 prescale and `T2PR` for `hz` (1..1,000,000). Returns 1, or 0 if unreachable or a channel is running. Starts nothing |
-| `PwmFrequency()` / `PwmSteps()` | achieved frequency; duty steps per period `4 * (T2PR + 1)` |
-| `PwmStart(ch, pin, duty)` | channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4, on pin 0..23. CCP1/CCP2 on ports B and C, PWM3/PWM4 on ports A and C. `duty` in steps. Returns 0 for a bad channel or pin, pin in use, or no `PwmInit` |
-| `PwmDuty(ch, duty)` / `PwmPercent(ch, pct)` | new duty of a running channel (steps, or 0..100 %) |
-| `PwmInvert(ch, inverted)` | polarity of PWM3/PWM4 (0 for channels 1 and 2) |
-| `PwmStop(ch)` | channel off, pin back to a latch-driven input; Timer2 stops with the last channel |
-
-All channels share one frequency and each has its own duty. The module owns Timer2 while a channel
-runs: do not use the `timer` module's Timer2 or a Timer2 interrupt then. With `T2PR` = 255 the
-maximum duty is 1023 of 1024 steps, so 100 % is not reachable.
-
+**Syntax**
 ```basic
-Include "pwm"
-Dim ok As Byte
-ok = Pwm.PwmInit(1000)
-ok = Pwm.PwmStart(3, 16, 0)       ' PWM3 on RC0
-Pwm.PwmPercent(3, 25)
+raw = AdcReadAvg(ch, count)
 ```
+**Overview** Mean of `count` conversions, rounded down.
 
-## i2c  (MSSP1 host)
+**Parameters** `ch` as `AdcRead`; `count` 1..64.
 
-| Routine | Effect |
-|---|---|
-| `I2cInit(hz, scl, sda)` | host at `hz` (1..1,000,000), pins 8..23 (ports B and C). Returns 1, or 0 for a bad pin, equal pins or no divider in range (at 64 MHz the slowest clock is 62 kHz) |
-| `I2cStart()` / `I2cRestart()` / `I2cStop()` | one bus condition each; return a status code |
-| `I2cSend(b)` | address byte (7-bit address << 1, plus R/W) or data. 0 = acknowledged, 3 = not acknowledged |
-| `I2cReceive(ack)` | one byte then ACK (`True`) or NACK (`False`); returns 0 and sets the status on error |
-| `I2cPing(addr)` | True when a device acknowledges the 7-bit address |
-| `I2cWriteReg(addr, reg, value)` / `I2cReadReg(addr, reg)` | register write / read (restart after the register byte) |
-| `I2cStatus()` | 0 ok, 1 timeout, 2 bus collision, 3 no acknowledge, 4 not initialised |
-| `I2cOff(scl, sda)` | MSSP off, pins back to latches |
+**Returns** `Word`; 0 for a `count` of 0.
 
-Every wait is bounded, so a missing pull-up gives status 1; call `I2cInit` again to recover. External
-pull-ups are required. Single host. The module polls `SSP1IF`/`BCL1IF` itself: keep the MSSP1
-interrupt disabled. Cannot be used together with `spi` (both own MSSP1).
-
+**Example**
 ```basic
-Include "i2c"
-Dim ok As Byte
-Dim ack As Boolean
-ok = I2c.I2cInit(100000, 19, 20)       ' RC3 = SCL, RC4 = SDA
-ack = I2c.I2cPing($50)
+Dim v As Word
+AdcInit()
+AdcPin(1)
+v = AdcReadAvg(1, 16)
 ```
 
-## spi  (MSSP1 host)
+### AdcMillivolts
 
-| Routine | Effect |
-|---|---|
-| `SpiInit(hz, mode, sck, sdo, sdi)` | host, mode 0..3, pins 8..23 (ports B and C); `sdo` = 255 for receive-only. Returns 1, or 0 for a bad pin or mode, a pin used twice or a clock out of range |
-| `SpiTransfer(b)` | send `b`, return the byte received at the same time |
-| `SpiWrite(b)` / `SpiRead()` | send ignoring the reply / receive (sends 255) |
-| `SpiStatus()` | 0 ok, 1 timeout, 4 not initialised |
-| `SpiOff(sck, sdo)` | MSSP off |
+**Syntax**
+```basic
+mv = AdcMillivolts(raw, vrefMv)
+```
+**Overview** Converts a result to millivolts: `raw * vrefMv / 1023`.
 
-The chip select is yours (use a port bit). Clock range: `FOSC/4` down to `FOSC/1024`.
+**Parameters** `raw` a `Word` from `AdcRead`; `vrefMv` the reference in millivolts.
 
-## lcd  (HD44780 character LCD, 4-bit)
+**Returns** `Word`.
 
-Pins are 0..23; R/W is tied to ground; the busy flag is not read (fixed waits).
+**Example**
+```basic
+Dim v As Word
+Dim mv As Word
+AdcInit()
+AdcPin(0)
+v = AdcRead(0)
+mv = AdcMillivolts(v, 3300)
+```
 
-| Routine | Effect |
-|---|---|
-| `LcdInit(rs, en, d4, d5, d6, d7, lines)` | initialise (about 55 ms); `lines` is 1 or 2. Returns 1 or 0 |
-| `LcdCommand(c)` | any instruction byte |
-| `LcdClear()` / `LcdHome()` | |
-| `LcdDisplay(on, cursor, blink)` | display control (Booleans) |
-| `LcdShift(whole, right)` | shift cursor or whole display |
-| `LcdGoto(col, row)` | `col` 0..39, `row` 0..1 |
-| `LcdSetAddress(a)` | raw DDRAM address (four-line displays) |
-| `LcdWriteChar(ch)` / `LcdWrite(s)` / `LcdWriteWord(v)` / `LcdWriteHex(v)` | character, string (up to 80), unsigned decimal, two hex digits |
-| `LcdCustomRow(slot, row, bits)` | one row of user character 0..7; follow with `LcdGoto` |
+### AdcRefVdd
 
-Read-modify-write of `LATA/B/C`: not for use from a handler and the main program together.
+**Syntax**
+```basic
+AdcRefVdd()
+```
+**Overview** Positive reference = VDD, negative = VSS (the reset state).
 
-## oled  (SSD1309, 128 x 64, I2C or 4-wire SPI)
+**Example**
+```basic
+AdcRefVdd()
+```
 
-You set up the bus first (`I2cInit` at no more than 400 kHz, or `SpiInit` mode 0 at no more than
-10 MHz). No frame buffer: you write 8-pixel-high pages, one byte per column, bit 0 on top.
+### AdcRefFvr
 
-| Routine | Effect |
-|---|---|
-| `OledInitI2c(addr, res)` | `addr` 60 or 61 (0x3C/0x3D); `res` = reset pin or 255. Returns 1 if all acknowledged |
-| `OledInitSpi(dc, cs, res)` | D/C#, CS# (255 = tied low), RES# (255 = none). Returns 0 for a bad or repeated pin |
-| `OledStatus()` / `OledClearStatus()` | first I2C error since init (always 0 for SPI) |
-| `OledOn(on)`, `OledContrast(v)`, `OledInvert(b)`, `OledAllOn(b)`, `OledFlip(rotated)` | display controls |
-| `OledGoto(col, page)` | column 0..127, page 0..7 |
-| `OledTextGoto(x, line)` | character cell 0..20, line 0..7 (6 x 8 cells) |
-| `OledData(b)` / `OledFill(pattern)` / `OledClear()` | one column / whole RAM / clear |
-| `OledWriteChar(ch)` / `OledWrite(s)` / `OledWriteWord(v)` / `OledWriteHex(v)` | text in a 5 x 7 font (ASCII 32..126) |
-| `FontByte(i)` | byte `i` (0..474) of the font table |
+**Syntax**
+```basic
+AdcRefFvr(gain)
+```
+**Overview** Positive reference = the fixed voltage reference; waits for `FVRRDY`.
 
-No pixel, line or bitmap drawing yet.
+**Parameters** `gain` 1, 2 or 4 (1.024, 2.048 or 4.096 V; the output cannot exceed VDD). 4 or more is
+taken as 4, 0 as 1.
+
+**Example**
+```basic
+AdcRefFvr(2)                      ' 2.048 V
+```
+**Notes** Slows the conversion clock to TAD of at least 8 us (errata 1.4.1); not possible above
+`Clock` = 16 MHz. The temperature indicator needs `FVRCON.TSEN`, which the module does not set.
+
+---
+
+## eeprom  (`Include "eeprom"`, data EEPROM, 1024 bytes)
+
+Global interrupts are held off for the unlock sequence and their previous state is restored. Success
+is judged by read-back (errata 1.6.1), not `NVMERR`. Reading stored values is **not verifiable in the
+simulator** (it does not model DFM reads); test on hardware.
+
+### EepromSize
+
+**Syntax**
+```basic
+EepromSize
+```
+**Overview** Constant, 1024: the number of bytes.
+
+**Example**
+```basic
+Dim last As Word
+last = EepromSize - 1
+```
+
+### EepromRead
+
+**Syntax**
+```basic
+b = EepromRead(addr)
+```
+**Overview** Reads one byte.
+
+**Parameters** `addr` is a `Word`, 0..1023.
+
+**Returns** `Byte`; 255 for an address above 1023.
+
+**Example**
+```basic
+Dim b As Byte
+b = EepromRead(0)
+```
+
+### EepromWrite
+
+**Syntax**
+```basic
+ok = EepromWrite(addr, value)
+```
+**Overview** Skips the write if the byte already holds `value` (saves a cycle); otherwise erases and
+programs it with the unlock sequence and waits.
+
+**Parameters** `addr` 0..1023; `value` a `Byte`.
+
+**Returns** `Byte`: 1 when the byte reads back as `value`, 0 for a bad address or a failed write.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = EepromWrite(0, 42)
+```
+
+### EepromReadWord / EepromWriteWord
+
+**Syntax**
+```basic
+w  = EepromReadWord(addr)
+ok = EepromWriteWord(addr, value)
+```
+**Overview** 16-bit forms, low byte first at `addr` and `addr + 1`.
+
+**Parameters** `addr` 0..1022; `value` a `Word`.
+
+**Returns** `EepromReadWord` a `Word`; `EepromWriteWord` a `Byte`, 1 when both bytes were stored.
+
+**Example**
+```basic
+Dim w As Word
+Dim ok As Byte
+ok = EepromWriteWord(10, 1234)
+w = EepromReadWord(10)
+```
+
+---
+
+## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
+
+Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
+Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a channel
+runs, so do not use `Timer2` routines at the same time. CCP1/CCP2 can output on ports B and C
+(pins 8..23); PWM3/PWM4 on ports A and C. The duty is a number of steps out of `PwmSteps()`.
+
+### PwmInit
+
+**Syntax**
+```basic
+ok = PwmInit(hz)
+```
+**Overview** Chooses the Timer2 prescale (1..128) and period for `hz`. Timer2 is started by `PwmStart`.
+
+**Parameters** `hz` is a `LongWord`, 1..1000000.
+
+**Returns** `Byte`: 1, or 0 when no prescale reaches `hz` or a channel is running (the period is shared).
+
+**Example**
+```basic
+Dim ok As Byte
+ok = PwmInit(1000)
+```
+
+### PwmFrequency
+
+**Syntax**
+```basic
+hz = PwmFrequency()
+```
+**Overview** The achieved frequency.
+
+**Returns** `LongWord`; 0 before a successful `PwmInit`.
+
+**Example**
+```basic
+Dim f As LongWord
+PwmInit(1000)
+f = PwmFrequency()
+```
+
+### PwmSteps
+
+**Syntax**
+```basic
+n = PwmSteps()
+```
+**Overview** Number of duty steps in one period: `4 * (T2PR + 1)`, at most 1024. The 10-bit resolution is
+reached only when `T2PR` = 255; a higher frequency gives fewer steps.
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim n As Word
+PwmInit(1000)
+n = PwmSteps()
+```
+
+### PwmStart
+
+**Syntax**
+```basic
+ok = PwmStart(ch, pin, duty)
+```
+**Overview** Starts a channel on a pin, following the data sheet set-up order (driver off, routing,
+duty, Timer2 on, wait for its first overflow, then driver on) so the first period is complete.
+
+**Parameters** `ch` 1..4; `pin` 0..23 (see the heading for valid pins); `duty` in steps, 0..`PwmSteps()`.
+
+**Returns** `Byte`: 0 (and nothing done) without a successful `PwmInit`, for a channel or pin that cannot
+be used, or for a pin another running channel uses. A running channel is restarted.
+
+**Example**
+```basic
+Dim ok As Byte
+PwmInit(1000)
+ok = PwmStart(1, 18, 512)         ' CCP1 on RC2, half duty at 1024 steps
+```
+
+### PwmDuty
+
+**Syntax**
+```basic
+PwmDuty(ch, duty)
+```
+**Overview** Sets the duty in steps. No effect on a stopped channel.
+
+**Parameters** `ch` 1..4; `duty` 0..`PwmSteps()` (at most 1023 is representable).
+
+**Example**
+```basic
+PwmDuty(1, 256)
+```
+**Notes** Duty registers are double buffered and copied at the period match; if the match falls between
+the two byte writes, one period can use a mixed value.
+
+### PwmPercent
+
+**Syntax**
+```basic
+PwmPercent(ch, pct)
+```
+**Overview** Sets the duty as a percentage, rounded down to a step.
+
+**Parameters** `ch` 1..4; `pct` 0..100. 100 gives the highest representable duty, which with 1024
+steps is 1023/1024: the output cannot reach a true 100 %.
+
+**Example**
+```basic
+PwmPercent(1, 25)
+```
+
+### PwmInvert
+
+**Syntax**
+```basic
+ok = PwmInvert(ch, inverted)
+```
+**Overview** Sets the output polarity of PWM3 or PWM4 (`PWMxCON.POL`); on a running channel it applies at
+once.
+
+**Parameters** `ch` 3 or 4; `inverted` a `Boolean`.
+
+**Returns** `Byte`: 0 for channels 1 and 2, which have no polarity bit.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = PwmInvert(3, True)
+```
+
+### PwmStop
+
+**Syntax**
+```basic
+PwmStop(ch)
+```
+**Overview** Stops a channel: the pin becomes an input again and returns to its `LATxy` bit and the module
+is disabled. Timer2 is stopped when the last channel stops.
+
+**Parameters** `ch` 1..4.
+
+**Example**
+```basic
+PwmStop(1)
+```
+
+---
+
+## i2c  (`Include "i2c"`, MSSP1 host)
+
+I2C host (master). SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
+(19) and SDA = RC4 (20). The module is the only host on the bus (no multi-master): a collision is an
+error. The bus needs external pull-ups. `Clock` must be FOSC in MHz. Every step is done by the hardware
+one at a time and each wait is bounded, so a stuck bus returns an error instead of hanging.
+
+**Status codes** (`I2cStatus`, and the return of Start, Restart, Stop and Send): 0 ok, 1 timeout (a bus
+line held low or no pull-up), 2 bus collision, 3 no acknowledge, 4 module not initialised.
+
+The module polls and clears `SSP1IF` itself; keep the MSSP1 interrupt disabled. It owns MSSP1: do not
+use `spi` at the same time.
+
+### I2cInit
+
+**Syntax**
+```basic
+ok = I2cInit(hz, scl, sda)
+```
+**Overview** Sets up MSSP1 as an I2C host at about `hz`. The clock is `FOSC / (4 * (SSPxADD + 1))`; the
+divider is rounded up so the clock is at or below `hz`. The highest clock is FOSC/16 and the lowest
+FOSC/1024. Slew rate control is disabled for 100 kHz or less and for 1 MHz and above, enabled in between.
+
+**Parameters** `hz` a `LongWord`, 1..1000000; `scl` and `sda` pin numbers 8..23, different.
+
+**Returns** `Byte`: 1 when set up, 0 when a pin is not allowed or no divider of 3..255 reaches `hz`.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = I2cInit(100000, 19, 20)
+```
+
+### I2cOff
+
+**Syntax**
+```basic
+I2cOff(scl, sda)
+```
+**Overview** Disables the MSSP and gives both pins back to their `LATxy` bits.
+
+**Parameters** The same pins given to `I2cInit`.
+
+**Example**
+```basic
+I2cOff(19, 20)
+```
+
+### I2cStatus
+
+**Syntax**
+```basic
+s = I2cStatus()
+```
+**Overview** The status of the last Start, Restart, Stop, byte or register routine.
+
+**Returns** `Byte`, the codes above.
+
+**Example**
+```basic
+Dim s As Byte
+s = I2cStatus()
+```
+
+### I2cStart / I2cRestart / I2cStop
+
+**Syntax**
+```basic
+s = I2cStart()
+s = I2cRestart()
+s = I2cStop()
+```
+**Overview** Generate a start, repeated-start or stop condition.
+
+**Returns** `Byte`, the status code.
+
+**Example**
+```basic
+Dim s As Byte
+s = I2cStart()
+s = I2cSend($A0)                  ' address 0x50 + write
+s = I2cStop()
+```
+
+### I2cSend
+
+**Syntax**
+```basic
+s = I2cSend(b)
+```
+**Overview** Sends one byte (an address with its R/W bit, or data).
+
+**Parameters** `b` a `Byte`.
+
+**Returns** `Byte`: 0 when the client acknowledged, 3 when it did not.
+
+**Example**
+```basic
+Dim s As Byte
+s = I2cStart()
+s = I2cSend($A0)
+s = I2cSend(0)
+s = I2cStop()
+```
+
+### I2cReceive
+
+**Syntax**
+```basic
+b = I2cReceive(ack)
+```
+**Overview** Receives a byte, then sends an acknowledge or not-acknowledge.
+
+**Parameters** `ack` True when more bytes follow, False for the last byte.
+
+**Returns** `Byte`. On an error it returns 0 and `I2cStatus` is not 0.
+
+**Example**
+```basic
+Dim b As Byte
+Dim s As Byte
+s = I2cStart()
+s = I2cSend($A1)                  ' address 0x50 + read
+b = I2cReceive(False)
+s = I2cStop()
+```
+
+### I2cPing
+
+**Syntax**
+```basic
+found = I2cPing(addr)
+```
+**Overview** Tests whether a client acknowledges its address for writing.
+
+**Parameters** `addr` the 7-bit address, 0..127.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim here As Boolean
+here = I2cPing($50)
+```
+
+### I2cWriteReg
+
+**Syntax**
+```basic
+s = I2cWriteReg(addr, reg, value)
+```
+**Overview** Start, address + W, `reg`, `value`, Stop.
+
+**Parameters** `addr` 7-bit address; `reg` and `value` are `Byte`s.
+
+**Returns** `Byte`: the first status code that was not 0 (the Stop is always attempted).
+
+**Example**
+```basic
+Dim s As Byte
+s = I2cWriteReg($68, $6B, 0)
+```
+
+### I2cReadReg
+
+**Syntax**
+```basic
+v = I2cReadReg(addr, reg)
+```
+**Overview** Start, address + W, `reg`, Restart, address + R, one byte with not-acknowledge, Stop.
+
+**Returns** `Byte`. On an error it returns 0 and `I2cStatus` is not 0.
+
+**Example**
+```basic
+Dim v As Byte
+v = I2cReadReg($68, $75)
+```
+
+---
+
+## spi  (`Include "spi"`, MSSP1 host)
+
+SPI host (master). SCK, SDO and SDI go to pins of ports B and C (8..23); SDO can be 255 for a
+receive-only host. The chip select is not part of the module: drive it with a port bit. `Clock` must be
+FOSC in MHz. The module owns MSSP1 (do not use `i2c` together) and does not use its interrupt.
+
+**Modes**: 0 = idle low, data changes on the falling edge; 1 = idle low, rising; 2 = idle high,
+falling; 3 = idle high, rising (CPOL/CPHA as `CKP`/`CKE`). **Status** (`SpiStatus`): 0 after the last
+transfer completed, 1 after a timeout, 4 when not initialised.
+
+### SpiInit
+
+**Syntax**
+```basic
+ok = SpiInit(hz, mode, sck, sdo, sdi)
+```
+**Overview** Sets up MSSP1 as an SPI host. The clock is FOSC/4 for `hz` of FOSC/4 or more, otherwise
+`FOSC / (4 * (SSPxADD + 1))`, rounded so the clock is at or below `hz`. The lowest is FOSC/1024.
+
+**Parameters** `hz` a `LongWord`, 1..16000000; `mode` 0..3; `sck`, `sdo`, `sdi` pins 8..23 (`sdo` may
+be 255).
+
+**Returns** `Byte`: 1, or 0 for a bad pin, a pin used twice, a mode above 3, or a clock below FOSC/1024.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = SpiInit(1000000, 0, 19, 20, 21)
+```
+**Notes** Use `SpiOff` before changing pins.
+
+### SpiOff
+
+**Syntax**
+```basic
+SpiOff(sck, sdo)
+```
+**Overview** Disables the MSSP and gives the pins back to their `LATxy` bits.
+
+**Parameters** The pins given to `SpiInit`.
+
+**Example**
+```basic
+SpiOff(19, 20)
+```
+
+### SpiStatus
+
+**Syntax**
+```basic
+s = SpiStatus()
+```
+**Returns** `Byte`, the codes above.
+
+**Example**
+```basic
+Dim s As Byte
+s = SpiStatus()
+```
+
+### SpiTransfer
+
+**Syntax**
+```basic
+r = SpiTransfer(b)
+```
+**Overview** Sends one byte and returns the byte received at the same time. The wait is bounded.
+
+**Returns** `Byte`; 0 on an error (see `SpiStatus`).
+
+**Example**
+```basic
+Dim r As Byte
+r = SpiTransfer($9F)
+```
+
+### SpiWrite
+
+**Syntax**
+```basic
+SpiWrite(b)
+```
+**Overview** Sends one byte and ignores the byte received.
+
+**Example**
+```basic
+SpiWrite($06)
+```
+
+### SpiRead
+
+**Syntax**
+```basic
+r = SpiRead()
+```
+**Overview** Receives one byte (sends 255 on SDO).
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim r As Byte
+r = SpiRead()
+```
+
+---
+
+## lcd  (`Include "lcd"`, HD44780 character LCD, 4-bit)
+
+Six port pins are used: RS, E and DB4..DB7 (pins 0..23). R/W is not used: tie it to ground. The busy
+flag is not read; every instruction is followed by a fixed wait longer than its worst case. The pins
+are set by read-modify-write of `LATA/B/C`, so do not use the module from a handler and from the main
+program together, and do not change those `LATx` registers elsewhere while a routine runs.
+
+A 2-line display has line 1 at DDRAM address 00H..27H and line 2 at 40H..67H; a 1-line display uses
+00H..4FH. Four-line displays are not described by the data sheet: address them with `LcdSetAddress`.
+
+### LcdInit
+
+**Syntax**
+```basic
+ok = LcdInit(rs, en, d4, d5, d6, d7, lines)
+```
+**Overview** Makes the six pins digital outputs, runs the 4-bit initialisation by instruction, turns the
+display on with no cursor, clears it and selects increment, no shift. Takes about 55 ms.
+
+**Parameters** `rs`, `en`, `d4`..`d7` pin numbers 0..23, all different; `lines` 1 or 2 (5 x 8 dot font).
+
+**Returns** `Byte`: 1, or 0 when `lines` is not 1 or 2, a pin is above 23 or a pin is used twice.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = LcdInit(16, 17, 18, 19, 20, 21, 2)   ' RS=RC0 E=RC1 D4..D7=RC2..RC5
+```
+
+### LcdCommand
+
+**Syntax**
+```basic
+LcdCommand(c)
+```
+**Overview** Sends any instruction byte (see the data sheet's instruction table). Waits 2 ms after Clear
+display and Return home, 50 us after the rest.
+
+**Example**
+```basic
+LcdCommand($01)                   ' clear display
+```
+
+### LcdClear / LcdHome
+
+**Syntax**
+```basic
+LcdClear()
+LcdHome()
+```
+**Overview** `LcdClear` clears the display and puts the cursor at line 1, column 0. `LcdHome` puts the
+cursor there and shifts the display back to its unshifted position.
+
+**Example**
+```basic
+LcdClear()
+LcdHome()
+```
+
+### LcdDisplay
+
+**Syntax**
+```basic
+LcdDisplay(on, cursor, blink)
+```
+**Overview** Display on/off control.
+
+**Parameters** Three `Boolean`s: display on, cursor shown, character at the cursor blinks.
+
+**Example**
+```basic
+LcdDisplay(True, True, False)
+```
+
+### LcdShift
+
+**Syntax**
+```basic
+LcdShift(whole, right)
+```
+**Overview** Shifts the whole display (`whole` True) or only the cursor, one position right (`right`
+True) or left.
+
+**Example**
+```basic
+LcdShift(True, False)             ' whole display one place left
+```
+
+### LcdGoto
+
+**Syntax**
+```basic
+LcdGoto(col, row)
+```
+**Overview** Moves the cursor.
+
+**Parameters** `col` 0..39 (0..79 on a one-line display); `row` 0 or 1. A position the display does not
+have is ignored.
+
+**Example**
+```basic
+LcdGoto(0, 1)                     ' start of line 2
+```
+
+### LcdSetAddress
+
+**Syntax**
+```basic
+LcdSetAddress(addr)
+```
+**Overview** Sets the raw DDRAM address; the next character is written there.
+
+**Parameters** `addr` 0..127.
+
+**Example**
+```basic
+LcdSetAddress($14)                ' line 3 of a common four-line display
+```
+
+### LcdWriteChar
+
+**Syntax**
+```basic
+LcdWriteChar(ch)
+```
+**Overview** Writes one character code at the cursor. Codes 32..126 are ASCII (A00 character ROM);
+0..7 are the user characters of `LcdCustomRow`.
+
+**Example**
+```basic
+LcdWriteChar(65)                  ' "A"
+```
+
+### LcdWrite
+
+**Syntax**
+```basic
+LcdWrite(text)
+```
+**Overview** Writes a string or literal (up to 80 characters) at the cursor.
+
+**Example**
+```basic
+LcdWrite("Hello")
+```
+
+### LcdWriteWord
+
+**Syntax**
+```basic
+LcdWriteWord(v)
+```
+**Overview** Writes a `Word` as unsigned decimal, without leading zeros.
+
+**Example**
+```basic
+LcdWriteWord(2048)
+```
+
+### LcdWriteHex
+
+**Syntax**
+```basic
+LcdWriteHex(v)
+```
+**Overview** Writes a `Byte` as two hexadecimal digits.
+
+**Example**
+```basic
+LcdWriteHex($3C)
+```
+
+### LcdCustomRow
+
+**Syntax**
+```basic
+LcdCustomRow(slot, row, bits)
+```
+**Overview** Sets one dot row of a user-defined character.
+
+**Parameters** `slot` 0..7 (shown as character code 0..7); `row` 0..7; `bits` uses the low five bits
+(bit 4 = leftmost dot). Keep row 7 at 0 if the cursor is used.
+
+**Example**
+```basic
+LcdCustomRow(0, 0, %00001110)
+LcdCustomRow(0, 1, %00010001)
+LcdGoto(0, 0)                     ' leave CGRAM before writing text
+LcdWriteChar(0)
+```
+**Notes** The write leaves the address counter in CGRAM: call `LcdGoto`, `LcdClear` or `LcdHome` before
+writing text.
+
+---
+
+## oled  (`Include "oled"`, SSD1309, 128 x 64, I2C or 4-wire SPI)
+
+Set up the bus first: `I2cInit` at no more than 400 kHz, or `SpiInit` in mode 0 at no more than 10 MHz.
+The module owns no pins except D/C#, CS# and RES# (pins 0..23; 255 for CS# or RES# means not
+controlled). The panel supply (about 12 V) is external: switch it on after RES#. There is **no frame
+buffer** (the serial interfaces are write-only): you write pages of 8 pixel rows, one byte per column,
+bit 0 on top, with `OledGoto` and `OledData`. Text uses a 5 x 7 font in 6 x 8 cells (21 characters on
+each of 8 lines) for ASCII 32..126. There is no pixel, line or bitmap drawing. If a module shows every
+other line or an upside-down picture, use `OledFlip`.
+
+### OledInitI2c
+
+**Syntax**
+```basic
+ok = OledInitI2c(addr, res)
+```
+**Overview** Starts the display on I2C, runs the start-up command sequence, clears the RAM and switches
+the display on.
+
+**Parameters** `addr` the 7-bit address, 60 or 61 (0x3C/0x3D); `res` the RES# pin, or 255.
+
+**Returns** `Byte`: 1 when every byte was acknowledged, else 0 (`OledStatus` gives the I2C code).
+
+**Example**
+```basic
+Dim ok As Byte
+ok = I2cInit(400000, 19, 20)
+ok = OledInitI2c(60, 255)
+```
+
+### OledInitSpi
+
+**Syntax**
+```basic
+ok = OledInitSpi(dc, cs, res)
+```
+**Overview** Starts the display on 4-wire SPI.
+
+**Parameters** `dc` the D/C# pin; `cs` the CS# pin or 255; `res` the RES# pin or 255.
+
+**Returns** `Byte`: 1, or 0 for a pin above 23 or a pin used twice.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = SpiInit(4000000, 0, 19, 20, 255)
+ok = OledInitSpi(16, 17, 18)
+```
+
+### OledStatus / OledClearStatus
+
+**Syntax**
+```basic
+s = OledStatus()
+OledClearStatus()
+```
+**Overview** `OledStatus` is 0 when all I2C bytes since the init (or the last `OledClearStatus`) were
+acknowledged, else the first I2C status code (3 = no acknowledge). Always 0 for SPI.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim s As Byte
+s = OledStatus()
+OledClearStatus()
+```
+
+### OledOn
+
+**Syntax**
+```basic
+OledOn(isOn)
+```
+**Overview** Display on, or off (sleep). The RAM keeps its content.
+
+**Example**
+```basic
+OledOn(False)
+```
+
+### OledContrast
+
+**Syntax**
+```basic
+OledContrast(level)
+```
+**Overview** Sets the contrast; reset value is 127.
+
+**Parameters** `level` 0..255.
+
+**Example**
+```basic
+OledContrast(200)
+```
+
+### OledInvert
+
+**Syntax**
+```basic
+OledInvert(inverse)
+```
+**Overview** Inverse display (True) or normal (False).
+
+**Example**
+```basic
+OledInvert(True)
+```
+
+### OledAllOn
+
+**Syntax**
+```basic
+OledAllOn(allOn)
+```
+**Overview** Every pixel on regardless of the RAM (True), or the RAM content (False).
+
+**Example**
+```basic
+OledAllOn(True)
+```
+
+### OledFlip
+
+**Syntax**
+```basic
+OledFlip(rotated)
+```
+**Overview** Turns the picture through 180 degrees (True) or normal (False). Takes effect for data
+written afterwards; the RAM is not rewritten.
+
+**Example**
+```basic
+OledFlip(True)
+OledClear()
+```
+
+### OledGoto
+
+**Syntax**
+```basic
+OledGoto(col, page)
+```
+**Overview** The next data byte goes to column `col` of page `page`. After each byte the column advances
+and wraps to the next page at the end of the line.
+
+**Parameters** `col` 0..127; `page` 0..7.
+
+**Example**
+```basic
+OledGoto(0, 0)
+```
+
+### OledTextGoto
+
+**Syntax**
+```basic
+OledTextGoto(x, line)
+```
+**Overview** The next character goes to cell `x` of text line `line`.
+
+**Parameters** `x` 0..20; `line` 0..7. An `x` above 20 is ignored.
+
+**Example**
+```basic
+OledTextGoto(0, 3)
+```
+
+### OledData
+
+**Syntax**
+```basic
+OledData(b)
+```
+**Overview** Writes one column byte (bit 0 on top) at the current position.
+
+**Example**
+```basic
+OledGoto(10, 2)
+OledData(%11111111)               ' a vertical bar 8 pixels high
+```
+
+### OledFill / OledClear
+
+**Syntax**
+```basic
+OledFill(pattern)
+OledClear()
+```
+**Overview** `OledFill` writes `pattern` to the whole RAM and returns to column 0, page 0. `OledClear`
+is `OledFill(0)`.
+
+**Example**
+```basic
+OledFill($AA)                     ' stripes
+OledClear()
+```
+
+### OledWriteChar
+
+**Syntax**
+```basic
+OledWriteChar(ch)
+```
+**Overview** One character at the current position: five font columns and one blank. Codes outside
+32..126 show `?`.
+
+**Example**
+```basic
+OledTextGoto(0, 0)
+OledWriteChar(65)
+```
+
+### OledWrite
+
+**Syntax**
+```basic
+OledWrite(text)
+```
+**Overview** Writes a string or literal (up to 80 characters).
+
+**Example**
+```basic
+OledTextGoto(0, 0)
+OledWrite("Hello")
+```
+
+### OledWriteWord / OledWriteHex
+
+**Syntax**
+```basic
+OledWriteWord(v)
+OledWriteHex(v)
+```
+**Overview** A `Word` as unsigned decimal without leading zeros; a `Byte` as two hex digits.
+
+**Example**
+```basic
+OledTextGoto(0, 1)
+OledWriteWord(1234)
+OledWriteHex($FF)
+```
+
+### FontByte
+
+**Syntax**
+```basic
+b = FontByte(idx)
+```
+**Overview** Byte `idx` of the font table: 5 column bytes for each code 32..126, bit 0 on top.
+
+**Parameters** `idx` a `Word`, 0..474.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim b As Byte
+b = FontByte(0)
+```
+
+---
 
 ## floatlib  (automatic)
 
-Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong
-FFromULong FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does.
+Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong
+FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does when a program
+uses `Float`.
 
 ---
 
@@ -1150,7 +3095,7 @@ reports these rather than miscompiling them.
 | `Branch`, `On GoTo`, `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
-| `Sin`, `Cos`, `Sqr`, `Log`, `Exp`, `Pow`, `ISqr`, `Div32`, `Dcd`, `Ncd`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
+| `Sin`, `Cos`, `Sqr`, `Log`, `Exp`, `Pow`, `ISqr`, `Div32`, `Dcd`, `Ncd`, `@`, `?` | not available; `Abs` (Float or constant), `Min`/`Max` (constants only) and arithmetic only; see section 2 |
 | `Len`, `Left$`, `Mid$`, `Right$`, string arrays | not available |
 | `Tern`, `SizeOf` | not available |
 | `$config`, `Config` directive | `Config NAME = VALUE` with pack names |
