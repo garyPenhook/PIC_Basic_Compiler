@@ -1,6 +1,6 @@
 # pic-config
 
-Qt 6 / C++ helper that turns drop-down choices into a `Config` line (basicc) or `#pragma config`
+Qt 6 / C++ helper that turns drop-down choices into a `Config` line (basil) or `#pragma config`
 lines (XC8) to paste into a source file.
 
 ## Build and run

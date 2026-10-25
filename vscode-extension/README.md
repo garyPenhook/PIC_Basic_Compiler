@@ -1,6 +1,6 @@
 # PIC BASIC for VS Code
 
-Editor support for the `basicc` PIC BASIC compiler (`.bas` files).
+Editor support for the `basil` PIC BASIC compiler (`.bas` files).
 
 * **Device name correction** — with a `Device = 18F27Q10` line, register and bit names take the spelling
   of the device description (`lata = 0` becomes `LATA = 0`, `portb.0` becomes `PORTB.0`) at the same moments as
@@ -13,16 +13,16 @@ Editor support for the `basicc` PIC BASIC compiler (`.bas` files).
 * **Formatting** — re-indents `Sub`/`Function`/`If`/`Select`/loops (4 spaces or your tab setting), trims trailing whitespace.
   Indents the new line after Enter.
 * **Highlighting**, snippets, bracket/comment configuration (`'`, `//`, `(* *)`, `{ }`).
-* **Diagnostics** — runs `basicc --check` on open/save (or while typing with `picbasic.diagnostics = onType`).
+* **Diagnostics** — runs `basil --check` on open/save (or while typing with `picbasic.diagnostics = onType`).
   Library `Module` files are skipped because they have no `Device`.
 * **Navigation** — outline, go to definition (own file, `Include`d modules, `lib/`), hover, completion, signature help.
-* **Build** — *PIC BASIC: Build / Check / Show Resource Report* commands and a `picbasic` task type with the `$basicc` problem matcher.
+* **Build** — *PIC BASIC: Build / Check / Show Resource Report* commands and a `picbasic` task type with the `$basil` problem matcher.
 
 ## Settings
 
 | Setting | Default |
 |---|---|
-| `picbasic.compilerPath` | `basicc` |
+| `picbasic.compilerPath` | `basil` |
 | `picbasic.compilerArgs` | `[]` (e.g. `["-L","/path/lib","--pic-as","/path/pic-as"]`) |
 | `picbasic.autoCorrectKeywords` | `true` |
 | `picbasic.fixKeywordCaseOnSave` | `true` |

@@ -1,5 +1,5 @@
 @page{size:A4;margin:22mm 18mm 22mm 18mm;
- @top-left{content:"basicc Compiler User Manual";font:8pt "Noto Sans",sans-serif;color:#666}
+ @top-left{content:"basil Compiler User Manual";font:8pt "Noto Sans",sans-serif;color:#666}
  @top-right{content:string(h1);font:8pt "Noto Sans",sans-serif;color:#666}
  @bottom-center{content:counter(page);font:9pt "Noto Sans",sans-serif;color:#444}}
 @page:first{@top-left{content:none}@top-right{content:none}@bottom-center{content:none}margin:0}

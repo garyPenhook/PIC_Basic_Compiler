@@ -2,8 +2,8 @@
 members = [".", "crates/devdesc", "tools/devgen"]
 
 [package]
-name = "basicc"
-version = "0.1.9"
+name = "basil"
+version = "0.1.10"
 edition = "2024"
 
 [dependencies]

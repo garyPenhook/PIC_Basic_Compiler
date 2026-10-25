@@ -27,7 +27,7 @@ function deviceNames(doc, lines) {
   if (extra) dirs.push(extra);
   if (doc.uri.scheme === 'file') dirs.push(...devicesAbove(path.dirname(doc.uri.fsPath)));
   for (const f of vscode.workspace.workspaceFolders || []) dirs.push(path.join(f.uri.fsPath, 'devices'));
-  // A development build lives in <repo>/target/<profile>/basicc, next to <repo>/devices.
+  // A development build lives in <repo>/target/<profile>/basil, next to <repo>/devices.
   const exe = cfg().get('compilerPath');
   if (exe && path.isAbsolute(exe)) dirs.push(...devicesAbove(path.dirname(exe)));
   return loadNames(device, dirs) || undefined;
@@ -346,7 +346,7 @@ const signatureHelp = {
 
 // --- compiler: diagnostics, build, tasks --------------------------------------------------
 
-const diagnostics = vscode.languages.createDiagnosticCollection('basicc');
+const diagnostics = vscode.languages.createDiagnosticCollection('basil');
 const output = vscode.window.createOutputChannel('PIC BASIC');
 const RE_DIAG = /^(.+?):(\d+):(\d+): (error|warning)\[([^\]]+)\]: (.*)$/;
 
@@ -354,10 +354,10 @@ function compilerArgs(extra) {
   return [...extra, ...cfg().get('compilerArgs', [])];
 }
 
-/** Runs `basicc --check` on `file` (the document itself, or a temporary copy of it) and publishes the results. */
+/** Runs `basil --check` on `file` (the document itself, or a temporary copy of it) and publishes the results. */
 function runCheck(doc, file, done) {
   const cwd = path.dirname(doc.uri.fsPath);
-  const exe = cfg().get('compilerPath') || 'basicc';
+  const exe = cfg().get('compilerPath') || 'basil';
   cp.execFile(exe, compilerArgs(['--check', file]), { cwd, timeout: 30000 }, (err, stdout, stderr) => {
     if (done) done();
     if (err && err.code === 'ENOENT') {
@@ -380,7 +380,7 @@ function runCheck(doc, file, done) {
       const w = /^[A-Za-z0-9_$%#]+/.exec(lineText.slice(col));
       const d = new vscode.Diagnostic(new vscode.Range(ln, col, ln, col + (w ? w[0].length : Math.max(1, lineText.length - col))), m[6], m[4] === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
       d.code = m[5];
-      d.source = 'basicc';
+      d.source = 'basil';
       if (!byFile.has(f)) byFile.set(f, []);
       byFile.get(f).push(d);
     }
@@ -419,10 +419,10 @@ function check(doc, typing) {
 }
 
 function taskFor(file, mode) {
-  const exe = cfg().get('compilerPath') || 'basicc';
+  const exe = cfg().get('compilerPath') || 'basil';
   const args = compilerArgs(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : []);
   const exec = new vscode.ShellExecution(exe, [...args, { value: file, quoting: vscode.ShellQuoting.Strong }], { cwd: path.dirname(file) });
-  const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basicc');
+  const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basil');
   t.group = mode === 'build' ? vscode.TaskGroup.Build : undefined;
   return t;
 }

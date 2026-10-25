@@ -5,9 +5,9 @@
 //! the error codes named on its `' expect:` line. Directories under `tests/projects` are
 //! multi-file programs (`main.bas` plus modules) judged the same way.
 
-use basicc::diag::{Diagnostics, Render, Severity};
-use basicc::project::{LoadConfig, load};
-use basicc::sema::{Analysis, SemaConfig, analyze};
+use basil::diag::{Diagnostics, Render, Severity};
+use basil::project::{LoadConfig, load};
+use basil::sema::{Analysis, SemaConfig, analyze};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -134,7 +134,7 @@ fn config_settings_are_resolved_against_the_device() {
 /// every valid program, and every program with one line removed.
 #[test]
 fn damaged_input_never_panics() {
-    use basicc::project::load_text;
+    use basil::project::load_text;
     let mut runs = 0;
     for f in bas_files(&root().join("tests/valid")).into_iter().chain(bas_files(&root().join("tests/negative"))) {
         let text = std::fs::read_to_string(&f).unwrap();

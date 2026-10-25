@@ -5,20 +5,20 @@ From nothing to a `.hex` file for a PIC18F27Q10.
 ## 1. Prerequisites
 
 * **Rust** (to build the compiler) and **MPLAB XC8** (its `pic-as` assembler does the last step).
-  `basicc` looks for `pic-as` in `/opt/microchip/xc8/*/pic-as/bin/pic-as`; to use another one set
-  `BASICC_PICAS=/path/to/pic-as` or pass `--pic-as PATH`.
+  `basil` looks for `pic-as` in `/opt/microchip/xc8/*/pic-as/bin/pic-as`; to use another one set
+  `BASIL_PICAS=/path/to/pic-as` or pass `--pic-as PATH`.
 * The **device pack** for the part under `~/.mchp_packs/Microchip/<pack>/<version>/xc8`.
-  If it is missing, `basicc` says which pack and version it wants.
+  If it is missing, `basil` says which pack and version it wants.
 
 ## 2. Build and install the compiler
 
 ```
 cargo build --release
-ln -sf "$PWD/target/release/basicc" ~/.local/bin/basicc     # any folder on your PATH
-basicc --version
+ln -sf "$PWD/target/release/basil" ~/.local/bin/basil     # any folder on your PATH
+basil --version
 ```
 
-`basicc` finds the `lib/` and `devices/` folders of the nearest parent directory of your source file,
+`basil` finds the `lib/` and `devices/` folders of the nearest parent directory of your source file,
 so keep your programs inside this repository (for example in `my_src/`) or pass `-L LIBDIR` and
 `--devices DIR`.
 
@@ -53,16 +53,16 @@ Wend
 ## 4. Compile
 
 ```
-basicc blink.bas            # blink.hex, plus blink.S (assembly) and blink.map
-basicc --report blink.bas   # also prints code and RAM use per routine and variable
-basicc --check blink.bas    # front end only: fast syntax and type check, no hex
+basil blink.bas            # blink.hex, plus blink.S (assembly) and blink.map
+basil --report blink.bas   # also prints code and RAM use per routine and variable
+basil --check blink.bas    # front end only: fast syntax and type check, no hex
 ```
 
 Expected output of the program above:
 
 ```
 Program: 28 words (56 bytes)
-basicc: blink.bas -> blink.hex (28 words, 56 bytes)
+basil: blink.bas -> blink.hex (28 words, 56 bytes)
 ```
 
 Program the `.hex` with your usual tool (MPLAB IPE, a Curiosity Nano, …).
@@ -89,7 +89,7 @@ cd vscode-extension && npm test && npx @vscode/vsce package
 code --install-extension picbasic-0.1.2.vsix
 ```
 
-Highlighting, keyword case correction, formatting, error squiggles from `basicc --check`, go to
+Highlighting, keyword case correction, formatting, error squiggles from `basil --check`, go to
 definition and build commands. Details in `vscode-extension/README.md`.
 
 ## Common problems
@@ -100,5 +100,5 @@ definition and build commands. Details in `vscode-extension/README.md`.
 | `E-UNDECLARED` | Name is misspelled, or a module is not `Include`d. Device registers (`PORTB`, `ANSELB`) are always known. |
 | `E-CONFIG` | Unknown `Config` setting or value; copy the line from the example. |
 | `device pack … not found` | Install the pack under `~/.mchp_packs` (MPLAB X or `mplab_platform` downloads it). |
-| `pic-as` not found | Set `BASICC_PICAS` or use `--pic-as`. |
+| `pic-as` not found | Set `BASIL_PICAS` or use `--pic-as`. |
 | Full list | `docs/DIAGNOSTICS.md` |

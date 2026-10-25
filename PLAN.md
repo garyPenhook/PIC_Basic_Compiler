@@ -444,7 +444,7 @@ The recovered earlier backend contains peepholes and passes for several of these
   compiler, assembles with pic-as, reads program words and data bytes from the linker map, and
   runs the hex in the MDB simulator for cycle counts (`/usr/bin/mdb`; the same
   XC8 + MDB stopwatch approach already used in `~/.claude/skills/xc8-pic18-optimize/`).
-  A report command (`basicc --report`) prints size and RAM per routine.
+  A report command (`basil --report`) prints size and RAM per routine.
 * **Benchmark set (kernels, C and BASIC equivalents):** integer math at 8/16/24/32 bits,
   multiply/divide/modulo by constants and variables, CRC-8/16, fixed-point scaling, bit-banging,
   table lookup, string output, ADC averaging, buffer copy/search, a state machine, an ISR
@@ -525,7 +525,7 @@ user guide: `-mcpu`, `-mdfp`, `-mreserve`, `-Wl,…` pass-through.
   (flash constants) are provided once `<xc.inc>` is included `[UG Table 5-2]`.
 * **Diagnostics**: pic-as errors/warnings are parsed and mapped back to BASIC source lines
   through `;` source-line comments in the emitted assembly.
-* The driver wraps the whole pipeline in a `basicc prog.bas` command that prints
+* The driver wraps the whole pipeline in a `basil prog.bas` command that prints
   `file:line: error: message`, the same shape the Zed tasks already parse for the other compiler wrappers.
 
 ---
@@ -594,7 +594,7 @@ Each milestone ends with something that runs and a short note in `docs/PROGRESS.
 | **M1** | Fact base | Datasheet/pack extraction notes for 18F27Q10: full memory map, Access Bank split, SFR map, interrupt system and context save, instruction table (incl. two-word, multiplier, XINST effects), config word layout, vector details; errata read in full | Every "TO VERIFY (M1)" item in this plan resolved with page cites |
 | **M2** | Device description | `devgen` produces the 18F27Q10 device file from the pack; script cross-checks sizes vs. datasheet Table 1 | Generated file passes cross-check; reviewed |
 | **M3** | Front end | Lexer, parser, AST, semantic analysis for the core language subset (types, expressions, control flow, subs/functions, modules, constants); error messages with line/column | Parses and type-checks a corpus of valid and invalid programs; unit tests green |
-| **M4** | Minimal back end (Route A) + measurement | **Width-annotated IR**; PIC18 code generator; static frames; pic-as driver; vectors, config, startup/RAM init; `basicc prog.bas` → `.hex`; **benchmark harness (size via map file, cycles via MDB) with XC8 baseline numbers for the kernel set (§7A.4)** | "Blink" and an integer-math test assemble and link; map-file check confirms vector placement; behaviour verified in MDB or on hardware; `docs/BENCHMARKS.md` holds the first baseline table and the §7A.4 targets are calibrated from it |
+| **M4** | Minimal back end (Route A) + measurement | **Width-annotated IR**; PIC18 code generator; static frames; pic-as driver; vectors, config, startup/RAM init; `basil prog.bas` → `.hex`; **benchmark harness (size via map file, cycles via MDB) with XC8 baseline numbers for the kernel set (§7A.4)** | "Blink" and an integer-math test assemble and link; map-file check confirms vector placement; behaviour verified in MDB or on hardware; `docs/BENCHMARKS.md` holds the first baseline table and the §7A.4 targets are calibrated from it |
 | **M5** | Language breadth + first optimisations | Arrays, strings, structures, 16/32-bit math, `Select Case`, loops with `Break/Continue`, short-circuit logic, compile-time stack-depth and RAM checks; optimisation passes 1–4 of §7A.3 (folding/DCE/inlining, width narrowing, Access-Bank allocation, frame overlay) | Test suite of ≥ 50 programs; golden-assembly tests; all pass; **efficiency gate**: benchmark set meets the M5 size target in §7A.4; differential tests (optimised vs. `-O0`) pass |
 | **M6** | Interrupts and library core | Interrupt handling and context saving (per M1 facts); `gpio`, `delay`, `timer`, `serial`; BSR and access-bank optimisation | Serial echo and timer-interrupt programs verified on hardware (programmer to be decided, D6) |
 | **M7** | Route B evaluation | Re-point the LLVM tree at the recovered backend, build it, run its recovered tests; compare output vs. Route A on the same programs | Written decision: adopt, adopt-partly, or drop Route B |

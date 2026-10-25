@@ -6,28 +6,28 @@ Each program names its expectations in comments near the top:
     ' expect: T_A=5 T_B=300      (variable symbol = decimal value; little endian, size from the .S)
     ' cycles: LO HI              (optional: total cycles to __halt must lie in LO..HI)
 
-Usage: exec-test.py [--basicc PATH] [--keep] prog.bas ...
-Variables are named by their assembly symbols (see `basicc --report`). The program must reach
+Usage: exec-test.py [--basil PATH] [--keep] prog.bas ...
+Variables are named by their assembly symbols (see `basil --report`). The program must reach
 `__halt` (a Terminate, or falling off the end of the program).
 """
 import argparse, glob, os, re, subprocess, sys, tempfile
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--basicc", default=os.path.join(os.path.dirname(__file__), "../target/debug/basicc"))
+ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../target/debug/basil"))
 ap.add_argument("--mdb", default=None)
 ap.add_argument("--keep", action="store_true")
 ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for the reference build")
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()
 mdb = a.mdb or sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh"))[-1]
-work = tempfile.mkdtemp(prefix="basicc-exec-")
+work = tempfile.mkdtemp(prefix="basil-exec-")
 
 jobs = []
 fails = 0
 for src in a.files:
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
-    r = subprocess.run([a.basicc, *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
+    r = subprocess.run([a.basil, *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL {name}: compile\n{r.stderr}")
         fails += 1

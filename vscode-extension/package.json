@@ -1,8 +1,8 @@
 {
   "name": "picbasic",
-  "displayName": "PIC BASIC (basicc)",
-  "description": "Language support for the basicc PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
-  "version": "0.1.2",
+  "displayName": "PIC BASIC (basil)",
+  "description": "Language support for the basil PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
+  "version": "0.1.3",
   "publisher": "garypenhook",
   "license": "UNLICENSED",
   "engines": { "vscode": "^1.80.0" },
@@ -32,19 +32,19 @@
     "configuration": {
       "title": "PIC BASIC",
       "properties": {
-        "picbasic.compilerPath": { "type": "string", "default": "basicc", "description": "Path to the basicc executable." },
-        "picbasic.compilerArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra arguments for every basicc run (for example [\"-L\", \"/path/lib\", \"--pic-as\", \"/path/pic-as\"])." },
+        "picbasic.compilerPath": { "type": "string", "default": "basil", "description": "Path to the basil executable." },
+        "picbasic.compilerArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra arguments for every basil run (for example [\"-L\", \"/path/lib\", \"--pic-as\", \"/path/pic-as\"])." },
         "picbasic.autoCorrectKeywords": { "type": "boolean", "default": true, "description": "Correct the case of a reserved word as soon as it is typed (dim becomes Dim)." },
         "picbasic.fixKeywordCaseOnSave": { "type": "boolean", "default": true, "description": "Correct the case of all reserved words when a file is saved." },
         "picbasic.autoCorrectDeviceNames": { "type": "boolean", "default": true, "description": "Also correct the case of register and bit names from the device description (lata becomes LATA). The device comes from the program's `Device` line." },
         "picbasic.devicesPath": { "type": "string", "default": "", "description": "Directory holding the device descriptions (for example 18F27Q10.toml). Empty: the nearest `devices` folder above the file, then the workspace and the compiler's own folder." },
         "picbasic.formatIndentation": { "type": "boolean", "default": true, "description": "Formatting also re-indents blocks and trims trailing whitespace." },
-        "picbasic.diagnostics": { "type": "string", "enum": ["off", "onSave", "onType"], "default": "onSave", "description": "When to run `basicc --check` for error and warning squiggles. onType checks a temporary copy shortly after typing stops." }
+        "picbasic.diagnostics": { "type": "string", "enum": ["off", "onSave", "onType"], "default": "onSave", "description": "When to run `basil --check` for error and warning squiggles. onType checks a temporary copy shortly after typing stops." }
       }
     },
     "problemMatchers": [
       {
-        "name": "basicc",
+        "name": "basil",
         "owner": "picbasic",
         "fileLocation": ["autoDetect", "${workspaceFolder}"],
         "pattern": { "regexp": "^(.+?):(\\d+):(\\d+): (error|warning)\\[([^\\]]+)\\]: (.*)$", "file": 1, "line": 2, "column": 3, "severity": 4, "code": 5, "message": 6 }

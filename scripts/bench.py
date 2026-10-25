@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark basicc against XC8 on the kernels in bench/kernels (PLAN 7A.4).
+"""Benchmark basil against XC8 on the kernels in bench/kernels (PLAN 7A.4).
 
 For every NAME.bas / NAME.c pair: program bytes, data bytes and the simulator cycles between
 two markers (BASIC: `mark_a:` / `mark_b:` labels in Asm blocks; C: calls to mark_a()/mark_b(),
@@ -12,16 +12,16 @@ import argparse, glob, os, re, subprocess, sys, tempfile
 
 root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ap = argparse.ArgumentParser()
-ap.add_argument("--basicc", default=os.path.join(root, "target/release/basicc"))
+ap.add_argument("--basil", default=os.path.join(root, "target/release/basil"))
 ap.add_argument("--md", action="store_true", help="print a Markdown table")
 ap.add_argument("kernels", nargs="*")
 a = ap.parse_args()
-if not os.path.exists(a.basicc):
-    a.basicc = os.path.join(root, "target/debug/basicc")
+if not os.path.exists(a.basil):
+    a.basil = os.path.join(root, "target/debug/basil")
 mdb = sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh"))[-1]
 dfp = sorted(glob.glob(os.path.expanduser("~/.mchp_packs/Microchip/PIC18F-Q_DFP/*/xc8")))[-1]
 names = a.kernels or sorted(os.path.basename(f)[:-4] for f in glob.glob(os.path.join(root, "bench/kernels/*.bas")))
-work = tempfile.mkdtemp(prefix="basicc-bench-")
+work = tempfile.mkdtemp(prefix="basil-bench-")
 
 
 def sh(cmd, **kw):
@@ -51,15 +51,15 @@ for opt in ("-Os", "-O2"):
 for k in names:
     b = os.path.join(root, "bench/kernels", k + ".bas")
     hexf = os.path.join(work, k + ".hex")
-    r = sh([a.basicc, "--report", b, "-o", hexf])
+    r = sh([a.basil, "--report", b, "-o", hexf])
     if r.returncode != 0:
-        sys.exit(f"basicc failed for {k}:\n{r.stdout}{r.stderr}")
+        sys.exit(f"basil failed for {k}:\n{r.stdout}{r.stderr}")
     words = int(re.search(r"Program: (\d+) words", r.stdout).group(1))
     ram = int(re.search(r"total (\d+) bytes", r.stdout).group(1))
     asm = open(os.path.join(work, k + ".S")).read()
     syms = {m.group(1): int(m.group(2), 16) for m in re.finditer(r"^;SYM (\S+) 0x([0-9A-F]+)", asm, re.M)}
     sink = re.search(r"^K_SINK equ 0x([0-9A-F]+).*\((\d+) bytes?\)", asm, re.M)
-    jobs.append(("basicc", k, "bas", hexf, words * 2, ram, (syms["mark_a"], syms["mark_b"], int(sink.group(1), 16), int(sink.group(2)))))
+    jobs.append(("basil", k, "bas", hexf, words * 2, ram, (syms["mark_a"], syms["mark_b"], int(sink.group(1), 16), int(sink.group(2)))))
     for opt in ("-Os", "-O2"):
         out = os.path.join(work, f"{k}{opt}.elf")
         pb, db = xc8(os.path.join(root, "bench/kernels", k + ".c"), opt, out)
@@ -108,22 +108,22 @@ base = {lab: results[(lab, "(empty)")][2] for lab in ("xc8 -Os", "xc8 -O2")}
 rows = []
 bad = 0
 for k in names:
-    ours = results[("basicc", k)]
+    ours = results[("basil", k)]
     row = [k]
     ref = None
-    for lab in ("basicc", "xc8 -Os", "xc8 -O2"):
+    for lab in ("basil", "xc8 -Os", "xc8 -O2"):
         pb, db, cy, val = results[(lab, k)]
-        if lab != "basicc" and cy is not None:
+        if lab != "basil" and cy is not None:
             cy -= base[lab]
         if ref is None:
             ref = val
         elif val != ref:
             bad += 1
-            print(f"MISMATCH {k}: {lab} sink={val}, basicc sink={ref}", file=sys.stderr)
+            print(f"MISMATCH {k}: {lab} sink={val}, basil sink={ref}", file=sys.stderr)
         row += [pb, db, cy]
     rows.append(row)
 
-hdr = ["kernel", "basicc B", "RAM", "cyc", "Os B", "RAM", "cyc", "O2 B", "RAM", "cyc"]
+hdr = ["kernel", "basil B", "RAM", "cyc", "Os B", "RAM", "cyc", "O2 B", "RAM", "cyc"]
 if a.md:
     print("| " + " | ".join(hdr) + " |")
     print("|" + "|".join(["---"] + ["---:"] * 9) + "|")

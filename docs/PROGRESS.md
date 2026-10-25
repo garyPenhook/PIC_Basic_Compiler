@@ -6,7 +6,7 @@ Done
 - Plan written and approved (`PLAN.md`).
 - Decisions recorded (`docs/DECISIONS.md`): D1–D5 accepted; D9–D19 made; D6 (tentative) and D7 decided; D8 open.
 - Efficiency made a top-level goal (PLAN §1, §7A); benchmark gate moved to M4.
-- Repo skeleton: git repository, Rust crate `basicc`, folders for source, devices, device
+- Repo skeleton: git repository, Rust crate `basil`, folders for source, devices, device
   generator, library, tests; vendor manuals moved to git-ignored `reference/`.
 - `docs/LANGUAGE.md` draft 0.1, `docs/GRAMMAR.md` draft 0.1, `docs/ABI.md` outline.
 - Reference compilers verified on this machine for the 18F27Q10 (first data point in PLAN §7A.4):
@@ -26,7 +26,7 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
   register maps (M6/M8), reset flags (M6).
 
 ## M2 — Device description (done 2026-10-23)
-- Cargo workspace: `basicc` (compiler), `crates/devdesc` (schema, loader, validator, 7 tests),
+- Cargo workspace: `basil` (compiler), `crates/devdesc` (schema, loader, validator, 7 tests),
   `tools/devgen` (pack → TOML generator and data sheet cross-check, 3 tests).
 - `devices/18F27Q10.toml` generated from `PIC18F-Q_DFP 1.31.492`: 438 SFRs with bit fields (current and
   legacy names), 32 joined registers, 12 configuration registers with every setting value, 16 RAM
@@ -41,8 +41,8 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
   declared 16-bit); non-contiguous sectors refused rather than guessed.
 
 ## M3 — Front end (done 2026-10-23)
-- `basicc` is now a library plus a binary: `src/{diag,pp,lexer,ast,parser,types,project,sema}.rs`.
-  `basicc --check prog.bas` runs the whole front end and prints `file:line:col: error[CODE]: message`
+- `basil` is now a library plus a binary: `src/{diag,pp,lexer,ast,parser,types,project,sema}.rs`.
+  `basil --check prog.bas` runs the whole front end and prints `file:line:col: error[CODE]: message`
   with the source line and a caret.
 - Lexer: case-insensitive keywords, `$FF` `%101` `#13` `1.5e3` literals, `'` `//` `(* *)` `{ }` comments
   (nesting), ` _` continuation, raw `Asm` bodies. Preprocessor: `#define/#ifdef/#option/#error…` (D25).
@@ -66,7 +66,7 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 ## M4 — Back end, Route A (done 2026-10-23)
 - Pipeline: checked tree → `lower.rs` (width-annotated IR, `ir.rs`) → `codegen.rs` (two passes: use
   counts, then final code against the planned layout) → `asm.rs` (branch relaxation, text) →
-  pic-as (`driver.rs`). `basicc prog.bas` produces `prog.hex`, `prog.S`, `prog.map`; `--report`
+  pic-as (`driver.rs`). `basil prog.bas` produces `prog.hex`, `prog.S`, `prog.map`; `--report`
   prints words per routine and every data object; `-S` stops at the assembly.
 - Covered: Boolean/Bit/Char and 8/16/32-bit integers, all operators (hardware 8×8 multiply,
   shift-and-add/restoring-division helpers for the rest), comparisons incl. signed, short-circuit
@@ -76,7 +76,7 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 - Front-end hooks added: `Symbol.owner`, `Analysis.decl_syms`, `Span: Hash`.
 - Tests: `tests/backend.rs` (assembles the valid corpus with zero pic-as warnings, checks the reset
   vector, checks unsupported features are rejected); `scripts/exec-test.py` runs `tests/exec` in the
-  MPLAB X simulator (`BASICC_MDB=1 cargo test --test backend`). `scripts/gen-arith-tests.py`
+  MPLAB X simulator (`BASIL_MDB=1 cargo test --test backend`). `scripts/gen-arith-tests.py`
   generates every operator at all six integer types on run-time operands with independently
   computed expectations (about 3,900 checks, all passing); further programs cover control flow,
   routines, registers and exact delay cycle counts (1,600 / 16,000 / 8,000,000 cycles).
@@ -243,7 +243,7 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   So the recovered tests could not be run.
 - Only data point: the prebuilt (2026-10-14) `pic-llc -march=pic18 -O2` on `pic-test/examples/sum.ll`
   gives 53 lines of assembly with visible waste (an `i8` index sign-extended to 16 bits, byte pairs
-  copied through `WREG` several times). No quantitative comparison with Route A was made: `basicc` has
+  copied through `WREG` several times). No quantitative comparison with Route A was made: `basil` has
   no LLVM IR output, so the same program cannot be fed to both.
 - Decision D46: drop Route B for now. Route A stays the single back end. Not changed: the symlinks
   stay on the recovered tree, so the LLVM build directory cannot reconfigure until the backend is

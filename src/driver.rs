@@ -23,9 +23,9 @@ pub fn target_of(dev: &Device) -> Target {
     Target { ram, access: (dev.memory.data.access_ram.start, dev.memory.data.access_ram.end), access_sfr: dev.memory.data.access_sfr.start, sfr, opt: true }
 }
 
-/// The newest installed pic-as, or the one named by `BASICC_PICAS`.
+/// The newest installed pic-as, or the one named by `BASIL_PICAS`.
 pub fn find_pic_as() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("BASICC_PICAS") {
+    if let Ok(p) = std::env::var("BASIL_PICAS") {
         return Some(PathBuf::from(p));
     }
     let root = Path::new("/opt/microchip/xc8");

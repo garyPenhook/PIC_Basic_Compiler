@@ -1,4 +1,4 @@
-//! basicc front end: lexer, parser, AST and semantic analysis (milestone M3).
+//! basil front end: lexer, parser, AST and semantic analysis (milestone M3).
 
 pub mod asm;
 pub mod ast;

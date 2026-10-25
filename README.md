@@ -40,8 +40,8 @@ Wend
 ```
 
 ```
-basicc blink.bas          # writes blink.hex (plus blink.S and blink.map)
-basicc --report blink.bas # also prints code and RAM sizes per routine and variable
+basil blink.bas          # writes blink.hex (plus blink.S and blink.map)
+basil --report blink.bas # also prints code and RAM sizes per routine and variable
 ```
 
 ## What works today
@@ -102,7 +102,7 @@ basicc --report blink.bas # also prints code and RAM sizes per routine and varia
 ## Tools
 
 * **VS Code extension** (`vscode-extension/`): highlighting, snippets, keyword and register-name
-  case correction, formatting, diagnostics from `basicc --check`, outline, go to definition, hover,
+  case correction, formatting, diagnostics from `basil --check`, outline, go to definition, hover,
   completion, signature help, and Build / Check / Report commands.
 * **pic-config** (`tools/pic-config/`): a Qt 6 helper that turns drop-down choices into a `Config`
   line (or XC8 `#pragma config` lines) to paste into a program. Changed settings are marked and
@@ -116,7 +116,7 @@ MPLAB XC8) to assemble and link. Simulator tests additionally need MPLAB X's `md
 
 ```
 cargo build --release
-target/release/basicc prog.bas
+target/release/basil prog.bas
 ```
 
 Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-check only), `-O0`
@@ -125,7 +125,7 @@ Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-che
 Documentation: the user manual `docs/MANUAL.md` (also `docs/MANUAL.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
 diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
-`BASICC_MDB=1 cargo test --test backend` for the simulator suite.
+`BASIL_MDB=1 cargo test --test backend` for the simulator suite.
 
 Personal-use project. Vendor manuals under `reference/` are not part of the repository and must
 not be redistributed.

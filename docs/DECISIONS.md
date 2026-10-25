@@ -5,7 +5,7 @@ recommendation shown; any item can be reopened.
 
 | ID | Decision | Status | Choice | Notes |
 |----|----------|--------|--------|-------|
-| D1 | Implementation language | Accepted | **Rust** | Single crate `basicc` to start; split into a workspace only when a part needs to be reused (e.g. `devgen`). |
+| D1 | Implementation language | Accepted | **Rust** | Single crate `basil` to start; split into a workspace only when a part needs to be reused (e.g. `devgen`). |
 | D2 | Surface syntax | Accepted | **Structured core language**, alternative spellings accepted as aliases where unambiguous | See `LANGUAGE.md` §14 for the alias table. |
 | D3 | Back-end route | Accepted | **Route A (direct pic-as emitter) first**; Route B (recovered LLVM backend) evaluated at M7 | Both emit the same pic-as dialect behind one driver. |
 | D4 | Calling convention / frames | Accepted (provisional) | **Static frames with overlay**, opt-in reentrant via FSR2 | Finalised in M4 after the M1 fact base; see `ABI.md`. |
@@ -84,7 +84,7 @@ recommendation shown; any item can be reopened.
 
 | ID | Decision | Choice | Reason |
 |----|----------|--------|--------|
-| D46 | Route B (recovered LLVM backend) | **Drop for now; Route A is the only back end.** The prebuilt `pic-llc` is kept as a reference only | The recovered tree does not build (see PROGRESS.md M7): the target `CMakeLists.txt` is a 15-line stub, `PICFrameLowering.cpp` was never recovered, `tools/pic-llc/pic-llc.cpp` is a 33-line stub. Rebuilding is a rewrite of unknown size, and `basicc` has no LLVM IR emitter to feed it. Reversible: reopen if the backend is rebuilt from `docs/BACKEND_DESIGN.md`. |
+| D46 | Route B (recovered LLVM backend) | **Drop for now; Route A is the only back end.** The prebuilt `pic-llc` is kept as a reference only | The recovered tree does not build (see PROGRESS.md M7): the target `CMakeLists.txt` is a 15-line stub, `PICFrameLowering.cpp` was never recovered, `tools/pic-llc/pic-llc.cpp` is a 33-line stub. Rebuilding is a rewrite of unknown size, and `basil` has no LLVM IR emitter to feed it. Reversible: reopen if the backend is rebuilt from `docs/BACKEND_DESIGN.md`. |
 
 ## Decisions made after M8 (Float)
 

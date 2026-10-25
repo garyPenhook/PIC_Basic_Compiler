@@ -3421,7 +3421,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     };
     let asmd: Assembled = assemble(&items, 0);
     let mut text = String::new();
-    text.push_str(&format!("; basicc output for {}\n", p.device));
+    text.push_str(&format!("; basil output for {}\n", p.device));
     text.push_str("#include <xc.inc>\n\n");
     for (name, _, v) in &p.config {
         text.push_str(&format!("CONFIG {name} = 0x{v:02X}\n"));

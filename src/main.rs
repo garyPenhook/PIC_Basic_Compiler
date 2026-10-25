@@ -1,18 +1,18 @@
-//! basicc — BASIC compiler for PIC microcontrollers.
+//! basil — BASIC compiler for PIC microcontrollers.
 //!
-//! `basicc prog.bas` compiles to `prog.hex` (with `prog.S` and `prog.map` beside it) through
+//! `basil prog.bas` compiles to `prog.hex` (with `prog.S` and `prog.map` beside it) through
 //! pic-as. `--check` stops after the front end, `-S` stops after writing the assembly.
 
-use basicc::codegen::generate;
-use basicc::diag::{Diagnostics, Render, Severity};
-use basicc::driver::{find_pic_as, report, run_pic_as, target_of, usage_summary};
-use basicc::lower::lower;
-use basicc::project::{LoadConfig, load};
-use basicc::sema::{SemaConfig, analyze};
+use basil::codegen::generate;
+use basil::diag::{Diagnostics, Render, Severity};
+use basil::driver::{find_pic_as, report, run_pic_as, target_of, usage_summary};
+use basil::lower::lower;
+use basil::project::{LoadConfig, load};
+use basil::sema::{SemaConfig, analyze};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: basicc [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
+const USAGE: &str = "usage: basil [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
 
 /// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
 /// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--version" | "-V" => {
-                println!("basicc {}", env!("CARGO_PKG_VERSION"));
+                println!("basil {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
             "--check" => check_only = true,
@@ -89,7 +89,7 @@ fn main() -> ExitCode {
         for d in &diags.items {
             eprintln!("{}", Render(d, &project.sources));
         }
-        eprintln!("basicc: {} error(s)", diags.error_count());
+        eprintln!("basil: {} error(s)", diags.error_count());
         return ExitCode::from(1);
     }
     let analysis = analyze(&project, &SemaConfig { devices_dirs: dev_dirs }, &mut diags);
@@ -110,8 +110,8 @@ fn main() -> ExitCode {
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());
         }
-        if g.errors.is_empty() && g.stack_levels > basicc::codegen::HW_STACK_LEVELS {
-            diags.error("E-STACK", basicc::diag::Span::default(), format!("the hardware return stack can need {} levels (calls, helpers and interrupt entries) but the device has {}", g.stack_levels, basicc::codegen::HW_STACK_LEVELS));
+        if g.errors.is_empty() && g.stack_levels > basil::codegen::HW_STACK_LEVELS {
+            diags.error("E-STACK", basil::diag::Span::default(), format!("the hardware return stack can need {} levels (calls, helpers and interrupt entries) but the device has {}", g.stack_levels, basil::codegen::HW_STACK_LEVELS));
         }
         generated = Some(g);
     }
@@ -124,11 +124,11 @@ fn main() -> ExitCode {
     let errors = diags.error_count();
     let warnings = items.iter().filter(|d| d.severity == Severity::Warning).count();
     if errors > 0 {
-        eprintln!("basicc: {errors} error(s), {warnings} warning(s)");
+        eprintln!("basil: {errors} error(s), {warnings} warning(s)");
         return ExitCode::from(1);
     }
     if check_only {
-        eprintln!("basicc: front end OK ({} unit(s), {dev_name}, {warnings} warning(s))", project.units.len());
+        eprintln!("basil: front end OK ({} unit(s), {dev_name}, {warnings} warning(s))", project.units.len());
         return ExitCode::SUCCESS;
     }
     let (program, generated) = (program.unwrap(), generated.unwrap());
@@ -137,18 +137,18 @@ fn main() -> ExitCode {
     let asm_path = hex.with_extension("S");
     let map_path = hex.with_extension("map");
     if let Err(e) = std::fs::write(&asm_path, &generated.out.text) {
-        eprintln!("basicc: cannot write {}: {e}", asm_path.display());
+        eprintln!("basil: cannot write {}: {e}", asm_path.display());
         return ExitCode::from(1);
     }
     if want_report {
         print!("{}", report(&program, &generated));
     }
     if asm_only {
-        eprintln!("basicc: wrote {} ({} words)", asm_path.display(), generated.out.words);
+        eprintln!("basil: wrote {} ({} words)", asm_path.display(), generated.out.words);
         return ExitCode::SUCCESS;
     }
     let Some(pic_as) = pic_as.or_else(find_pic_as) else {
-        eprintln!("basicc: pic-as not found (install MPLAB XC8 or set BASICC_PICAS)");
+        eprintln!("basil: pic-as not found (install MPLAB XC8 or set BASIL_PICAS)");
         return ExitCode::from(1);
     };
     match run_pic_as(&pic_as, analysis.device.as_ref().unwrap(), &asm_path, &hex, &map_path) {
@@ -157,16 +157,16 @@ fn main() -> ExitCode {
                 eprintln!("pic-as: {line}");
             }
             if !run.ok {
-                eprintln!("basicc: pic-as failed; see {}", asm_path.display());
+                eprintln!("basil: pic-as failed; see {}", asm_path.display());
                 return ExitCode::from(1);
             }
         }
         Err(e) => {
-            eprintln!("basicc: {e}");
+            eprintln!("basil: {e}");
             return ExitCode::from(1);
         }
     }
-    eprintln!("basicc: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);
+    eprintln!("basil: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);
     let color = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none();
     eprint!("{}", usage_summary(analysis.device.as_ref().unwrap(), &generated, color));
     ExitCode::SUCCESS

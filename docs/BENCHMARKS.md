@@ -9,7 +9,7 @@ v4.00 `-Os` / `-O2`.
 
 ## Baseline — M4, 2026-10-23 (first code generator, no optimisation passes yet)
 
-| kernel | basicc B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
+| kernel | basil B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | add32 | 172 | 22 | 57208 | 196 | 21 | 17166 | 218 | 21 | 18350 |
 | bitbang | 34 | 3 | 182 | 62 | 3 | 165 | 62 | 3 | 165 |
@@ -26,11 +26,11 @@ Cycles relative to XC8 `-O2`: median **1.11**; outliers are the multiplications 
 (`fixmul` 8.6×, `add32` 3.1×, `mul8` 1.8×), which go through the generic shift-and-add helper.
 
 Start-up reference point from PLAN §7A.4 (`x = 5`, then `x = x + 1` forever, `x` a byte): XC8
-24 bytes / 1 byte RAM, another BASIC compiler 32 / 26, **basicc 14 / 1** (the start-up `clrf` of `x` goes in M5).
+24 bytes / 1 byte RAM, another BASIC compiler 32 / 26, **basil 14 / 1** (the start-up `clrf` of `x` goes in M5).
 
 ## After M5 hardware multiply, 2026-10-24
 
-| kernel | basicc B | RAM | cyc | was cyc |
+| kernel | basil B | RAM | cyc | was cyc |
 |---|---:|---:|---:|---:|
 | add32 | 128 | 17 | 4808 | 57208 |
 | fixmul | 128 | 12 | 7437 | 33463 |
@@ -40,7 +40,7 @@ The other kernels are unchanged. `add32` is now 0.26× XC8 `-O2` in cycles; `fix
 
 ## After M5 counted loops, 2026-10-24
 
-| kernel | basicc B | RAM | cyc | was B | was cyc |
+| kernel | basil B | RAM | cyc | was B | was cyc |
 |---|---:|---:|---:|---:|---:|
 | add32 | 130 | 18 | 4710 | 128 | 4808 |
 | cmpchain | 64 | 6 | 3222 | 62 | 3421 |
@@ -56,7 +56,7 @@ bytes where the old compare was already cheap; it wins where the compare was wid
 
 ## After M5 frame overlay, in-place read-modify-write and the peephole pass, 2026-10-24
 
-| kernel | basicc B | RAM | cyc | was B | was RAM | was cyc |
+| kernel | basil B | RAM | cyc | was B | was RAM | was cyc |
 |---|---:|---:|---:|---:|---:|---:|
 | add32 | 108 | 18 | 3610 | 130 | 18 | 4710 |
 | bitbang | 34 | 4 | 125 | 34 | 4 | 182 |
@@ -104,11 +104,11 @@ raises `TMR0IF` in software and waits for the handler, which does a multiply by 
 `Mod` 13 on its own 16-bit state. The handler therefore runs exactly 50 times in every build, so the
 three `sink` values agree (and do). Cycles include the interrupt entry, context save and exit.
 
-| kernel | basicc B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
+| kernel | basil B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | isrmuldiv | 464 | 35 | 53456 | 582 | 45 | 51994 | 608 | 45 | 54338 |
 
 Size is 0.80 of XC8 `-Os`; cycles are 0.98 of `-O2` and 1.03 of `-Os`. The C kernel sets `PEIE` as
 well as `GIE`: DS40002043F p.199 says the `PIR0` flags (including `TMR0IF`) are not gated by `PEIE`,
 but the MDB simulator does not deliver the Timer0 interrupt without it (without it the XC8 build
-never leaves its wait loop). basicc's `Enable` sets both bits, so it was not affected.
+never leaves its wait loop). basil's `Enable` sets both bits, so it was not affected.

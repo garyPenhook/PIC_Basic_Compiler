@@ -1,6 +1,6 @@
-# basicc Compiler User Manual
+# basil Compiler User Manual
 
-Revision for **basicc 0.1.9**, target device **PIC18F27Q10**.
+Revision for **basil 0.1.9**, target device **PIC18F27Q10**.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -62,7 +62,7 @@ the device is available by its pack name (`PORTB`, `LATA`, `T0CON0`, `PIE0.5`, `
 ## Running the compiler
 
 ```
-basicc [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR]
+basil [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR]
        [--devices DIR] [--pic-as PATH] [--version] <program.bas>
 ```
 
@@ -77,7 +77,7 @@ basicc [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `-D NAME` | Define a preprocessor name (visible in every file). |
 | `-L DIR` | Add a library folder (repeatable). |
 | `--devices DIR` | Folder holding the device descriptions. |
-| `--pic-as PATH` | The `pic-as` assembler (otherwise `$BASICC_PICAS`, then `/opt/microchip/xc8/*/pic-as/bin/pic-as`). |
+| `--pic-as PATH` | The `pic-as` assembler (otherwise `$BASIL_PICAS`, then `/opt/microchip/xc8/*/pic-as/bin/pic-as`). |
 | `--version` | Print the version. |
 
 `lib/` and `devices/` are found by looking in the source file's folder and then each parent folder
@@ -89,7 +89,7 @@ against the device (colour only on a terminal, and not when `NO_COLOR` is set):
 
 ```
 Program: 28 words (56 bytes)
-basicc: blink.bas -> blink.hex (28 words, 56 bytes)
+basil: blink.bas -> blink.hex (28 words, 56 bytes)
 ```
 
 Errors print as `file:line:col: error[CODE]: message`, with the source line and a caret. Several
@@ -3140,7 +3140,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basicc 0.1.9 |
+| Feature of other BASIC compilers | basil 0.1.9 |
 |---|---|
 | Other devices | only PIC18F27Q10 |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -3173,7 +3173,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basicc --version` prints `0.1.9`. `basicc --check` on a program with a deliberate error prints a
+1. `basil --version` prints `0.1.9`. `basil --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.

@@ -16,8 +16,8 @@ open(sys.argv[2], 'w').write('# About this manual\n' + rest)
 P
 cp "$here/manual.css" "$tmp/"
 (cd "$tmp" && pandoc m.md -f gfm -t html5 -s --toc --toc-depth=2 --section-divs=false \
-  --metadata title="basicc Compiler User Manual" \
-  --metadata subtitle="PIC18F27Q10 · basicc ${version}" \
+  --metadata title="basil Compiler User Manual" \
+  --metadata subtitle="PIC18F27Q10 · basil ${version}" \
   --metadata date="$(date +%F)" -c manual.css -o m.html)
 weasyprint "$tmp/m.html" "$docs/MANUAL.pdf"
 echo "wrote docs/MANUAL.pdf"

@@ -1,5 +1,5 @@
-use basicc::diag::Diagnostics;
-use basicc::lexer::{Tok, lex};
+use basil::diag::Diagnostics;
+use basil::lexer::{Tok, lex};
 
 fn toks(src: &str) -> (Vec<Tok>, Diagnostics) {
     let mut d = Diagnostics::default();
