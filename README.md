@@ -109,7 +109,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
   completion, signature help, and Build / Check / Report commands.
 * **pic-config** (`tools/pic-config/`): a Qt 6 helper that turns drop-down choices into a `Config`
   line (or XC8 `#pragma config` lines) to paste into a program. Changed settings are marked and
-  can be reverted one by one or all at once.
+  can be reverted one by one or all at once. Its Clock drop-down adds `Device`, `Clock` and
+  `Include "intosc"` lines (with a note when `CSWEN = ON` is needed) so the output is a whole header.
 * **devgen** (`tools/devgen/`): generates a device description (`devices/*.toml`) from a Microchip device pack and cross-checks it against numbers read from the data sheet.
 
 ## Using it

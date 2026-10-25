@@ -136,13 +136,18 @@ Const ClockDiv As Byte = 0
 Const NoscHf As Byte = 96
 
 ' Waits for the switch to finish (ORDY) and for HFINTOSC to be ready (HFOR); gives up after a bounded
-' number of polls and says whether both came true.
-Private Function Settle() As Boolean
+' number of polls.
+Private Sub WaitSettle()
     Dim n As Word
     n = 0
     While (OSCCON3.ORDY = 0 Or OSCSTAT.HFOR = 0) And n < 60000
         Inc(n)
     Wend
+End Sub
+
+' WaitSettle, then says whether both ORDY and HFOR came true.
+Private Function Settle() As Boolean
+    WaitSettle()
     Result = OSCCON3.ORDY = 1 And OSCSTAT.HFOR = 1
 End Function
 
@@ -216,12 +221,18 @@ End Function
 ' Start-up: put the oscillator on `Clock`. The same steps as Apply with the constants written in, so a
 ' program that never calls SetClock or SetClockDiv does not carry Apply (nor its variables); the order
 ' rule is the same, and OSCCON2 is read because the reset divider depends on RSTOSC [Table 5-1].
+#if _clock >= 1
+' No divider: the new divider (0) can never exceed the current one, so OSCFRQ goes first.
+OSCFRQ = ClockFrq
+OSCCON1 = NoscHf
+#else
 If ClockDiv > (OSCCON2 And 15) Then
     OSCCON1 = NoscHf + ClockDiv
-    Settle()
+    WaitSettle()
     OSCFRQ = ClockFrq
 Else
     OSCFRQ = ClockFrq
     OSCCON1 = NoscHf + ClockDiv
 End If
-Settle()
+#endif
+WaitSettle()

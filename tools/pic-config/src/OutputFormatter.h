@@ -11,10 +11,13 @@ enum class OutputFormat {
     XC8Pragma,   // #pragma config A = X
 };
 
+// `clockMhz` (Basic only, empty = off) adds the `Device`/`Clock` lines before the Config and
+// `Include "intosc"` after it, so the whole block pastes as a program header.
 QString formatName(OutputFormat f);
 
 // `selection[w][s]` is the chosen value index for settings s of word w.
 using Selection = QVector<QVector<int>>;
 
 QString formatConfig(const DeviceDef &dev, const Selection &selection, OutputFormat fmt,
-                     bool onlyChanged, bool withComments);
+                     bool onlyChanged, bool withComments,
+                     const QString &clockMhz = QString());

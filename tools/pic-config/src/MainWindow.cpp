@@ -48,6 +48,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     comments_ = new QCheckBox(tr("Comments"));
     comments_->setChecked(true);
     onlyChanged_->setChecked(true);
+    clockBox_ = new QComboBox;
+    clockBox_->setToolTip(tr("Adds Device, Clock and Include \"intosc\" lines so the output is a complete header"));
+    clockBox_->addItem(tr("none"), QString());
+    for (const char *mhz : {"64", "48", "32", "16", "12", "8", "4", "2", "1"})
+        clockBox_->addItem(QString::fromLatin1(mhz) + QStringLiteral(" MHz"), QString::fromLatin1(mhz));
     auto *openBtn = new QPushButton(tr("Add device file…"));
     resetBtn_ = new QPushButton(tr("Clear all changes"));
     resetBtn_->setToolTip(tr("Put every setting back to its default"));
@@ -57,6 +62,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     bar->addSpacing(12);
     bar->addWidget(new QLabel(tr("Output:")));
     bar->addWidget(formatBox_);
+    bar->addSpacing(12);
+    bar->addWidget(new QLabel(tr("Clock:")));
+    bar->addWidget(clockBox_);
     bar->addSpacing(12);
     bar->addWidget(onlyChanged_);
     bar->addWidget(comments_);
@@ -97,6 +105,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     connect(deviceBox_, &QComboBox::currentIndexChanged, this, &MainWindow::deviceChanged);
     connect(formatBox_, &QComboBox::currentIndexChanged, this, &MainWindow::refreshOutput);
+    connect(clockBox_, &QComboBox::currentIndexChanged, this, &MainWindow::refreshOutput);
     connect(onlyChanged_, &QCheckBox::toggled, this, &MainWindow::refreshOutput);
     connect(comments_, &QCheckBox::toggled, this, &MainWindow::refreshOutput);
     connect(openBtn, &QPushButton::clicked, this, &MainWindow::openDeviceFile);
@@ -269,7 +278,8 @@ void MainWindow::refreshOutput()
             sel[w].push_back(c->currentIndex());
 
     const auto fmt = OutputFormat(formatBox_->currentData().toInt());
-    output_->setPlainText(formatConfig(*current_, sel, fmt, onlyChanged_->isChecked(), comments_->isChecked()));
+    output_->setPlainText(formatConfig(*current_, sel, fmt, onlyChanged_->isChecked(), comments_->isChecked(),
+                                    clockBox_->currentData().toString()));
 
     // Resulting configuration bytes, for cross-checking against a programmer.
     QStringList bytes;

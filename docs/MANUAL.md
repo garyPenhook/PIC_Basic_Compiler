@@ -1579,7 +1579,9 @@ High(p) : DelayNop() : Low(p)
 `Clock` only tells the compiler what speed to expect; it does not touch the hardware. Including
 `intosc` makes the hardware match it. Its start-up code (run before the main program) writes
 `OSCFRQ` and `OSCCON1` and waits, each wait bounded, for `OSCCON3.ORDY` and `OSCSTAT.HFOR`. Include
-it **first**: module start-up code runs in include order.
+it **first**: module start-up code runs in include order. For `Clock` of 1 MHz or more the divider is
+never raised, so start-up writes `OSCFRQ` then `OSCCON1` without reading `OSCCON2`; below 1 MHz it
+reads `OSCCON2` to pick the order.
 
 Accepted `Clock` values (anything else is a compile error): 64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and
 0.5, 0.25, 0.125, 0.0625, 0.03125 MHz (1 MHz divided by 2 to 32). `Config` needs `CSWEN = ON` unless

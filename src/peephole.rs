@@ -842,6 +842,31 @@ fn pass_unreachable(items: &mut Vec<Item>) -> bool {
     changed
 }
 
+/// The `__halt: bra __halt` that ends the main program is dropped when the code before it never
+/// falls through (an endless `Do … Loop`). The label stays: the stack-depth count reads it.
+fn pass_halt_loop(items: &mut Vec<Item>) -> bool {
+    let Some(h) = items.iter().position(|i| matches!(i, Item::Label(l) if l == "__halt")) else { return false };
+    if !matches!(items.get(h + 1), Some(Item::Br(Cc::Always, t)) if t == "__halt") {
+        return false;
+    }
+    let named = items.iter().enumerate().any(|(k, i)| k != h + 1 && matches!(i, Item::Br(_, t) | Item::Call(t) if t == "__halt"));
+    let mut j = h;
+    while j > 0 && matches!(items[j - 1], Item::Comment(_) | Item::Fence) {
+        j -= 1;
+    }
+    let ends = j > 0
+        && match &items[j - 1] {
+            Item::Br(Cc::Always, _) => true,
+            Item::Ins(t) => matches!(t.split_whitespace().next(), Some("return" | "retfie" | "goto" | "retlw")),
+            _ => false,
+        };
+    if named || !ends {
+        return false;
+    }
+    items.remove(h + 1);
+    true
+}
+
 /// Drops the compiler's own `_L` labels that nothing names. They only split straight runs of
 /// code, which stops the other passes at them.
 fn pass_unused_labels(items: &mut Vec<Item>) -> bool {
@@ -1204,6 +1229,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_unused_labels(&mut items);
         changed |= pass_tail_call(&mut items);
         changed |= pass_unreachable(&mut items);
+        changed |= pass_halt_loop(&mut items);
         changed |= pass_hoist_movlb(&mut items);
         changed |= pass_redundant_movlb(&mut items);
         changed |= pass_warg(&mut items);
@@ -1500,5 +1526,18 @@ mod tests {
     fn argument_in_w_is_stored_when_w_is_clobbered() {
         let r = run(&[Item::Label("F".into()), Item::Comment("warg".into()), ins("movwf P, c"), ins("movlw 3"), ins("movwf Q, c"), ins("movf P, w, c"), ins("movwf TX1REG, c"), ins("return")]);
         assert!(r.iter().any(|t| t == "movwf P, c"), "{r:?}");
+    }
+
+    #[test]
+    fn halt_loop_after_an_endless_loop_is_dropped() {
+        let ends = |main: Vec<Item>| {
+            let mut v = vec![Item::Label("__reset".into())];
+            v.extend(main);
+            v.push(Item::Label("__halt".into()));
+            v.push(Item::Br(Cc::Always, "__halt".into()));
+            optimise(v, &env()).iter().any(|i| matches!(i, Item::Br(Cc::Always, t) if t == "__halt"))
+        };
+        assert!(!ends(vec![Item::Label("_L1".into()), ins("btg LATB, 0, c"), Item::Br(Cc::Always, "_L1".into())]));
+        assert!(ends(vec![ins("btg LATB, 0, c")]));
     }
 }

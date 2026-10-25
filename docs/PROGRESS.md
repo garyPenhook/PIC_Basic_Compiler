@@ -461,3 +461,12 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   pass off (`Target::keep_vars`, `peephole::Env::keep_writes`); `scripts/exec-test.py` always passes it. The default build is unchanged.
   The simulator suite passes again, optimised and `-O0`.
 
+
+## Smaller start-up code (done 2026-10-25, 0.1.25)
+- `lib/intosc.bas`: for `Clock` >= 1 MHz the start-up code no longer compares against `OSCCON2` (the new divider is 0, so the
+  other order was dead code), and waits with a new `WaitSettle()` Sub instead of `Settle()`, whose Boolean nobody read.
+  `Settle()` now calls `WaitSettle()`. The 18F27Q10 blink example went from 127 to 103 words.
+- `peephole::pass_halt_loop` drops `__halt: bra __halt` when the main program ends in an endless loop (102 words).
+- `tools/pic-config`: Clock drop-down that prepends `Device`/`Clock` and appends `Include "intosc"`, with a `CSWEN` warning.
+- Not done: `movlw 0 ; movwf` to `clrf` (the delay counters are in cycle-exact code; the `TBLPTR` bytes are label parts) and
+  `bcf` after `clrf` of the same register.

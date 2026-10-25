@@ -10,7 +10,7 @@ QString formatName(OutputFormat f)
 }
 
 QString formatConfig(const DeviceDef &dev, const Selection &sel, OutputFormat fmt,
-                     bool onlyChanged, bool withComments)
+                     bool onlyChanged, bool withComments, const QString &clockMhz)
 {
     struct Item { QString name, value, comment; bool changed; };
     QVector<Item> items;
@@ -27,7 +27,31 @@ QString formatConfig(const DeviceDef &dev, const Selection &sel, OutputFormat fm
         }
     }
 
+    // intosc.bas: CSWEN = ON is needed for every speed except the one RSTOSC already gives.
+    QString warning;
+    if (fmt == OutputFormat::Basic && !clockMhz.isEmpty()) {
+        QString rstosc, cswen;
+        for (int w = 0; w < dev.words.size(); ++w)
+            for (int s = 0; s < dev.words[w].settings.size(); ++s) {
+                const ConfigSetting &set = dev.words[w].settings[s];
+                const int idx = (w < sel.size() && s < sel[w].size()) ? sel[w][s] : set.defaultIndex;
+                if (set.name == QLatin1String("RSTOSC")) rstosc = set.values[idx].name;
+                else if (set.name == QLatin1String("CSWEN")) cswen = set.values[idx].name;
+            }
+        const bool startsAtClock = rstosc == QStringLiteral("HFINTOSC_%1MHZ").arg(clockMhz);
+        if (!startsAtClock && cswen != QLatin1String("ON"))
+            warning = QStringLiteral("' WARNING: Clock = %1 needs CSWEN = ON for Include \"intosc\"\n")
+                          .arg(clockMhz);
+    }
+
     QString out;
+    const bool header = fmt == OutputFormat::Basic && !clockMhz.isEmpty();
+    if (header) {
+        QString part = dev.name;
+        if (part.startsWith(QLatin1String("PIC"), Qt::CaseInsensitive))
+            part.remove(0, 3);
+        out += QStringLiteral("Device = %1\nClock = %2\n").arg(part, clockMhz) + warning + QLatin1Char('\n');
+    }
     if (withComments)
         out += QStringLiteral("' %1 configuration\n").arg(dev.name);
 
@@ -58,6 +82,8 @@ QString formatConfig(const DeviceDef &dev, const Selection &sel, OutputFormat fm
                 if (it.changed)  // defaults need no explanation
                     out += QStringLiteral("' %1 = %2: %3\n").arg(it.name, it.value, it.comment);
         }
+        if (header)
+            out += QStringLiteral("\nInclude \"intosc\"\n");
     } else {
         for (const Item &it : items) {
             out += QStringLiteral("#pragma config %1 = %2").arg(it.name, it.value);

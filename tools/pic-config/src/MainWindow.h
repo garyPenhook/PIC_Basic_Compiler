@@ -44,6 +44,7 @@ private:
     QComboBox *formatBox_;
     QCheckBox *onlyChanged_;
     QCheckBox *comments_;
+    QComboBox *clockBox_;
     QWidget *settingsHost_;
     QVBoxLayout *settingsLayout_;
     QPlainTextEdit *output_;
