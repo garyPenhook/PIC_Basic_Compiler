@@ -201,6 +201,10 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   L2 / L1:` becomes `b!cc L2`, and a `movlb` to the bank already selected goes. Fixed: `src_to_reg`
   sized a scratch register for one byte while writing several, so a 16-bit compare against a constant
   overwrote the next variable. Test: `tests/exec/callopt.bas`.
+- Write-only copies (0.1.17): `pass_wreg` keeps what `WREG` holds across a fence and past a conditional
+  branch, and a callee is not given the caller's flags, so `movwf c / bz / movf c,w` loses the reload;
+  `pass_write_only` then deletes `movwf v` when nothing in the program mentions `v` otherwise. `SerialWrite`
+  is two words smaller.
 - Review fixes (done): passes never touch the instruction after a skip and never use it as a copy
   source; `Result` is cleared on entry unless a straight-line assignment precedes any `Return`;
   objects over 256 bytes start on a bank boundary. Test: `tests/exec/review.bas`. Known cost: the

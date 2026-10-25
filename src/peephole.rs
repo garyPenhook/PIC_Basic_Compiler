@@ -354,8 +354,10 @@ fn flags_live(items: &[Item], i: usize, mut needed: u8) -> bool {
         match it {
             Item::Comment(_) => {}
             Item::Fence => return false,
-            // Both paths of a branch, and a callee, are not followed: assume the flags are read.
-            Item::Br(..) | Item::Call(_) => return true,
+            // Both paths of a branch are not followed: assume the flags are read. A callee gets
+            // none from its caller.
+            Item::Br(..) => return true,
+            Item::Call(_) => return false,
             Item::Ins(t) => match effect(t) {
                 None => return true,
                 Some(e) => {
@@ -511,7 +513,66 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                 // A scratch register copy of W stays valid only until it is rewritten: not tracked.
                 w = next;
             }
+            // A fence emits nothing, so what `WREG` holds is still true after it. A conditional
+            // branch that is not taken leaves `WREG` alone; the target is a label, which forgets it.
+            Item::Fence => {}
+            Item::Br(cc, _) if *cc != Cc::Always => {}
             _ => w = W::Unknown,
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// Deletes `movwf v` when `v` is a compiler-placed byte that nothing in the program reads, takes
+/// the address of or names any other way (typically a copy of `WREG` that `pass_wreg` made
+/// redundant to reload).
+fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
+    fn idents(t: &str) -> impl Iterator<Item = &str> {
+        t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|s| !s.is_empty())
+    }
+    let keep = protected(items);
+    let mut stores: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (i, it) in items.iter().enumerate() {
+        match it {
+            Item::Ins(t) => {
+                if let Some((m, ops)) = parse(t)
+                    && m == "movwf"
+                    && !keep[i]
+                    && let Some(&sym) = ops.first()
+                    && env.is_plain(sym)
+                    && idents(sym).count() == 1
+                    && !sym.starts_with("__")
+                    && !sym.starts_with("PROD")
+                {
+                    stores.entry(sym).or_default().push(i);
+                    for o in &ops[1..] {
+                        used.extend(idents(o));
+                    }
+                    continue;
+                }
+                used.extend(idents(t));
+            }
+            Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => {
+                used.extend(idents(t));
+            }
+            _ => {}
+        }
+    }
+    let mut dead = vec![false; items.len()];
+    for (sym, at) in &stores {
+        if !used.contains(sym) {
+            for &i in at {
+                dead[i] = true;
+            }
         }
     }
     let changed = dead.iter().any(|&d| d);
@@ -1152,6 +1213,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_forward(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
+        changed |= pass_write_only(&mut items, env);
         if !changed {
             break;
         }
@@ -1180,7 +1242,14 @@ mod tests {
         Item::Ins(t.to_string())
     }
 
+    /// Runs with some other code reading every test variable, so stores to them stay.
     fn run(src: &[Item]) -> Vec<String> {
+        let mut all = vec![Item::Raw("lfsr 0, X+Y+R".into())];
+        all.extend_from_slice(src);
+        run_alone(&all).split_off(1)
+    }
+
+    fn run_alone(src: &[Item]) -> Vec<String> {
         optimise(src.to_vec(), &env())
             .iter()
             .map(|i| match i {
@@ -1216,6 +1285,25 @@ mod tests {
         assert_eq!(r, vec!["--"]);
         // Read in between keeps it.
         let r = run(&[ins("movff X, __A0"), ins("movwf __A0, c"), ins("movff __A0, Y"), Item::Fence]);
+        assert_eq!(r.len(), 3, "{r:?}");
+    }
+
+    #[test]
+    fn reload_after_a_conditional_branch_and_the_write_only_copy_go() {
+        let r = run_alone(&[
+            ins("movf TABLAT, w, c"),
+            ins("movwf X, c"),
+            Item::Br(Cc::Z, "L".into()),
+            ins("movf X, w, c"),
+            Item::Call("f".into()),
+            Item::Label("L".into()),
+        ]);
+        assert_eq!(r.len(), 4, "{r:?}");
+    }
+
+    #[test]
+    fn a_read_of_another_byte_keeps_the_store() {
+        let r = run_alone(&[ins("movwf X+1, c"), ins("movf X, w, c"), ins("addwf Y, f, c")]);
         assert_eq!(r.len(), 3, "{r:?}");
     }
 
@@ -1265,8 +1353,8 @@ mod tests {
     #[test]
     fn reload_after_store_needs_dead_flags() {
         // movwf X ; movf X,w : the reload goes when nothing reads Z/N afterwards.
-        let r = run(&[ins("movwf X, c"), ins("movf X, w, c"), ins("addwf Y, f, c")]);
-        assert_eq!(r, vec!["movwf X, c", "addwf Y, f, c"]);
+        let r = run(&[ins("movwf X, c"), ins("movf X, w, c"), ins("addwf Y, f, c"), ins("movff X, Y")]);
+        assert_eq!(r, vec!["movwf X, c", "addwf Y, f, c", "movff X, Y"]);
         // A branch on Z after it needs the flags of the reload.
         let r = run(&[ins("movwf X, c"), ins("movf X, w, c"), Item::Br(Cc::Z, "L".into())]);
         assert_eq!(r.len(), 3);
