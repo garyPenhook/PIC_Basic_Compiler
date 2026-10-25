@@ -19,6 +19,7 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
@@ -48,7 +49,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     comments_->setChecked(true);
     onlyChanged_->setChecked(true);
     auto *openBtn = new QPushButton(tr("Add device file…"));
-    auto *resetBtn = new QPushButton(tr("Reset to defaults"));
+    resetBtn_ = new QPushButton(tr("Clear all changes"));
+    resetBtn_->setToolTip(tr("Put every setting back to its default"));
+    resetBtn_->setEnabled(false);
     bar->addWidget(new QLabel(tr("Device:")));
     bar->addWidget(deviceBox_);
     bar->addSpacing(12);
@@ -59,7 +62,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     bar->addWidget(comments_);
     bar->addStretch();
     bar->addWidget(openBtn);
-    bar->addWidget(resetBtn);
+    bar->addWidget(resetBtn_);
     root->addLayout(bar);
 
     // --- body --------------------------------------------------------
@@ -97,7 +100,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(onlyChanged_, &QCheckBox::toggled, this, &MainWindow::refreshOutput);
     connect(comments_, &QCheckBox::toggled, this, &MainWindow::refreshOutput);
     connect(openBtn, &QPushButton::clicked, this, &MainWindow::openDeviceFile);
-    connect(resetBtn, &QPushButton::clicked, this, &MainWindow::resetToDefaults);
+    connect(resetBtn_, &QPushButton::clicked, this, &MainWindow::resetToDefaults);
     connect(copyBtn, &QPushButton::clicked, this, &MainWindow::copyOutput);
 
     loadBuiltInDevices();
@@ -168,6 +171,8 @@ void MainWindow::buildSettingsPanel()
     // Remove the old panel (combos_ is cleared first so refreshOutput can
     // never see dangling pointers).
     combos_.clear();
+    reverts_.clear();
+    labels_.clear();
     while (QLayoutItem *item = settingsLayout_->takeAt(0)) {
         delete item->widget();
         delete item;
@@ -176,6 +181,8 @@ void MainWindow::buildSettingsPanel()
         return;
 
     combos_.resize(current_->words.size());
+    reverts_.resize(current_->words.size());
+    labels_.resize(current_->words.size());
     for (int w = 0; w < current_->words.size(); ++w) {
         const ConfigWord &word = current_->words[w];
         auto *box = new QGroupBox(QStringLiteral("%1   (0x%2)")
@@ -195,9 +202,25 @@ void MainWindow::buildSettingsPanel()
             combo->setMinimumContentsLength(24);
             auto *label = new QLabel(set.name);
             label->setToolTip(set.desc);
-            form->addRow(label, combo);
+            auto *revert = new QToolButton;
+            revert->setText(QStringLiteral("↺"));
+            revert->setToolTip(tr("Back to the default for %1").arg(set.name));
+            revert->setAutoRaise(true);
+            // Keeps its space while hidden so the combos do not shift when a setting changes.
+            auto sp = revert->sizePolicy();
+            sp.setRetainSizeWhenHidden(true);
+            revert->setSizePolicy(sp);
+            revert->setVisible(false);
+            auto *row = new QHBoxLayout;
+            row->setContentsMargins(0, 0, 0, 0);
+            row->addWidget(combo, 1);
+            row->addWidget(revert);
+            form->addRow(label, row);
             combos_[w].push_back(combo);
+            reverts_[w].push_back(revert);
+            labels_[w].push_back(label);
             connect(combo, &QComboBox::currentIndexChanged, this, &MainWindow::refreshOutput);
+            connect(revert, &QToolButton::clicked, this, [combo, d = set.defaultIndex] { combo->setCurrentIndex(d); });
         }
         settingsLayout_->addWidget(box);
     }
@@ -224,8 +247,22 @@ void MainWindow::refreshOutput()
     if (!consistent) {
         output_->clear();
         wordsInfo_->clear();
+        resetBtn_->setEnabled(false);
         return;
     }
+    // Mark what differs from the default and offer a way back for each.
+    bool anyChanged = false;
+    for (int w = 0; w < combos_.size(); ++w)
+        for (int s = 0; s < combos_[w].size(); ++s) {
+            const bool changed = combos_[w][s]->currentIndex() != current_->words[w].settings[s].defaultIndex;
+            anyChanged = anyChanged || changed;
+            reverts_[w][s]->setVisible(changed);
+            QFont f = labels_[w][s]->font();
+            f.setBold(changed);
+            labels_[w][s]->setFont(f);
+        }
+    resetBtn_->setEnabled(anyChanged);
+
     Selection sel(combos_.size());
     for (int w = 0; w < combos_.size(); ++w)
         for (QComboBox *c : combos_[w])

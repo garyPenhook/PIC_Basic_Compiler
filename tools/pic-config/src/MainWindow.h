@@ -11,6 +11,8 @@ class QPlainTextEdit;
 class QVBoxLayout;
 class QWidget;
 class QLabel;
+class QPushButton;
+class QToolButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -33,7 +35,11 @@ private:
     const DeviceDef *current_ = nullptr;
     // combos_[word][setting] mirrors current_->words[word].settings[setting]
     QVector<QVector<QComboBox *>> combos_;
+    // Same shape as combos_: the per-setting revert button and the setting's name label.
+    QVector<QVector<QToolButton *>> reverts_;
+    QVector<QVector<QLabel *>> labels_;
 
+    QPushButton *resetBtn_;
     QComboBox *deviceBox_;
     QComboBox *formatBox_;
     QCheckBox *onlyChanged_;
