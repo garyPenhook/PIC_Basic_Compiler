@@ -394,3 +394,10 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Limits: no denormals (flushed to zero), no `Str`/`Print` of a Float yet, no `Sqr` etc., not usable in `Select` / `For` / `Inc`.
   Size: a program using `+ * /` carries roughly 2,500 words of Float code; assembly versions of the routines would be smaller (D51).
 
+
+## Device descriptions for PIC16F17126 / PIC16F17146 (0.1.12)
+
+- `devgen` gained the `16Exxx` (enhanced mid-range) family table: reset 0000h, single interrupt vector 0004h (DS40002343F p.36-37).
+  `devices/16F17126.toml` and `16F17146.toml` are generated from PIC16F1xxxx_DFP 1.32.471 and cross-checked by `scripts/check-devices.sh`
+  against hand-written `*.expect.toml` files (Table 1 p.1, Table 9-1 p.36, Sec. 8.1/8.4 p.24).
+- Not compilable yet: no `pic16e` code generator, so `Device = 16F17146` reports `E-DEVICE` saying so. Errata (DS80001009) not yet reviewed.

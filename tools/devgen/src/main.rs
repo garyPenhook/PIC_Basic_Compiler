@@ -89,6 +89,12 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
             vectors: (0x00, 0x08, 0x18),
             vectors_source: "PIC18F27/47Q10 data sheet DS40002043F p.108 and p.193 (fixed vectors: reset 0000h, high 0008h, low 0018h)",
         }),
+        // Enhanced mid-range: one interrupt vector, so high and low are both 0004h.
+        "16Exxx" => Ok(FamilyFacts {
+            family: "pic16e",
+            vectors: (0x00, 0x04, 0x04),
+            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37 (Reset vector 0000h, interrupt vector 0004h)",
+        }),
         other => Err(format!("architecture '{other}' has no family table in devgen yet; add and verify one before generating")),
     }
 }
@@ -128,7 +134,7 @@ fn generate(pic: &Path, out: &Path) -> Res<()> {
             interrupt_low: facts.vectors.2,
             source: facts.vectors_source.to_string(),
         },
-        memory: memory(root)?,
+        memory: memory(root, facts.family)?,
         config: config_registers(root)?,
         sfr: sfrs(root)?,
         joined: Vec::new(),
@@ -156,6 +162,15 @@ fn generate(pic: &Path, out: &Path) -> Res<()> {
     Ok(())
 }
 
+/// The Access Bank exists only on PIC18; other families get an empty range.
+fn no_access_bank(found: Option<Range>, family: &str, what: &str) -> Res<Range> {
+    match (found, family) {
+        (Some(r), _) => Ok(r),
+        (None, "pic16e") => Ok(Range { start: 0, end: 0 }),
+        (None, _) => Err(format!("pack has no access {what} region")),
+    }
+}
+
 /// A memory region made of one or more pack sectors. Sectors must be contiguous: a device with
 /// split or gapped flash would otherwise get a silently wrong size, so it is refused instead.
 fn region(root: roxmltree::Node, tag: &'static str, what: &str) -> Res<Region> {
@@ -179,7 +194,7 @@ fn region(root: roxmltree::Node, tag: &'static str, what: &str) -> Res<Region> {
     Ok(Region { start, size: end - start })
 }
 
-fn memory(root: roxmltree::Node) -> Res<Memory> {
+fn memory(root: roxmltree::Node, family: &str) -> Res<Memory> {
     let program = region(root, "CodeSector", "program memory")?;
     let eeprom = region(root, "EEDataSector", "data EEPROM")?;
     let user_id = region(root, "UserIDSector", "user IDs")?;
@@ -196,6 +211,10 @@ fn memory(root: roxmltree::Node) -> Res<Memory> {
             continue;
         }
         let (b, e) = (req_num(n, "beginaddr")?, req_num(n, "endaddr")?);
+        // A shadow is another view of common RAM (enhanced mid-range), not extra storage.
+        if attr(n, "shadowidref").is_some() {
+            continue;
+        }
         if attr(n, "regionid") == Some("accessram") {
             access_ram = Some(Range { start: b, end: e }); // overlaps bank 0; not a separate RAM
             continue;
@@ -229,8 +248,8 @@ fn memory(root: roxmltree::Node) -> Res<Memory> {
             usable_gpr,
             gpr,
             sfr,
-            access_ram: access_ram.ok_or("pack has no access RAM region")?,
-            access_sfr: access_sfr.ok_or("pack has no access SFR region")?,
+            access_ram: no_access_bank(access_ram, family, "RAM")?,
+            access_sfr: no_access_bank(access_sfr, family, "SFR")?,
         },
     })
 }
@@ -461,5 +480,6 @@ mod tests {
     fn unknown_architecture_is_refused() {
         assert!(family_facts("33xxxx").is_err());
         assert_eq!(family_facts("18xxxx").unwrap().family, "pic18");
+        assert_eq!(family_facts("16Exxx").unwrap().vectors, (0, 4, 4));
     }
 }

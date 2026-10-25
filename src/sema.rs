@@ -504,6 +504,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                     Ok(d) => {
                         if !d.device.name.eq_ignore_ascii_case(&name) {
                             self.diags.error("E-DEVICE", span, format!("{} describes {}, not {name}", p.display(), d.device.name));
+                        } else if d.device.family != "pic18" {
+                            self.diags.error("E-DEVICE", span, format!("{} is described, but Basil has no code generator for the {} family yet (only pic18)", d.device.name, d.device.family));
                         } else {
                             self.a.device = Some(d);
                         }
