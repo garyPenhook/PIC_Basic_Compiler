@@ -115,23 +115,24 @@ never leaves its wait loop). basil's `Enable` sets both bits, so it was not affe
 
 ## Re-run at 0.1.25, 2026-10-25
 
+`scripts/bench.py` now builds the basil side with `--keep-vars`. The kernels only write `sink`, and
+since 0.1.17 the write-only peephole pass deleted that store (`cmpchain` then left 0 in `sink`
+against XC8's 201, a mismatch that looked like a miscompile but was not). XC8 keeps the store, so
+`--keep-vars` is the like-for-like build.
+
 | kernel | basil B | RAM | cyc | XC8 -Os B | RAM | cyc | XC8 -O2 B | RAM | cyc |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | add32 | 108 | 18 | 3610 | 196 | 21 | 17166 | 218 | 21 | 18350 |
-| bitbang | 30 | 4 | 123 | 62 | 3 | 165 | 62 | 3 | 165 |
-| cmpchain | 62 | 6 | 3221 | 88 | 5 | 3224 | 88 | 5 | 3224 |
-| crc8 | 66 | 6 | 6129 | 86 | 4 | 6376 | 86 | 4 | 6641 |
+| bitbang | 34 | 4 | 125 | 62 | 3 | 165 | 62 | 3 | 165 |
+| cmpchain | 64 | 6 | 3222 | 88 | 5 | 3224 | 88 | 5 | 3224 |
+| crc8 | 70 | 6 | 6257 | 86 | 4 | 6376 | 86 | 4 | 6641 |
 | div16 | 174 | 17 | 31832 | 292 | 18 | 29380 | 306 | 18 | 30746 |
 | fixmul | 78 | 11 | 3578 | 104 | 8 | 3725 | 110 | 8 | 3870 |
 | isrmuldiv | 456 | 35 | 53258 | 582 | 45 | 51994 | 608 | 45 | 54338 |
 | mul8 | 54 | 9 | 1106 | 97 | 7 | 1109 | 99 | 7 | 1110 |
-| state | 68 | 6 | 1578 | 94 | 4 | 1532 | 102 | 4 | 1857 |
+| state | 72 | 6 | 1580 | 94 | 4 | 1532 | 102 | 4 | 1857 |
 | sum16 | 46 | 6 | 1806 | 72 | 6 | 1807 | 74 | 6 | 1808 |
 
-Total flash 1142 B against 1673 B for XC8 `-Os` (0.68; median 0.67, range 0.48 `bitbang` to 0.78
-`isrmuldiv`). Total RAM 118 B against 121 B: basil uses 1–3 bytes more on six kernels, less on
-`add32`, `div16` and `isrmuldiv`, and the same on `sum16`.
-
-**Open: `cmpchain` fails the cross-check.** The script reports `MISMATCH cmpchain: xc8 sink=201,
-basil sink=0`, so the `cmpchain` row above is not trustworthy. The previous table had it passing
-(64 B, 3222 cyc); this is a regression since then, to be bisected.
+Total flash 1156 B against 1673 B for XC8 `-Os` (0.69; median 0.69, range 0.55 `add32` / `bitbang` to
+0.81 `crc8`). Total RAM 118 B against 121 B: basil uses 1-3 bytes more on six kernels, less on
+`add32`, `div16` and `isrmuldiv`, and the same on `sum16`. All sinks agree in the three builds.

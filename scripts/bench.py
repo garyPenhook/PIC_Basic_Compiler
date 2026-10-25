@@ -51,7 +51,7 @@ for opt in ("-Os", "-O2"):
 for k in names:
     b = os.path.join(root, "bench/kernels", k + ".bas")
     hexf = os.path.join(work, k + ".hex")
-    r = sh([a.basil, "--report", b, "-o", hexf])
+    r = sh([a.basil, "--keep-vars", "--report", b, "-o", hexf])
     if r.returncode != 0:
         sys.exit(f"basil failed for {k}:\n{r.stdout}{r.stderr}")
     words = int(re.search(r"Program: (\d+) words", r.stdout).group(1))
