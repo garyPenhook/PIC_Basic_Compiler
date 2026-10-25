@@ -2019,7 +2019,14 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.a.resolved.insert(d.id, Res::Intrinsic(key.clone()));
             return Some(Cur::Intrinsic(key));
         }
-        let msg = if self.a.device.is_none() { format!("`{}` is not declared", d.head.name) } else { format!("`{}` is not declared and is not a register of {}", d.head.name, self.a.device.as_ref().unwrap().device.name) };
+        let mut msg = if self.a.device.is_none() { format!("`{}` is not declared", d.head.name) } else { format!("`{}` is not declared and is not a register of {}", d.head.name, self.a.device.as_ref().unwrap().device.name) };
+        // A Public routine of a module that is loaded (by another file) but not included here.
+        let owner = (0..self.proj.units.len()).find(|&u| {
+            u != self.unit && !self.proj.units[self.unit].includes.contains(&u) && self.unit_scopes[u].get(&key).is_some_and(|&id| self.a.symbols[id].vis == Vis::Public)
+        });
+        if let Some(m) = owner.and_then(|u| self.proj.units[u].unit.name.as_ref()) {
+            msg.push_str(&format!("; it is declared in module `{0}`, add `Include \"{1}\"` to this file (an Include is not inherited from another file)", m.name, m.name.to_lowercase()));
+        }
         self.err("E-UNDECLARED", d.head.span, msg)
     }
 

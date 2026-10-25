@@ -1,6 +1,6 @@
 # basicc Compiler User Manual
 
-Revision for **basicc 0.1.8**, target device **PIC18F27Q10**.
+Revision for **basicc 0.1.9**, target device **PIC18F27Q10**.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -3140,7 +3140,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basicc 0.1.8 |
+| Feature of other BASIC compilers | basicc 0.1.9 |
 |---|---|
 | Other devices | only PIC18F27Q10 |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -3173,7 +3173,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basicc --version` prints `0.1.8`. `basicc --check` on a program with a deliberate error prints a
+1. `basicc --version` prints `0.1.9`. `basicc --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.
