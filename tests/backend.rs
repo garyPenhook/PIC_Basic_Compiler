@@ -81,7 +81,7 @@ fn valid_programs_assemble_or_are_deferred() {
 fn unsupported_features_are_reported_not_miscompiled() {
     let out = scratch("unsupported");
     let src = out.join("u.bas");
-    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim i As Integer\nDim j As Integer\nj = Abs(i)\n").unwrap();
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim i As Integer\nDim j As Word\nj = AddressOf(i)\n").unwrap();
     let r = Command::new(basicc()).arg(&src).arg("-S").output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));

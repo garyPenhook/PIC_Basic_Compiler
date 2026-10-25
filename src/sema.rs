@@ -2308,12 +2308,20 @@ impl<'p, 'd> Sema<'p, 'd> {
         let call = |ty: Ty| Some(EI { call: true, ..EI::new(ty) });
         match name {
             "inc" | "dec" => {
-                if !want(self, 1) {
+                // `Inc(x)` / `Dec(x)`, or `Inc(x, amount)` / `Dec(x, amount)` with an integer amount.
+                if args.len() != 1 && args.len() != 2 {
+                    self.diags.error("E-ARGS", span, format!("`{}` takes 1 or 2 arguments, {} given", d.head.name, args.len()));
                     return None;
                 }
                 let v = self.lvalue_arg(&args[0], d.head.name.as_str())?;
                 if !v.ty.is_int() {
                     return self.err("E-TYPE", args[0].span, format!("`{}` needs an integer variable, found {}", d.head.name, v.ty));
+                }
+                if let Some(amount) = args.get(1) {
+                    let a = self.check_expr(amount)?;
+                    if !a.ty.is_numeric_int() {
+                        return self.err("E-TYPE", amount.span, format!("the amount of `{}` must be an integer, found {}", d.head.name, a.ty));
+                    }
                 }
                 call(Ty::Void)
             }

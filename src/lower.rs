@@ -1590,6 +1590,40 @@ impl<'a> Lowerer<'a> {
                 let x = self.expr(&args[0])?;
                 Some(Ex::new(ExK::Bin(BinKind::And, Box::new(x), Box::new(Ex::konst(0x7FFF_FFFF, 32, false))), 32, false))
             }
+            // |x| = x + ((-2x) & mask), mask = all ones when x < 0. Unsigned values are their own magnitude.
+            "abs" => {
+                let (w, s) = nat(&ty)?;
+                let x = conv(self.expr(&args[0])?, w, s);
+                if !s {
+                    return Some(x);
+                }
+                if x.has_call() {
+                    self.unsupported(e.span, "a call inside the argument of Abs");
+                    return None;
+                }
+                let neg = Ex::boolean(ExK::Cmp(CmpKind::Lt, Box::new(x.clone()), Box::new(Ex::konst(0, w, s))));
+                let mask = Ex::new(ExK::Neg(Box::new(conv(neg, w, s))), w, s);
+                let twice = Ex::new(ExK::Bin(BinKind::Add, Box::new(x.clone()), Box::new(x.clone())), w, s);
+                let minus_twice = Ex::new(ExK::Neg(Box::new(twice)), w, s);
+                let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(minus_twice), Box::new(mask)), w, s);
+                Some(Ex::new(ExK::Bin(BinKind::Add, Box::new(x), Box::new(pick)), w, s))
+            }
+            // Min = b + ((a - b) & mask) with mask all ones when a < b; Max the same with a > b.
+            "min" | "max" => {
+                let (w, s) = nat(&ty)?;
+                let a = conv(self.expr(&args[0])?, w, s);
+                let b = conv(self.expr(&args[1])?, w, s);
+                if a.has_call() || b.has_call() {
+                    self.unsupported(e.span, &format!("a call inside the arguments of {}", if name == "min" { "Min" } else { "Max" }));
+                    return None;
+                }
+                let kind = if name == "min" { CmpKind::Lt } else { CmpKind::Gt };
+                let pick_a = Ex::boolean(ExK::Cmp(kind, Box::new(a.clone()), Box::new(b.clone())));
+                let mask = Ex::new(ExK::Neg(Box::new(conv(pick_a, w, false))), w, s);
+                let diff = Ex::new(ExK::Bin(BinKind::Sub, Box::new(a), Box::new(b.clone())), w, s);
+                let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(diff), Box::new(mask)), w, s);
+                Some(Ex::new(ExK::Bin(BinKind::Add, Box::new(b), Box::new(pick)), w, s))
+            }
             n => {
                 self.unsupported(e.span, &format!("the intrinsic `{n}`"));
                 None
@@ -1914,6 +1948,37 @@ impl<'a> Lowerer<'a> {
                 let Some(p) = arg_place(self) else { return };
                 if p.ty == Ty::Float {
                     self.unsupported(span, "Inc/Dec of a Float");
+                    return;
+                }
+                let amount_ex = match args.get(1) {
+                    Some(a) => {
+                        let Some((w, sg)) = nat(&p.ty) else { return };
+                        match self.expr(a) {
+                            Some(x) => Some(conv(x, w, sg)),
+                            None => return,
+                        }
+                    }
+                    None => None,
+                };
+                if let Some(amt) = amount_ex {
+                    if p.is_bit() {
+                        self.unsupported(span, "Inc/Dec of a bit with an amount");
+                        return;
+                    }
+                    if p.idx.as_ref().is_some_and(|i| i.has_call()) || amt.has_call() {
+                        self.unsupported(span, "a call inside the index or amount of Inc/Dec");
+                        return;
+                    }
+                    if let (Some(c), false) = (amt.as_const(), p.indirect()) {
+                        let delta = if name == "inc" { c } else { 0u32.wrapping_sub(c) };
+                        Self::push(out, St::Add(p, delta), span);
+                        return;
+                    }
+                    let Some((w, sg)) = nat(&p.ty) else { return };
+                    let load = Ex::new(ExK::Load(p.clone()), w, sg);
+                    let kind = if name == "inc" { BinKind::Add } else { BinKind::Sub };
+                    let sum = Ex::new(ExK::Bin(kind, Box::new(load), Box::new(amt)), w, sg);
+                    Self::push(out, St::Assign(p, sum), span);
                     return;
                 }
                 let delta = if name == "inc" { 1u32 } else { u32::MAX };

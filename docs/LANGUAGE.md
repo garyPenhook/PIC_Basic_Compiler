@@ -240,7 +240,7 @@ Break                                    ' leave the innermost loop
 Continue                                 ' next iteration of the innermost loop
 Exit                                     ' leave the current Sub/Function
 GoTo label  /  label:
-Inc(v)  Dec(v)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)  Input(bit)  Output(bit)
+Inc(v)  Inc(v, n)  Dec(v)  Dec(v, n)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)  Input(bit)  Output(bit)
 ```
 (SF.) Notes:
 * The limit of `For` is evaluated once, the step must be a constant, and after a loop that ran the variable keeps the last value it took, not one past it (D33). The loop variable of `For` must not be modified inside the loop (SF); the compiler may keep it
