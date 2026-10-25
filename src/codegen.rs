@@ -325,7 +325,7 @@ fn src_calls(s: &StrSrc, out: &mut BTreeSet<FuncId>) {
 
 fn ex_calls(e: &Ex, out: &mut BTreeSet<FuncId>) {
     match &e.k {
-        ExK::Const(_) => {}
+        ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
         ExK::Load(p) | ExK::Addr(p) => place_calls(p, out),
         ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => ex_calls(x, out),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
@@ -764,6 +764,26 @@ impl<'p> Gen<'p> {
                 }
             }
             ExK::Load(p) => self.load_place(p, n),
+            ExK::FuncAddr(_) | ExK::FlashAddr(..) => {
+                let (sym, off) = match &e.k {
+                    ExK::FuncAddr(f) => {
+                        // The routine is linked even when nothing calls it.
+                        self.called.insert(*f);
+                        (self.p.funcs[*f].asm.clone(), 0)
+                    }
+                    ExK::FlashAddr(t, off) => (self.p.flash[*t].asm.clone(), *off),
+                    _ => unreachable!(),
+                };
+                let at = if off == 0 { sym } else { format!("{sym}+{off}") };
+                let (a0, a1, a2, a3) = (self.a(0), self.a(1), self.a(2), self.a(3));
+                self.ins(format!("movlw low({at})"));
+                self.fo("movwf", &a0);
+                self.ins(format!("movlw high({at})"));
+                self.fo("movwf", &a1);
+                self.ins(format!("movlw highword({at})"));
+                self.fo("movwf", &a2);
+                self.fo("clrf", &a3);
+            }
             ExK::Addr(p) => {
                 if p.indirect() {
                     // Leaves the address in __A0:__A1 as well.

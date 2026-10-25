@@ -6,7 +6,7 @@ whitespace are removed by the lexer. `{ x }` zero or more, `[ x ]` optional, `( 
 terminals in quotes or `UPPER` for token classes.
 
 This grammar is the contract for milestone M3 (front end), implemented in `src/lexer.rs` and
-`src/parser.rs`. Positron-style spellings (LANGUAGE.md §14) are added below as extra productions;
+`src/parser.rs`. Alternative spellings (LANGUAGE.md §14) are added below as extra productions;
 the parser rewrites them into the core forms.
 
 ## Lexical tokens
@@ -43,7 +43,7 @@ module      = "Module" IDENT EOL
               { header } { include } { decl } { stmt }
               [ "End" ] ;
 
-header      = ( "Declare" "Xtal" "=" const_expr             (* Positron spelling of Clock *)
+header      = ( "Declare" "Xtal" "=" const_expr             (* alternative spelling of Clock *)
               | "Device" "=" device_name
               | "Clock"  "=" const_expr
               | "Config" config_item { "," config_item } ) EOL ;
@@ -62,7 +62,7 @@ identifier declared before use.
 ```
 decl        = [ vis ] ( const_decl | dim_decl | struct_decl | type_decl | routine_decl
                       | interrupt_decl | event_decl | symbol_decl ) EOL ;
-symbol_decl = "Symbol" IDENT [ "=" ] expr ;       (* Positron: alias or constant, decided by the value *)
+symbol_decl = "Symbol" IDENT [ "=" ] expr ;       (* alias or constant, decided by the value *)
 vis         = "Public" | "Private" ;
 
 const_decl  = "Const" const_item { "," const_item } ;

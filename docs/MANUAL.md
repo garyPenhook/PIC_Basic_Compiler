@@ -1,12 +1,12 @@
 # basicc Compiler User Manual
 
-Revision for **basicc 0.1.7**, target device **PIC18F27Q10**.
+Revision for **basicc 0.1.8**, target device **PIC18F27Q10**.
 
-This manual describes exactly what the compiler accepts and generates today. It is laid out like the
-Positron8 manual: an overview of the language, then one entry per command (Syntax, Overview,
-Parameters, Example, Notes), then one entry per library routine. Anything not listed here is not
-supported; Appendix A lists the Positron8 features that are missing or different, and Appendix B is
-a checklist to work through when testing.
+This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
+language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
+per library routine. Anything not listed here is not supported; Appendix A lists the alternative
+spellings that are accepted and the common BASIC features that are missing or different, and
+Appendix B is a checklist to work through when testing.
 
 Status of the code: every feature below passes the Microchip MDB simulator suite and the host test
 suite. **Nothing has been run on a real chip yet** (decision D6). Where a feature depends on pin
@@ -41,7 +41,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 2. Language commands (alphabetical)
 3. Library modules
 4. Diagnostics
-5. Appendix A: Positron8 comparison
+5. Appendix A: Alternative spellings and unsupported forms
 6. Appendix B: Test checklist
 
 ---
@@ -119,7 +119,7 @@ Program Name                        ' name is optional
 * Identifiers must be declared before use. There is no forward reference.
 * The program and all modules are compiled together. A module included by several files is loaded once.
 
-A `Proc ... EndProc` flat/procedural layout in the Positron style is accepted (see *Procedures*).
+A `Proc ... EndProc` flat/procedural layout is accepted (see *Procedures*).
 
 ## Identifiers, labels, comments, line continuation
 
@@ -160,7 +160,7 @@ Dim Name As Type = constant          ' initial value
 Dim Name = constant, Name2 = 5 As Type
 ```
 
-| Type | Bits | Range / meaning | Positron-style spelling |
+| Type | Bits | Range / meaning | Alternative spelling |
 |---|---|---|---|
 | `Boolean` | 1 | `True` / `False`. Cannot hold a number | |
 | `Bit` | 1 | 0 / 1 | `Bit` |
@@ -175,9 +175,9 @@ Dim Name = constant, Name2 = 5 As Type
 | `String(n)` | n+1 bytes | up to n characters plus a terminating `Null` | |
 | `Structure` | | see *Structures and unions* | |
 
-**Note on `Long`:** here `Long` is the signed 32-bit type (`LongInt`), not Positron8's 24-bit
+**Note on `Long`:** here `Long` is the signed 32-bit type (`LongInt`), not a 24-bit
 unsigned `Long`. There is no 24-bit type; 24 bits is only used inside the compiler. `SDword` and
-`Double` are not accepted. The Positron `Pin` type is not accepted.
+`Double` are not accepted. A `Pin` type is not accepted.
 
 * All variables are zeroed at start-up unless they have an initialiser. A routine's local variables
   are zeroed **at every entry**, and an initialiser is applied at every entry too.
@@ -190,7 +190,7 @@ unsigned `Long`. There is no 24-bit type; 24 bits is only used inside the compil
 ### Type conversion
 
 `Byte(x)`, `Word(x)`, `Integer(x)`, `LongWord(x)`, `LongInt(x)`, `ShortInt(x)`, `Float(x)`,
-`Boolean(x)`, `Bit(x)`, `Char(x)`, and the Positron spellings `SByte(x)`, `SWord(x)`, `Dword(x)`,
+`Boolean(x)`, `Bit(x)`, `Char(x)`, and the alternative spellings `SByte(x)`, `SWord(x)`, `Dword(x)`,
 `Long(x)`. A constant that does not fit the target type is an error (`E-CONST-RANGE`). Conversion
 to `String` is not supported. Float to integer truncates toward zero.
 
@@ -203,7 +203,7 @@ Dim LED As PORTB.0               ' a register bit
 Dim Flags As Byte
 Dim Ready As Flags.0             ' a bit of a variable
 Dim LowNibble As Flags.Bits(4)   ' see the modifier table
-Symbol Button = PORTA.3          ' Positron spelling, same effect
+Symbol Button = PORTA.3          ' alternative spelling, same effect
 ```
 
 | Modifier | Gives |
@@ -223,7 +223,7 @@ without declaring it: `PORTB`, `TRISB`, `ANSELB = 0`, `PIE0.5 = 1`, `SSP1CON1.SS
 ```basic
 Const Name = expression               ' type inferred
 Const Name As Type = expression
-Symbol cLimit = 100                   ' Positron form; the = is optional
+Symbol cLimit = 100                   ' the = is optional
 Symbol LED = PORTB.0                  ' becomes an alias, chosen by what the value is
 ```
 
@@ -312,7 +312,7 @@ the routines used are linked.
   comparisons; mixed integer and Float expressions (the integer is converted); `Float(x)` and the
   integer conversions `Byte(f)`, `Integer(f)`, ... (truncating).
 * Rounding is to nearest even. Infinities and NaN propagate. Denormals are flushed to zero.
-* Not supported: `Sqr`, `Sin`, `Cos`, `Tan`, `Log`, `Exp`, `Pow`, `fRound` and the other Positron math
+* Not supported: `Sqr`, `Sin`, `Cos`, `Tan`, `Log`, `Exp`, `Pow`, `fRound` and the other math
   functions; `Print`/`Str` of a Float; a Float as a `For` variable, in `Select`, or with `Inc`/`Dec`;
   `=` and `<>` between floats are available but avoid them as for any float.
 * Cost: about 700 words for `+`, 800 for `*`, 470 for `/`, plus about 250 shared (roughly 2,500 words
@@ -371,7 +371,7 @@ End Function
 param := [ByVal | ByRef | ByRefConst] Name [()] As Type [= constant]
 ```
 
-Positron-style equivalents are accepted:
+Equivalent alternative forms are accepted:
 
 ```basic
 Proc Name(p As Byte)                 ' = Sub
@@ -497,9 +497,6 @@ Include "intosc"
 
 followed by the lines shown. `Dim` lines come first, as the language requires.
 
-**Not yet working in the back end.** `AddressOf` and `@` are accepted by the parser and type checker
-but rejected by the code generator with `E-BACKEND`. Everything else in this section builds.
-
 ---
 
 ## Abs
@@ -541,12 +538,42 @@ otherwise); assign the call to a variable first.
 p = AddressOf(item)
 p = @item
 ```
-**Overview** Address of a variable, array or routine. The type is `Word` for RAM objects and
-`LongWord` for `Const` arrays and routines. The argument must be a variable, array or routine
-(`E-ADDR` otherwise).
+**Overview** The address of a variable, register, array, array element, structure field, constant array
+or routine.
 
-**Notes** **Not usable in 0.1.7**: the back end rejects both spellings with `E-BACKEND`. Use `Asm`
-with the symbol name if you need an address (names are in the `.map` file).
+**Parameters** `item` is the thing whose address is wanted. For RAM objects and registers the result
+is a `Word` holding the data-memory address (an array element with a run-time index gives the address of
+that element). For a `Const` array or a routine the result is a `LongWord` holding the 24-bit
+program-memory address (for a `Const` array, of its first byte). Anything else is `E-ADDR`.
+
+**Example 1** The address of a variable and of an array element.
+```basic
+Dim x As Byte
+Dim a(4) As Byte
+Dim k As Byte
+Dim px As Word
+Dim pe As Word
+k = 2
+px = AddressOf(x)
+pe = @a(k)
+```
+**Example 2** A routine and a constant table, as program-memory addresses.
+```basic
+Const Tbl(3) As Byte = (1, 2, 3)
+Dim pr As LongWord
+Dim pt As LongWord
+Sub Blink()
+    Inc(PORTB)
+End Sub
+pr = AddressOf(Blink)
+pt = @Tbl
+```
+**Notes** The address of a routine keeps it in the program even if nothing calls it. The address of a
+bit, a `Const` array element chosen at run time, or an expression is not supported. An index in the
+operand must not contain a call. The address of a `ByRef` parameter is the address of the caller's
+variable.
+
+**See also** `Asm`, `Bound`.
 
 ## Asm ... End Asm
 
@@ -742,7 +769,7 @@ Disable(Tick)
 ```
 **See also** *Interrupts, events and context saving* (section 1), `Save`.
 
-## Do ... Loop  (Positron form)
+## Do ... Loop
 
 **Syntax**
 ```basic
@@ -776,7 +803,7 @@ Loop
 **Syntax**
 ```basic
 Exit
-ExitProc                     ' Positron spelling
+ExitProc                     ' alternative spelling
 ```
 **Overview** Leaves the current `Sub`, `Function` or `Proc`. For a `Function` the current `Result` is
 returned.
@@ -1061,7 +1088,7 @@ Select x
         x = 0
 EndSelect
 ```
-**Notes** The Positron form `Select Case x` is **not** accepted: write `Select x`. Strings and
+**Notes** The form `Select Case x` is **not** accepted: write `Select x`. Strings and
 `Float`s cannot be selected on.
 
 ## Terminate
@@ -3102,9 +3129,9 @@ reports these rather than miscompiling them.
 
 ---
 
-# Appendix A: Positron8 comparison
+# Appendix A: Alternative spellings and unsupported forms
 
-## Accepted Positron spellings
+## Accepted alternative spellings
 
 `Declare Xtal = n`; `Symbol`; `Proc`/`EndProc`/`ExitProc`; `Do`/`Loop` forms; type names `SByte`, `SWord`,
 `Dword`, `Long` (and conversions); `$FF`, `%1010`; `:` between statements; `'` and `(* *)` comments;
@@ -3113,7 +3140,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Positron8 feature | basicc 0.1.7 |
+| Feature of other BASIC compilers | basicc 0.1.8 |
 |---|---|
 | Other devices | only PIC18F27Q10 |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -3146,7 +3173,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basicc --version` prints `0.1.7`. `basicc --check` on a program with a deliberate error prints a
+1. `basicc --version` prints `0.1.8`. `basicc --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.

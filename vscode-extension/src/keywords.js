@@ -13,11 +13,11 @@ const CANONICAL = [
   'Public', 'Reentrant', 'Repeat', 'Restore', 'Result', 'Save', 'Select', 'ShortInt', 'Step',
   'String', 'Structure', 'Sub', 'Terminate', 'Then', 'To', 'Toggle', 'True', 'Type', 'Until', 'Wend',
   'While', 'Word', 'Xor',
-  // Positron-style spellings
+  // Alternative spellings
   'Declare', 'Do', 'EndProc', 'ExitProc', 'Loop', 'Proc', 'Symbol',
 ];
 
-// Positron type names the lexer reads as a native type (TYPE_ALIASES in ../src/lexer.rs). They are
+// Alternative type names the lexer reads as a native type (TYPE_ALIASES in ../src/lexer.rs). They are
 // not in the compiler's KEYWORDS list, so they are kept apart from CANONICAL.
 const ALIASES = ['SByte', 'SWord', 'Long', 'Dword'];
 
@@ -112,17 +112,17 @@ const DOCS = {
   Wend: 'Closes a `While` loop.',
   While: '`While cond` … `Wend`.',
   Word: 'Unsigned 16-bit integer.',
-  SByte: 'Signed 8-bit integer (Positron spelling of `ShortInt`).',
-  SWord: 'Signed 16-bit integer (Positron spelling of `Integer`).',
-  Long: 'Signed 32-bit integer (Positron spelling of `LongInt`).',
-  Dword: 'Unsigned 32-bit integer (Positron spelling of `LongWord`).',
+  SByte: 'Signed 8-bit integer (alternative spelling of `ShortInt`).',
+  SWord: 'Signed 16-bit integer (alternative spelling of `Integer`).',
+  Long: 'Signed 32-bit integer (alternative spelling of `LongInt`).',
+  Dword: 'Unsigned 32-bit integer (alternative spelling of `LongWord`).',
   Xor: 'Exclusive or.',
-  Declare: 'Positron-style header, e.g. `Declare Xtal = 8`.',
+  Declare: 'Alternative header, e.g. `Declare Xtal = 8`.',
   Do: '`Do [While|Until cond]` … `Loop [While|Until cond]`.',
   EndProc: 'Closes a `Proc`.',
   ExitProc: 'Leaves the current `Proc` (same as `Exit`).',
   Loop: 'Closes a `Do` loop.',
-  Proc: 'Positron-style `Proc Name(params)[, Type]` … `EndProc`.',
+  Proc: 'Alternative to `Sub`/`Function`: `Proc Name(params)[, Type]` … `EndProc`.',
   Symbol: '`Symbol Name = value` — alias or constant.',
 };
 

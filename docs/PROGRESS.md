@@ -10,7 +10,7 @@ Done
   generator, library, tests; vendor manuals moved to git-ignored `reference/`.
 - `docs/LANGUAGE.md` draft 0.1, `docs/GRAMMAR.md` draft 0.1, `docs/ABI.md` outline.
 - Reference compilers verified on this machine for the 18F27Q10 (first data point in PLAN §7A.4):
-  XC8 v4.00 and Swordfish 2.2.5.0 both compile and report sizes.
+  XC8 v4.00 and another BASIC compiler both compile and report sizes.
 
 Review items D11–D13, D16 and the missing-`Device` error were auto-approved as proposed. D6 (tentative) and D7 (IEEE binary32) were decided; D8 stays open until after M9.
 
@@ -47,7 +47,7 @@ Review items D11–D13, D16 and the missing-`Device` error were auto-approved as
 - Lexer: case-insensitive keywords, `$FF` `%101` `#13` `1.5e3` literals, `'` `//` `(* *)` `{ }` comments
   (nesting), ` _` continuation, raw `Asm` bodies. Preprocessor: `#define/#ifdef/#option/#error…` (D25).
 - Parser: the full `GRAMMAR.md` including headers, includes, declarations, structures and unions, routines,
-  interrupts, events, `Save`, `Asm`, `Select`, loops and the Positron spellings (D20). Errors are
+  interrupts, events, `Save`, `Asm`, `Select`, loops and the alternative spellings (D20). Errors are
   recovered per line, so one run reports several problems.
 - Semantic analysis: scopes and visibility, modules and qualified names, device registers and bit
   fields resolved through `devdesc`, `Config` settings validated against the pack, constant folding,
@@ -353,9 +353,7 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - Tests `tests/exec/lib_lcd.bas`, `lib_oled.bas` (optimised and `-O0`): refusals, pin set-up, final pin levels, font bytes read from flash. Nothing runs on a panel (D6); there is no pin model in the simulator.
 
 ## Clock set-up in source (done 2026-10-25)
-- Decision: `Clock` stays informational (as in Swordfish `clock` and Positron `Declare Xtal`); the hardware is set in source. Both reference
-  compilers were read from their wine installs: Swordfish `Library/IntOSC.bas` (include module, `#error` on a bad clock, `set_clock`) and
-  Positron8 `Samples/8-Bit Device_Code_Templates/*Internal_Oscillator_Setups.bas` (procedures the program calls). Written up in `docs/CLOCK.md`.
+- Decision: `Clock` stays informational (as with `Declare Xtal`); the hardware is set in source. Written up in `docs/CLOCK.md`.
 - `lib/intosc.bas` (module `IntOsc`): start-up writes `OSCFRQ` / `OSCCON1` for `Clock` (64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and 1 MHz / 2..32), bounded
   waits on `OSCCON3.ORDY` and `OSCSTAT.HFOR`; `SetClock(mhz)`, `SetClockDiv(mhz, shift)` for run-time changes (library timing is not updated, by design).
   Facts from DS40002043F 5.3.1, 5.6.1-5.6.5, Table 5-1.

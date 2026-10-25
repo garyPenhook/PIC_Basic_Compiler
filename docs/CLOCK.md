@@ -25,8 +25,8 @@ If the two disagree, the program still builds, but every delay and baud rate is 
 between them. The compiler warns about the common case (§5), and `System.SysClockOk()` tests it
 while the program runs.
 
-This is how the two reference compilers work too (§7): their `Clock` / `Declare Xtal` is
-informational, and the oscillator is set up in source.
+This is a common design for BASIC compilers (§7): the clock declaration is informational, and the
+oscillator is set up in source.
 
 ## 2. What the hardware offers
 
@@ -172,29 +172,17 @@ and in the main file, not in an included file.
 (nominal, `OSCTUNE` ignored) and `System.SysClockOk()` compares it with `Clock`; see LIBRARY.md,
 *system*. A program can test it once at start and signal an error if it is False.
 
-## 7. How the reference compilers do it (the design source)
+## 7. Design background
 
-Both were read in their installed copies on the development machine.
+Other BASIC compilers use `clock = n` or `Declare Xtal = n` as an informational declaration of the
+expected frequency, with the hardware set up either by a library include (for the Q10: `RSTOSC =
+HFINTOSC_64MHZ`, `FEXTOSC = OFF`, `CSWEN = ON` in the configuration, and at start-up `OSCCON1` and
+`OSCFRQ` written, with `NDIV` raised for speeds below 1 MHz) or by procedures the program calls that
+write `OSCCON1`, `OSCCON3`, `OSCEN`, `OSCFRQ` and `OSCTUNE` and wait on the status flag.
 
-**Swordfish** (`ProgramData/Mecanique/Swordfish/Library/IntOSC.bas`, version 2.8): `clock = n` is only
-the expected frequency ("The clock keyword informs the compiler what crystal frequency is being
-used"). The library module `IntOSC` does the set-up: you `include` it, and for the Q10 it sets
-`RSTOSC = HFINTOSC_64MHZ`, `FEXTOSC = OFF`, `CSWEN = ON` in the configuration and at start-up
-writes `OSCCON1 = $60` and `OSCFRQ` (codes 8, 7, 6, 5, 4, 3, 2, 1, 0 for 64, 48, 32, 16, 12, 8, 4,
-2, 1 MHz). Slower speeds keep `OSCFRQ` at 1 MHz and raise `NDIV`. An unsupported `clock` stops the
-build with `#error "invalid _clock setting for intosc"`. Waiting for `OSCCON3.ORDY` is optional
-(off by default), and `set_clock(freq)` changes the speed at run time.
-
-**Positron8** (`ProgramData/PDS/Samples/8-Bit Device_Code_Templates/`): `Declare Xtal = n` is the
-informational declaration. There is no set-up command; the templates are procedures the program
-calls (`Osc_4MHz()`, `Osc_16MHz()`, `Osc_64MHz()` …) that write `OSCCON1`, `OSCCON3`, `OSCEN`,
-`OSCFRQ`, `OSCTUNE` and wait on the status flag, with the oscillator `Config` in the program's own
-`Config_Start … Config_End` block. The manual's `Declare Xtal` text says it tells the compiler "what
-frequency oscillator is being used on the microcontroller" so timing commands can adjust.
-
-`IntOsc` follows Swordfish's structure (an include that reads `Clock`, plus a run-time call) and
-Positron's rule that the configuration stays visible in the program source. It adds the check that
-the divider and `OSCFRQ` really switched (read back) and the data-sheet-ordered write sequence.
+`IntOsc` is an include that reads `Clock`, plus a run-time call, and the configuration stays visible in
+the program source. It adds the check that the divider and `OSCFRQ` really switched (read back) and
+the data-sheet-ordered write sequence.
 
 ## 8. Related changes made with this feature
 

@@ -155,7 +155,7 @@ is a compile-time error. Needs `CSWEN = ON` in `Config` unless `Clock` already i
 | `SetClockDiv(mhz, shift)` | the same divided by 2^`shift` (`shift` 0..9) |
 
 A run-time change does not change the compile-time `Clock` that `DelayMs`/`DelayUs` and the library timing use. Full
-description, register order and the reference compilers' approach: `docs/CLOCK.md`.
+description, register order and the design background: `docs/CLOCK.md`.
 
 ## system (reset cause, clock check)
 | Routine | Effect |

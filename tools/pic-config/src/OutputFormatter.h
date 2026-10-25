@@ -7,7 +7,7 @@
 // Output dialects. Add a new one by extending this enum, formatName() and
 // the switch in formatConfig().
 enum class OutputFormat {
-    Basic,       // Config A = X, B = Y, ...   (basicc / Positron style)
+    Basic,       // Config A = X, B = Y, ...   (basicc style)
     XC8Pragma,   // #pragma config A = X
 };
 

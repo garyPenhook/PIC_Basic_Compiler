@@ -3,8 +3,7 @@
 Status: DRAFT for approval · Drafted 2026-10-23 · Owner: Gary
 Location: `/home/gary/apps/Basic_Compiler/`
 
-A personal BASIC compiler for PIC microcontrollers. It combines the **structure** of
-Swordfish BASIC with the **friendly command library** of Positron8 BASIC, and uses
+A personal BASIC compiler for PIC microcontrollers. It combines a **structured core language** with a **friendly command library**, and uses
 Microchip's **pic-as** assembler/linker as its back end.
 
 **First target: PIC18F27Q10. Other microcontrollers will be added slowly, one at a time,
@@ -29,8 +28,8 @@ device is a data-and-validation task, not a compiler rewrite.
 
 ### Goals
 1. Compile BASIC source for the **PIC18F27Q10** to a flashable `.hex`, via pic-as.
-2. A language that is pleasant to write (Positron-style commands) but well-structured
-   (Swordfish-style modules, typed subroutines/functions, structures, interrupts).
+2. A language that is pleasant to write (short, friendly commands) but well-structured
+   (modules, typed subroutines/functions, structures, interrupts).
 3. Every device fact comes from Microchip documents/packs, never from memory and never from
    a third-party vendor's data files.
 4. **Code efficiency is a top priority**: small *and* fast generated code, measured against
@@ -42,7 +41,7 @@ device is a data-and-validation task, not a compiler rewrite.
    (§9) without redesigning anything.
 
 ### Non-goals (for now)
-* Not a drop-in clone of Positron8 or Swordfish. Source compatibility is "close where
+* Not a drop-in clone of any other BASIC compiler. Source compatibility is "close where
   cheap", not a promise.
 * No IDE, no debugger, no programmer in the first phases (editor integration comes via
   Zed tasks, as already done for the other compilers).
@@ -53,20 +52,18 @@ device is a data-and-validation task, not a compiler rewrite.
 
 ## 2. Clean-room and hygiene rules
 
-Both manuals are owned by their vendors and kept in this folder for personal reference
-(`0 - Positron8 manual.pdf`, `SFManual_indexed.pdf`).
+Reference manuals of other compilers are owned by their vendors and kept in the `reference/`
+folder for personal reference.
 
 * Work from the manuals' *descriptions of behaviour*. Do not disassemble any vendor
   executable. Do not copy vendor include files, library source, `.def` files, generated
   macro code, or manual text into this project.
 * Device data comes from **Microchip's own packs** (`~/.mchp_packs`) and datasheets.
 * Where a manual is silent or ambiguous, define the behaviour ourselves and write it down in
-  `docs/LANGUAGE.md`; optionally compare against Swordfish output on this machine as a
-  behavioural reference (there is already an `18F27Q10.bas` test under
-  `~/swordfish-patchkit/tests/`).
+  `docs/LANGUAGE.md`.
 * Repository hygiene: commits, files, comments and docs carry only the owner's authorship; no tool-generated attribution lines or trailers.
-* Check the Positron8 and Swordfish licence terms before any work that could be read as
-  building a competing product; this plan does not rely on either licence.
+* Check the licence terms of any reference compiler before work that could be read as
+  building a competing product; this plan does not rely on any such licence.
 
 ---
 
@@ -106,15 +103,14 @@ exhaustive matches). Alternatives are fine if preferred.
 
 ## 4. The language
 
-Principle: **a small, strict core language** (Swordfish-style) plus **a rich standard
-library written in that language** (Positron-style commands). The compiler implements the
+Principle: **a small, strict core language** plus **a rich standard
+library written in that language** (friendly commands). The compiler implements the
 core; commands like `HRSOut`, `Toggle`, `DelayMS` are library code, so adding commands never
 means touching the compiler.
 
-### 4.1 Core language (modelled on the Swordfish manual's structure)
+### 4.1 Core language
 
-Features to support, in implementation order. "SF §" refers to the table of contents of
-`SFManual_indexed.pdf`.
+Features to support, in implementation order. "SF §" refers to the section numbers of the reference language manual kept in `reference/`.
 
 | # | Feature | Notes |
 |---|---|---|
@@ -136,13 +132,13 @@ Features to support, in implementation order. "SF §" refers to the table of con
 | 16 | Preprocessor: `#define #if #ifdef #constant #error #option` etc. | plus device predefined constants |
 | 17 | Built-ins: `AddressOf, BitOf, Bound, Clear, Inc, Dec, High, Low, Input, Output, Toggle, DelayMS, DelayUS, Terminate` | SF "Predefined Subroutines and Functions" |
 
-### 4.2 Positron-style conveniences (provided as library + thin header syntax)
+### 4.2 Conveniences (provided as library + thin header syntax)
 
-From the Positron8 manual (`0 - Positron8 manual.pdf`) the following *ideas* are kept:
+The following *ideas* from other BASIC compilers are kept:
 
 * A short program header: `Device = 18F27Q10` and `Declare Xtal = 64` (clock in MHz), or an
-  equivalent in the module header. **Note:** unlike Positron8, the device name has no `PIC`
-  prefix issue — we accept both `18F27Q10` and `PIC18F27Q10`.
+  equivalent in the module header. **Note:** the device name may be written with or without a `PIC`
+  prefix — we accept both `18F27Q10` and `PIC18F27Q10`.
 * `Symbol` aliases (`Symbol LED = PORTB.0`).
 * Friendly commands as library procedures: `HRSOut`, `HRSIn`, `Toggle`, `DelayMS`, LCD, I2C,
   SPI, ADC read, PWM, EEPROM read/write, timers.
@@ -177,8 +173,8 @@ Wend
 
 ### 4.4 Syntax conflicts to settle in M0 (decision D2)
 
-Positron uses `Proc … EndProc`, Swordfish uses `Sub/Function … End Sub`. Both `Dim x As Byte`
-styles exist. Plan: the core grammar is Swordfish-style; Positron spellings are accepted as
+Some dialects use `Proc … EndProc`, others `Sub/Function … End Sub`. Both `Dim x As Byte`
+styles exist. Plan: the core grammar uses `Sub/Function`; the `Proc` spellings are accepted as
 aliases where they are unambiguous. The full grammar goes in `docs/GRAMMAR.md` (EBNF) in M0.
 
 ---
@@ -281,7 +277,7 @@ pack — not typed in by hand.
 | `flashwrite` | Program flash self-write | Errata 1.9.1; low priority. |
 | `pwm` | CCP / 10-bit PWM | |
 | `i2c`, `spi` | MSSP-style master | |
-| `lcd` | HD44780 | Positron-style `Declare` pin mapping. |
+| `lcd` | HD44780 | `Declare`-style pin mapping. |
 | `system` | Reset cause, clock setup, config helpers | |
 
 Order of work follows §10; each module ships with at least a compile test, and a simulator or
@@ -319,7 +315,7 @@ layout and library, so they are interchangeable behind the driver.
   has a `PICStackDepth` pass worth reading for ideas — treat as reference only.)
 * **Default: static frame allocation with overlay.** Each function's locals/parameters get
   fixed RAM addresses; functions that can never be live at the same time share memory
-  (Swordfish calls this "frame recycling"). Fast, no stack pointer. Recursion is rejected at
+  ("frame recycling"). Fast, no stack pointer. Recursion is rejected at
   compile time unless the function is marked reentrant.
 * **Reentrant functions (opt-in)**: use a software stack through `FSR2`. The extended
   instruction set (`PUSHL, ADDFSR, SUBFSR, MOVSF, MOVSS, CALLW, ADDULNK, SUBULNK`) is built for
@@ -453,17 +449,16 @@ The recovered earlier backend contains peepholes and passes for several of these
   multiply/divide/modulo by constants and variables, CRC-8/16, fixed-point scaling, bit-banging,
   table lookup, string output, ADC averaging, buffer copy/search, a state machine, an ISR
   with a counter, a PWM-style loop. Growth continues as library modules appear.
-* **Baselines — two independent reference compilers, both installed and verified here:**
+* **Baselines — independent reference compilers, installed and verified here:**
   1. **XC8 v4.00** (`/opt/microchip/xc8/v4.00/bin/xc8-cc`) at `-Os` and `-O2` on the C version of
      each kernel; size read from the linker map (`Program space used`, `Data space used`).
-  2. **Swordfish BASIC 2.2.5.0** (`swordfish prog.bas`, the existing wrapper; it targets the
-     18F27Q10 directly) on the BASIC version of each kernel; size from its `ROM used` / `RAM used`
-     report, cycles from the same MDB runs. Swordfish is the closest like-for-like comparison
+  2. **Another BASIC compiler** on the BASIC version of each kernel; size from its `ROM used` /
+     `RAM used` report, cycles from the same MDB runs. It is the closest like-for-like comparison
      because it is the same language family — it shows what a BASIC compiler can achieve on this
      chip, XC8 shows what a C compiler achieves.
   * **First data point (verified 2026-10-23, 18F27Q10, kernel `x = 5; loop forever: x = x + 1`,
     with `x` a byte variable):** XC8 `-Os` and `-O2`: **24 bytes** program, **1 byte** data;
-    Swordfish: **32 bytes** ROM, **26 bytes** RAM (its RAM figure includes its own system and
+    the other BASIC compiler: **32 bytes** ROM, **26 bytes** RAM (its RAM figure includes its own system and
     frame storage). This shows two things worth targeting: a BASIC compiler should not pay a
     fixed RAM tax for a one-byte program, and the code can match XC8.
   * **How the reference compilers may be used (clean-room, PLAN §2):** only as black boxes —
@@ -531,8 +526,7 @@ user guide: `-mcpu`, `-mdfp`, `-mreserve`, `-Wl,…` pass-through.
 * **Diagnostics**: pic-as errors/warnings are parsed and mapped back to BASIC source lines
   through `;` source-line comments in the emitted assembly.
 * The driver wraps the whole pipeline in a `basicc prog.bas` command that prints
-  `file:line: error: message`, the same shape the Zed tasks already parse for the Positron and
-  Swordfish wrappers.
+  `file:line: error: message`, the same shape the Zed tasks already parse for the other compiler wrappers.
 
 ---
 
@@ -621,8 +615,8 @@ Each milestone ends with something that runs and a short note in `docs/PROGRESS.
   program's observable results against a host-computed reference (the recovered project's
   simulator headers and exhaustive-style tests are a good starting point; they need
   re-verification first).
-* **Behavioural comparison** with Swordfish for the same source where the language overlaps
-  (Swordfish supports the 18F27Q10 on this machine).
+* **Behavioural comparison** with another BASIC compiler for the same source where the language
+  overlaps.
 * **Hardware tests**: a small suite flashed to a real 18F27Q10. Programmer choice is open (D6):
   an MPLAB X project exists at `~/MPLABXProjects/test.X`; the home-built Nucleo-based PIC
   programmer currently targets only PIC16F17146/17124, so it cannot be assumed.
@@ -670,7 +664,7 @@ The two PDFs already in this folder move to `reference/` in M0.
 | ID | Decision | My recommendation | Needed by |
 |---|---|---|---|
 | D1 | Implementation language | Rust (matches the existing AVR compiler front-end) | M0 |
-| D2 | Surface syntax | Swordfish-style core, Positron spellings accepted as aliases | M0 |
+| D2 | Surface syntax | Structured core, alternative spellings accepted as aliases | M0 |
 | D3 | Back-end route | Route A first; evaluate Route B (recovered LLVM) at M7 | M0 / M7 |
 | D4 | Calling convention | Static frames with overlay; opt-in reentrant via FSR2 | M4 |
 | D5 | Device-file format | TOML (readable, diff-friendly) | M2 |
@@ -689,6 +683,4 @@ The two PDFs already in this folder move to `reference/` in M0.
 | `~/Documents/Microchip/PIC/PIC18F27Q10/PIC18F27-47Q10-…-DS40002043.pdf` (DS40002043F, 767 pp.) | §5.1–5.4: device summary (p.1–4), memory map (p.108), data memory/addressing (p.116–120), instruction set (p.621–622, 682) |
 | `…/PIC18F274-7Q10-Si-Errata-…-DS80000832.pdf` (DS80000832G) | §5.5 (p.2–6; item 1.9.1 text not yet read in full — M1) |
 | `/opt/microchip/xc8/v4.00/docs/MPLAB_XC8_PIC_Assembler_User_Guide.pdf` (DS50002974E) | §8: CONFIG directive (p.41), psects/classes (Table 5-2), default link line |
-| `SFManual_indexed.pdf` (67 pp.) | §4.1 feature list (table of contents only; behaviour details read as needed in M0/M3) |
-| `0 - Positron8 manual.pdf` | §4.2 (ideas only) |
-| Observed on this machine | pic-as smoke test; Swordfish test file exists; recovered-project inventory |
+| Observed on this machine | pic-as smoke test; recovered-project inventory |

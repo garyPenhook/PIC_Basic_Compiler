@@ -26,7 +26,7 @@ Cycles relative to XC8 `-O2`: median **1.11**; outliers are the multiplications 
 (`fixmul` 8.6×, `add32` 3.1×, `mul8` 1.8×), which go through the generic shift-and-add helper.
 
 Start-up reference point from PLAN §7A.4 (`x = 5`, then `x = x + 1` forever, `x` a byte): XC8
-24 bytes / 1 byte RAM, Swordfish 32 / 26, **basicc 14 / 1** (the start-up `clrf` of `x` goes in M5).
+24 bytes / 1 byte RAM, another BASIC compiler 32 / 26, **basicc 14 / 1** (the start-up `clrf` of `x` goes in M5).
 
 ## After M5 hardware multiply, 2026-10-24
 

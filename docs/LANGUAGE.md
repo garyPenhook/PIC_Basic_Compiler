@@ -8,8 +8,8 @@ Conventions: `[x]` optional, `{x}` zero or more, `a | b` alternatives. Keywords 
 case-insensitive (D10). Device-dependent facts (RAM size, pin names, register names) always come
 from the device description, never from this document.
 
-Notation for provenance: **(SF)** = behaviour taken from the Swordfish-style core,
-**(P8)** = convenience taken from the Positron8-style library/syntax, **(NEW)** = our own rule.
+Notation for provenance: **(SF)** = behaviour of the structured core language,
+**(P8)** = convenience spelling or library command, **(NEW)** = our own rule.
 
 ---
 
@@ -79,7 +79,7 @@ module Name
 | `String[(n)]` | n bytes | up to 255 characters + terminating `Null`; default size is a compiler constant (24 in the reference language) |
 | `Structure` | — | see §3.3 |
 
-(SF; the table follows the reference language's core types.) **Positron-style spellings** such as
+(SF; the table follows the core types.) **Alternative spellings** such as
 `Dim x As Byte` are accepted for declarations (§14).
 
 The compiler uses 24-bit as an **internal** width only (D19); there is no `Word24` type.
@@ -248,7 +248,7 @@ Inc(v)  Inc(v, n)  Dec(v)  Dec(v, n)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)
 * A `For` loop whose bounds are constants and whose body is small may be unrolled; `For` over a
   `Byte` with an upper bound of 255 is safe (the compiler does not wrap-loop forever). (NEW)
 * `Case` conditions are compile-time-checked for overlap and unreachable `Else`. (NEW)
-* **Positron-style loops** `Do … Loop`, `Do While/Until … Loop` are accepted as aliases (§14).
+* **Alternative loop forms** `Do … Loop`, `Do While/Until … Loop` are accepted as aliases (§14).
 
 ## 7. Subroutines and functions
 
@@ -346,8 +346,7 @@ are plain bit operations and are allowed. A 4-byte Float is not read atomically 
 * `Clock = 64` is the **instruction-clock source frequency in MHz** the program is built for
   (may be fractional). `_Clock` reads it. The delay and serial libraries compute timing from it.
   `Declare Xtal = 64` is accepted as an alias. (SF/P8)
-* **`Clock` does not set the hardware.** It declares the speed the program expects, as `clock` does in
-  Swordfish and `Declare Xtal` in Positron8. The oscillator is set by `Config` (`RSTOSC`) and by register
+* **`Clock` does not set the hardware.** It declares the speed the program expects, as `Declare Xtal` does. The oscillator is set by `Config` (`RSTOSC`) and by register
   writes in the program: `Include "intosc"` does them for you, or write `OSCFRQ` / `OSCCON1` yourself
   (`docs/CLOCK.md`). A `Clock` that differs from the `RSTOSC` speed with nothing setting the oscillator
   gives `W-CLOCK`.
@@ -401,12 +400,11 @@ The block is pic-as syntax, passed through unchanged. The compiler treats it as 
 and will not move its own code across it. Variables are referenced by their emitted symbol
 names (documented in `ABI.md`). (SF/NEW)
 
-## 14. Positron-style spellings accepted (provisional)
+## 14. Alternative spellings accepted (provisional)
 
-Confirmed against the Positron8 manual in M3 (`Proc`/`EndProc` p.453, `Do…Loop` p.302,
-`Symbol` p.462, `Declare`). Anything not listed here is not accepted.
+Anything not listed here is not accepted.
 
-| Positron-style | Meaning here |
+| Alternative spelling | Meaning here |
 |---|---|
 | `Declare Xtal = n` | `Clock = n` |
 | `Device = 18F27Q10` / `PIC18F27Q10` | same |
@@ -423,7 +421,7 @@ Confirmed against the Positron8 manual in M3 (`Proc`/`EndProc` p.453, `Do…Loop
 | `:` between statements | native |
 | `HRSOut`, `HRSIn`, `Toggle`, `Inc`, `Dec`, `DelayMS`, `DelayUS` | library or intrinsic with the same name where the behaviour matches |
 
-Positron's global `Declare` switches (for example for LCD pins or baud rate) are **not**
+Global `Declare` switches (for example for LCD pins or baud rate) are **not**
 reproduced as a global mechanism; the corresponding library modules take their settings as
 `Const` or `#constant` values (PLAN §4.2).
 
@@ -469,6 +467,6 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
 
 * Float format (D7).
 * Exact interrupt context-save behaviour and vector registers for the 18F27Q10 (M1).
-* Positron's other type names, `ByValue`/`BycRef`, `Static` and command
+* Other type names, `ByValue`/`BycRef`, `Static` and command
   statements without parentheses (`High LED`) are not accepted; only the spellings in §14 are.
 * Overloading and compound subroutines (M9).

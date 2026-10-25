@@ -26,7 +26,7 @@ pub struct Token {
     pub span: Span,
 }
 
-/// Reserved words: the list in `GRAMMAR.md` plus the Positron-style spellings of `LANGUAGE.md` §14.
+/// Reserved words: the list in `GRAMMAR.md` plus the alternative spellings of `LANGUAGE.md` §14.
 pub const KEYWORDS: &[&str] = &[
     "absolute", "access", "addressof", "and", "as", "asm", "bit", "bitof", "boolean", "bound", "break", "byref",
     "byrefconst", "byte", "byval", "case", "char", "clear", "clock", "compound", "config", "const", "continue", "dec",
@@ -35,11 +35,11 @@ pub const KEYWORDS: &[&str] = &[
     "interrupt", "longint", "longword", "low", "mod", "module", "next", "noinline", "not", "null", "or", "output",
     "private", "program", "public", "reentrant", "repeat", "restore", "result", "save", "select", "shortint", "step",
     "string", "structure", "sub", "terminate", "then", "to", "toggle", "true", "type", "until", "wend", "while", "word",
-    "xor", // Positron-style aliases
+    "xor", // alternative-spelling aliases
     "declare", "do", "endproc", "exitproc", "loop", "proc", "symbol",
 ];
 
-/// Positron type names, read as the native type of the same width and signedness (`LANGUAGE.md` §14).
+/// Alternative type names, read as the native type of the same width and signedness (`LANGUAGE.md` §14).
 const TYPE_ALIASES: &[(&str, &str)] = &[("sbyte", "shortint"), ("sword", "integer"), ("dword", "longword"), ("long", "longint")];
 
 pub fn keyword(lower: &str) -> Option<&'static str> {

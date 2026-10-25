@@ -1102,6 +1102,7 @@ impl<'a> Lowerer<'a> {
                 let ex = self.designator_value(d, e)?;
                 Some(self.widen(e, ex))
             }
+            ExprKind::Unary(UnOp::AddressOf, x) => self.address_value(x),
             ExprKind::Unary(op, x) => {
                 let xv = self.expr(x)?;
                 if ty == Ty::Float {
@@ -1123,10 +1124,7 @@ impl<'a> Lowerer<'a> {
                         Ty::Bit => Ex::new(ExK::Bin(BinKind::Xor, Box::new(xv), Box::new(Ex::konst(1, 8, false))), 8, false),
                         _ => Ex::new(ExK::Com(Box::new(conv(xv, w, ns))), w, ns),
                     },
-                    UnOp::AddressOf => {
-                        self.unsupported(e.span, "`@` (address of)");
-                        return None;
-                    }
+                    UnOp::AddressOf => unreachable!(),
                 };
                 Some(ex)
             }
@@ -1531,6 +1529,36 @@ impl<'a> Lowerer<'a> {
         Self::push(out, St::If(vec![(cond, on)], Vec::new()), span);
     }
 
+    /// `AddressOf(x)` / `@x`: the data address of a variable, register, array or element (a
+    /// `Word`), or the program-memory address of a routine or constant table (a `LongWord`).
+    fn address_value(&mut self, arg: &'a Expr) -> Option<Ex> {
+        let ExprKind::Designator(d) = &arg.kind else {
+            self.unsupported(arg.span, "the address of this");
+            return None;
+        };
+        if let Some((sym, _, _)) = self.callee_of(d) {
+            let f = self.func_of(sym, arg.span)?;
+            return Some(Ex::new(ExK::FuncAddr(f), 32, false));
+        }
+        let p = self.place_idx_of(d)?;
+        if p.is_bit() {
+            self.unsupported(arg.span, "the address of a bit");
+            return None;
+        }
+        if let Base::Flash(t) = p.base {
+            if p.idx.is_some() {
+                self.unsupported(arg.span, "the address of a constant table element chosen at run time");
+                return None;
+            }
+            return Some(Ex::new(ExK::FlashAddr(t, p.off), 32, false));
+        }
+        if p.idx.as_ref().is_some_and(|i| i.has_call()) {
+            self.unsupported(arg.span, "a call inside the index of AddressOf");
+            return None;
+        }
+        Some(Ex::new(ExK::Addr(p), 16, false))
+    }
+
     fn intrinsic_value(&mut self, name: &str, d: &'a Designator, e: &'a Expr) -> Option<Ex> {
         let args: &[Expr] = match d.parts.first() {
             Some(Part::Args(a, _)) => a,
@@ -1539,6 +1567,7 @@ impl<'a> Lowerer<'a> {
         let ty = self.a.types.get(&e.id).cloned().unwrap_or(BYTE);
         match name {
             "float" => self.value_for(&args[0], &Ty::Float),
+            "addressof" => self.address_value(&args[0]),
             "byte" | "word" | "integer" | "longword" | "longint" | "shortint" | "char" => {
                 let (w, s) = nat(&ty)?;
                 let x = self.expr(&args[0])?;
@@ -2270,7 +2299,7 @@ fn strip_place(p: &mut Place, is_len: LenTest) {
 
 fn strip_ex(e: &mut Ex, is_len: LenTest) {
     match &mut e.k {
-        ExK::Const(_) => {}
+        ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
         ExK::Load(p) | ExK::Addr(p) => strip_place(p, is_len),
         ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => strip_ex(x, is_len),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {

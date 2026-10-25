@@ -88,7 +88,7 @@ pub enum DeclKind {
     Structure(StructDecl),
     /// `Type TName = Event()`
     EventType(Ident),
-    /// Positron-style `Symbol Name [=] Value`: a constant or an alias, decided by the semantic pass.
+    /// `Symbol Name [=] Value`: a constant or an alias, decided by the semantic pass.
     Symbol(Ident, Expr),
     Routine(Routine),
     Interrupt(InterruptDecl),

@@ -175,6 +175,10 @@ pub enum ExK {
     Call(FuncId, Vec<(Place, Ex)>),
     /// The 16-bit data address of a place (the argument of a `ByRef` parameter).
     Addr(Place),
+    /// The 24-bit program-memory address of a routine, as a 32-bit value (`AddressOf(Routine)`).
+    FuncAddr(FuncId),
+    /// The 24-bit program-memory address of a constant table plus a byte offset, as a 32-bit value.
+    FlashAddr(usize, u32),
     /// `a = b` on strings: 1 when equal. `a` is a RAM string, `b` a RAM string or a literal.
     StrEq(StrSrc, StrSrc),
 }
@@ -203,7 +207,7 @@ impl Ex {
     pub fn has_call(&self) -> bool {
         match &self.k {
             ExK::Call(..) => true,
-            ExK::Const(_) => false,
+            ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => false,
             ExK::Load(p) | ExK::Addr(p) => p.idx.as_ref().is_some_and(|i| i.has_call()),
             ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.has_call(),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.has_call() || b.has_call(),
@@ -349,7 +353,7 @@ impl Ex {
     /// `reads` is set, it is loaded as well.
     pub fn touches(&self, v: VarId, reads: bool) -> bool {
         match &self.k {
-            ExK::Const(_) => false,
+            ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => false,
             ExK::Load(p) => (reads && p.is_var(v)) || p.idx.as_ref().is_some_and(|i| i.touches(v, reads)),
             ExK::Addr(p) => p.touches(v, reads),
             ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.touches(v, reads),
