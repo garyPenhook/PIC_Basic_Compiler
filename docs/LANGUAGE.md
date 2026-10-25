@@ -342,6 +342,11 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
 * `Clock = 64` is the **instruction-clock source frequency in MHz** the program is built for
   (may be fractional). `_Clock` reads it. The delay and serial libraries compute timing from it.
   `Declare Xtal = 64` is accepted as an alias. (SF/P8)
+* **`Clock` does not set the hardware.** It declares the speed the program expects, as `clock` does in
+  Swordfish and `Declare Xtal` in Positron8. The oscillator is set by `Config` (`RSTOSC`) and by register
+  writes in the program: `Include "intosc"` does them for you, or write `OSCFRQ` / `OSCCON1` yourself
+  (`docs/CLOCK.md`). A `Clock` that differs from the `RSTOSC` speed with nothing setting the oscillator
+  gives `W-CLOCK`.
 * The compiler checks the `Clock` against the device's limits and the configuration settings; for
   the 18F27Q10 the limits come from the datasheet (64 MHz maximum, `[DS40002043F p.1]`) and the
   oscillator-mode errata (e.g. XT above 2 MHz, `[DS80000832G]`) — see PLAN §5.5.
@@ -356,8 +361,11 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
 ## 11. Preprocessor
 
 `#define`, `#undefine`, `#constant`, `#variable`, `#ifdef/#ifndef/#else/#endif`,
-`#if/#elseif/#else/#endif`, `#error`, `#warning`, `#option`. Expressions in `#if` are
-integer/float constants. (SF) **Predefined constants** come from the device description:
+`#if/#elseif/#else/#endif`, `#error`, `#warning`, `#option`. `#if` / `#elseif` take numbers, the
+predefined `_clock` and `_device` (read from the program's `Clock` and `Device` lines, so a module can
+test them), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and parentheses; a device name such as
+`18F27Q10` is written bare and compared with `=`, `<>` or `in`. Example:
+`#if not(_clock in (1, 2, 4))` ... `#error "..."` ... `#endif`. (SF) **Predefined constants** come from the device description:
 `_device`, `_clock`, `_core`, `_maxram`, `_maxrom`, `_ports`, `_adc`, `_adres`, `_eeprom`,
 `_usart`, `_usb`, `_mssp`, `_ccp`, `_eccp`, `_comparator`, `_flash_write`, and more as devices
 need them. (SF; names follow the reference language; values come from our device files.)
@@ -444,8 +452,9 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
   arrays and routines.
 * **`BitOf`** is reserved but not specified in 0.1; using it is an error.
 * **Preprocessor subset.** `#define`, `#undefine`, `#ifdef`, `#ifndef`, `#else`, `#endif`, `#error`,
-  `#warning` and `#option` work. `#if`, `#elseif`, `#constant` and `#variable` need a compile-time
-  expression evaluator and are reported as unsupported until a later milestone.
+  `#warning`, `#option`, `#if` and `#elseif` work. `#constant` and `#variable` are reported as
+  unsupported (`E-PP-UNSUPPORTED`) until a later milestone. Only `_clock` and `_device` are predefined in `#if`;
+  the other predefined names in §11 are not yet available to the preprocessor.
 * **Clock limits.** `Clock` is checked to be a positive number. The upper limit for the device is
   not in the device description yet (it is a data sheet value, not in the pack), so it is not checked.
 * **Overflow warnings (`W-OVF`)** need range analysis and arrive with the optimiser (M5). The

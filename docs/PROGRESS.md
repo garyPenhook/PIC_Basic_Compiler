@@ -350,3 +350,17 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - `lib/oled.bas` (module `Oled`): SSD1309 128 x 64 over I2C (8.1.5) or 4-wire SPI (8.1.3), from `~/Projects/Solomon_SSD1309_v1.1.pdf` (command tables 9-1..9-5, power-on 8.8). Relies on Reset values (8.4) for geometry/COM pins; text is a 5 x 7 font from the public domain X11 `5x7` font (not from the data sheet).
 - The compiler has no `Const` arrays yet, so the font lives in an `Asm` block (`db` data read with `TBLRD`). That exposed a bug in `asm.rs::words_of`: a raw `db` line counted as one word, so the call/branch range selection was wrong for programs over 1K words. It now counts operands.
 - Tests `tests/exec/lib_lcd.bas`, `lib_oled.bas` (optimised and `-O0`): refusals, pin set-up, final pin levels, font bytes read from flash. Nothing runs on a panel (D6); there is no pin model in the simulator.
+
+## Clock set-up in source (done 2026-10-25)
+- Decision: `Clock` stays informational (as in Swordfish `clock` and Positron `Declare Xtal`); the hardware is set in source. Both reference
+  compilers were read from their wine installs: Swordfish `Library/IntOSC.bas` (include module, `#error` on a bad clock, `set_clock`) and
+  Positron8 `Samples/8-Bit Device_Code_Templates/*Internal_Oscillator_Setups.bas` (procedures the program calls). Written up in `docs/CLOCK.md`.
+- `lib/intosc.bas` (module `IntOsc`): start-up writes `OSCFRQ` / `OSCCON1` for `Clock` (64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and 1 MHz / 2..32), bounded
+  waits on `OSCCON3.ORDY` and `OSCSTAT.HFOR`; `SetClock(mhz)`, `SetClockDiv(mhz, shift)` for run-time changes (library timing is not updated, by design).
+  Facts from DS40002043F 5.3.1, 5.6.1-5.6.5, Table 5-1.
+- Preprocessor `#if` / `#elseif` implemented (`src/pp.rs`: expression evaluator, `scan_header` for `_clock` / `_device`); `#constant` / `#variable` still unsupported.
+  The old negative test `pp_if_unsupported` was replaced by `pp_if_bad`, `pp_constant_unsupported`; positive test `tests/exec/pp_if.bas`.
+- `W-CLOCK` (`sema.rs::check_clock_setup`): `Clock` differs from the `RSTOSC` speed and nothing sets the oscillator. Earlier docs claimed the
+  compiler rejects a `Clock` / `RSTOSC` mismatch; nothing checked it. This warning is that check.
+- Tests: `tests/exec/lib_intosc.bas`, `lib_intosc_div.bas`, `pp_if.bas`; `tests/negative/intosc_bad_clock.bas`; `tests/valid/clock_*.bas`. The simulator does not model
+  `ORDY`, `HFOR`, `OSCCON2`; the switch itself needs hardware (D6).

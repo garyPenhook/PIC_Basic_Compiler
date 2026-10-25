@@ -7,7 +7,7 @@ use crate::ast::{Unit, UnitKind};
 use crate::diag::{Diagnostics, SourceMap, Span};
 use crate::lexer::lex;
 use crate::parser::parse_unit;
-use crate::pp::{OptionDirective, preprocess};
+use crate::pp::{OptionDirective, Predef, preprocess, scan_header};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -38,6 +38,8 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
         cfg,
         by_path: HashMap::new(),
         loading: HashSet::new(),
+        // `#if` in any file sees the main program's `Clock` and `Device`.
+        predef: std::fs::read_to_string(main).map(|t| scan_header(&t)).unwrap_or_default(),
     };
     ld.load_file(&mut proj, diags, main, Span::default());
     proj
@@ -48,7 +50,7 @@ pub fn load_text(name: &str, text: &str, diags: &mut Diagnostics) -> Project {
     let mut proj = Project::default();
     let mut defined = HashSet::new();
     let file = proj.sources.add(name.to_string(), text.to_string());
-    let pp = preprocess(file, text, &mut defined, diags);
+    let pp = preprocess(file, text, &mut defined, &scan_header(text), diags);
     proj.options.extend(pp.options);
     let toks = lex(file, &pp.text, diags);
     let unit = parse_unit(file, toks, diags, &mut proj.next_id);
@@ -60,6 +62,7 @@ struct Loader<'c> {
     cfg: &'c LoadConfig,
     by_path: HashMap<PathBuf, usize>,
     loading: HashSet<PathBuf>,
+    predef: Predef,
 }
 
 impl Loader<'_> {
@@ -84,7 +87,7 @@ impl Loader<'_> {
         // `#define` names are scoped to the file: only the command-line names are shared, so the
         // result does not depend on include order.
         let mut defined: HashSet<String> = self.cfg.defines.iter().map(|d| d.to_ascii_lowercase()).collect();
-        let pp = preprocess(file, &text, &mut defined, diags);
+        let pp = preprocess(file, &text, &mut defined, &self.predef, diags);
         proj.options.extend(pp.options);
         let toks = lex(file, &pp.text, diags);
         let unit = parse_unit(file, toks, diags, &mut proj.next_id);

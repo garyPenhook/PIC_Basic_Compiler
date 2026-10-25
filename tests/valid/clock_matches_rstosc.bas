@@ -1,0 +1,4 @@
+Program T
+Device = 18F27Q10
+Clock = 1
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_1MHZ, WDTE = OFF, LVP = ON

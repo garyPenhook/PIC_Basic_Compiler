@@ -107,6 +107,8 @@ pub struct Analysis {
     pub symbols: Vec<Symbol>,
     pub device: Option<Device>,
     pub clock_mhz: Option<f64>,
+    /// Where `Clock` is given (for diagnostics about it).
+    pub clock_span: Option<Span>,
     pub options: Options,
     pub config: Vec<ConfigSetting>,
     /// Type of every checked expression.
@@ -391,8 +393,35 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
         self.check_recursion();
         self.check_ram();
+        self.check_clock_setup();
         let off = self.a.options.warn_off.clone();
         self.diags.items.retain(|d| !(d.severity == crate::diag::Severity::Warning && off.contains(d.code)));
+    }
+
+    /// `Clock` only tells the compiler the speed to expect. When it differs from the speed the
+    /// `RSTOSC` setting starts the part at (Table 5-1: `HFINTOSC_64MHZ` 64 MHz, `HFINTOSC_1MHZ`
+    /// 1 MHz) and nothing in the program sets the oscillator, every delay and baud rate is wrong.
+    fn check_clock_setup(&mut self) {
+        let (Some(clock), Some(span)) = (self.a.clock_mhz, self.a.clock_span) else { return };
+        let Some(rst) = self.a.config.iter().find(|c| c.field == "RSTOSC") else { return };
+        let reset_mhz = match rst.value {
+            0 => 64.0,
+            6 => 1.0,
+            _ => return,
+        };
+        if (clock - reset_mhz).abs() < 1e-9 {
+            return;
+        }
+        let proj = self.proj;
+        let by_module = proj.units.iter().any(|u| u.path.file_stem().is_some_and(|n| n.eq_ignore_ascii_case("intosc")));
+        if by_module || proj.sources.texts().any(writes_oscillator) {
+            return;
+        }
+        self.diags.warn(
+            "W-CLOCK",
+            span,
+            format!("Clock is {clock} MHz but RSTOSC starts the part at {reset_mhz} MHz and nothing sets the oscillator: Include \"intosc\", write OSCFRQ, or change RSTOSC (docs/CLOCK.md)"),
+        );
     }
 
     fn read_options(&mut self) {
@@ -521,6 +550,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                         self.diags.error("E-CLOCK", e.span, format!("Clock is {mhz} here but {prev} elsewhere"));
                     } else {
                         self.a.clock_mhz = Some(mhz);
+                        self.a.clock_span = Some(e.span);
                         let id = self.add_symbol("_Clock", Span::default(), Vis::Public, SymKind::Const { ty: Ty::Float, val: CVal::Float(mhz), typed: false });
                         self.a.symbols[id].unit = usize::MAX;
                         self.predef.insert("_clock".into(), id);
@@ -2517,4 +2547,15 @@ fn coerce_const(t: &Ty, v: CVal) -> CVal {
 
 fn params_with_ast(ast: &[Param], infos: &[ParamInfo]) -> Vec<(Ident, ParamInfo)> {
     ast.iter().zip(infos).map(|(a, i)| (a.name.clone(), i.clone())).collect()
+}
+
+/// True when the text has a statement that assigns to `OSCFRQ` or `OSCCON1` (a line starting with
+/// the register name and then `=` or `.`). Comments are ignored; reads in conditions do not count.
+fn writes_oscillator(text: &str) -> bool {
+    text.lines().any(|l| {
+        let code = l.split('\'').next().unwrap_or("").trim_start().to_ascii_lowercase();
+        ["oscfrq", "osccon1"].iter().any(|r| {
+            code.strip_prefix(r).is_some_and(|rest| matches!(rest.trim_start().chars().next(), Some('=') | Some('.')))
+        })
+    })
 }

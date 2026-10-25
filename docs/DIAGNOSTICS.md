@@ -11,7 +11,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-SYNTAX | The text does not match the grammar |
 | E-RESERVED | A reserved word used as a name |
 | E-ORDER | Headers, includes, declarations and statements out of order |
-| E-PP, E-PP-ERROR, E-PP-UNSUPPORTED | Preprocessor misuse, `#error`, `#if` family not implemented |
+| E-PP, E-PP-ERROR, E-PP-UNSUPPORTED | Preprocessor misuse (including a bad `#if` expression), `#error`, `#constant` / `#variable` not implemented |
 | E-OPTION | Unknown `#option` or bad value |
 | W-PP-WARNING | `#warning` |
 
@@ -20,6 +20,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 |---|---|
 | E-NODEVICE, E-DEVICE | No `Device`, or no description file for it / it disagrees |
 | E-CLOCK | `Clock` not a positive number, or two different values |
+| W-CLOCK | `Clock` differs from the speed `RSTOSC` starts the part at and nothing sets the oscillator (`Include "intosc"` or a write to `OSCFRQ` / `OSCCON1`); see `docs/CLOCK.md` |
 | E-CONFIG | Unknown configuration setting or value, setting given twice |
 | E-INCLUDE | Module not found, include cycle, name mismatch, program included |
 | W-REGNAME | A declaration reuses a device register's name and hides the register |

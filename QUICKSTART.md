@@ -44,7 +44,10 @@ Wend
 
 * `Device` and `Clock` (MHz) must come first, then `Config` (oscillator and watchdog settings), then
   `Include`s, then declarations, then statements.
-* `Config` must match the clock: `RSTOSC = HFINTOSC_64MHZ` with `Clock = 64`.
+* `Clock` only tells the compiler the speed to expect; `Config` (`RSTOSC`) and register writes set it.
+  `RSTOSC = HFINTOSC_64MHZ` starts the part at 64 MHz, so use `Clock = 64`. For another speed add
+  `CSWEN = ON` to `Config` and `Include "intosc"` (it sets the oscillator to `Clock`), or write `OSCFRQ` yourself.
+  See `docs/CLOCK.md`. A mismatch gives the warning `W-CLOCK`.
 * Keywords are case-insensitive; the VS Code extension rewrites them to `Dim`, `While`, ….
 
 ## 4. Compile

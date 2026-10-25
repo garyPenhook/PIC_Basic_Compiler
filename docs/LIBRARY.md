@@ -144,6 +144,19 @@ needed. Single host only; not reentrant.
 The chip select is not part of the module (use `Gpio` or a port bit). The module owns MSSP1 (not together with `I2c`),
 does not use its interrupt, and is not reentrant.
 
+## intosc (internal oscillator set-up)
+`Include "intosc"` makes the hardware run at `Clock`: its start-up code, run before the main program, writes `OSCFRQ` and
+`OSCCON1` (HFINTOSC, divider) and waits for `OSCCON3.ORDY` and `OSCSTAT.HFOR`, each wait bounded. `Clock` must be 64, 48,
+32, 16, 12, 8, 4, 2, 1 (HFINTOSC, no divider) or 0.5, 0.25, 0.125, 0.0625, 0.03125 (1 MHz divided by 2..32); any other value
+is a compile-time error. Needs `CSWEN = ON` in `Config` unless `Clock` already is the `RSTOSC` speed. Include it first.
+| Routine | Effect |
+|---|---|
+| `SetClock(mhz)` | HFINTOSC at `mhz` (1, 2, 4, 8, 12, 16, 32, 48 or 64), divider 1:1; True when the switch completed and read back, False (nothing written) for another value |
+| `SetClockDiv(mhz, shift)` | the same divided by 2^`shift` (`shift` 0..9) |
+
+A run-time change does not change the compile-time `Clock` that `DelayMs`/`DelayUs` and the library timing use. Full
+description, register order and the reference compilers' approach: `docs/CLOCK.md`.
+
 ## system (reset cause, clock check)
 | Routine | Effect |
 |---|---|
@@ -155,9 +168,9 @@ does not use its interrupt, and is not reentrant.
 | `SysClockOk()` | True when `SysClockHz()` equals `Clock` |
 
 A flag left from an earlier Reset is reported until it is cleared; after a power-on Reset the brown-out flag is
-unknown, so power-on is tested first. The module does not change the clock at run time: `DelayUs`/`DelayMs`, `Serial`,
-`Pwm`, `I2c`, `Spi` and `Adc` compute from the compile-time `Clock`, so a run-time change would make them wrong.
-`SysClockOk` is the check that `Clock` and the `Config` `RSTOSC` setting agree.
+unknown, so power-on is tested first. The module does not change the clock (that is `intosc`, `docs/CLOCK.md`): `DelayUs`/`DelayMs`, `Serial`,
+`Pwm`, `I2c`, `Spi` and `Adc` compute from the compile-time `Clock`, so a run-time change makes them wrong.
+`SysClockOk` is the run-time check that the oscillator really runs at `Clock`.
 
 ## lcd (HD44780U character LCD, 4-bit)
 Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "Initializing by Instruction" (Figure 24), DDRAM map, bus timing. Pins `0..23` (RA0 = 0, RB0 = 8, RC0 = 16 ...); R/W tied to ground, the busy flag is not read (fixed waits: 50 us, 2 ms after Clear/Home).
@@ -192,5 +205,5 @@ Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tab
 | `OledFontByte(i)` | byte `i` (0..474) of the font table (kept in flash inside an `Asm` block, read with `TBLRD`) |
 
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

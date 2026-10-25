@@ -108,7 +108,7 @@ Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-che
 (no optimisation).
 
 Documentation: language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
-diagnostics `docs/DIAGNOSTICS.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,
+diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
 `BASICC_MDB=1 cargo test --test backend` for the simulator suite.
 

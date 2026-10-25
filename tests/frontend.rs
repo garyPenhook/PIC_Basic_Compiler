@@ -25,7 +25,7 @@ struct Outcome {
 fn check(path: &Path) -> Outcome {
     let mut diags = Diagnostics::default();
     let dir = path.parent().unwrap().to_path_buf();
-    let proj = load(path, &LoadConfig { lib_dirs: vec![dir], defines: vec![] }, &mut diags);
+    let proj = load(path, &LoadConfig { lib_dirs: vec![dir, root().join("lib")], defines: vec![] }, &mut diags);
     let analysis = analyze(&proj, &SemaConfig { devices_dirs: vec![root().join("devices")] }, &mut diags);
     let mut out = Outcome { errors: BTreeSet::new(), warnings: BTreeSet::new(), rendered: String::new(), analysis };
     for d in &diags.items {
