@@ -38,6 +38,8 @@ pub struct Env {
     /// Access Bank RAM `[start, end)` and the start of the Access Bank's SFR half.
     pub access: (u32, u32),
     pub access_sfr: u32,
+    /// Do not delete stores to variables nothing reads.
+    pub keep_writes: bool,
 }
 
 impl Env {
@@ -1213,7 +1215,9 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_forward(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
-        changed |= pass_write_only(&mut items, env);
+        if !env.keep_writes {
+            changed |= pass_write_only(&mut items, env);
+        }
         if !changed {
             break;
         }
@@ -1235,7 +1239,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: 0x60 }
+        Env { plain, access: (0x00, 0x60), access_sfr: 0x60, keep_writes: false }
     }
 
     fn ins(t: &str) -> Item {

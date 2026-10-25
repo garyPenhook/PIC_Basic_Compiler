@@ -93,6 +93,7 @@ basil [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `--check` | Front end only (syntax, types, declarations). No output files. Fast. |
 | `-S` | Stop after writing the assembly (`prog.S`). |
 | `--report` | Also print words per routine and every RAM object. |
+| `--keep-vars` | Keep stores to variables that nothing reads (the optimiser normally drops them), so a test can inspect them in RAM. A `Volatile` variable is always kept. |
 | `-O0` | No optimisation (the test suite builds everything both ways and compares). `-O1`, `-O2`, `-Os` are accepted and mean "optimise" (the default). |
 | `-o FILE` | Output hex path. |
 | `-D NAME` | Define a preprocessor name (visible in every file). |

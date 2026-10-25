@@ -30,6 +30,8 @@ pub struct Target {
     pub sfr: HashMap<String, u32>,
     /// Optimise (`-O0` turns it off, giving the reference build for differential tests).
     pub opt: bool,
+    /// Keep stores to variables nothing reads (`--keep-vars`).
+    pub keep_vars: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3585,7 +3587,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
                 plain.insert(n.to_string(), (a, 1));
             }
         }
-        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr })
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars })
     } else {
         items
     };

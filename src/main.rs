@@ -12,7 +12,7 @@ use basil::sema::{SemaConfig, analyze};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: basil [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
+const USAGE: &str = "usage: basil [--check] [-S] [--report] [-O0] [--keep-vars] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
 
 /// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
 /// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
@@ -27,6 +27,7 @@ fn main() -> ExitCode {
     let mut asm_only = false;
     let mut want_report = false;
     let mut optimise = true;
+    let mut keep_vars = false;
     let mut out_hex: Option<PathBuf> = None;
     let mut pic_as: Option<PathBuf> = None;
     let mut defines = Vec::new();
@@ -42,6 +43,7 @@ fn main() -> ExitCode {
             "-S" => asm_only = true,
             "--report" => want_report = true,
             "-O0" => optimise = false,
+            "--keep-vars" => keep_vars = true,
             "-O1" | "-O2" | "-Os" => optimise = true,
             "-o" => match args.next() {
                 Some(v) => out_hex = Some(PathBuf::from(v)),
@@ -109,6 +111,7 @@ fn main() -> ExitCode {
         let dev = analysis.device.as_ref().unwrap();
         let mut target = target_of(dev);
         target.opt = optimise;
+        target.keep_vars = keep_vars;
         let g = generate(p, &target);
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());

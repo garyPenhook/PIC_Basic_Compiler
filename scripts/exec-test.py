@@ -27,7 +27,7 @@ fails = 0
 for src in a.files:
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
-    r = subprocess.run([a.basil, *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
+    r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL {name}: compile\n{r.stderr}")
         fails += 1

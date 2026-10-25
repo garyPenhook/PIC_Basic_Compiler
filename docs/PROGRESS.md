@@ -453,4 +453,11 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   they cost no flash or RAM).
 - Tests: `tests/exec/events_array_cmp.bas`, `events_params.bas`, `events_isr.bas`, `lib_timer_event.bas` (simulator); negative
   `event_arg_count`, `event_sig_mismatch`, `event_byref_param`; valid `event_params`. The result variables of the exec tests are
-  `Volatile`: a program-level variable nothing reads is a dead store, which had made `events.bas` fail since it was added.
+  `Volatile` (no longer needed, see below).
+
+## Exec tests keep unread variables (done 2026-10-25, 0.1.24)
+- Since 0.1.17 the peephole pass `pass_write_only` deletes `movwf v` for a variable nothing in the program reads, so 39 of the simulator
+  tests (which read their result variables from RAM after the run) failed in the optimised build. `basil --keep-vars` now turns that
+  pass off (`Target::keep_vars`, `peephole::Env::keep_writes`); `scripts/exec-test.py` always passes it. The default build is unchanged.
+  The simulator suite passes again, optimised and `-O0`.
+
