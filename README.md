@@ -1,5 +1,12 @@
 # Basic_Compiler
 
+[![CI](https://github.com/garyPenhook/PIC_Basic_Compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/garyPenhook/PIC_Basic_Compiler/actions/workflows/ci.yml)
+
+Pre-built `basil` for Linux, macOS and Windows (with `lib/`, `devices/` and the docs) is on the
+[releases page](https://github.com/garyPenhook/PIC_Basic_Compiler/releases). Unpack it, put the
+folder's `basil` on your `PATH`, and keep your programs inside that folder or pass `-L` and `--devices`.
+You still need MPLAB XC8 (for `pic-as`) and the device pack, see QUICKSTART.md.
+
 A BASIC compiler for PIC microcontrollers, built for small, fast code. It turns a structured,
 typed BASIC (modules, subroutines and functions, structures, interrupts) into a `.hex` file, and
 comes with a library of ready-made modules for the common peripherals.
@@ -47,7 +54,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 ## What works today
 
 **Language**
-* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), `Float` (IEEE-754 binary32), strings, one-dimensional arrays (with initialisers and program-memory `Const` tables), structures
+* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), `Float` (IEEE-754 binary32), strings, arrays (one or more dimensions, with initialisers and program-memory `Const` tables, also of strings), structures (with initialisers), overloaded and `Reentrant` routines
   and unions, constants.
 * Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
   short-circuit conditions.
@@ -93,9 +100,9 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 
 ## Still to do
 
-* **Language:** overloading, `Reentrant` routines (parsed, rejected by the back end), a few remaining
-  string and structure forms (the compiler reports these clearly rather than miscompiling them),
-  structure initialisers, arrays of strings and multi-dimensional arrays.
+* **Language:** a few string and structure forms are still missing (the compiler reports these
+  clearly rather than miscompiling them). `Reentrant` recursion is limited by the 31-level hardware
+  stack, and there is no forward declaration, so mutual recursion cannot be written.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
   Serial output, PWM waveforms, I2C and SPI traffic, external timer inputs and the second EUSART
   are the main things that need a hardware run. `docs/MANUAL.md` Appendix B is the bench checklist.

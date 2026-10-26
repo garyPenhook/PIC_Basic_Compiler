@@ -127,6 +127,8 @@ pub struct DimDecl {
 pub struct DimItem {
     pub name: Ident,
     pub size: Option<Expr>,
+    /// The sizes of the second and later dimensions of `Dim m(3, 4)`; `size` is the first.
+    pub more_dims: Vec<Expr>,
     pub init: Option<Expr>,
     /// Array initialiser written before the `As` clause: `Dim a(3) = (1, 2, 3) As Byte`.
     pub list: Option<Vec<Expr>>,

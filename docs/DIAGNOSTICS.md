@@ -37,7 +37,8 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-MIX | Boolean mixed with a number (D11) |
 | E-SIGN | Signed and unsigned operands that cannot be combined (D16) |
 | E-CONST-EXPR, E-CONST-RANGE, E-CONST, E-CONST-ARRAY | Not constant; constant does not fit; bad constant declaration |
-| E-DIM-ARRAY | An array initialiser has a different number of values than the array has elements |
+| E-DIM-ARRAY | An array or structure initialiser has a different number of values than the array has elements or the structure has fields |
+| E-OVERLOAD | No overload of a routine accepts the arguments of a call |
 | E-NARROW / W-NARROW | Value may not fit the target (error under `Strict`) |
 | E-DIV0 | Constant division by zero |
 | E-BOUNDS | Constant index, bit or modifier outside the object |

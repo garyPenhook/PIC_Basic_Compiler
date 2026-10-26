@@ -531,6 +531,11 @@ struct Gen<'p> {
     save_stack: Vec<(usize, Vec<String>)>,
     /// Routines with one Byte parameter, called only by plain calls: the argument travels in WREG.
     warg: BTreeSet<FuncId>,
+    /// `reach[f]`: the routines `f` can reach through one or more calls. A call from `f` to a
+    /// routine that can reach `f` again is recursive.
+    reach: Vec<BTreeSet<FuncId>>,
+    /// The most bytes any recursive call site pushed on the software stack.
+    soft_max: u32,
 }
 
 /// The second factor of a partial product in `mul_partials`: a literal byte or byte `j` of `__B`.
@@ -576,7 +581,69 @@ impl<'p> Gen<'p> {
             isr_end: None,
             save_stack: Vec::new(),
             warg: Self::warg_set(p, tgt),
+            reach: Self::reach_sets(p),
+            soft_max: 0,
         }
+    }
+
+    /// For each routine, the routines it can reach through the call graph.
+    fn reach_sets(p: &Program) -> Vec<BTreeSet<FuncId>> {
+        let direct: Vec<BTreeSet<FuncId>> = p
+            .funcs
+            .iter()
+            .map(|f| {
+                let mut out = BTreeSet::new();
+                stmt_calls(&f.body, &mut out);
+                out
+            })
+            .collect();
+        (0..direct.len())
+            .map(|f| {
+                let mut seen: BTreeSet<FuncId> = BTreeSet::new();
+                let mut todo: Vec<FuncId> = direct[f].iter().copied().collect();
+                while let Some(g) = todo.pop() {
+                    if seen.insert(g) {
+                        todo.extend(direct[g].iter().copied());
+                    }
+                }
+                seen
+            })
+            .collect()
+    }
+
+    /// True when a call from the routine being generated to `f` can come back to it.
+    fn recursive_call(&self, f: FuncId) -> bool {
+        self.cur < self.p.funcs.len() && (f == self.cur || self.reach[f].contains(&self.cur))
+    }
+
+    /// Where the software stack (the frames pushed by recursive calls) lives.
+    fn obj_swstk(&self) -> usize {
+        self.nvars + 4 + self.p.funcs.len() + 1 + self.p.n_saves + self.p.isrs.len()
+    }
+
+    /// The memory a recursive call must keep safe: every variable of the routine being
+    /// generated (parameters, locals, result) and its temporaries, as `(operand, byte)` pairs.
+    fn frame_bytes(&mut self) -> Vec<Mem> {
+        let mut out = Vec::new();
+        for (i, v) in self.p.vars.iter().enumerate() {
+            if v.owner != Some(self.cur) || v.bytes == 0 {
+                continue;
+            }
+            let size = self.layout.map_or(v.bytes, |l| l.size[i]);
+            if size == 0 {
+                continue;
+            }
+            let m = Mem { sym: v.asm.clone(), addr: self.layout.and_then(|l| l.addr[i]), obj: Some(i), reg: false };
+            out.extend((0..v.bytes).map(|k| m.at(k)));
+        }
+        let t = self.obj_temp(self.cur);
+        let tn = match self.layout {
+            Some(l) => l.size[t],
+            None => self.temp_max[self.cur],
+        };
+        let tm = self.mem_obj(t, format!("{}__TMP", self.cur_asm));
+        out.extend((0..tn).map(|k| tm.at(k)));
+        out
     }
 
     /// Routines that take their one Byte argument in WREG (optimised builds only).
@@ -910,15 +977,18 @@ impl<'p> Gen<'p> {
                 self.label(&le);
             }
             ExK::Call(f, args) => {
-                self.do_call(*f, args);
+                self.do_call(*f, args, true);
                 let rv = self.p.funcs[*f].result.expect("a value call has a result");
-                let m = self.mem_obj(rv, self.p.vars[rv].asm.clone());
-                if n == 1 {
-                    self.fop("movf", &m, "w");
-                } else {
-                    for i in 0..n {
-                        let d = self.a(i);
-                        self.movff(&d, &m.at(i));
+                // A recursive call has already read its result.
+                if !self.recursive_call(*f) {
+                    let m = self.mem_obj(rv, self.p.vars[rv].asm.clone());
+                    if n == 1 {
+                        self.fop("movf", &m, "w");
+                    } else {
+                        for i in 0..n {
+                            let d = self.a(i);
+                            self.movff(&d, &m.at(i));
+                        }
                     }
                 }
             }
@@ -1065,6 +1135,10 @@ impl<'p> Gen<'p> {
 
     /// Points FSR`fsr` at the first byte of a RAM string (a variable or a `ByRef` parameter).
     fn point_str(&mut self, fsr: u8, p: &Place) {
+        // An element picked at run time: the byte offset is worked out first, then added to the pointer.
+        if let Some(idx) = &p.idx {
+            self.gen_to_acc_16(idx);
+        }
         match &p.base {
             Base::Var(v) => {
                 self.uses[*v] += weight(self.depth);
@@ -1088,6 +1162,14 @@ impl<'p> Gen<'p> {
                 }
             }
             Base::Abs { .. } | Base::Flash(_) | Base::FlashNext(_) => self.err("internal: a string in a device register or constant table"),
+        }
+        if p.idx.is_some() {
+            let (a0, a1) = (self.a(0), self.a(1));
+            let (fl, fh) = (self.sfr_mem(&format!("FSR{fsr}L")), self.sfr_mem(&format!("FSR{fsr}H")));
+            self.fop("movf", &a0, "w");
+            self.fop("addwf", &fl, "f");
+            self.fop("movf", &a1, "w");
+            self.fop("addwfc", &fh, "f");
         }
     }
 
@@ -2342,9 +2424,21 @@ impl<'p> Gen<'p> {
         }
     }
 
-    fn do_call(&mut self, f: FuncId, args: &[(Place, Ex)]) {
+    /// `want` is true when the call's value is wanted: for a recursive call it is read before the
+    /// caller's own `Result` is put back, and left where `gen_val` expects it.
+    fn do_call(&mut self, f: FuncId, args: &[(Place, Ex)], want: bool) {
         self.called.insert(f);
         self.calls[self.cur].insert(f);
+        // A recursive call would run over this activation's variables, so they wait on the
+        // software stack (FSR2) for the call and are put back after it.
+        let frame = if self.recursive_call(f) { self.frame_bytes() } else { Vec::new() };
+        let rec = self.recursive_call(f);
+        if rec {
+            self.soft_max = self.soft_max.max(frame.len() as u32);
+            for m in &frame {
+                self.ins(format!("movff {}, PREINC2", m.sym));
+            }
+        }
         // Arguments that contain calls are evaluated first, so a nested call cannot overwrite
         // a parameter that was already stored.
         let nested = args.len() > 1 && args.iter().any(|(_, e)| e.has_call());
@@ -2358,7 +2452,8 @@ impl<'p> Gen<'p> {
                     self.gen_val(&conv);
                 }
             }
-        } else if nested {
+        } else if nested || (rec && args.len() > 1) {
+            // A recursive call stores into the very parameters its arguments may read.
             let mut temps = Vec::new();
             for (_, e) in args {
                 let t = self.spill(e);
@@ -2377,6 +2472,24 @@ impl<'p> Gen<'p> {
         }
         self.items.push(Item::Call(self.p.funcs[f].asm.clone()));
         self.bsr = None;
+        if rec {
+            if want && let Some(rv) = self.p.funcs[f].result {
+                let n = self.p.vars[rv].bytes;
+                let m = self.mem_obj(rv, self.p.vars[rv].asm.clone());
+                if n == 1 {
+                    self.fop("movf", &m, "w");
+                } else {
+                    for i in 0..n {
+                        let d = self.a(i);
+                        self.movff(&d, &m.at(i));
+                    }
+                }
+            }
+            for m in frame.iter().rev() {
+                self.ins(format!("movff POSTDEC2, {}", m.sym));
+            }
+            self.bsr = None;
+        }
     }
 
     fn block(&mut self, ss: &[S]) {
@@ -2427,7 +2540,7 @@ impl<'p> Gen<'p> {
             St::ClearMem(p, n) => self.clear_mem(p, *n),
             St::Copy { dst, src, bytes } => self.copy_mem(dst, src, *bytes),
             St::Direction { place, output } => self.direction(place, *output),
-            St::Call(f, args) => self.do_call(*f, args),
+            St::Call(f, args) => self.do_call(*f, args, false),
             St::FlashSeek(f, off, idx) => {
                 let at = Place { base: Base::Flash(*f), off: *off, bit: None, idx: idx.clone().map(Box::new), dbit: None, ty: crate::types::Ty::Int(8, false) };
                 self.point_tblptr(&at);
@@ -3358,6 +3471,11 @@ impl<'p> Gen<'p> {
             self.fbit("bsf", &m, 5);
         }
         let Some(layout) = self.layout else { return };
+        // The software stack for recursive calls.
+        if layout.size[self.obj_swstk()] > 0 {
+            // FSR2 points at the last byte pushed.
+            self.ins("lfsr 2, __SWSTK - 1");
+        }
         // Zero ranges: all allocated user variables, merged.
         let mut ranges: Vec<(u32, u32)> = Vec::new();
         for (i, v) in self.p.vars.iter().enumerate() {
@@ -3535,6 +3653,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let indep = independent(&g1.calls, &isr_mask);
     let nvars = p.vars.len();
     let mut save_bytes = vec![0u32; p.n_saves + p.isrs.len()];
+    let mut soft = g1.soft_max;
     drop(g1);
     let mut result = None;
     for _round in 0..6 {
@@ -3553,6 +3672,8 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
             let name = if k < p.n_saves { format!("__SAV{k}") } else { format!("__ISV{}", k - p.n_saves) };
             objs.push(Obj { name, bytes: n, weight: 0, force_access: false, zero: false, owner: None });
         }
+        // Every level of recursion pushes at most `soft` bytes, and the hardware stack allows 30 levels (a nested call in an argument adds a push or two).
+        objs.push(Obj { name: "__SWSTK".into(), bytes: soft * 32, weight: 0, force_access: false, zero: false, owner: None });
         let layout = match plan_layout(&objs, tgt, &indep) {
             Ok(l) => l,
             Err(e) => {
@@ -3561,11 +3682,12 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
             }
         };
         let (g2, items) = run_pass(p, tgt, Some(&layout), Some(&facts));
-        let grew = (0..4).any(|r| g2.scratch_max[r] > scratch[r]) || (0..temps.len()).any(|f| g2.temp_max[f] > temps[f]) || (0..nvars).any(|i| g2.uses[i] > 0 && uses[i] == 0) || (0..save_bytes.len()).any(|k| g2.save_max[k] > save_bytes[k]);
+        let grew = (0..4).any(|r| g2.scratch_max[r] > scratch[r]) || (0..temps.len()).any(|f| g2.temp_max[f] > temps[f]) || (0..nvars).any(|i| g2.uses[i] > 0 && uses[i] == 0) || (0..save_bytes.len()).any(|k| g2.save_max[k] > save_bytes[k]) || g2.soft_max > soft;
         if grew {
             for k in 0..save_bytes.len() {
                 save_bytes[k] = save_bytes[k].max(g2.save_max[k]);
             }
+            soft = soft.max(g2.soft_max);
             for r in 0..4 {
                 scratch[r] = scratch[r].max(g2.scratch_max[r]);
             }

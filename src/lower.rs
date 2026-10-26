@@ -481,7 +481,7 @@ impl<'a> Lowerer<'a> {
                 SymKind::Var { ty } => {
                     let array = match &ty {
                         Ty::Array(elem, _) => {
-                            if nat(elem).is_none() && !matches!(**elem, Ty::Struct(_)) {
+                            if nat(elem).is_none() && !matches!(**elem, Ty::Struct(_) | Ty::Str(_)) {
                                 self.unsupported_sym(sym, &format!("an array of {elem}"));
                                 continue;
                             }
@@ -523,6 +523,14 @@ impl<'a> Lowerer<'a> {
                         let dst = Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
                         self.str_assign(dst, *cap, e, it.name.span, inits);
                     }
+                    if let Ty::Struct(sid) = &ty {
+                        let list: Vec<&'a Expr> = match (it.list.as_ref().or(dim.trailing_list.as_ref()), init_e) {
+                            (Some(l), _) => l.iter().collect(),
+                            (None, Some(e)) => vec![e],
+                            _ => Vec::new(),
+                        };
+                        self.struct_init(v, *sid, &list, it.name.span, inits);
+                    }
                     if let Ty::Array(elem, _) = &ty {
                         let list: Option<Vec<&'a Expr>> = match (it.list.as_ref().or(dim.trailing_list.as_ref()), init_e) {
                             (Some(l), _) => Some(l.iter().collect()),
@@ -549,6 +557,30 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.startup.append(&mut once);
+    }
+
+    /// Gives a freshly declared structure its initial values, field by field. Storage is zero
+    /// already, so a zero is not stored.
+    fn struct_init(&mut self, v: VarId, sid: usize, list: &[&'a Expr], span: Span, inits: &mut Vec<S>) {
+        if list.is_empty() {
+            return;
+        }
+        let Some(lay) = self.layout(sid) else { return };
+        let SymKind::Struct { fields, .. } = self.a.symbols[sid].kind.clone() else { return };
+        let owned = fields.iter().zip(lay.iter()).filter(|(f, _)| !f.alias);
+        for ((_, f), e) in owned.zip(list) {
+            let dst = Place { base: Base::Var(v), off: f.off, bit: None, idx: None, dbit: None, ty: f.ty.clone() };
+            if let Ty::Str(cap) = f.ty {
+                self.str_assign(dst, cap, e, span, inits);
+                continue;
+            }
+            let Some(c) = self.a.consts.get(&e.id) else { continue };
+            let (w, sg) = nat(&f.ty).unwrap_or((8, false));
+            let x = cval_for(c, &f.ty) & mask(w);
+            if x != 0 {
+                inits.push(S { st: St::Assign(dst, Ex::konst(x, w, sg)), span });
+            }
+        }
     }
 
     /// Gives a freshly declared array its initial values. Storage is zero already (start-up
@@ -590,9 +622,6 @@ impl<'a> Lowerer<'a> {
             return Some(fi.id);
         }
         let r = *self.routines.get(&sym)?;
-        if r.reentrant {
-            self.unsupported(r.name.span, &format!("the Reentrant routine `{}`", r.name.name));
-        }
         let (params_info, ret) = match &self.a.symbols[sym].kind {
             SymKind::Routine { params, ret, .. } => (params.clone(), ret.clone()),
             _ => return None,
@@ -1085,11 +1114,13 @@ impl<'a> Lowerer<'a> {
                             return None;
                         }
                     };
-                    if place.bit.is_some() || args.len() != 1 {
+                    let md = self.a.md_index.get(sp).cloned();
+                    if place.bit.is_some() || (args.len() != 1 && md.is_none()) {
                         self.unsupported(*sp, "this array access");
                         return None;
                     }
-                    if let Base::Var(v) = place.base
+                    if md.is_none()
+                        && let Base::Var(v) = place.base
                         && self.packed.contains(&v)
                         && place.off == 0
                         && place.idx.is_none()
@@ -1100,25 +1131,31 @@ impl<'a> Lowerer<'a> {
                         continue;
                     }
                     let size = self.size_of(&elem);
-                    if let Some(CVal::Int(c)) = self.a.consts.get(&args[0].id) {
-                        if *c < 0 || (n > 0 && *c >= n as i128) {
-                            self.err("E-BOUNDS", args[0].span, format!("index {c} is outside the array (0 to {})", n.saturating_sub(1)));
-                            return None;
+                    // One index, or one per dimension of a multi-dimensional array: each steps
+                    // over `stride` elements, the product of the dimensions after it.
+                    let dims = md.unwrap_or_else(|| vec![n]);
+                    for (k, arg) in args.iter().enumerate() {
+                        let step = size * dims[k + 1..].iter().product::<u32>();
+                        if let Some(CVal::Int(c)) = self.a.consts.get(&arg.id) {
+                            if *c < 0 || (dims[k] > 0 && *c >= dims[k] as i128) {
+                                self.err("E-BOUNDS", arg.span, format!("index {c} is outside the array (0 to {})", dims[k].saturating_sub(1)));
+                                return None;
+                            }
+                            place.off += *c as u32 * step;
+                        } else {
+                            let ix = self.expr(arg)?;
+                            let ix = conv(ix, 16, false);
+                            let off = match step {
+                                1 => ix,
+                                s if s.is_power_of_two() => Ex::new(ExK::Bin(BinKind::Shl, Box::new(ix), Box::new(Ex::konst(s.trailing_zeros(), 8, false))), 16, false),
+                                s => Ex::new(ExK::Bin(BinKind::Mul, Box::new(ix), Box::new(Ex::konst(s, 16, false))), 16, false),
+                            };
+                            // A second run-time index (a field array of an array element) adds up.
+                            place.idx = Some(Box::new(match place.idx.take() {
+                                Some(prev) => Ex::new(ExK::Bin(BinKind::Add, prev, Box::new(off)), 16, false),
+                                None => off,
+                            }));
                         }
-                        place.off += *c as u32 * size;
-                    } else {
-                        let ix = self.expr(&args[0])?;
-                        let ix = conv(ix, 16, false);
-                        let off = match size {
-                            1 => ix,
-                            s if s.is_power_of_two() => Ex::new(ExK::Bin(BinKind::Shl, Box::new(ix), Box::new(Ex::konst(s.trailing_zeros(), 8, false))), 16, false),
-                            s => Ex::new(ExK::Bin(BinKind::Mul, Box::new(ix), Box::new(Ex::konst(s, 16, false))), 16, false),
-                        };
-                        // A second run-time index (a field array of an array element) adds up.
-                        place.idx = Some(Box::new(match place.idx.take() {
-                            Some(prev) => Ex::new(ExK::Bin(BinKind::Add, prev, Box::new(off)), 16, false),
-                            None => off,
-                        }));
                     }
                     place.ty = *elem;
                 }
@@ -1371,6 +1408,7 @@ impl<'a> Lowerer<'a> {
             }
             _ => return None,
         };
+        let sym = self.a.call_targets.get(&d.id).copied().unwrap_or(sym);
         match d.parts.get(next) {
             Some(Part::Args(args, sp)) => Some((sym, args.as_slice(), *sp)),
             None => Some((sym, &[], d.span)),
@@ -1767,7 +1805,7 @@ impl<'a> Lowerer<'a> {
             }
             (ExprKind::Designator(d), Some(Ty::Str(_))) => {
                 let p = self.place_idx_of(d)?;
-                if p.idx.is_some() || p.bit.is_some() {
+                if p.idx.as_ref().is_some_and(|i| i.has_call() || i.uses_fsr()) || p.bit.is_some() {
                     self.unsupported(d.span, "this string");
                     return None;
                 }
@@ -1819,8 +1857,8 @@ impl<'a> Lowerer<'a> {
     }
 
     fn str_assign(&mut self, dst: Place, cap: u32, value: &'a Expr, span: Span, out: &mut Vec<S>) {
-        if dst.idx.is_some() {
-            self.unsupported(span, "assigning to a String field of an array element picked at run time");
+        if dst.idx.as_ref().is_some_and(|i| i.has_call() || i.uses_fsr()) {
+            self.unsupported(span, "assigning to a String whose array index reads an array or calls a routine");
             return;
         }
         let mut parts = Vec::new();
@@ -1829,9 +1867,11 @@ impl<'a> Lowerer<'a> {
         }
         // `s = s + x` appends in place. The target anywhere else on the right would be
         // overwritten before it is read.
-        let same = |p: &StrSrc| matches!(p, StrSrc::Ram(q) if q.base == dst.base && q.off == dst.off);
+        let same = |p: &StrSrc| matches!(p, StrSrc::Ram(q) if q.base == dst.base && q.off == dst.off && q.idx == dst.idx);
+        // Elements picked at run time can be the same string whatever their indices say.
+        let may_alias = |p: &StrSrc| matches!(p, StrSrc::Ram(q) if q.base == dst.base && (q.idx.is_some() || dst.idx.is_some()));
         let keep = parts.first().is_some_and(same);
-        if parts.iter().skip(1).any(same) {
+        if parts.iter().skip(1).any(|p| same(p) || may_alias(p)) {
             self.unsupported(span, "a String that is also read after its first operand on the right of its own assignment");
             return;
         }

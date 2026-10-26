@@ -285,10 +285,11 @@ param := [ByVal | ByRef | ByRefConst] Name [()] As Type [= constexpr]
   the sum. Declaring working variables locally therefore saves RAM.
 * **Inlining**: a routine called exactly once is inlined by default; `Inline` forces it,
   `NoInline` forbids it; the optimiser may also inline small routines by its cost model.
-* **Overloading** (same name, different parameter types) and **compound subroutines** are
-  planned but deferred to milestone M9. (SF)
-* **Reentrant** routines (opt-in attribute `Reentrant`) use a software stack and may recurse; they
-  are slower and larger and are off by default (PLAN §7.2).
+* **Overloading** (same name, different parameter types) is supported: the best fit of the
+  arguments wins, a tie is `E-AMBIG`. **Compound subroutines** are deferred to milestone M9. (SF)
+* **Reentrant** routines (opt-in attribute `Reentrant`) may recurse. Their variables keep fixed
+  addresses; a recursive call pushes the caller's frame on a software stack (FSR2) and restores it
+  after the call. Slower and larger, and off by default. Depth is limited by the hardware stack.
 
 ## 8. Interrupts, events and context saving
 
@@ -489,4 +490,4 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
 * Exact interrupt context-save behaviour and vector registers for the 18F27Q10 (M1).
 * Other type names, `ByValue`/`BycRef` and command
   statements without parentheses (`High LED`) are not accepted; only the spellings in §14 are.
-* Overloading and compound subroutines (M9).
+* Compound subroutines (M9).

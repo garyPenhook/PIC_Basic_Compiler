@@ -505,15 +505,19 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
         loop {
             let name = self.ident()?;
+            let mut more_dims = Vec::new();
             let size = if self.eat_punct("(") {
                 let e = self.expr()?;
+                while self.eat_punct(",") {
+                    more_dims.push(self.expr()?);
+                }
                 self.expect_punct(")")?;
                 Some(e)
             } else {
                 None
             };
             let (init, list) = if self.eat_punct("=") { self.dim_init()? } else { (None, None) };
-            items.push(DimItem { name, size, init, list });
+            items.push(DimItem { name, size, more_dims, init, list });
             if !self.eat_punct(",") {
                 break;
             }

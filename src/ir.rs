@@ -220,6 +220,17 @@ impl Ex {
             ExK::StrEq(a, b) => a.has_call() || b.has_call(),
         }
     }
+    /// True when evaluating the expression reads memory through an FSR (an array element or a
+    /// `ByRef` parameter), which would disturb a string pointer set up beforehand.
+    pub fn uses_fsr(&self) -> bool {
+        match &self.k {
+            ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) | ExK::Call(..) => false,
+            ExK::Load(p) | ExK::Addr(p) => p.indirect() || p.idx.as_ref().is_some_and(|i| i.uses_fsr()),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.uses_fsr(),
+            ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.uses_fsr() || b.uses_fsr(),
+            ExK::StrEq(..) => true,
+        }
+    }
     pub fn as_const(&self) -> Option<u32> {
         match self.k {
             ExK::Const(v) => Some(v),

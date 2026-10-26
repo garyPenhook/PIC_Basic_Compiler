@@ -116,16 +116,20 @@ fn float_work_in_a_handler_must_go_through_save() {
 }
 
 #[test]
-fn structure_fields_picked_at_run_time_are_reported_not_miscompiled() {
+fn string_fields_and_elements_picked_at_run_time_build() {
     let out = scratch("structidx");
     let src = out.join("s.bas");
-    let prog = "Program T\nDevice = 18F27Q10\nStructure TS\n Tag As String(4)\n V As Byte\n F As V.0\nEnd Structure\nDim a(3) As TS\nDim i As Byte\nDim s As String(8)\ni = 1\n";
-    for stmt in ["a(i).Tag = \"x\"", "s = a(i).Tag + \"!\""] {
+    let prog = "Program T\nDevice = 18F27Q10\nStructure TS\n Tag As String(4)\n V As Byte\n F As V.0\nEnd Structure\nDim a(3) As TS\nDim n(3) As String(8)\nDim k(3) As Byte\nDim i As Byte\nDim s As String(8)\ni = 1\n";
+    for stmt in ["a(i).Tag = \"x\"", "s = a(i).Tag + \"!\"", "n(i) = s", "s = n(i)"] {
         std::fs::write(&src, format!("{prog}{stmt}\n")).unwrap();
         let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
-        assert!(!r.status.success(), "{stmt} should be rejected");
-        assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"), "{stmt}");
+        assert!(r.status.success(), "{stmt}: {}", String::from_utf8_lossy(&r.stderr));
     }
+    // An index that itself reads an array would disturb the string pointer: reported, not miscompiled.
+    std::fs::write(&src, format!("{prog}n(k(i)) = s\n")).unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
 }
 
 /// Word addresses of the `;SYM name 0xADDR` lines (byte addresses) in generated assembly.
@@ -215,13 +219,23 @@ fn library_modules_build_cleanly() {
 }
 
 #[test]
-fn reentrant_routines_are_rejected() {
+fn reentrant_routines_use_a_software_stack_and_only_then() {
     let out = scratch("reentrant");
     let src = out.join("r.bas");
-    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nDim r As Word\nReentrant Function F(ByVal n As Byte) As Word\n If n <= 1 Then\n Result = 1\n Else\n Result = n * F(n - 1)\n End If\nEnd Function\nr = F(5)\n").unwrap();
+    let prog = |attr: &str| format!("Program T\nDevice = 18F27Q10\nDim r As Word\n{attr}Function F(ByVal n As Byte) As Word\n If n <= 1 Then\n Result = 1\n Else\n Result = n * F(n - 1)\n End If\nEnd Function\nr = F(5)\n");
+    std::fs::write(&src, prog("Reentrant ")).unwrap();
     let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
-    assert!(!r.status.success());
-    assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("r.S")).unwrap();
+    assert!(asm.contains("__SWSTK") && asm.contains("PREINC2") && asm.contains("POSTDEC2"));
+    // Without the attribute recursion is still refused, and a program that does not recurse has no stack.
+    std::fs::write(&src, prog("")).unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+    assert!(!r.status.success() && String::from_utf8_lossy(&r.stderr).contains("E-RECURSION"));
+    let plain = root().join("tests/exec/funcs.bas");
+    let r = Command::new(basil()).arg(&plain).arg("-S").arg("-o").arg(out.join("plain.hex")).output().unwrap();
+    assert!(r.status.success());
+    assert!(!std::fs::read_to_string(out.join("plain.S")).unwrap().contains("__SWSTK"));
 }
 
 /// Addresses of the one-byte `NAME equ 0x...` data lines in generated assembly.

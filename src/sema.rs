@@ -120,6 +120,16 @@ pub struct Analysis {
     /// Resolution of each designator's head.
     pub resolved: HashMap<NodeId, Res>,
     pub calls: Vec<CallEdge>,
+    /// The other routines that share a name with the routine in the scope table (overloading),
+    /// keyed by that first routine.
+    pub overloads: HashMap<SymId, Vec<SymId>>,
+    /// The dimensions of each multi-dimensional array, which is stored flat in row-major order.
+    pub dims: HashMap<SymId, Vec<u32>>,
+    /// The dimensions of the array that each `m(i, j)` index list (by the span of its
+    /// parentheses) subscripts.
+    pub md_index: HashMap<Span, Vec<u32>>,
+    /// The overload each call designator selected, when its name is overloaded.
+    pub call_targets: HashMap<NodeId, SymId>,
     /// Bytes of global variables.
     pub global_ram: u32,
     /// The symbol declared at the position of a declared name; the back end uses it to walk the
@@ -248,6 +258,8 @@ pub struct Sema<'p, 'd> {
     enabled: HashMap<Option<i64>, SymId>,
     interrupts: Vec<SymId>,
     reentrant_ok: HashSet<SymId>,
+    /// Dimensions of the multi-dimensional array the designator being checked has just named.
+    md_cur: Option<Vec<u32>>,
     /// True while the operand of `Bound` is checked: it only needs the array's type.
     in_bound: bool,
 }
@@ -271,6 +283,7 @@ pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Ana
         enabled: HashMap::new(),
         interrupts: Vec::new(),
         reentrant_ok: HashSet::new(),
+        md_cur: None,
         in_bound: false,
     };
     s.run();
@@ -316,6 +329,99 @@ impl<'p, 'd> Sema<'p, 'd> {
             None => self.unit_scopes[self.unit].insert(key, id),
         };
         Some(id)
+    }
+
+    /// Declares a routine. A second routine of the same name is an overload when its parameter
+    /// types differ from every earlier one; it is kept beside the first, which owns the name.
+    fn declare_routine(&mut self, name: &Ident, vis: Vis, kind: SymKind, params: &[ParamInfo]) -> Option<SymId> {
+        let first = match self.scopes.last() {
+            Some(_) => None,
+            None => self.unit_scopes[self.unit].get(&name.key()).copied(),
+        };
+        let Some(first) = first.filter(|&f| matches!(self.a.symbols[f].kind, SymKind::Routine { .. })) else {
+            return self.declare(name, vis, kind);
+        };
+        let same = |a: &[ParamInfo], b: &[ParamInfo]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.ty == y.ty && x.mode == y.mode);
+        let mut all = vec![first];
+        all.extend(self.a.overloads.get(&first).cloned().unwrap_or_default());
+        for prev in all {
+            if let SymKind::Routine { params: pp, .. } = &self.a.symbols[prev].kind
+                && same(pp, params)
+            {
+                let at = self.a.symbols[prev].span;
+                return self.err("E-REDECL", name.span, format!("`{}` is already declared with these parameter types (line {})", name.name, at.line));
+            }
+        }
+        let id = self.add_symbol(&name.name, name.span, vis, kind);
+        self.a.overloads.entry(first).or_default().push(id);
+        Some(id)
+    }
+
+    /// The overload of `id` that a call with `args` selects. A name with one routine is
+    /// returned unchanged; otherwise the arguments are checked against each candidate.
+    fn pick_overload(&mut self, id: SymId, args: &'p [Expr], span: Span, call: NodeId) -> Option<SymId> {
+        let Some(rest) = self.a.overloads.get(&id).cloned() else { return Some(id) };
+        let mut cands = vec![id];
+        cands.extend(rest);
+        let unit = self.unit;
+        cands.retain(|&c| self.a.symbols[c].unit == unit || self.a.symbols[c].vis == Vis::Public);
+        let name = self.a.symbols[id].name.clone();
+        // The arguments are checked again against the chosen overload, so what this first look
+        // reports and records is dropped once a choice is made.
+        let (diag_mark, call_mark) = (self.diags.items.len(), self.a.calls.len());
+        let mut eis = Vec::new();
+        for a in args {
+            eis.push(self.check_expr(a)?);
+        }
+        let mut best: Vec<(u32, SymId)> = Vec::new();
+        for c in cands {
+            let SymKind::Routine { params, .. } = self.a.symbols[c].kind.clone() else { continue };
+            let required = params.iter().filter(|p| !p.has_default).count();
+            if args.len() < required || args.len() > params.len() {
+                continue;
+            }
+            let mark = self.diags.items.len();
+            let mut cost = 0u32;
+            let mut viable = true;
+            for ((a, ei), p) in args.iter().zip(&eis).zip(&params) {
+                let before = self.diags.items.len();
+                let ok = match p.mode {
+                    ParamMode::ByVal => self.assign_ok(&p.ty, ei, a.span, "argument"),
+                    _ => match (&p.ty, &ei.ty) {
+                        (Ty::Array(pe, _), Ty::Array(ae, _)) => pe == ae,
+                        (Ty::Str(_), Ty::Str(_)) => true,
+                        (x, y) => x == y,
+                    },
+                };
+                if !ok {
+                    viable = false;
+                    break;
+                }
+                let warned = self.diags.items[before..].iter().any(|d| d.severity == crate::diag::Severity::Warning);
+                cost += if ei.ty == p.ty && !ei.lit {
+                    0
+                } else if warned {
+                    100
+                } else {
+                    1 + p.ty.width().map_or(0, |w| u32::from(w) / 8)
+                };
+            }
+            self.diags.items.truncate(mark);
+            if viable {
+                best.push((cost, c));
+            }
+        }
+        let Some(min) = best.iter().map(|b| b.0).min() else {
+            return self.err("E-OVERLOAD", span, format!("no overload of `{name}` accepts these arguments"));
+        };
+        let top: Vec<SymId> = best.iter().filter(|b| b.0 == min).map(|b| b.1).collect();
+        if top.len() > 1 {
+            return self.err("E-AMBIG", span, format!("the call to `{name}` matches {} overloads equally well; convert an argument, e.g. Word(x)", top.len()));
+        }
+        self.diags.items.truncate(diag_mark);
+        self.a.calls.truncate(call_mark);
+        self.a.call_targets.insert(call, top[0]);
+        Some(top[0])
     }
 
     fn lookup(&mut self, key: &str, span: Span) -> Option<Option<SymId>> {
@@ -778,7 +884,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.alias_decl(dim, d, vis);
             return;
         };
-        if dim.trailing_list.is_some() && (dim.items.len() != 1 || dim.items[0].init.is_some() || dim.items[0].list.is_some() || dim.items[0].size.is_none()) {
+        if dim.trailing_list.is_some() && (dim.items.len() != 1 || dim.items[0].init.is_some() || dim.items[0].list.is_some() || (dim.items[0].size.is_none() && !matches!(base, Ty::Struct(_)))) {
             self.diags.error("E-DIM", dim.items[0].name.span, "a list of initial values after `As` needs a single array: `Dim a(3) As Byte = (1, 2, 3)`");
             return;
         }
@@ -792,10 +898,24 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
         for it in &dim.items {
             let mut vty = base.clone();
+            let mut dims = Vec::new();
             if let Some(sz) = &it.size {
-                let Some(n) = self.const_int(sz) else { continue };
-                if !(1..=65535).contains(&n) {
-                    self.diags.error("E-CONST-RANGE", sz.span, "array size must be 1 to 65535");
+                let Some(first) = self.const_int(sz) else { continue };
+                let mut n = first;
+                dims.push(first as u32);
+                let mut bad = !(1..=65535).contains(&first);
+                for e in &it.more_dims {
+                    match self.const_int(e) {
+                        Some(d) if (1..=65535).contains(&d) => {
+                            n *= d;
+                            dims.push(d as u32);
+                        }
+                        Some(_) => bad = true,
+                        None => bad = true,
+                    }
+                }
+                if bad || !(1..=65535).contains(&n) {
+                    self.diags.error("E-CONST-RANGE", sz.span, "each array size, and the total number of elements, must be 1 to 65535");
                     continue;
                 }
                 if matches!(vty, Ty::EventVar(_)) && (it.list.is_some() || dim.trailing_list.is_some() || it.init.is_some() || dim.trailing_init.is_some()) {
@@ -806,7 +926,11 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             let init = it.init.as_ref().or(dim.trailing_init.as_ref());
             let list = it.list.as_ref().or(dim.trailing_list.as_ref());
-            if let Some(items) = list {
+            if let (Ty::Struct(sid), Some(items)) = (&vty, list) {
+                self.struct_init(&it.name, *sid, items);
+            } else if let (Ty::Struct(sid), Some(e)) = (&vty, init) {
+                self.struct_init(&it.name, *sid, std::slice::from_ref(e));
+            } else if let Some(items) = list {
                 match &vty {
                     Ty::Array(elem, n) => self.array_init(&it.name, elem, *n, items),
                     _ => self.diags.error("E-DIM", it.name.span, "a list of initial values is for an array"),
@@ -837,6 +961,10 @@ impl<'p, 'd> Sema<'p, 'd> {
             };
             let initialised = list.is_some() || init.is_some();
             if let Some(id) = self.declare(&it.name, vis, SymKind::Var { ty: vty }) {
+                if dims.len() > 1 {
+                    self.a.dims.insert(id, dims);
+                    self.a.unpackable.insert(id);
+                }
                 if bit_array.is_some() && initialised {
                     self.a.unpackable.insert(id);
                 }
@@ -846,6 +974,29 @@ impl<'p, 'd> Sema<'p, 'd> {
                         self.a.global_bit_arrays.push((id, n));
                     }
                 }
+            }
+        }
+    }
+
+    /// Checks the values of a structure initialiser `(a, b, …)`: one constant per field, in the
+    /// order the fields are declared. Only numeric, Boolean, Char and String fields take one.
+    fn struct_init(&mut self, name: &Ident, sid: SymId, items: &'p [Expr]) {
+        let SymKind::Struct { fields, .. } = self.a.symbols[sid].kind.clone() else { return };
+        let fields: Vec<FieldInfo> = fields.into_iter().filter(|f| !f.alias).collect();
+        if let Some(f) = fields.iter().find(|f| !matches!(f.ty, Ty::Int(..) | Ty::Char | Ty::Bool | Ty::Str(_))) {
+            self.diags.error("E-DIM", name.span, format!("a structure with the {} field `{}` cannot have initial values", f.ty, f.name));
+            return;
+        }
+        if items.len() != fields.len() {
+            self.diags.error("E-DIM-ARRAY", name.span, format!("`{}` has {} fields but the list has {} values", name.name, fields.len(), items.len()));
+            return;
+        }
+        for (e, f) in items.iter().zip(&fields) {
+            let Some(ei) = self.check_expr(e) else { continue };
+            if ei.val.is_none() {
+                self.diags.error("E-CONST-EXPR", e.span, "an initial value must be known at compile time");
+            } else if self.assign_ok(&f.ty, &ei, e.span, &format!("field `{}`", f.name)) {
+                self.annotate_assignment(&f.ty, &ei, e);
             }
         }
     }
@@ -1051,7 +1202,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             return;
         }
         let kind = SymKind::Routine { params: params.clone(), ret: ret.clone(), reentrant: r.reentrant, inlining: r.inlining };
-        let Some(id) = self.declare(&r.name, vis, kind) else { return };
+        let Some(id) = self.declare_routine(&r.name, vis, kind, &params) else { return };
         if r.reentrant {
             self.reentrant_ok.insert(id);
         }
@@ -2014,6 +2165,7 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     fn cur_from_symbol(&mut self, id: SymId, d: &Designator, addr_mode: bool, module: bool) -> Option<Cur> {
         self.a.resolved.insert(d.id, Res::Sym(id));
+        self.md_cur = self.a.dims.get(&id).cloned();
         let sym = self.a.symbols[id].clone();
         if !self.in_bound && matches!(&sym.kind, SymKind::Var { ty: Ty::Array(e, _) } if matches!(**e, Ty::Bit | Ty::Bool)) {
             // Only `a(i)` (or `Module.a(i)`) leaves the layout free to be packed.
@@ -2039,6 +2191,7 @@ impl<'p, 'd> Sema<'p, 'd> {
     }
 
     fn resolve_head(&mut self, d: &Designator, addr_mode: bool) -> Option<Cur> {
+        self.md_cur = None;
         let key = d.head.key();
         if key == "result" {
             return match self.ctx.ret.clone() {
@@ -2127,6 +2280,26 @@ impl<'p, 'd> Sema<'p, 'd> {
                     Cur::Val(EI { ty: Ty::Bit, place: v.place, in_array: false, ..EI::new(Ty::Bit) })
                 }
                 (Cur::Val(v), Part::Args(args, sp)) => match v.ty.clone() {
+                    Ty::Array(elem, n) if self.md_cur.is_some() => {
+                        let dims = self.md_cur.take().unwrap();
+                        let _ = n;
+                        if args.len() != dims.len() {
+                            return self.err("E-ARGS", *sp, format!("this array has {} dimensions, so it takes {} indices", dims.len(), dims.len()));
+                        }
+                        for (a, &dn) in args.iter().zip(&dims) {
+                            let ix = self.check_expr(a)?;
+                            if !ix.ty.is_int() {
+                                return self.err("E-TYPE", a.span, format!("an array index must be an integer, found {}", ix.ty));
+                            }
+                            if let Some(CVal::Int(c)) = &ix.val
+                                && (*c < 0 || *c >= dn as i128)
+                            {
+                                return self.err("E-BOUNDS", a.span, format!("index {c} is outside the dimension (0 to {})", dn - 1));
+                            }
+                        }
+                        self.a.md_index.insert(*sp, dims);
+                        Cur::Val(EI { ty: *elem, place: v.place, in_array: true, ..EI::new(Ty::Void) })
+                    }
                     Ty::Array(elem, n) => {
                         if args.len() != 1 {
                             return self.err("E-ARGS", *sp, "an array index is a single number");
@@ -2177,7 +2350,10 @@ impl<'p, 'd> Sema<'p, 'd> {
                     }
                     t => return self.err("E-TYPE", *sp, format!("a {t} cannot be indexed or called")),
                 },
-                (Cur::Routine(id), Part::Args(args, sp)) => Cur::Val(self.check_call(id, args, *sp)?),
+                (Cur::Routine(id), Part::Args(args, sp)) => {
+                    let id = self.pick_overload(id, args, *sp, d.id)?;
+                    Cur::Val(self.check_call(id, args, *sp)?)
+                }
                 (Cur::Routine(_), _) => return self.err("E-CALL", d.span, "a routine can only be followed by its arguments"),
                 (Cur::Intrinsic(name), Part::Args(args, sp)) => Cur::Val(self.check_intrinsic(&name, args, *sp, d)?),
                 (Cur::Intrinsic(name), _) => return self.err("E-CALL", d.span, format!("`{name}` needs its arguments in parentheses")),
@@ -2190,10 +2366,15 @@ impl<'p, 'd> Sema<'p, 'd> {
         match cur {
             Cur::Val(v) => Some((v, false)),
             Cur::Routine(id) if addr_mode => {
-                let _ = id;
+                if self.a.overloads.contains_key(&id) {
+                    return self.err("E-AMBIG", d.span, format!("`{}` is overloaded; its address is ambiguous", d.head.name));
+                }
                 Some((EI::new(LONGWORD), true))
             }
-            Cur::Routine(id) => Some((self.check_call(id, &[], d.span)?, false)),
+            Cur::Routine(id) => {
+                let id = self.pick_overload(id, &[], d.span, d.id)?;
+                Some((self.check_call(id, &[], d.span)?, false))
+            }
             Cur::Reg(r) => Some((EI::place(r.ty, Place::Var), false)),
             Cur::Handler(h) => Some((EI::new(Ty::EventAny(h)), false)),
             Cur::Intrinsic(name) => {

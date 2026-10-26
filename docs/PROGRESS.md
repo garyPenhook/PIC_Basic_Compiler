@@ -488,3 +488,20 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - `tests/exec/lib_flashwrite.bas`: the simulator does not model flash reads, so it checks `NVMADR`, `NVMEN`, `GIE` restore, `NVMERR`,
   and `TBLPTRL`/`TABLAT` left by the sector read-modify-write. A scratch run showed `NVMERR` clear after SECRD, SECER and SECWR.
   `FlashEraseSector` rejects a sector above 511 (it would wrap onto a lower one). Nothing runs on hardware (D6).
+
+## Overloading, multi-dimensional arrays, string arrays, structure initialisers, Reentrant (done 2026-10-26, 0.1.32)
+- Overloading: `declare_routine` keeps further routines of a name in `Analysis::overloads` (the scope table holds the first);
+  `pick_overload` scores each candidate (exact type 0, widening 1 + width/8, narrowing 100) and records the winner per call
+  designator in `Analysis::call_targets`, which the lowerer's `callee_of` follows. Tests: `tests/exec/overload.bas`, negatives
+  `overload_duplicate`, `overload_ambiguous`.
+- Multi-dimensional arrays: `DimItem::more_dims`; the array stays a flat `Ty::Array` (row-major) and `Analysis::dims` /
+  `md_index` give the lowerer each dimension, so `apply_parts` folds `i*stride + j*...` into the existing byte offset.
+  Never bit-packed. Test: `tests/exec/multidim.bas`.
+- Arrays of strings and String fields of structure array elements picked at run time: `point_str` adds the element offset to
+  the FSR; an index that itself reads an array, or aliasing between two run-time elements, is still `E-BACKEND`.
+  Tests: `strarray.bas`, `structstr.bas`.
+- Structure initialisers `Dim p As T = (a, b, ...)` for numeric, Boolean, Char and String fields. Test: `structinit.bas`.
+- `Reentrant`: caller-save. A call to a routine that can reach the caller again pushes the caller's variables and `__TMP`
+  bytes with `movff x, PREINC2` and pops them with `movff POSTDEC2, x` (the device has no PREDEC); the result is read
+  before the pop. `__SWSTK` is 32 x the largest push, and exists only if something recurses. Test: `reentrant.bas`.
+  Not done: forward declarations (so no mutual recursion in source), a depth check, XINST frame addressing (PLAN 7.2).

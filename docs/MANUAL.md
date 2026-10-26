@@ -427,7 +427,14 @@ Const Tbl(4) As Byte = (10, 20, 30, 40)  ' lives in program memory
 
 * The number in brackets is the **element count**. `Bound(a)` is the highest index (4 here), so
   `For i = 0 To Bound(a)` visits every element.
-* Element types: the integer types, `Char`, `Boolean`, `Bit`, `Float`. One dimension only.
+* Element types: the integer types, `Char`, `Boolean`, `Bit`, `Float`, `String(n)` and structures.
+* More than one dimension: `Dim m(3, 4) As Byte` is 3 rows of 4, stored row by row, and is indexed
+  `m(i, j)` with exactly one index per dimension (`E-ARGS` otherwise). A constant index outside its
+  dimension is `E-BOUNDS`. An initialiser is one flat list in row order. The array can be copied
+  and cleared as a whole, but a routine that receives it as `p() As Byte` sees one flat dimension.
+* An array of strings, `Dim names(3) As String(8)`, is indexed like any array: `names(i) = "abc"`,
+  `s = names(i)`, `names(i)(0)`. It cannot have an initialiser, and a run-time index must not
+  itself read an array element or call a routine (`E-BACKEND`).
 * A constant index outside the array is a compile error (`E-BOUNDS`). A run-time index is not
   checked.
 * `Const` arrays are read-only (reading by index works; assigning a `Const` array to a same-sized RAM
@@ -437,8 +444,7 @@ Const Tbl(4) As Byte = (10, 20, 30, 40)  ' lives in program memory
   interrupt (the compiler turns interrupts off around the write).
 * Arrays are passed to routines as `ByRef` (written `p() As Byte`) or `ByRefConst`.
 * `Clear(a)` zeroes an array; `a = b` copies same-sized arrays.
-* Not supported: multi-dimensional arrays, arrays of strings, `Const` arrays of Float, functions
-  that return an array.
+* Not supported: `Const` arrays of Float, functions that return an array.
 
 ### Strings
 
@@ -459,7 +465,7 @@ A `String` parameter is `ByRef` (size must match the callee's `String(n)` exactl
 (any size, also accepts a literal).
 
 Not supported: `Len`, `Left`, `Mid`, `Right`, `Str`, `Val`, `Print`, comparison of a concatenation,
-string-returning functions, arrays of strings. Output of text is done by the library routines
+string-returning functions. Output of text is done by the library routines
 (`SerialWrite`, `LcdWrite`, `OledWrite`).
 
 ### Structures and unions
@@ -483,7 +489,9 @@ pts(2).Y = 7
 Clear(p)
 ```
 
-Fields are reached with `.`. `Clear(x)` zeroes a structure. Structure initialisers are not supported.
+Fields are reached with `.`. `Clear(x)` zeroes a structure. A structure can be given initial
+values in field order, `Dim p As TPoint = (3, 4)`: one constant for each numeric, `Boolean`, `Char`
+or `String` field (a structure with an array, bit or nested-structure field cannot be initialised).
 
 ## Float
 
@@ -576,9 +584,35 @@ EndProc
 * **No recursion** (`E-RECURSION`). Because the call graph is acyclic, the compiler gives every
   routine static storage and **overlays** the storage of routines never live at the same time, so
   RAM use is the deepest call chain, not the sum. Declaring working variables locally saves RAM.
-  `Reentrant` is parsed but rejected by the back end.
+  A routine marked `Reentrant` may call itself; see *Reentrant routines* below.
 * A routine called once is inlined by default; `Inline` forces and `NoInline` forbids it.
-* Overloading and compound subroutines are not supported.
+* **Overloading**: several routines may share a name when their parameter types differ. A call
+  picks the overload whose parameters its arguments fit best (an exact type match first, then the
+  narrowest type that holds the value); a call that fits two equally well is `E-AMBIG`, one that
+  fits none is `E-OVERLOAD`, and two routines with the same parameter types are `E-REDECL`.
+  `AddressOf(Name)` of an overloaded name is `E-AMBIG`. Compound subroutines are not supported.
+
+### Reentrant routines
+
+```basic
+Reentrant Function Fact(ByVal n As Byte) As Word
+    If n <= 1 Then
+        Result = 1
+    Else
+        Result = Fact(n - 1) * n
+    End If
+End Function
+```
+
+A `Reentrant` routine may call itself (directly, or through other routines when the whole cycle is
+reentrant). Its variables still have fixed addresses; a recursive call first pushes the caller's
+variables and temporaries on a software stack (FSR2) and puts them back when the call returns, so
+a recursive call costs two instructions per byte of the routine's frame. The stack is sized by
+the compiler (32 pushes of the largest frame) and exists only in programs that recurse.
+Each level also uses one of the 31 hardware return-address levels, so **recursion deeper than
+about 30 calls resets the device** (stack overflow); the compiler does not know the depth and does
+not check it. `Static` locals are shared by all levels. A routine must be declared before it is
+called, so mutual recursion cannot be written yet.
 * Routines are called as `Name(args)`, or `Module.Name(args)`.
 
 ## Interrupts, events and context saving
@@ -3793,13 +3827,13 @@ reports these rather than miscompiling them.
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
 | `Sin`, `Cos`, `Sqr`, `Log`, `Exp`, `Pow`, `ISqr`, `Div32`, `Dcd`, `Ncd`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
-| `Len`, `Left$`, `Mid$`, `Right$`, string arrays | not available |
+| `Len`, `Left$`, `Mid$`, `Right$` | not available; string arrays are `Dim s(3) As String(8)` |
 | `Tern`, `SizeOf` | not available |
 | `$config`, `Config` directive | `Config NAME = VALUE` with pack names |
 | `$include`, `$asm`, `Asm` | `Include "name"`, `Asm ... End Asm` (pic-as syntax) |
 | Interrupt via `On_Hardware_Interrupt` | `Interrupt Name() ... End Interrupt` plus `Enable` |
 | `0x` and `0b` literals | accepted, as are `$` and `%` |
-| Overloading, `Reentrant` routines | not yet |
+| Overloading, `Reentrant` routines | supported (see *Routines*) |
 
 ---
 

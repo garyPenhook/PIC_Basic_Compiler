@@ -167,5 +167,5 @@ Disambiguation notes (resolved in semantic analysis, not in the grammar):
 
 ## Not yet covered
 
-Overloading and compound subroutines (M9), `With` statements, multi-dimensional arrays (not
-supported in 0.1).
+Compound subroutines (M9) and `With` statements. Multi-dimensional arrays are declared
+`Dim m(3, 4) As Byte` and indexed `m(i, j)`.
