@@ -1,8 +1,8 @@
 {
-  // .bas is also claimed by the Swordfish extension; pin it to PIC BASIC in basil projects.
-  "file_types": { "PIC BASIC": ["bas"] },
+  // .bas is also claimed by the Swordfish extension; pin it to Basil in basil projects.
+  "file_types": { "Basil": ["bas"] },
   "languages": {
-    "PIC BASIC": {
+    "Basil": {
       "tab_size": 4,
       "hard_tabs": false,
       "format_on_save": "off",

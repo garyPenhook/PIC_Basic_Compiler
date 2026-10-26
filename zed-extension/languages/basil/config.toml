@@ -1,5 +1,5 @@
-name = "PIC BASIC"
-grammar = "picbasic"
+name = "Basil"
+grammar = "basil"
 path_suffixes = ["bas"]
 line_comments = ["' "]
 block_comment = { start = "(* ", prefix = "", end = " *)", tab_size = 0 }

@@ -1,10 +1,10 @@
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
-struct PicBasicExtension;
+struct BasilExtension;
 
-impl zed::Extension for PicBasicExtension {
+impl zed::Extension for BasilExtension {
     fn new() -> Self {
-        PicBasicExtension
+        BasilExtension
     }
 
     fn language_server_command(
@@ -33,4 +33,4 @@ impl zed::Extension for PicBasicExtension {
     }
 }
 
-zed::register_extension!(PicBasicExtension);
+zed::register_extension!(BasilExtension);

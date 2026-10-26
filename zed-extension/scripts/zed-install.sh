@@ -7,7 +7,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 zed_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/zed"
-mirror="${XDG_DATA_HOME:-$HOME/.local/share}/basil-zed/tree-sitter-picbasic"
+mirror="${XDG_DATA_HOME:-$HOME/.local/share}/basil-zed/tree-sitter-basil"
 
 command -v tree-sitter >/dev/null || { echo "tree-sitter CLI not found (cargo install tree-sitter-cli)" >&2; exit 1; }
 (cd "$here/grammar" && tree-sitter generate)
@@ -15,13 +15,13 @@ command -v tree-sitter >/dev/null || { echo "tree-sitter CLI not found (cargo in
 mkdir -p "$mirror" "$HOME/.local/bin" "$zed_cfg/snippets"
 rsync -a --delete --exclude .git "$here/grammar/" "$mirror/"
 (cd "$mirror" && { [ -d .git ] || git init -q; } && git add -A &&
-  { git diff --cached --quiet || git -c user.name=basil -c user.email=basil@localhost commit -qm "picbasic grammar"; })
+  { git diff --cached --quiet || git -c user.name=basil -c user.email=basil@localhost commit -qm "basil grammar"; })
 rev="$(git -C "$mirror" rev-parse HEAD)"
 sed -i -E "s|^repository = \"file://.*\"|repository = \"file://$mirror\"|; s|^rev = \".*\"|rev = \"$rev\"|" "$here/extension.toml"
 
 ln -sf "$here/lsp/basil-lsp.js" "$HOME/.local/bin/basil-lsp"
 chmod +x "$here/lsp/basil-lsp.js"
-cp "$here/config/snippets.json" "$zed_cfg/snippets/pic basic.json"
+cp "$here/config/snippets.json" "$zed_cfg/snippets/basil.json"
 
 node - "$here/config/tasks.json" "$zed_cfg/tasks.json" <<'JS'
 const fs = require('fs');

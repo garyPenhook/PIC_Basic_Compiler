@@ -1,7 +1,7 @@
 // Token-level grammar: highlighting is driven by queries, not by parse structure.
 // Block bodies stay a flat token stream; declarations are recognised only so the outline can list them.
 module.exports = grammar({
-  name: 'picbasic',
+  name: 'basil',
   extras: $ => [/\s+/, $.comment],
   // Whole-word, case-insensitive keywords come from src/scanner.c (lexical precedence cannot express
   // that `Subtotal` is an identifier).

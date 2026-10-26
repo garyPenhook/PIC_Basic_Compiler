@@ -1,4 +1,4 @@
 {
-  "grammars": [{ "name": "picbasic", "camelcase": "PicBasic", "scope": "source.picbasic", "path": ".", "file-types": ["bas"] }],
-  "metadata": { "version": "0.1.0", "license": "MIT", "description": "PIC BASIC (basil) token grammar" }
+  "grammars": [{ "name": "basil", "camelcase": "Basil", "scope": "source.basil", "path": ".", "file-types": ["bas"] }],
+  "metadata": { "version": "0.1.0", "license": "MIT", "description": "Basil token grammar" }
 }

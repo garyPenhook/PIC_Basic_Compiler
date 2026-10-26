@@ -194,11 +194,11 @@ or debug a chip (use the VS Code extension or `basil -g` with Microchip's tools 
 
 | Piece | What it gives |
 |---|---|
-| Highlighting, outline, brackets, comments | A tree-sitter grammar for PIC BASIC (`grammar/`), case-insensitive keywords, with the keyword lists of the VS Code extension. |
+| Highlighting, outline, brackets, comments | A tree-sitter grammar for basil source (`grammar/`), case-insensitive keywords, with the keyword lists of the VS Code extension. |
 | Language server `basil-lsp` | `basil --check` diagnostics (on change) with the file, line and column of each error; keyword and symbol completion (also after `.`); keyword hover; the document outline (`lsp/basil-lsp.js`, Node, no dependencies). It reads the standard library only. |
 | Tasks | `basil: build`, `check (front end only)`, `debug build (-g)`, `resource report`, `build + open assembly`, `clean outputs`, `version` (Run Task: `task: spawn`). |
-| Snippets | Common program shapes, installed as `snippets/pic basic.json`. |
-| Project settings | `.zed/settings.json` pins `.bas` to PIC BASIC (the Swordfish extension claims the same suffix) and turns off its language server. |
+| Snippets | Common program shapes, installed as `snippets/basil.json`. |
+| Project settings | `.zed/settings.json` pins `.bas` to Basil (the Swordfish extension claims the same suffix) and turns off its language server. |
 
 Install (needs Node, `rsync` and `basil` on the PATH):
 
