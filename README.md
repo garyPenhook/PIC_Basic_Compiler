@@ -164,7 +164,7 @@ Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-che
 (no optimisation), `-g` (debug build: BASIC line, variable and routine information in `prog.elf`).
 
 Documentation: the user manual `docs/MANUAL.md` (also `docs/MANUAL.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
-diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,
+diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`, efficiency worklist `docs/EFFICIENCY.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
 `BASIL_MDB=1 cargo test --test backend` for the simulator suite.
 
