@@ -1,5 +1,5 @@
-' expect: LA_CLK=31 LA_ACQ=8 LA_CON=132 LA_REF=0 LA_CP=128 LA_CLK2=31 LA_ACQ2=8 LA_REF2=3 LA_TA=32 LA_NA=32 LA_CH=13 LA_RD=0 LA_MV=3300 LA_FV=3 LA_OK=1
-' ADC library on the PIC18F16Q41 (12 bits, 8 us acquisition). 64 MHz: ADCLK = 31 gives TAD = 1 us, ADACQ = 8
+' expect: LA_CLK=31 LA_ACQ=8 LA_CON=132 LA_REF=0 LA_CP=128 LA_CLK2=31 LA_ACQ2=8 LA_REF2=3 LA_TA=1 LA_NA=1 LA_CH=16 LA_RD=0 LA_MV=3300 LA_FV=3 LA_OK=1
+' ADC library on the PIC18F16Q41 (port C, RC0 = channel 16, exists on all six parts; the 14-pin ones have no port B) (12 bits, 8 us acquisition). 64 MHz: ADCLK = 31 gives TAD = 1 us, ADACQ = 8
 ' ADC clocks. ADCON0 = ON | FM (right-justified). ADCP.CPON is set. AdcRefFvr(4) selects the FVR (ADREF.PREF = 3).
 Program La
 Device = 18F16Q41
@@ -27,12 +27,12 @@ acq = ADACQL
 con = ADCON0
 ref = ADREF
 cp = ADCPCON And 128
-TRISB = 0
-ANSELB = 0
-Adc.AdcPin(13)
-ta = TRISB
-na = ANSELB
-rd = Adc.AdcRead(13)
+TRISC = 0
+ANSELC = 0
+Adc.AdcPin(16)
+ta = TRISC
+na = ANSELC
+rd = Adc.AdcRead(16)
 ch = ADPCH
 mv = Adc.AdcMillivolts(Adc.AdcMax, 3300)
 Adc.AdcRefFvr(4)

@@ -1,9 +1,9 @@
-' expect: FW_SA=32640 FW_R1=1 FW_R2=1 FW_R3=1 FW_R5=1 FW_RD=22136 FW_RD2=26214 FW_R6=0 FW_ADL=2 FW_ADH=255 FW_ADU=0 FW_CMD=0 FW_GIE=1 FW_TL=2 FW_TA=86 FW_GIE2=0 FW_R4=0 FW_LAST=255
-' Flashwrite on the PIC18F16Q41 (32 K words, sectors 0..255). The simulator models the program flash, so values
-' are checked: after the sector erase, word 32640 takes 4660 (R2) and word 32641 takes 26214 (R3: an erased word
-' goes through the quick word write); then FlashUpdateWord(32640, 22136) must go the page way (the word is
+' expect: FW_SA=8064 FW_R1=1 FW_R2=1 FW_R3=1 FW_R5=1 FW_RD=22136 FW_RD2=26214 FW_R6=0 FW_ADL=2 FW_ADH=63 FW_ADU=0 FW_CMD=0 FW_GIE=1 FW_TL=2 FW_TA=86 FW_GIE2=0 FW_R4=0
+' Flashwrite on the PIC18-Q41 parts (8, 16 or 32 K words, so sector 63 exists on all six; FlashLastSector is 63, 127 or 255 and is not checked here). The simulator models the program flash, so values
+' are checked: after the sector erase, word 8064 takes 4660 (R2) and word 8065 takes 26214 (R3: an erased word
+' goes through the quick word write); then FlashUpdateWord(8064, 22136) must go the page way (the word is
 ' programmed): page read, page erase, the two TBLWT*+ (TBLPTRL = 0 + 2, TABLAT = 56h) and page write (R5), and the
-' neighbouring word 32641 must survive it (RD2). Writing 4660 over the programmed word again must fail (R6 = 0). NVMCMD is back at 000, GIE is restored as found (set, then clear).
+' neighbouring word 8065 must survive it (RD2). Writing 4660 over the programmed word again must fail (R6 = 0). NVMCMD is back at 000, GIE is restored as found (set, then clear).
 Program Fw
 Device = 18F16Q41
 Clock = 64
@@ -28,13 +28,13 @@ Dim tl As Byte
 Dim ta As Byte
 Dim last As Word
 INTCON0 = 128
-sa = Flashwrite.FlashSectorAddr(255)
-r1 = Flashwrite.FlashEraseSector(255)
-r2 = Flashwrite.FlashWriteWord(32640, 4660)
-r3 = Flashwrite.FlashUpdateWord(32641, 26214)
-r5 = Flashwrite.FlashUpdateWord(32640, 22136)
-rd = Flashwrite.FlashReadWord(32640)
-rd2 = Flashwrite.FlashReadWord(32641)
+sa = Flashwrite.FlashSectorAddr(63)
+r1 = Flashwrite.FlashEraseSector(63)
+r2 = Flashwrite.FlashWriteWord(8064, 4660)
+r3 = Flashwrite.FlashUpdateWord(8065, 26214)
+r5 = Flashwrite.FlashUpdateWord(8064, 22136)
+rd = Flashwrite.FlashReadWord(8064)
+rd2 = Flashwrite.FlashReadWord(8065)
 adl = NVMADRL
 adh = NVMADRH
 adu = NVMADRU
@@ -43,7 +43,7 @@ gie = INTCON0 >> 7
 tl = TBLPTRL
 ta = TABLAT
 INTCON0 = 0
-r6 = Flashwrite.FlashWriteWord(32640, 4660)
+r6 = Flashwrite.FlashWriteWord(8064, 4660)
 gie2 = INTCON0 >> 7
 r4 = Flashwrite.FlashEraseSector(256)
 last = Flashwrite.FlashLastSector
