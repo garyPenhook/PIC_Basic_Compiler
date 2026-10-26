@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The tests that need the Microchip assembler or simulator skip themselves when it is absent,
+      # so this runs the parser, semantic, diagnostics and code-generator tests.
+      - run: cargo test --workspace
+
+  # Puts a `ci: passing` or `ci: failing` label on the pull request.
+  label:
+    name: label pull request
+    needs: test
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: set label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          RESULT: ${{ needs.test.result }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$RESULT" = "success" ]; then add="ci: passing"; drop="ci: failing"; else add="ci: failing"; drop="ci: passing"; fi
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/$(printf %s "$drop" | jq -sRr @uri)" || true
+          gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=$add"

@@ -1,0 +1,63 @@
+name: Release
+
+# Push a tag such as v0.1.32 to build the compiler for Linux, macOS and Windows and attach the
+# archives to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64,  os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  ext: tar.gz }
+          - { name: macos-arm64,   os: macos-latest,   target: aarch64-apple-darwin,      ext: tar.gz }
+          - { name: macos-x86_64,  os: macos-13,       target: x86_64-apple-darwin,       ext: tar.gz }
+          - { name: windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc,   ext: zip }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: package
+        shell: bash
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          dir="basil-$ver-${{ matrix.name }}"
+          mkdir "$dir"
+          exe=basil; [ "${{ matrix.os }}" = windows-latest ] && exe=basil.exe
+          cp "target/${{ matrix.target }}/release/$exe" "$dir/"
+          cp -r lib devices "$dir/"
+          cp README.md QUICKSTART.md "$dir/"
+          mkdir "$dir/docs" && cp docs/*.md "$dir/docs/"
+          if [ "${{ matrix.ext }}" = zip ]; then 7z a "$dir.zip" "$dir" >/dev/null; else tar czf "$dir.tar.gz" "$dir"; fi
+          echo "ASSET=$dir.${{ matrix.ext }}" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "basil ${GITHUB_REF_NAME#v}" --generate-notes
