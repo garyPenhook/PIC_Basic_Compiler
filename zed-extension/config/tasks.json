@@ -1,0 +1,9 @@
+[
+  { "label": "basil: build", "command": "basil", "args": ["$ZED_FILE"], "cwd": "$ZED_DIRNAME", "reveal": "always", "use_new_terminal": false, "allow_concurrent_runs": false },
+  { "label": "basil: check (front end only)", "command": "basil", "args": ["--check", "$ZED_FILE"], "cwd": "$ZED_DIRNAME", "reveal": "always", "use_new_terminal": false },
+  { "label": "basil: debug build (-g)", "command": "basil", "args": ["-g", "$ZED_FILE"], "cwd": "$ZED_DIRNAME", "reveal": "always", "use_new_terminal": false },
+  { "label": "basil: resource report", "command": "basil", "args": ["--report", "$ZED_FILE"], "cwd": "$ZED_DIRNAME", "reveal": "always", "use_new_terminal": false },
+  { "label": "basil: build + open assembly", "command": "basil \"$ZED_FILE\" && zed \"$ZED_DIRNAME/$ZED_STEM.S\"", "cwd": "$ZED_DIRNAME", "reveal": "always", "use_new_terminal": false },
+  { "label": "basil: clean outputs", "command": "rm -f \"$ZED_STEM.hex\" \"$ZED_STEM.S\" \"$ZED_STEM.map\" \"$ZED_STEM.elf\"", "cwd": "$ZED_DIRNAME", "reveal": "never" },
+  { "label": "basil: version", "command": "basil --version", "reveal": "always", "use_new_terminal": false }
+]

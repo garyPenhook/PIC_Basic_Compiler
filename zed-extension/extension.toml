@@ -1,0 +1,15 @@
+id = "picbasic"
+name = "PIC BASIC (basil)"
+version = "0.1.0"
+schema_version = 1
+authors = ["garyPenhook"]
+description = "Language support for the basil PIC BASIC compiler: highlighting, outline, diagnostics from basil --check, hover and completion."
+
+# scripts/zed-install.sh points this at a local copy of ./grammar and keeps `rev` current.
+[grammars.picbasic]
+repository = "file:///home/gary/.local/share/basil-zed/tree-sitter-picbasic"
+rev = "c59b9f2caedd42b1aac7b535c15fc78b72c4ad4a"
+
+[language_servers.basil-lsp]
+name = "basil"
+languages = ["PIC BASIC"]

@@ -1,0 +1,17 @@
+{
+  // .bas is also claimed by the Swordfish extension; pin it to PIC BASIC in basil projects.
+  "file_types": { "PIC BASIC": ["bas"] },
+  "languages": {
+    "PIC BASIC": {
+      "tab_size": 4,
+      "hard_tabs": false,
+      "format_on_save": "off",
+      "language_servers": ["basil-lsp", "!swordfish-lsp"]
+    }
+  },
+  "lsp": {
+    "basil-lsp": {
+      "initialization_options": { "compilerPath": "basil", "compilerArgs": [], "diagnostics": "onChange" }
+    }
+  }
+}

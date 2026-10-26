@@ -187,6 +187,46 @@ Start debugging with F5 (configuration `PIC BASIC: Debug`; F9 breakpoint, F10 / 
 Run Build Debug first, or the debugger will not find `dist/<name>.elf`. The extension's settings are
 listed in `vscode-extension/README.md`.
 
+### Editing in Zed
+
+The Zed extension (`zed-extension/`) gives the editor side of the same workflow. It does not program
+or debug a chip (use the VS Code extension or `basil -g` with Microchip's tools for that).
+
+| Piece | What it gives |
+|---|---|
+| Highlighting, outline, brackets, comments | A tree-sitter grammar for PIC BASIC (`grammar/`), case-insensitive keywords, with the keyword lists of the VS Code extension. |
+| Language server `basil-lsp` | `basil --check` diagnostics (on change) with the file, line and column of each error; keyword and symbol completion (also after `.`); keyword hover; the document outline (`lsp/basil-lsp.js`, Node, no dependencies). It reads the standard library only. |
+| Tasks | `basil: build`, `check (front end only)`, `debug build (-g)`, `resource report`, `build + open assembly`, `clean outputs`, `version` (Run Task: `task: spawn`). |
+| Snippets | Common program shapes, installed as `snippets/pic basic.json`. |
+| Project settings | `.zed/settings.json` pins `.bas` to PIC BASIC (the Swordfish extension claims the same suffix) and turns off its language server. |
+
+Install (needs Node, `rsync` and `basil` on the PATH):
+
+```
+cargo install tree-sitter-cli        # once
+zed-extension/scripts/zed-install.sh # run from the repository root; safe to re-run
+```
+
+The script generates the parser, publishes `grammar/` as a local git repository and pins
+`extension.toml` to it, links `basil-lsp` into `~/.local/bin`, and merges the tasks and snippets into
+`~/.config/zed`. Then, in Zed, run `zed: install dev extension` and choose the `zed-extension` folder.
+The extension is not published to the Zed extension store.
+
+The keys are not installed by the script. To get the same keys as the VS Code extension, add
+bindings to `~/.config/zed/keymap.json`:
+
+```json
+{
+  "context": "Editor && extension == bas",
+  "bindings": {
+    "f7":       ["task::Spawn", { "task_name": "basil: build" }],
+    "ctrl-f7":  ["task::Spawn", { "task_name": "basil: debug build (-g)" }],
+    "f6":       ["task::Spawn", { "task_name": "basil: check (front end only)" }],
+    "shift-f7": ["task::Spawn", { "task_name": "basil: resource report" }]
+  }
+}
+```
+
 ## Program layout
 
 A source file is a **program** or a **module**.
