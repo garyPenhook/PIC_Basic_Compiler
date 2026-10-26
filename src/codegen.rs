@@ -25,9 +25,17 @@ pub struct Target {
     pub ram: Vec<(u32, u32)>,
     /// Access Bank RAM `[start, end)`.
     pub access: (u32, u32),
-    /// First address of the Access Bank's SFR half.
-    pub access_sfr: u32,
+    /// The Access Bank's SFR half `[start, end)`. It is the top of the SFR space on the Q10 and sits
+    /// below the Access RAM on the Q41, so a lower address is not necessarily in the Access Bank.
+    pub access_sfr: (u32, u32),
     pub sfr: HashMap<String, u32>,
+    /// The interrupt controller saves WREG, STATUS, BSR, FSR0..2, PROD and PCLAT itself, on two
+    /// levels (VIC, `SHADCON`), and `RETFIE, FAST` restores all of them.
+    pub hw_context: bool,
+    /// Highest data address plus one; `movff` reaches only the first 4096 bytes (`movffl` beyond).
+    pub data_top: u32,
+    /// Levels of the hardware return stack.
+    pub hw_stack: u32,
     /// Optimise (`-O0` turns it off, giving the reference build for differential tests).
     pub opt: bool,
     /// Keep stores to variables nothing reads (`--keep-vars`).
@@ -473,10 +481,55 @@ impl Src {
     }
 }
 
+/// Whether the Access Bank (`access` RAM and `sfr` half) maps data address `a`.
+pub fn in_access(access: (u32, u32), sfr: (u32, u32), a: u32) -> bool {
+    (access.0..access.1).contains(&a) || (sfr.0..sfr.1).contains(&a)
+}
+
+/// `movff` holds two 12-bit data addresses; beyond them the three-word `movffl` is needed.
+const MOVFF_REACH: u32 = 0x1000;
+
+/// The data address an operand names (`SYM`, `SYM+n`, or a number), when it can be told.
+fn operand_addr(op: &str, at: &HashMap<String, u32>) -> Option<u32> {
+    let op = op.trim();
+    if let Some(h) = op.strip_prefix("0x").or_else(|| op.strip_prefix("0X")) {
+        return u32::from_str_radix(h, 16).ok();
+    }
+    if let Ok(n) = op.parse::<u32>() {
+        return Some(n);
+    }
+    let (name, off) = match op.split_once('+') {
+        Some((n, o)) => (n.trim(), o.trim().parse::<u32>().ok()?),
+        None => (op, 0),
+    };
+    at.get(name).map(|a| a + off)
+}
+
+/// Rewrites each `movff` that names an address past `MOVFF_REACH` as `movffl`, so that the sizes the
+/// branch relaxation works with are the sizes `pic-as` really emits.
+fn widen_movff(items: Vec<Item>, at: &HashMap<String, u32>) -> Vec<Item> {
+    let wide = |t: &str| -> Option<String> {
+        let (m, ops) = t.trim_start().split_once(char::is_whitespace)?;
+        if !m.eq_ignore_ascii_case("movff") {
+            return None;
+        }
+        let far = ops.split(',').any(|o| operand_addr(o, at).is_some_and(|a| a >= MOVFF_REACH));
+        far.then(|| format!("movffl {}", ops.trim()))
+    };
+    items
+        .into_iter()
+        .map(|it| match it {
+            Item::Ins(t) => Item::Ins(wide(&t).unwrap_or(t)),
+            Item::Raw(t) => Item::Raw(wide(&t).unwrap_or(t)),
+            other => other,
+        })
+        .collect()
+}
+
 fn is_access(tgt: &Target, addr: Option<u32>) -> bool {
     match addr {
         None => true,
-        Some(a) => a < tgt.access.1 || a >= tgt.access_sfr,
+        Some(a) => in_access(tgt.access, tgt.access_sfr, a),
     }
 }
 
@@ -996,6 +1049,12 @@ impl<'p> Gen<'p> {
     }
 
     /// A special function register by name, for the indirect-addressing registers.
+    /// The register that holds the global interrupt enables and IPEN (bits 7, 6 and 5): `INTCON`,
+    /// or `INTCON0` on the parts with the vectored interrupt controller `[DS40002214G p.127]`.
+    fn intcon(&self) -> Mem {
+        self.sfr_mem(if self.tgt.sfr.contains_key("INTCON") { "INTCON" } else { "INTCON0" })
+    }
+
     fn sfr_mem(&self, name: &str) -> Mem {
         Mem { sym: name.to_string(), addr: self.tgt.sfr.get(name).copied(), obj: None, reg: false }
     }
@@ -1551,7 +1610,7 @@ impl<'p> Gen<'p> {
             if skip0 {
                 // Adding or subtracting zero changes nothing, but the next byte consumes the
                 // carry: make it "no carry" (add) / "no borrow" (subtract).
-                if n > 1 {
+                if n > 1 && matches!(op, BinKind::Add | BinKind::Sub) {
                     self.ins(if op == BinKind::Add { "bcf STATUS, 0, c" } else { "bsf STATUS, 0, c" });
                 }
                 continue;
@@ -2452,6 +2511,30 @@ impl<'p> Gen<'p> {
                     self.gen_val(&conv);
                 }
             }
+        } else if nested && !rec {
+            // Only a value computed before the last call needs to wait in a temporary; constants
+            // are stored at the end, and the last call's value and everything after it go straight
+            // into the parameters (no call follows that could overwrite them).
+            let last = args.iter().rposition(|(_, e)| e.has_call()).unwrap_or(0);
+            let mut held: Vec<(usize, Mem, u32)> = Vec::new();
+            let mut later: Vec<usize> = Vec::new();
+            for (i, (pl, e)) in args.iter().enumerate() {
+                if i >= last {
+                    self.store(pl, e);
+                } else if matches!(e.k, ExK::Const(_) | ExK::FlashAddr(..) | ExK::FuncAddr(_)) {
+                    later.push(i);
+                } else {
+                    held.push((i, self.spill(e), Self::nb(e)));
+                }
+            }
+            for (i, t, n) in &held {
+                let dst = self.place_mem(&args[*i].0, true);
+                self.store_src(&dst, *n, &Src::Mem(t.clone(), *n));
+            }
+            for i in later {
+                self.store(&args[i].0, &args[i].1);
+            }
+            self.free(held.iter().map(|h| h.2).sum());
         } else if nested || (rec && args.len() > 1) {
             // A recursive call stores into the very parameters its arguments may read.
             let mut temps = Vec::new();
@@ -2657,11 +2740,16 @@ impl<'p> Gen<'p> {
                 self.label(&name);
             }
             St::Asm(lines) => {
-                // Variables named in the block need storage.
+                // Variables, scratch registers and routines named in the block need storage or code.
                 for l in lines {
                     for tok in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
                         if let Some(i) = self.p.vars.iter().position(|v| v.asm == tok) {
                             self.uses[i] += weight(self.depth);
+                        } else if let Some(f) = self.p.funcs.iter().position(|f| f.asm == tok) {
+                            self.called.insert(f);
+                            self.calls[self.cur].insert(f);
+                        } else if let Some(r) = SCRATCH.iter().position(|s| tok.strip_prefix("__").and_then(|t| t.strip_prefix(*s)).is_some_and(|d| d.len() == 1 && (b'0'..=b'3').contains(&d.as_bytes()[0]))) {
+                            self.scr(r, u32::from(tok.as_bytes()[3] - b'0'));
                         }
                     }
                 }
@@ -2685,17 +2773,23 @@ impl<'p> Gen<'p> {
     /// `Enable`/`Disable`. With priorities (IPEN = 1) GIEH (INTCON bit 7) gates every interrupt
     /// and GIEL (bit 6) the low-priority ones; without, bit 7 is GIE and bit 6 PEIE
     /// `[DS40002043F p.198]`. Clearing the global bit is retried until it reads back clear, since an
-    /// interrupt taken just then would return with it set again.
+    /// interrupt taken just then would return with it set again (on the Q10; the Q41 does not do that).
     fn int_control(&mut self, level: Level, on: bool) {
-        let m = self.sfr_mem("INTCON");
+        let m = self.intcon();
         self.items.push(Item::Keep(true));
         match (on, level) {
             (true, Level::High) => self.fbit("bsf", &m, 7),
+            // Without priorities the vectored controller has only GIE; bit 6 (GIEL) is reserved then
+            // [DS40002214G p.127], and setting it makes the simulator vector twice.
+            (true, Level::Single) if self.tgt.hw_context => self.fbit("bsf", &m, 7),
             (true, _) => {
                 self.fbit("bsf", &m, 6);
                 self.fbit("bsf", &m, 7);
             }
             (false, Level::Low) => self.fbit("bcf", &m, 6),
+            // The vectored controller does not set the enable again on `RETFIE`; a request that is
+            // pending when the bit clears is dropped [DS40002214G p.124, "Aborting Interrupts"].
+            (false, _) if self.tgt.hw_context => self.fbit("bcf", &m, 7),
             (false, _) => {
                 let l = self.fresh();
                 self.label(&l);
@@ -2818,7 +2912,13 @@ impl<'p> Gen<'p> {
     /// `WREG`, `STATUS` and `BSR`). With two priorities a high-priority interrupt overwrites the
     /// copy a low-priority handler relies on, so that one saves them in software
     /// `[DS40002043F p.112]`.
+    ///
+    /// With the vectored interrupt controller each of the two levels has its own shadow set, so
+    /// `RETFIE, FAST` is always safe `[DS40002214G p.120-121]`.
     fn isr_shadow(&self, level: Level) -> bool {
+        if self.tgt.hw_context {
+            return self.p.isr_shadow;
+        }
         let dual = self.p.isrs.iter().any(|x| x.1 == Level::High) && self.p.isrs.iter().any(|x| x.1 == Level::Low);
         self.p.isr_shadow && !(level == Level::Low && dual)
     }
@@ -2843,7 +2943,13 @@ impl<'p> Gen<'p> {
             syms.extend(["WREG", "STATUS", "BSR"].map(String::from));
         }
         if let Some(facts) = self.facts {
-            syms.extend(facts.regs[f].syms());
+            let mut regs = facts.regs[f].clone();
+            if shadow && self.tgt.hw_context {
+                // FSR0..2, PRODL/H are saved on entry and restored by `RETFIE, FAST` as well.
+                regs.fsr = 0;
+                regs.prod = 0;
+            }
+            syms.extend(regs.syms());
         }
         let (save, restore) = self.ctx_lists(p.n_saves + j, &syms);
         self.emit_ctx(&save);
@@ -3280,7 +3386,7 @@ fn sign_ext(v: u32, w: u8) -> i64 {
 
 // ---- driver -----------------------------------------------------------------------------
 
-/// Levels of the 31-level hardware return stack.
+/// Levels of the hardware return stack of a device description that does not give them (the Q10's).
 pub const HW_STACK_LEVELS: u32 = 31;
 
 /// The most hardware-stack levels the program can use at once: the deepest chain of calls from
@@ -3369,7 +3475,14 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
     let mut g = Gen::new(p, tgt, layout, facts);
     // Vectors. Reset jumps over them; with one handler (IPEN = 0) it sits right at 0x08, with two
     // priorities each vector jumps to its handler, and an unserved vector spins.
+    //
+    // With the vectored interrupt controller (MVECEN = 0) the word at each vector must be a `goto`
+    // `[DS40002214G p.114]`: a handler written straight at 0008h is entered with the return address
+    // pushed twice, so it runs twice (seen in the MPLAB X simulator), as Microchip's own compiler
+    // places a `goto` there as well.
     if !p.isrs.is_empty() {
+        let vic = g.tgt.hw_context;
+        let jump = |label: &str| if vic { Item::Ins(format!("goto {label}")) } else { Item::Br(Cc::Always, label.into()) };
         g.items.push(Item::Br(Cc::Always, "__reset".into()));
         let hi = p.isrs.iter().position(|x| x.1 != Level::Low);
         let lo = p.isrs.iter().position(|x| x.1 == Level::Low);
@@ -3378,8 +3491,8 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
                 g.items.push(Item::Org(at));
                 g.items.push(Item::Label(vec.into()));
                 match h {
-                    Some(_) => g.items.push(Item::Br(Cc::Always, label.into())),
-                    None => g.items.push(Item::Br(Cc::Always, vec.into())),
+                    Some(_) => g.items.push(jump(label)),
+                    None => g.items.push(jump(vec)),
                 }
             }
             for j in [hi, lo].into_iter().flatten() {
@@ -3387,6 +3500,9 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
             }
         } else if let Some(j) = hi {
             g.items.push(Item::Org(4));
+            if vic {
+                g.items.push(jump("__ISR_H"));
+            }
             g.gen_isr(j);
         }
         g.bsr = Some(0);
@@ -3467,7 +3583,7 @@ impl<'p> Gen<'p> {
     fn startup(&mut self) {
         // Priority levels are switched on before anything can be enabled (IPEN, INTCON bit 5).
         if self.p.isrs.iter().any(|x| x.1 != Level::Single) {
-            let m = self.sfr_mem("INTCON");
+            let m = self.intcon();
             self.fbit("bsf", &m, 5);
         }
         let Some(layout) = self.layout else { return };
@@ -3737,6 +3853,23 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     } else {
         items
     };
+    let items = if tgt.data_top > MOVFF_REACH {
+        let mut at: HashMap<String, u32> = tgt.sfr.clone();
+        for (i, o) in objs.iter().enumerate() {
+            if let Some(a) = layout.addr[i] {
+                if i >= nvars && i < nvars + 4 {
+                    for k in 0..o.bytes {
+                        at.insert(format!("__{}{}", SCRATCH[i - nvars], k), a + k);
+                    }
+                } else {
+                    at.insert(o.name.clone(), a);
+                }
+            }
+        }
+        widen_movff(items, &at)
+    } else {
+        items
+    };
     let asmd: Assembled = assemble(&items, 0);
     let mut text = String::new();
     text.push_str(&format!("; basil output for {}\n", p.device));
@@ -3834,4 +3967,42 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         }
     }
     Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asm::words_of;
+
+    #[test]
+    fn access_bank_is_two_ranges() {
+        // Q10: Access RAM 000h..060h, SFR half F60h..1000h; every address in between is banked.
+        assert!(in_access((0, 0x60), (0xF60, 0x1000), 0x10));
+        assert!(in_access((0, 0x60), (0xF60, 0x1000), 0xF60));
+        assert!(!in_access((0, 0x60), (0xF60, 0x1000), 0x60));
+        assert!(!in_access((0, 0x60), (0xF60, 0x1000), 0xF5F));
+        // Q41: Access RAM 0500h..0560h and the SFR half 0460h..0500h; the low SFRs are banked.
+        let q41 = ((0x500, 0x560), (0x460, 0x500));
+        assert!(in_access(q41.0, q41.1, 0x4D6), "INTCON0 is a fast SFR");
+        assert!(in_access(q41.0, q41.1, 0x500));
+        assert!(in_access(q41.0, q41.1, 0x4C8), "LATC / TRISC (04C0h / 04C8h) are fast SFRs");
+        assert!(!in_access(q41.0, q41.1, 0x45F), "below 0460h needs BSR");
+        assert!(!in_access(q41.0, q41.1, 0x560), "past the Access RAM");
+        assert!(!in_access(q41.0, q41.1, 0x40));
+    }
+
+    #[test]
+    fn movff_becomes_movffl_only_beyond_4096() {
+        let at: HashMap<String, u32> = [("NEAR".to_string(), 0x0FFF), ("FAR".to_string(), 0x1000), ("WIDE".to_string(), 0x14FF)].into_iter().collect();
+        let run = |t: &str| match widen_movff(vec![Item::Ins(t.into())], &at).remove(0) {
+            Item::Ins(s) => s,
+            _ => unreachable!(),
+        };
+        assert_eq!(run("movff NEAR, __A0"), "movff NEAR, __A0");
+        assert_eq!(run("movff FAR, __A0"), "movffl FAR, __A0");
+        assert_eq!(run("movff __A0, WIDE+1"), "movffl __A0, WIDE+1");
+        assert_eq!(run("movff POSTINC0, 0x1100"), "movffl POSTINC0, 0x1100");
+        assert_eq!(run("movwf FAR, c"), "movwf FAR, c");
+        assert_eq!(words_of("movffl A, B"), 3);
+    }
 }

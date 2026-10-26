@@ -6,6 +6,13 @@ Program Evi
 Device = 18F27Q10
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+#if _has(PIR3.TMR1IF)
+Dim SwIf As PIR3.4
+Dim SwIe As PIE3.4
+#else
+Dim SwIf As PIR0.0
+Dim SwIe As PIE0.0
+#endif
 Type TCb = Event(ByVal v As Byte)
 Dim Cb As TCb
 Volatile Dim hits As Byte
@@ -22,14 +29,14 @@ End Event
 Function Other() As Byte
     Dim z As Byte
     z = 55
-    PIR0.0 = 1
+    SwIf = 1
     While hits < 1
     Wend
     Result = z
 End Function
 
 Interrupt H()
-    PIR0.0 = 0
+    SwIf = 0
     Inc(hits)
     Cb(9)
 End Interrupt
@@ -38,7 +45,7 @@ Cb = OnHit
 If Cb = OnHit Then
     cmp = 1
 EndIf
-PIE0.0 = 1
+SwIe = 1
 Enable(H)
 b = Other()
 Disable(H)

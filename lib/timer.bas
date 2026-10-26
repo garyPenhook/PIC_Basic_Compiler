@@ -1,8 +1,9 @@
 Module Timer
 ' Timer0, Timer1 and Timer2 helpers (PIC18F27/47Q10: DS40002043F chapters 19, 20, 21; PIC16F17126/46:
-' DS40002343F chapters 22, 23, 24). The control registers have the same layout on both; the interrupt flag
-' registers and the source-selection constants below differ, and are chosen with `#if _has(PIR1.TMR1IF)`
-' (true for the PIC16F171xx, whose Timer1 and Timer2 flags are in PIR1 and PIR2). The module only configures the timer and reads its
+' DS40002343F chapters 22, 23, 24; PIC18F0x/1xQ41: DS40002214G chapters 24, 25, 26). The control registers have
+' the same layout on all of them; the interrupt flag registers and the source-selection constants below
+' differ, and are chosen with `#if _has(PIR1.TMR1IF)` (true for the PIC16F171xx, whose Timer1 and Timer2 flags
+' are in PIR1 and PIR2) and `#if _has(PIR3.TMR1IF)` (true for the PIC18-Q41, whose flags are in PIR3). The module only configures the timer and reads its
 ' flag. It declares no interrupt handler, so it never claims a vector: to be interrupted, call
 ' Timer0EnableInterrupt, write your own `Interrupt` and call Timer0Ack in it (flags are not
 ' cleared by hardware). To run your own code on each overflow instead, use the TimerNOnExpire event
@@ -13,7 +14,35 @@ Module Timer
 ' (prescale 0..15 selects 1:1 to 1:32768 [T0CON1]).
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
-#if _has(PIR1.TMR1IF)
+#if _has(PIR3.TMR1IF)
+' Timer1 clock sources, the CS field of T1CLK [DS40002214G Table 25-4]. T1ClkPin counts rising edges on the
+' pin selected by T1CKIPPS; T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise. T1ClkMfIntOsc is the
+' 500 kHz MFINTOSC, T1ClkMfIntOsc32 the 32 kHz one.
+Public Const T1ClkPin = 0
+Public Const T1ClkFosc4 = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkHfIntOsc = 3
+Public Const T1ClkLfIntOsc = 4
+Public Const T1ClkMfIntOsc = 5
+Public Const T1ClkMfIntOsc32 = 6
+Public Const T1ClkSosc = 7
+Public Const T1ClkExtOsc = 8
+Public Const T1ClkRef = 9
+Public Const T1ClkTmr0 = 10
+Public Const T1ClkTmr3 = 12
+
+' Timer1 gate sources, the GSS field of T1GATE [DS40002214G Table 25-5]. T1GatePin is the pin selected by T1GPPS.
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateTmr2 = 3
+Public Const T1GateTmr4 = 5
+Public Const T1GateSmt1 = 6
+Public Const T1GateCcp1 = 7
+Public Const T1GateNco1 = 14
+Public Const T1GateCmp1 = 15
+Public Const T1GateCmp2 = 16
+Public Const T1GateZcd = 17
+#elseif _has(PIR1.TMR1IF)
 ' Timer1 clock sources, the CS field of T1CLK [DS40002343F Table 23-4]. T1ClkPin counts rising edges on the
 ' pin selected by T1CKIPPS; T1ClkSosc needs the secondary oscillator enabled and time to stabilise.
 Public Const T1ClkPin = 0
@@ -83,7 +112,22 @@ Public Const T2ModeMonoAnyEdge = 19
 Public Const T2ModeOneShotLevelHigh = 22
 Public Const T2ModeOneShotLevelLow = 23
 
-#if _has(PIR1.TMR1IF)
+#if _has(PIR3.TMR1IF)
+' Timer2 external reset sources, the RSEL field of T2RST [DS40002214G Table 26-4]. T2RstPin is the pin
+' selected by T2INPPS; T2RstPwmNP1 / T2RstPwmNP2 are the outputs of PWM module N (PWMNS1P1 / PWMNS1P2).
+Public Const T2RstPin = 0
+Public Const T2RstTmr4 = 2
+Public Const T2RstCcp1 = 4
+Public Const T2RstPwm1P1 = 5
+Public Const T2RstPwm1P2 = 6
+Public Const T2RstPwm2P1 = 7
+Public Const T2RstPwm2P2 = 8
+Public Const T2RstPwm3P1 = 9
+Public Const T2RstPwm3P2 = 10
+Public Const T2RstCmp1 = 11
+Public Const T2RstCmp2 = 12
+Public Const T2RstZcd = 13
+#elseif _has(PIR1.TMR1IF)
 ' Timer2 external reset sources, the RSEL field of T2RST [DS40002343F Table 24-4]. T2RstPin is the pin
 ' selected by T2INPPS.
 Public Const T2RstPin = 0
@@ -106,14 +150,24 @@ Public Const T2RstCmp1 = 8
 Public Const T2RstCmp2 = 9
 #endif
 
+#if _has(PIR3.TMR1IF)
+' PIR3 / PIE3 bits 7, 4 and 3 [DS40002214G 11.13.21, 11.13.10].
+Dim Tmr0If As PIR3.7
+Dim Tmr0Ie As PIE3.7
+Dim Tmr1If As PIR3.4
+Dim Tmr1Ie As PIE3.4
+Dim Tmr2If As PIR3.3
+Dim Tmr2Ie As PIE3.3
+#elseif _has(PIR1.TMR1IF)
 Dim Tmr0If As PIR0.5
 Dim Tmr0Ie As PIE0.5
-#if _has(PIR1.TMR1IF)
 Dim Tmr1If As PIR1.6
 Dim Tmr1Ie As PIE1.6
 Dim Tmr2If As PIR2.2
 Dim Tmr2Ie As PIE2.2
 #else
+Dim Tmr0If As PIR0.5
+Dim Tmr0Ie As PIE0.5
 Dim Tmr1If As PIR4.0
 Dim Tmr1Ie As PIE4.0
 Dim Tmr2If As PIR4.1

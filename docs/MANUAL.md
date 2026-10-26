@@ -61,10 +61,12 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 | Device | Core | Program memory | RAM | Status |
 |---|---|---|---|---|
 | PIC18F27Q10 | PIC18 (8-bit), legacy instruction set (`XINST = 0`) | 128 KB (65,536 words) | 3,359 usable GPR bytes (as reported by the build summary) | **Supported.** Device file `devices/18F27Q10.toml`, generated from pack `PIC18F-Q_DFP 1.31.492`. All library modules |
+| PIC18F04Q41, PIC18F05Q41, PIC18F06Q41 (14-pin) | PIC18 (8-bit), legacy instruction set (`XINST = 0`), vectored interrupt controller run with `MVECEN = 0` | 16 / 32 / 64 KB (8 / 16 / 32 K words) | 1,024 / 2,048 / 4,096 usable GPR bytes; 512 bytes data EEPROM | **Supported.** Device files `devices/18F04Q41.toml` … (pack `PIC18F-Q_DFP 1.31.492`, data sheets DS40002242F and DS40002214G, facts in `docs/FACTS-18F-Q41.md`). Ports A and C. Library: every module except `floatlib`, which has not been run there (`gpio`, `delay`, `intosc`, `system`, `timer`, `serial`, `serial2`, `adc`, `eeprom`, `flashwrite`, `spi`, `lcd`, `i2c`, `pwm`, `oled`, `aht30`); `i2c` is a software host and `pwm` uses the six PWM outputs (see `docs/LIBRARY.md`). Tested in the simulator (PIC18F16Q41) and built for every part; not run on hardware |
+| PIC18F14Q41, PIC18F15Q41, PIC18F16Q41 (20-pin) | as above | 16 / 32 / 64 KB | 1,024 / 2,048 / 4,096 usable GPR bytes; 512 bytes data EEPROM | **Supported**, as the 14-pin parts, with port B (RB4..RB7) |
 | PIC16F17126 (14/16-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | **Described, not compilable yet.** Device file `devices/16F17126.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002343F). There is no `pic16e` code generator, so `Device = 16F17126` stops with `E-DEVICE`. Library modules `gpio`, `intosc`, `system`, `timer`, `serial` and `adc` are prepared for it; the others are not |
 | PIC16F17146 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | As the PIC16F17126 (`devices/16F17146.toml`) |
 
-`Device = 18F27Q10` (or `PIC18F27Q10`) is the only value that compiles today. A device is added only
+`Device = 18F27Q10` (or `PIC18F27Q10`) and the PIC18-Q41 parts (`Device = 18F16Q41`, `18F04Q41` …) are the values that compile today. A device is added only
 after it has its own description file and passes its own tests, and **adding one means more than the
 description file**:
 
@@ -275,7 +277,7 @@ unsigned `Long`. There is no 24-bit type; 24 bits is only used inside the compil
 * Name lookup order: local, then the current file, then the `Public` names of included modules.
   Qualify with `Module.Name` to resolve a clash.
 * Global variables must fit the device RAM (`E-RAM`). The hardware return stack is checked at
-  compile time (31 levels; `E-STACK`).
+  compile time (the device's depth: 31 levels on the Q10, 127 on the PIC18-Q41; `E-STACK`).
 
 ### Type conversion
 
@@ -413,7 +415,8 @@ Symbol LED = PORTB.0                  ' becomes an alias, chosen by what the val
 A constant without a type takes its type from the expression: `5 / 1024` is integer arithmetic and
 is 0; write `5.0 / 1024` for floating point. Constants can be used in array sizes, `Case` values
 and anywhere a constant expression is required. `_Clock` and `_Device` are predefined constants
-(the `Clock` value and the device name).
+(the `Clock` value and the device name), and so are `_FlashBytes` (a `LongWord`), `_EepromBytes` and
+`_RamBytes` (`Word`s): the program flash, data EEPROM and allocatable RAM of the device, in bytes.
 
 ## Arrays, strings, structures
 
@@ -885,7 +888,7 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 |---|---|
 | `#define NAME [value]`, `#undefine NAME` | scoped to the file that defines them (only `-D` names are shared) |
 | `#ifdef`, `#ifndef`, `#else`, `#endif` | |
-| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
+| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
 | `#error "text"`, `#warning "text"` | |
 | `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `Warn.<id> = true\|false` | |
 
@@ -3783,7 +3786,7 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 | `E-TYPE`, `E-SIGN`, `E-MIX`, `E-NARROW` / `W-NARROW` | type rules |
 | `E-COND` | condition is not Boolean (a bare bit alias) |
 | `E-CONST-RANGE`, `E-BOUNDS` | constant does not fit; constant index out of range |
-| `E-RAM`, `E-STACK` | variables exceed RAM; hardware stack deeper than 31 |
+| `E-RAM`, `E-STACK` | variables exceed RAM; hardware stack deeper than the device has (31 / 127) |
 | `E-RECURSION` | call cycle |
 | `E-ISR-CALL` | call from a handler without `Save ... Restore` (also float maths) |
 | `E-BACKEND` | valid per the front end but not generated yet (see below) |

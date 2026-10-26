@@ -13,7 +13,7 @@ on an 8-bit PIC18 (PLAN §7A), not compatibility with any other compiler.
 | Interrupt frames | Data RAM, **not overlaid** with main-line frames | A handler owns its storage (LANGUAGE.md §8). |
 | Event frames | Data RAM, own unique frame | LANGUAGE.md §8. |
 | Constants (strings, `Const` arrays) | Program flash, read with `TBLRD` through `TBLPTR`/`TABLAT` (2 cycles each) | Verified M1 `[DS40002043F p.629]`. |
-| Hardware return stack | Dedicated 31-level stack `[DS40002043F p.1, p.108]` | Depth proven at compile time; error if the proven maximum can exceed 31. |
+| Hardware return stack | Dedicated 31-level stack `[DS40002043F p.1, p.108]` | Depth proven at compile time; error if the proven maximum can exceed the device's depth (31 on the Q10; 127 on the PIC18-Q41, `hw_stack` in the device file). |
 | Reentrant software stack (opt-in) | Data RAM through `FSR2` | Needs `XINST = 1`; then Access Bank addresses ≤ `5Fh` become FSR2-indexed, so ordinary variables must use bank-select (`a = 1`) addressing in such builds (verified M1 `[DS40002043F p.119, p.123]`). |
 
 ## 2. Registers (provisional; interrupt-related facts verified in M1)
@@ -38,6 +38,13 @@ shared helpers it calls) for those registers and copies exactly those with `MOVF
 `__ISV<n>`, a static area that is never overlaid. `MOVFF` is never used to write interrupt
 control registers while any interrupt is enabled (`[DS40002043F p.194]`); nothing here does. The
 save and restore code is fenced from the peephole pass (`Keep`).
+
+PIC18-Q41 (vectored interrupt controller, `docs/FACTS-18F-Q41.md` §4): the controller saves `STATUS`, `WREG`,
+`BSR`, `FSR0..2`, `PRODL/H` and `PCLATH/U` on entry in two sets (main and low-priority handler) and
+`RETFIE, FAST` restores all of them, in either priority, so a handler saves in software only `TBLPTR`,
+`TABLAT` and the used bytes of `__A`..`__D`. The interrupt control register is `INTCON0`, `Enable` sets only
+`GIE` without priorities, and `MVECEN` is forced off (a program with a handler that asks for `MVECEN = ON`
+is an `E-CONFIG` error).
 
 ## 3. Calling convention (as implemented in M4)
 
@@ -102,7 +109,9 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
 * **Vectors** (only when the program has a handler): `0x0000` is `bra __reset`. One unprioritised
   handler (IPEN = 0) is placed at `0x0008`. With priorities (IPEN = 1) `0x0008` and `0x0018` each
   hold a branch to `__ISR_H` / `__ISR_L`, or spin when that level has no handler; the handlers
-  follow, then the start-up code. Start-up sets IPEN before anything runs.
+  follow, then the start-up code. Start-up sets IPEN before anything runs. On the PIC18-Q41 the word at each
+  vector is always a `goto` (`MVECEN = 0` requires one, DS40002214G p.114), also for a single handler, which
+  then follows the `goto` at `0x000C`.
 * **`Save … Restore`**: byte-for-byte `MOVFF` copies into `__SAV<n>`; addresses are deduplicated so
   overlaid frames are copied once.
 * **Start-up**: without interrupts the program begins at address 0 (no reset `goto`). The

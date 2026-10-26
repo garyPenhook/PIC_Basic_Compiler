@@ -5,9 +5,26 @@ Module Serial2
 ' also the ICSP clock and data pins, so disconnect a programmer or debugger while using them.
 ' EUSART1 (module `Serial`) can be used at the same time.
 '
+' PIC18F0x/1xQ41 (DS40002214G, chapters 21 and 34): UART2 (U2CON0/1/2, U2BRG, U2TXB, U2RXB, U2FIFO), TX on RC2
+' and RX on RC1, both on the 14-pin parts too. RC2PPS = 0x13 selects UART2 TX [Table 21-2]; U2RXPPS = PORT[5:3] |
+' PIN[2:0], RC1 = 010 001 = 17 [21.8.1] (the reset selection of U2RXPPS, Table 21-1). RC1 and RC2 are also the default
+' SPI1 data in and I2C1 data pins of the 14-pin parts: route them elsewhere if both modules are used. Set-up and
+' flags as in module `Serial` (the buffer status bits of U2FIFO and TXMTIF of U2ERRIR).
+'
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
+#if _has(U2CON0)
+Dim TxFull As U2FIFO.4
+Dim TxBufEmpty As U2FIFO.5
+Dim RxEmpty As U2FIFO.1
+Dim TxShiftEmpty As U2ERRIR.7
+Dim OverrunErr As U2ERRIR.1
+Dim TxPin As TRISC.2
+Dim RxPin As TRISC.1
+Dim TxAnalog As ANSELC.2
+Dim RxAnalog As ANSELC.1
+#else
 Dim TxIf As PIR3.6
 Dim RxIf As PIR3.7
 Dim OverrunErr As RC2STA.1
@@ -15,6 +32,7 @@ Dim RxEnable As RC2STA.4
 Dim TxPin As TRISB.6
 Dim RxPin As TRISB.7
 Dim RxAnalog As ANSELB.7
+#endif
 Public Const FoscHz = LongWord(_Clock * 1000000)
 
 Public Sub Serial2Init(ByVal baud As LongWord)
@@ -23,6 +41,16 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     RxAnalog = 0
     RxPin = 1
     TxPin = 0
+#if _has(U2CON0)
+    TxAnalog = 0
+    RC2PPS = 19
+    U2RXPPS = 17
+    U2BRGL = Byte(n)
+    U2BRGH = Byte(n >> 8)
+    U2CON0 = 176
+    U2CON2 = 128
+    U2CON1 = 128
+#else
     RB6PPS = 11
     RX2PPS = 15
     SP2BRGL = Byte(n)
@@ -30,13 +58,20 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     BAUD2CON = 8
     TX2STA = 36
     RC2STA = 144
+#endif
 End Sub
 
 ' Sends one byte, waiting for the transmit register to be free.
 Public Sub Serial2WriteByte(ByVal b As Byte)
+#if _has(U2CON0)
+    While TxFull = 1
+    Wend
+    U2TXB = b
+#else
     While TxIf = 0
     Wend
     TX2REG = b
+#endif
 End Sub
 
 Public Sub Serial2Write(ByRefConst s As String(80))
@@ -87,11 +122,23 @@ End Sub
 
 ' True when a received byte is waiting.
 Public Function Serial2Available() As Boolean
+#if _has(U2CON0)
+    Result = RxEmpty = 0
+#else
     Result = RxIf = 1
+#endif
 End Function
 
 ' Waits for a byte. An overrun stops the receiver until CREN is cycled, so it is cleared here.
 Public Function Serial2Read() As Byte
+#if _has(U2CON0)
+    While RxEmpty = 1
+        If OverrunErr = 1 Then
+            OverrunErr = 0
+        End If
+    Wend
+    Result = U2RXB
+#else
     While RxIf = 0
         If OverrunErr = 1 Then
             RxEnable = 0
@@ -99,10 +146,16 @@ Public Function Serial2Read() As Byte
         End If
     Wend
     Result = RC2REG
+#endif
 End Function
 
 ' Waits until the last byte has left the shift register (TRMT, TX2STA bit 1).
 Public Sub Serial2Flush()
+#if _has(U2CON0)
+    While TxBufEmpty = 0 Or TxShiftEmpty = 0
+    Wend
+#else
     While TX2STA.1 = 0
     Wend
+#endif
 End Sub

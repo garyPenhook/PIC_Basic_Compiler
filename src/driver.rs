@@ -19,8 +19,22 @@ pub fn target_of(dev: &Device) -> Target {
             _ => ram.push((start, g.end)),
         }
     }
-    let sfr = dev.sfr.iter().map(|s| (s.name.clone(), s.addr)).collect();
-    Target { ram, access: (dev.memory.data.access_ram.start, dev.memory.data.access_ram.end), access_sfr: dev.memory.data.access_sfr.start, sfr, opt: true, keep_vars: false, debug_files: Vec::new() }
+    let sfr: std::collections::HashMap<String, u32> = dev.sfr.iter().map(|s| (s.name.clone(), s.addr)).collect();
+    let hw_context = sfr.contains_key("SHADCON");
+    let data_top = dev.memory.data.gpr.iter().map(|g| g.end).chain(dev.memory.data.sfr.iter().map(|r| r.end)).max().unwrap_or(0);
+    let acc = &dev.memory.data.access_sfr;
+    Target {
+        ram,
+        access: (dev.memory.data.access_ram.start, dev.memory.data.access_ram.end),
+        access_sfr: (acc.start, acc.end),
+        sfr,
+        hw_context,
+        data_top,
+        hw_stack: if dev.memory.hw_stack > 0 { dev.memory.hw_stack } else { crate::codegen::HW_STACK_LEVELS },
+        opt: true,
+        keep_vars: false,
+        debug_files: Vec::new(),
+    }
 }
 
 /// The newest installed pic-as, or the one named by `BASIL_PICAS`.
@@ -52,6 +66,9 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, hex: &Path, map: &Pat
     let out = Command::new(pic_as)
         .arg(format!("-mcpu={cpu}"))
         .arg(format!("-mdfp={}", dfp.display()))
+        // The configuration words keep the bits the pack leaves out of `implemented` at 1 (lower.rs), which pic-as
+        // reports as "truncated by" although it writes them to the hex as given.
+        .arg("-Wno-1388")
         .arg(format!("-Wl,-Map={}", map.display()))
         .arg("-o")
         .arg(hex)

@@ -421,6 +421,13 @@ The block is pic-as syntax, passed through unchanged. The compiler treats it as 
 and will not move its own code across it. Variables are referenced by their emitted symbol
 names (documented in `ABI.md`). (SF/NEW)
 
+The compiler scratch registers `__A0`..`__D3` (accumulator and operand registers, nothing is live in
+them across a call) are defined when a block names them, and so is a routine the block names in a
+`call` (it is linked, but only if some statement of the program reaches it: the lowerer only lowers
+routines a statement names, so put a real call to it, e.g. `Pack()`, in the BASIC code around the
+block). A function whose `Asm` block stores into `<ROUTINE>__RESULT` is taken to have set its result:
+no `W-NORESULT` warning, and `Result` is not cleared on entry. `lib/floatlib.bas` is written this way.
+
 ## 14. Alternative spellings accepted (provisional)
 
 Anything not listed here is not accepted.

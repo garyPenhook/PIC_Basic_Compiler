@@ -35,9 +35,9 @@ use std::collections::HashMap;
 pub struct Env {
     /// Compiler-placed RAM objects: name to `(address, bytes)`.
     pub plain: HashMap<String, (u32, u32)>,
-    /// Access Bank RAM `[start, end)` and the start of the Access Bank's SFR half.
+    /// Access Bank RAM `[start, end)` and the Access Bank's SFR half `[start, end)`.
     pub access: (u32, u32),
-    pub access_sfr: u32,
+    pub access_sfr: (u32, u32),
     /// Do not delete stores to variables nothing reads.
     pub keep_writes: bool,
 }
@@ -60,7 +60,7 @@ impl Env {
     }
     /// A plain byte reachable with the access bit set.
     fn is_access(&self, sym: &str) -> bool {
-        self.addr(sym).is_some_and(|a| a < self.access.1 || a >= self.access_sfr)
+        self.addr(sym).is_some_and(|a| crate::codegen::in_access(self.access, self.access_sfr, a))
     }
 }
 
@@ -389,6 +389,9 @@ fn loc_live(items: &[Item], i: usize, l: Loc) -> Live {
         match it {
             Item::Comment(_) => {}
             Item::Fence => return Live::Dead,
+            // A routine takes its arguments from its own frame; only the `__` helpers read the
+            // scratch registers, and a routine is free to overwrite them.
+            Item::Call(t) if matches!(l, Loc::S(_)) && !t.starts_with("__") => return Live::Dead,
             Item::Ins(t) => match effect(t) {
                 None => return Live::Live,
                 Some(e) => {
@@ -1265,7 +1268,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: 0x60, keep_writes: false }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false }
     }
 
     fn ins(t: &str) -> Item {
@@ -1349,8 +1352,11 @@ mod tests {
     fn scratch_is_live_across_labels_and_calls() {
         let r = run(&[ins("movff X, __A0"), Item::Label("L".into()), ins("movff __A0, Y")]);
         assert_eq!(r.len(), 3);
-        let r = run(&[ins("movff X, __A0"), Item::Call("f".into()), Item::Fence]);
+        let r = run(&[ins("movff X, __A0"), Item::Call("__mul2".into()), Item::Fence]);
         assert_eq!(r.len(), 3);
+        // A routine reads its parameters from memory, so the scratch copy is dead.
+        let r = run(&[ins("movff X, __A0"), Item::Call("f".into()), Item::Fence]);
+        assert_eq!(r.len(), 2);
     }
 
     #[test]

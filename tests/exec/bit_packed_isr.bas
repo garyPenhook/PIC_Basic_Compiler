@@ -7,6 +7,15 @@ Program BPI
 Device = 18F27Q10
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+#if _has(PIR3.TMR0IF)
+Dim T0If As PIR3.7
+Dim T0Ie As PIE3.7
+Dim T0Ip As IPR3.7
+#else
+Dim T0If As PIR0.5
+Dim T0Ie As PIE0.5
+Dim T0Ip As IPR0.5
+#endif
 Dim pk(16) As Bit
 Dim hits As Word
 Dim ok As Byte
@@ -15,7 +24,7 @@ Dim i As Byte
 Dim j As Byte
 
 Interrupt Tick()
-    PIR0.5 = 0
+    T0If = 0
     Inc(hits)
     If (hits And 1) = 1 Then
         pk(1) = 1
@@ -34,7 +43,7 @@ Interrupt Tick()
     End If
 End Interrupt
 
-PIE0.5 = 1
+T0Ie = 1
 Enable(Tick)
 T0CON1 = 65
 T0CON0 = 128

@@ -416,3 +416,123 @@ fn debug_flag_adds_variables_and_routines_to_the_elf() {
     let elf2 = std::fs::read(plain.with_extension("elf")).unwrap();
     assert!(!elf2.windows(6).any(|w| w == b"basil\0"), "plain build carries debug-only data");
 }
+
+// ---- PIC18-Q41 ---------------------------------------------------------------------------------
+
+const Q41_PARTS: [&str; 6] = ["18F04Q41", "18F05Q41", "18F06Q41", "18F14Q41", "18F15Q41", "18F16Q41"];
+
+/// A test program for another part: only its `Device` line changes.
+fn for_device(src: &Path, device: &str, into: &Path) -> PathBuf {
+    let text = std::fs::read_to_string(src).unwrap();
+    let mut out = String::new();
+    let mut done = false;
+    for line in text.lines() {
+        if !done && line.trim_start().to_ascii_lowercase().starts_with("device") {
+            out += &format!("Device = {device}\n");
+            done = true;
+        } else {
+            out += line;
+            out.push('\n');
+        }
+    }
+    std::fs::write(into, out).unwrap();
+    into.to_path_buf()
+}
+
+/// The programs of `tests/exec` that touch no peripheral register build for every PIC18-Q41 part, with
+/// handlers (the vectors hold a `goto`, the context is saved by the controller) and with data above 0FFFh.
+#[test]
+fn q41_parts_build_the_standard_programs() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("q41parts");
+    let programs = ["arith_byte", "arith_word", "arith_longword", "arrays", "flow", "funcs", "isr_save", "isr_dual", "isr_single", "events_isr", "bit_packed_isr", "reentrant", "strings", "structs"];
+    let mut failures = Vec::new();
+    for dev in Q41_PARTS {
+        for p in programs {
+            let src = for_device(&root().join(format!("tests/exec/{p}.bas")), dev, &out.join(format!("{p}_{dev}.bas")));
+            let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join(format!("{p}_{dev}.hex"))).output().unwrap();
+            let text = String::from_utf8_lossy(&r.stderr).into_owned();
+            // A program too big for the part's RAM is refused with E-RAM, which is the right answer.
+            let too_big = text.contains("error[E-RAM]");
+            if (!r.status.success() && !too_big) || text.contains("pic-as:") {
+                failures.push(format!("{p} for {dev}:\n{text}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every library module builds on all six PIC18-Q41 parts.
+#[test]
+fn q41_library_modules_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("q41lib");
+    for f in bas_files(&root().join("tests/exec_q41")) {
+        let name = f.file_stem().unwrap().to_string_lossy().into_owned();
+        let r = Command::new(basil()).arg(&f).arg("-o").arg(out.join(format!("{name}.hex"))).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(r.status.success() && !text.contains("warning"), "{name}:\n{text}");
+    }
+    for dev in Q41_PARTS {
+        // `oled` and `aht30` do not fit the 1 KB parts.
+        let all = root().join(if dev == "18F04Q41" || dev == "18F14Q41" { "tests/programs/library_q41_small.bas" } else { "tests/programs/library_q41.bas" });
+        let src = for_device(&all, dev, &out.join(format!("library_{dev}.bas")));
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join(format!("library_{dev}.hex"))).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(r.status.success() && !text.contains("warning"), "{dev}:\n{text}");
+    }
+}
+
+/// A part whose Access Bank is not at the top of the SFR space: `ANSELC` (0410h) is banked and needs `BSR`, while
+/// `INTCON0` (04D6h) and `TRISC` (04C8h) are fast SFRs. The Q10 test "below the Access RAM's end" got this wrong.
+#[test]
+fn q41_low_sfrs_are_not_access_bank_operands() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("q41access");
+    let src = out.join("t.bas");
+    std::fs::write(&src, "Program T\nDevice = 18F16Q41\nClock = 1\nANSELC = 0\nTRISC = 0\nINTCON0 = 0\nNVMCON1 = 0\n").unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-S").arg("-o").arg(out.join("t.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("t.S")).unwrap();
+    assert!(asm.contains("ANSELC, b"), "{asm}");
+    assert!(asm.contains("NVMCON1, b"), "{asm}");
+    assert!(asm.contains("TRISC, c"), "{asm}");
+    assert!(asm.contains("INTCON0, c"), "{asm}");
+}
+
+/// With `BASIL_MDB=1` the programs that touch no peripheral, and the PIC18-Q41 library tests, run on the
+/// simulator's `PIC18F16Q41`.
+#[test]
+fn q41_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let mut files: Vec<PathBuf> = bas_files(&root().join("tests/exec"))
+        .into_iter()
+        .filter(|p| {
+            let t = std::fs::read_to_string(p).unwrap();
+            let name = p.file_stem().unwrap().to_string_lossy().into_owned();
+            // `Include` means a library module: only the ones that are device independent.
+            !t.contains("Include \"") || ["lib_system", "lib_intosc", "lib_intosc_div"].contains(&name.as_str())
+        })
+        .collect();
+    files.extend(bas_files(&root().join("tests/exec_q41")));
+    let r = Command::new("python3")
+        .arg(root().join("scripts/exec-test.py"))
+        .arg("--basil")
+        .arg(basil())
+        .arg("--device")
+        .arg("18F16Q41")
+        .args(&files)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+    assert!(r.status.success(), "{text}");
+}

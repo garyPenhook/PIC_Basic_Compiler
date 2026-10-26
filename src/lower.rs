@@ -258,7 +258,11 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
                 v = (v & !m) | ((cs.value << f.pos) & m);
             }
         }
-        config.push((reg.name.clone(), reg.addr, (v & reg.implemented) as u8));
+        // Bits the pack's `implemented` mask leaves out stay at their unprogrammed value (1), as Microchip's
+        // compiler writes them: on the PIC18-Q41 the mask omits DEBUG (CONFIG7 bit 5) and WRTAPP (CONFIG8
+        // bit 7), which are real bits whose 0 means "debug mode" and "application block write-protected"
+        // [DS40002214G 8.6 p.53, 8.1 p.43]; clearing them made self-writes to program flash fail.
+        config.push((reg.name.clone(), reg.addr, v as u8));
     }
 
     let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default() };
@@ -875,6 +879,10 @@ impl<'a> Lowerer<'a> {
             if (scalar || matches!(ty, Ty::Str(_))) && written_first(body, v) {
                 continue;
             }
+            // A routine whose own `Asm` block stores into its `Result` sets it itself.
+            if var.kind == VarKind::Result && body.iter().any(|s| matches!(&s.st, St::Asm(ls) if ls.iter().any(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|t| t == var.asm)))) {
+                continue;
+            }
             if var.kind == VarKind::Local && !mentions(body, v) {
                 continue;
             }
@@ -1336,9 +1344,23 @@ impl<'a> Lowerer<'a> {
         };
         let lv = self.value_for(l, &Ty::Float)?;
         let rv = self.value_for(r, &Ty::Float)?;
-        let ex = self.flt_call(name, vec![lv, rv], e.span)?;
-        // The FloatLib comparisons answer with a Boolean (8 bits, unsigned).
-        Some(if op.is_relational() { Ex::boolean(ex.k) } else { ex })
+        if op.is_relational() {
+            // `Cmp` answers -1, 0, 1 (a < b, a = b, a > b) or 2 (not ordered); testing its answer
+            // here saves the copy of both operands that the FEq..FGe wrappers would make.
+            let c = self.flt_call("Cmp", vec![lv, rv], e.span)?;
+            let k = |v: u32| Box::new(Ex::konst(v, 8, true));
+            let ex = match op {
+                BinOp::Eq => ExK::Cmp(CmpKind::Eq, Box::new(c), k(0)),
+                BinOp::Ne => ExK::Cmp(CmpKind::Ne, Box::new(c), k(0)),
+                BinOp::Lt => ExK::Cmp(CmpKind::Eq, Box::new(c), k(0xFF)),
+                BinOp::Le => ExK::Cmp(CmpKind::Le, Box::new(c), k(0)),
+                BinOp::Gt => ExK::Cmp(CmpKind::Eq, Box::new(c), k(1)),
+                // Only 0 and 1 are "equal or greater": below 2 when read unsigned.
+                _ => ExK::Cmp(CmpKind::Lt, Box::new(Ex::new(ExK::Conv(Box::new(c)), 8, false)), Box::new(Ex::konst(2, 8, false))),
+            };
+            return Some(Ex::boolean(ex));
+        }
+        self.flt_call(name, vec![lv, rv], e.span)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1622,7 +1644,8 @@ impl<'a> Lowerer<'a> {
     /// that is not trivially cheap is worked out first so the window stays short.
     fn bit_store(&mut self, p: &Place, v: Option<Ex>, span: Span, out: &mut Vec<S>) {
         let has_isr = self.a.symbols.iter().any(|s| matches!(s.kind, SymKind::Interrupt { .. }));
-        let intcon = if has_isr { self.reg_place("INTCON", span) } else { None };
+        // The global enable is bit 7 of `INTCON` (Q10) or of `INTCON0` (vectored interrupt controller).
+        let intcon = if has_isr { self.reg_place("INTCON", span).or_else(|| self.reg_place("INTCON0", span)) } else { None };
         let Some(intcon) = intcon else {
             if let Some(st) = self.bit_write(p, v, span) {
                 Self::push(out, st, span);

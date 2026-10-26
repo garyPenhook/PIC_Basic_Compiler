@@ -1,17 +1,21 @@
 Module Adc
-' 10-bit ADC with computation (ADCC), basic mode, right-justified results (PIC18F27/47Q10: DS40002043F,
-' chapter 33; PIC16F17126/46: DS40002343F, chapter 33). ADCON0, ADCLK, ADREF, ADPCH, ADACQ and FVRCON are used
-' with the same bit layout on both. What differs is chosen with `#if _has(ADREF.ADPREF)` (true for the Q10):
-' the channel numbers of the internal sources, the pins that exist, and the errata workarounds. The
-' PIC16F171xx has no errata for the channel change or the FVR reference (DS80001009E), so it carries neither
-' workaround. Its erratum 1.1.2 (ADACQ/ADPRE only delay the next conversion and do not lengthen the sample
+' ADC with computation (ADCC), basic mode, right-justified results (PIC18F27/47Q10: DS40002043F,
+' chapter 33, 10 bits; PIC16F17126/46: DS40002343F, chapter 33, 12 bits; PIC18F0x/1xQ41: DS40002214G,
+' chapter 40, 12 bits). ADCON0, ADCLK, ADREF, ADPCH, ADACQ and FVRCON are used with the same bit layout on
+' all of them. What differs is chosen with `#if _has(ADREF.ADPREF) and not _has(ADCPCON)` (the Q10; the Q41 pack
+' lists ADPREF as a legacy name of ADREF.PREF, so `_has(ADREF.ADPREF)` alone is true there too) and
+' `#if _has(ADCPCON)` (true for the Q41, which has the ADC charge pump register): the resolution
+' (`AdcMax`), the channel numbers of the internal sources, the pins that exist, and the errata
+' workarounds. The PIC16F171xx has no errata for the channel change or the FVR reference (DS80001009E), and
+' the Q41 none either (DS80000901H lists only the double-sample erratum 1.1.2, which this module does not
+' use), so they carry neither workaround. Its erratum 1.1.2 (ADACQ/ADPRE only delay the next conversion and do not lengthen the sample
 ' time of the current one) applies to the 5 us acquisition below: for a high-impedance source slow the
 ' conversion clock or the oscillator, or use the ADCRC clock, as the erratum says.
 ' Conversions are started by software and the clock is derived from FOSC, so `Clock` must be FOSC
 ' in MHz. The module is not reentrant: do not call it from a handler and from the main program.
 '
 ' Conversion clock [33.1.4, ADCLK, Table 39-14 AD20]: TAD = 2 * (n + 1) / FOSC and must lie in
-' 1..9 us. AdcInit picks the smallest TAD >= 1 us. Acquisition is done by the hardware: ADACQ
+' 1..9 us (Q41: 0.5..9 us, AD20 [DS40002214G 48.4.8], so the same choice is inside its range). AdcInit picks the smallest TAD >= 1 us. Acquisition is done by the hardware: ADACQ
 ' counts ADC clocks [33.7.10] and is set to cover 5 us, the 10 kohm worked example of Equation
 ' 33-1 (4.62 us). A higher source impedance needs a longer time: write ADACQ after AdcInit.
 '
@@ -27,7 +31,17 @@ Module Adc
 ' pin may have been changed by `Gpio.GpioAllDigital`).
 ' ADC channel numbers, the ADPCH values of Table 33-1. Pins: RA0..RA7 = 0..7, RB0..RB7 = 8..15,
 ' RC0..RC7 = 16..23.
-#if _has(ADREF.ADPREF)
+#if _has(ADCPCON)
+' PIC18F0x/1xQ41, ADPCH [DS40002214G 40.7.8]: RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 (RB
+' on the 20-pin parts only; RA3 is input only). AdcChFvr is FVR buffer 1, the one the ADC reference uses
+' (ADFVR); AdcChFvr2 is buffer 2 (CDAFVR).
+Public Const AdcChDac2 = 58
+Public Const AdcChVss = 59
+Public Const AdcChTemp = 60
+Public Const AdcChDac = 61
+Public Const AdcChFvr = 62
+Public Const AdcChFvr2 = 63
+#elseif _has(ADREF.ADPREF)
 Public Const AdcChVss = 60
 Public Const AdcChTemp = 61
 Public Const AdcChDac = 62
@@ -41,6 +55,22 @@ Public Const AdcChTemp = 59
 Public Const AdcChDac = 60
 Public Const AdcChDac2 = 61
 Public Const AdcChFvr = 62
+#endif
+
+' Largest result: 10 bits on the Q10 [DS40002043F AD01], 12 bits on the PIC16F171xx [DS40002343F AD01] and
+' the Q41 [DS40002214G AD01].
+#if _has(ADREF.ADPREF) and not _has(ADCPCON)
+Public Const AdcMax = 1023
+#else
+Public Const AdcMax = 4095
+#endif
+
+' Acquisition time set by SetClock, in microseconds: 5 us is the 10 kohm worked example of the Q10 (4.62 us);
+' the Q41's own example for 12 bits is 7.79 us (Equation 40-1), covered by 8 us. [40.3]
+#if _has(ADCPCON)
+Const AcqUs = 8
+#else
+Const AcqUs = 5
 #endif
 
 Dim AdcGo As ADCON0.0
@@ -61,8 +91,8 @@ Sub SetClock(ByVal minNs As Word)
         m = 64
     End If
     ADCLK = Byte(m - 1)
-    ' ADACQ = ceil(5 us / TAD) with TAD = 2 * m / FOSC
-    acq = (fosc * 5 + m * 2000000 - 1) / (m * 2000000)
+    ' ADACQ = ceil(AcqUs / TAD) with TAD = 2 * m / FOSC
+    acq = (fosc * AcqUs + m * 2000000 - 1) / (m * 2000000)
     If acq > 255 Then
         acq = 255
     End If
@@ -79,6 +109,10 @@ Public Sub AdcInit()
     ADPRE = 0
     ADACT = 0
     ADREF = 0
+#if _has(ADCPCON)
+    ' The charge pump runs when the ADC asks for it [40.4, ADCP]; it keeps the converter accurate at low VDD.
+    ADCPCON = 128
+#endif
     SetClock(1000)
     lastCh = 255
     ' ADON, ADFM = 1 (right-justified), ADCS = 0 (FOSC); ADGO is set later, not with ADON [33.2.1].
@@ -125,14 +159,14 @@ Public Sub AdcRefFvr(ByVal gain As Byte)
     While FvrReady = 0
     Wend
     ADREF = 3
-#if _has(ADREF.ADPREF)
+#if _has(ADREF.ADPREF) and not _has(ADCPCON)
     SetClock(8000)
 #else
     SetClock(1000)
 #endif
 End Sub
 
-' One conversion on the currently selected channel; returns the 10-bit result.
+' One conversion on the currently selected channel; returns the result (0..AdcMax).
 Function Convert() As Word
     Dim lo As Byte
     AdcGo = 1
@@ -142,15 +176,15 @@ Function Convert() As Word
     Result = ADRESH * 256 + lo
 End Function
 
-' Converts channel `ch` (0..63, see the AdcCh constants) and returns 0..1023.
+' Converts channel `ch` (0..63, see the AdcCh constants) and returns 0..AdcMax.
 Public Function AdcRead(ByVal ch As Byte) As Word
-#if _has(ADREF.ADPREF)
+#if _has(ADREF.ADPREF) and not _has(ADCPCON)
     Dim dummy As Word
 #endif
     ch = ch And 63
     If ch <> lastCh Then
         ADPCH = ch
-#if _has(ADREF.ADPREF)
+#if _has(ADREF.ADPREF) and not _has(ADCPCON)
         dummy = Convert()
 #endif
         lastCh = ch
@@ -174,7 +208,7 @@ Public Function AdcReadAvg(ByVal ch As Byte, ByVal count As Byte) As Word
     End If
 End Function
 
-' Converts a result to millivolts for a reference of `vrefMv` millivolts: raw * vref / 1023.
+' Converts a result to millivolts for a reference of `vrefMv` millivolts: raw * vref / AdcMax.
 Public Function AdcMillivolts(ByVal raw As Word, ByVal vrefMv As Word) As Word
-    Result = Word(LongWord(raw) * vrefMv / 1023)
+    Result = Word(LongWord(raw) * vrefMv / AdcMax)
 End Function

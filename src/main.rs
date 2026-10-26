@@ -122,8 +122,8 @@ fn main() -> ExitCode {
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());
         }
-        if g.errors.is_empty() && g.stack_levels > basil::codegen::HW_STACK_LEVELS {
-            diags.error("E-STACK", basil::diag::Span::default(), format!("the hardware return stack can need {} levels (calls, helpers and interrupt entries) but the device has {}", g.stack_levels, basil::codegen::HW_STACK_LEVELS));
+        if g.errors.is_empty() && g.stack_levels > target.hw_stack {
+            diags.error("E-STACK", basil::diag::Span::default(), format!("the hardware return stack can need {} levels (calls, helpers and interrupt entries) but the device has {}", g.stack_levels, target.hw_stack));
         }
         generated = Some(g);
     }

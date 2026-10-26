@@ -84,11 +84,13 @@ Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
             LATA = LATA And (m Xor 255)
         End If
     ElseIf pin < 16 Then
+#if _has(LATB)
         If level Then
             LATB = LATB Or m
         Else
             LATB = LATB And (m Xor 255)
         End If
+#endif
     Else
         If level Then
             LATC = LATC Or m
@@ -106,8 +108,10 @@ Sub PinOutput(ByVal pin As Byte)
         ANSELA = ANSELA And n
         TRISA = TRISA And n
     ElseIf pin < 16 Then
+#if _has(LATB)
         ANSELB = ANSELB And n
         TRISB = TRISB And n
+#endif
     Else
         ANSELC = ANSELC And n
         TRISC = TRISC And n

@@ -1,6 +1,6 @@
 # Quick start
 
-From nothing to a `.hex` file for a PIC18F27Q10.
+From nothing to a `.hex` file for a PIC18F27Q10 (the same steps work for the PIC18F04/05/06/14/15/16Q41: write `Device = 18F16Q41`; the device pack is `PIC18F-Q_DFP` for both families, and `docs/MANUAL.md` "Supported device" lists what each part has).
 
 ## 1. Prerequisites
 

@@ -80,6 +80,7 @@ pub fn words_of(text: &str) -> u32 {
     let m = t.split(|c: char| c.is_whitespace()).next().unwrap_or("").to_ascii_lowercase();
     match m.as_str() {
         "goto" | "call" | "movff" | "lfsr" | "movsf" | "movss" => 2,
+        "movffl" => 3,
         "" => 0,
         // Byte data in a raw block: two bytes to a word (a lone byte is padded).
         "db" => (t[2..].split(',').count() as u32).div_ceil(2),

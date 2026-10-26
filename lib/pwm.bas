@@ -22,6 +22,373 @@ Module Pwm
 ' PWM4 on ports A and C [Table 18-2]. The pin is routed through RxyPPS = 5 + channel - 1 (CCP1 5,
 ' CCP2 6, PWM3 7, PWM4 8) and made a digital output.
 ' The module is not reentrant: do not call it from a handler and from the main program.
+' PIC18F0x/1xQ41 (chosen with `#if _has(PWMEN)`, DS40002214G chapter 30): the six outputs of the three 16-bit PWM modules
+' replace the four Q10 channels: channel 1 = PWM1S1P1, 2 = PWM1S1P2, 3 = PWM2S1P1, 4 = PWM2S1P2, 5 = PWM3S1P1, 6 = PWM3S1P2
+' (the CCP1 PWM is not offered). The modules run left aligned from FOSC (PWMxCLK = 2) with a prescale CPRE + 1 and a
+' period PR + 1 = PwmSteps clocks, 2..65535, shared by all modules: f = FOSC / ((CPRE + 1) * (PR + 1)); the duty of an
+' output is its parameter register P1 / P2, the number of clocks it is active at the start of the period (more than
+' PR is full), so PwmSteps steps give 100 %. Outputs go to any pin of RA0..RA5 (not RA3), RB4..RB7, RC0..RC7 through
+' RxyPPS = 9 + channel [Table 21-2]. Timer2 is not used. The buffered registers are copied when the module is
+' enabled and by a reload (LD) at the end of the period; a new duty is written and LD is set [30.5].
+#if _has(PWMEN)
+Dim steps As Word
+Dim cpre As Byte
+Dim prv As Word
+Dim active As Byte
+Dim freq As LongWord
+Dim pins(6) As Byte
+Dim polv(6) As Byte
+Dim ready As Boolean
+
+' Chooses the PWM clock prescale (CPRE, 1..256) and period (PR) for `hz` and returns 1, or 0 when no setting
+' within 16 bits reaches it or a channel is running (the period is shared by all). Starts nothing.
+Public Function PwmInit(ByVal hz As LongWord) As Byte
+    Dim fosc As LongWord
+    Dim n As LongWord
+    Dim p As LongWord
+    Result = 0
+    If active <> 0 Or hz = 0 Or hz > 1000000 Then
+        Exit
+    End If
+    fosc = LongWord(_Clock * 1000000)
+    ' smallest prescale p = CPRE + 1 with fosc / (p * hz) <= 65535
+    p = (fosc / hz + 65534) / 65535
+    If p < 1 Then
+        p = 1
+    End If
+    If p > 256 Then
+        Exit
+    End If
+    n = (fosc + p * hz / 2) / (p * hz)
+    If n < 2 Or n > 65535 Then
+        Exit
+    End If
+    cpre = Byte(p - 1)
+    prv = Word(n - 1)
+    steps = Word(n)
+    freq = fosc / (p * n)
+    ready = True
+    Result = 1
+End Function
+
+' The achieved frequency in Hz (0 before a successful PwmInit).
+Public Function PwmFrequency() As LongWord
+    Result = 0
+    If ready Then
+        Result = freq
+    End If
+End Function
+
+' Number of duty cycle steps in one period: PR + 1 (the PWM clocks in a period).
+Public Function PwmSteps() As Word
+    Result = 0
+    If ready Then
+        Result = steps
+    End If
+End Function
+
+' Pins that exist: RA0..RA5 except RA3 (input only), RB4..RB7 on the 20-pin parts, RC0..RC7.
+Function PinOk(ByVal pin As Byte) As Boolean
+    Result = (pin <= 5 And pin <> 3) Or (pin >= 16 And pin <= 21)
+#if _has(RC6PPS)
+    If pin = 22 Or pin = 23 Then
+        Result = True
+    End If
+#endif
+#if _has(TRISB)
+    If pin >= 12 And pin <= 15 Then
+        Result = True
+    End If
+#endif
+End Function
+
+' Makes the pin an input (the output driver off) or an output.
+Sub PinInput(ByVal pin As Byte, ByVal asInput As Boolean)
+    Dim m As Byte
+    m = 1 << (pin And 7)
+    If pin < 8 Then
+        If asInput Then
+            TRISA = TRISA Or m
+        Else
+            TRISA = TRISA And (m Xor 255)
+        End If
+#if _has(TRISB)
+    ElseIf pin < 16 Then
+        If asInput Then
+            TRISB = TRISB Or m
+        Else
+            TRISB = TRISB And (m Xor 255)
+        End If
+#endif
+    Else
+        If asInput Then
+            TRISC = TRISC Or m
+        Else
+            TRISC = TRISC And (m Xor 255)
+        End If
+    End If
+End Sub
+
+Sub PinDigital(ByVal pin As Byte)
+    Dim m As Byte
+    m = (1 << (pin And 7)) Xor 255
+    If pin < 8 Then
+        ANSELA = ANSELA And m
+#if _has(TRISB)
+    ElseIf pin < 16 Then
+        ANSELB = ANSELB And m
+#endif
+    Else
+        ANSELC = ANSELC And m
+    End If
+End Sub
+
+' RxyPPS = code for a pin the part has (code 0 gives the pin back to its LATxy bit).
+Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+    If pin = 0 Then
+        RA0PPS = code
+    ElseIf pin = 1 Then
+        RA1PPS = code
+    ElseIf pin = 2 Then
+        RA2PPS = code
+    ElseIf pin = 4 Then
+        RA4PPS = code
+    ElseIf pin = 5 Then
+        RA5PPS = code
+#if _has(RB4PPS)
+    ElseIf pin = 12 Then
+        RB4PPS = code
+    ElseIf pin = 13 Then
+        RB5PPS = code
+    ElseIf pin = 14 Then
+        RB6PPS = code
+    ElseIf pin = 15 Then
+        RB7PPS = code
+#endif
+    ElseIf pin = 16 Then
+        RC0PPS = code
+    ElseIf pin = 17 Then
+        RC1PPS = code
+    ElseIf pin = 18 Then
+        RC2PPS = code
+    ElseIf pin = 19 Then
+        RC3PPS = code
+    ElseIf pin = 20 Then
+        RC4PPS = code
+    ElseIf pin = 21 Then
+        RC5PPS = code
+#if _has(RC6PPS)
+    ElseIf pin = 22 Then
+        RC6PPS = code
+    ElseIf pin = 23 Then
+        RC7PPS = code
+#endif
+    End If
+End Sub
+
+' The PWM module of channel 1..6: PWM1 for channels 1, 2; PWM2 for 3, 4; PWM3 for 5, 6.
+Function Inst(ByVal ch As Byte) As Byte
+    Result = (ch + 1) >> 1
+End Function
+
+Sub SetCon(ByVal m As Byte, ByVal v As Byte)
+    If m = 1 Then
+        PWM1CON = v
+    ElseIf m = 2 Then
+        PWM2CON = v
+    Else
+        PWM3CON = v
+    End If
+End Sub
+
+Function GetCon(ByVal m As Byte) As Byte
+    If m = 1 Then
+        Result = PWM1CON
+    ElseIf m = 2 Then
+        Result = PWM2CON
+    Else
+        Result = PWM3CON
+    End If
+End Function
+
+' Waits (bounded) until a requested reload has finished: LD is cleared by hardware, and nothing may be
+' written until then [30.5].
+Sub WaitLoad(ByVal m As Byte)
+    Dim n As Word
+    n = 0
+    While (GetCon(m) And 4) <> 0 And n < 60000
+        Inc(n)
+    Wend
+End Sub
+
+' Period, prescale and clock of module m; the slice "a" configuration (both outputs high true or low true by
+' polv) is written with the module disabled [30.9.10 note].
+Sub Setup(ByVal m As Byte)
+    Dim cfg As Byte
+    cfg = polv(m * 2 - 2) * 64 + polv(m * 2 - 1) * 128
+    If m = 1 Then
+        PWM1CLK = 2
+        PWM1CPRE = cpre
+        PWM1PR = prv
+        PWM1S1CFG = cfg
+    ElseIf m = 2 Then
+        PWM2CLK = 2
+        PWM2CPRE = cpre
+        PWM2PR = prv
+        PWM2S1CFG = cfg
+    Else
+        PWM3CLK = 2
+        PWM3CPRE = cpre
+        PWM3PR = prv
+        PWM3S1CFG = cfg
+    End If
+End Sub
+
+' Parameter register of channel ch (P1 for the odd channels, P2 for the even ones).
+Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
+    If ch = 1 Then
+        PWM1S1P1 = d
+    ElseIf ch = 2 Then
+        PWM1S1P2 = d
+    ElseIf ch = 3 Then
+        PWM2S1P1 = d
+    ElseIf ch = 4 Then
+        PWM2S1P2 = d
+    ElseIf ch = 5 Then
+        PWM3S1P1 = d
+    Else
+        PWM3S1P2 = d
+    End If
+End Sub
+
+' Writes the duty of a channel and asks for the reload at the next period.
+Sub LoadDuty(ByVal ch As Byte, ByVal d As Word)
+    Dim m As Byte
+    m = Inst(ch)
+    If d > steps Then
+        d = steps
+    End If
+    WaitLoad(m)
+    SetDuty(ch, d)
+    SetCon(m, GetCon(m) Or 4)
+End Sub
+
+' True when module m has a running channel.
+Function ModuleActive(ByVal m As Byte) As Boolean
+    Result = (active And (3 << (m * 2 - 2))) <> 0
+End Function
+
+' Stops a channel: the pin becomes an input again and returns to its LATxy bit. The module is disabled with its
+' last channel.
+Public Sub PwmStop(ByVal ch As Byte)
+    Dim msk As Byte
+    Dim m As Byte
+    If ch >= 1 And ch <= 6 Then
+        msk = 1 << (ch - 1)
+        If (active And msk) <> 0 Then
+            m = Inst(ch)
+            PinInput(pins(ch - 1), True)
+            SetPps(pins(ch - 1), 0)
+            active = active And (msk Xor 255)
+            If ModuleActive(m) Then
+                LoadDuty(ch, 0)
+            Else
+                SetCon(m, 0)
+            End If
+        End If
+    End If
+End Sub
+
+' Starts a channel (1..6: PWM1S1P1, PWM1S1P2, PWM2S1P1, PWM2S1P2, PWM3S1P1, PWM3S1P2) on a pin (see the header)
+' at `duty` steps of PwmSteps. A module is set up while disabled (clock FOSC, prescale, period, left aligned mode),
+' the duty and the pin routing are written, and the module is enabled, which copies the registers to the buffers
+' [30.5]; a channel of a module that already runs gets its duty by the reload request. Returns 0 (and does nothing)
+' without a successful PwmInit, for a channel or pin that cannot be used, or for a pin already used by another
+' running channel; a running channel is restarted.
+Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word) As Byte
+    Dim msk As Byte
+    Dim m As Byte
+    Dim c As Byte
+    Result = 0
+    If Not ready Or ch < 1 Or ch > 6 Or Not PinOk(pin) Then
+        Exit
+    End If
+    msk = 1 << (ch - 1)
+    c = 1
+    While c <= 6
+        If c <> ch And (active And (1 << (c - 1))) <> 0 And pins(c - 1) = pin Then
+            Exit
+        End If
+        Inc(c)
+    Wend
+    If (active And msk) <> 0 Then
+        PwmStop(ch)
+    End If
+    m = Inst(ch)
+    pins(ch - 1) = pin
+    PinInput(pin, True)
+    PinDigital(pin)
+    If ModuleActive(m) Then
+        LoadDuty(ch, duty)
+    Else
+        SetCon(m, 0)
+        Setup(m)
+        SetDuty(m * 2 - 1, 0)
+        SetDuty(m * 2, 0)
+        If duty > steps Then
+            duty = steps
+        End If
+        SetDuty(ch, duty)
+        SetCon(m, 128)
+    End If
+    SetPps(pin, ch + 9)
+    PinInput(pin, False)
+    active = active Or msk
+    Result = 1
+End Function
+
+' Duty cycle in steps (0..PwmSteps); no effect on a stopped channel. It takes effect at the next period.
+Public Sub PwmDuty(ByVal ch As Byte, ByVal duty As Word)
+    If ch >= 1 And ch <= 6 Then
+        If (active And (1 << (ch - 1))) <> 0 Then
+            LoadDuty(ch, duty)
+        End If
+    End If
+End Sub
+
+' Duty cycle as a percentage 0..100 of the period (rounded down to a step).
+Public Sub PwmPercent(ByVal ch As Byte, ByVal pct As Byte)
+    Dim d As LongWord
+    If pct > 100 Then
+        pct = 100
+    End If
+    d = LongWord(pct) * steps / 100
+    PwmDuty(ch, Word(d))
+End Sub
+
+' Output polarity (POL1 / POL2 of the slice configuration): inverted = low true. The configuration may only be
+' written with the module disabled [30.9.10], so on a running module this restarts it: both outputs of the module
+' stop for a moment and its period begins again. Always returns 1.
+Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
+    Dim m As Byte
+    Result = 1
+    If ch < 1 Or ch > 6 Then
+        Result = 0
+        Exit
+    End If
+    If inverted Then
+        polv(ch - 1) = 1
+    Else
+        polv(ch - 1) = 0
+    End If
+    m = Inst(ch)
+    If ModuleActive(m) Then
+        SetCon(m, 0)
+        Setup(m)
+        SetCon(m, 128)
+    End If
+End Function
+#else
 Dim Tmr2If As PIR4.1
 Dim steps As Word
 Dim period As Byte
@@ -340,3 +707,4 @@ Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
         Result = 1
     End If
 End Function
+#endif

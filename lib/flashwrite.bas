@@ -1,5 +1,6 @@
 Module Flashwrite
-' Program flash self-write of the 18F27Q10 (DS40002043F, section 12.1). Addresses are PFM *word*
+' Program flash self-write of the 18F27Q10 (DS40002043F, section 12.1) and of the PIC18F0x/1xQ41 (DS40002214G,
+' section 10.3; the paragraph after the Q10 notes below). Addresses are PFM *word*
 ' addresses 0..65535 (Table 12-2: 65536 words); word w is byte address 2*w, which is what NVMADR holds
 ' [12.5.5]. A sector is 128 words = 256 bytes, so sector s starts at word 128*s (sectors 0..511).
 ' The last sector, FlashLastSector, is the one a program normally keeps for data: the compiler fills
@@ -27,17 +28,33 @@ Module Flashwrite
 ' Endurance is 10k erase/write cycles per sector (MEM30), so FlashUpdateWord does nothing when the
 ' word already holds the value. Write protection (the WRTn configuration bits) makes a write fail and
 ' NVMERR is set [12.1.4].
-#if not _has(NVMADRU)
-#error "flashwrite: only the PIC18F27/47Q10 NVM registers (NVMADRU, NVMCON0.NVMERR) are supported"
-#endif
+'
+' PIC18F0x/1xQ41 (chosen with `#if _has(NVMLOCK)`): the same word and sector (page) addressing, the sector being
+' 128 words [10.3.1] and the flash 8, 16 or 32 K words, so FlashLastSector is 63, 127 or 255. NVMADR holds the
+' byte address, as above. Operations are NVMCMD in NVMCON1 (read 000, word write 011, page read 010, page write
+' 101, page erase 110 [Table 10-1]) then the unlock sequence NVMLOCK = 55h, AAh and GO [10.2]; GO clears when the
+' operation ends, and WRERR (NVMCON1 bit 7) reports a write-protected or invalid target [10.3.1]. A word write
+' needs an erased word [10.3.5]. FlashUpdateWord follows the Word Modify procedure [10.3.6, Example 10-7]: page
+' read into the buffer RAM (the last RAM bank, the one after the GPR banks [Table 10-2]; TBLWT writes it with the
+' low byte of TBLPTR as the offset [10.3.10.5]), page erase, change the two bytes, page write. The data sheet gives
+' no pause after the GO instruction and the silicon errata (DS80000901H, DS80000911H) none for the NVM, so none is added.
+' NVMCMD is put back to 000 at the end [10.3.5 step 9]. Interrupts are off from before NVMADR is loaded.
+#if _has(NVMLOCK)
+Dim NvmGo As NVMCON0.0
+Dim NvmErr As NVMCON1.7
+Dim IntEn As INTCON0.7
+#elseif _has(NVMADRU)
 Dim NvmRd As NVMCON1.0
 Dim NvmEn As NVMCON0.7
 Dim NvmErr As NVMCON0.4
 Dim IntEn As INTCON.7
+#else
+#error "flashwrite: only the NVM registers of the PIC18F27/47Q10 (NVMADRU, NVMCON0.NVMERR) and the PIC18-Q41 (NVMLOCK, NVMCON1.WRERR) are supported"
+#endif
 
-' Words in a sector, and the number of the last sector.
+' Words in a sector, and the number of the last sector (the program flash in bytes / 256, less one).
 Public Const FlashSectorWords = 128
-Public Const FlashLastSector = 511
+Public Const FlashLastSector As Word = _FlashBytes / 256 - 1
 
 ' The PFM word address of the first word of sector s.
 Public Function FlashSectorAddr(ByVal sector As Word) As Word
@@ -53,9 +70,16 @@ End Sub
 ' The word at PFM word address addr (65535 = FFFFh when erased).
 Public Function FlashReadWord(ByVal addr As Word) As Word
     SetAddr(addr)
+#if _has(NVMLOCK)
+    NVMCON1 = 0
+    NvmGo = 1
+    While NvmGo = 1
+    Wend
+#else
     NvmRd = 1
     While NvmRd = 1
     Wend
+#endif
     Result = NVMDAT
 End Function
 
@@ -68,6 +92,21 @@ Public Function FlashEraseSector(ByVal sector As Word) As Byte
         ie = IntEn
         IntEn = 0
         SetAddr(sector << 7)
+#if _has(NVMLOCK)
+        NVMCON1 = 6
+        NVMLOCK = 85
+        NVMLOCK = 170
+        NvmGo = 1
+        While NvmGo = 1
+        Wend
+        If NvmErr = 0 Then
+            Result = 1
+        End If
+        NVMCON1 = 0
+        If ie = 1 Then
+            IntEn = 1
+        End If
+#else
         NvmErr = 0
         NvmEn = 1
         Asm
@@ -87,6 +126,7 @@ Public Function FlashEraseSector(ByVal sector As Word) As Byte
             Result = 1
         End If
         NvmErr = 0
+#endif
     End If
 End Function
 
@@ -98,6 +138,25 @@ Public Function FlashWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
     IntEn = 0
     SetAddr(addr)
     NVMDAT = value
+#if _has(NVMLOCK)
+    NVMCON1 = 3
+    NVMLOCK = 85
+    NVMLOCK = 170
+    NvmGo = 1
+    While NvmGo = 1
+    Wend
+    Result = 0
+    If NvmErr = 0 Then
+        NVMCON1 = 0
+        If FlashReadWord(addr) = value Then
+            Result = 1
+        End If
+    End If
+    NVMCON1 = 0
+    If ie = 1 Then
+        IntEn = 1
+    End If
+#else
     NvmErr = 0
     NvmEn = 1
     Asm
@@ -120,6 +179,7 @@ Public Function FlashWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
         End If
     End If
     NvmErr = 0
+#endif
 End Function
 
 ' Replaces one word and keeps the other 127 of its sector, about 20 ms. Does nothing when the word
@@ -131,6 +191,9 @@ End Function
 Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
     Dim cur As Word
     Dim ie As Byte
+#if _has(NVMLOCK)
+    Dim failed As Byte
+#endif
     cur = FlashReadWord(addr)
     If cur = value Then
         Result = 1
@@ -140,6 +203,49 @@ Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
         Result = 0
         ie = IntEn
         IntEn = 0
+#if _has(NVMLOCK)
+        SetAddr(addr)
+        NVMCON1 = 2
+        NvmGo = 1
+        While NvmGo = 1
+        Wend
+        NVMCON1 = 6
+        NVMLOCK = 85
+        NVMLOCK = 170
+        NvmGo = 1
+        While NvmGo = 1
+        Wend
+        failed = NvmErr
+        If failed = 0 Then
+            TBLPTRU = 0
+            TBLPTRH = 0
+            TBLPTRL = Byte(addr << 1)
+            TABLAT = Byte(value)
+            Asm
+                tblwt*+
+            End Asm
+            TABLAT = Byte(value >> 8)
+            Asm
+                tblwt*+
+            End Asm
+            NVMCON1 = 5
+            NVMLOCK = 85
+            NVMLOCK = 170
+            NvmGo = 1
+            While NvmGo = 1
+            Wend
+            failed = NvmErr
+        End If
+        NVMCON1 = 0
+        If ie = 1 Then
+            IntEn = 1
+        End If
+        If failed = 0 Then
+            If FlashReadWord(addr) = value Then
+                Result = 1
+            End If
+        End If
+#else
         TBLPTRU = 0
         TBLPTRH = 0
         TBLPTRL = Byte(addr << 1)
@@ -193,5 +299,6 @@ Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
             End If
         End If
         NvmErr = 0
+#endif
     End If
 End Function

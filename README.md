@@ -11,7 +11,8 @@ A BASIC compiler for PIC microcontrollers, built for small, fast code. It turns 
 typed BASIC (modules, subroutines and functions, structures, interrupts) into a `.hex` file, and
 comes with a library of ready-made modules for the common peripherals.
 
-First target: **PIC18F27Q10**. More microcontrollers will follow, one at a time.
+First target: **PIC18F27Q10**. The **PIC18F04/05/06/14/15/16Q41** family is supported too (see `docs/MANUAL.md`, "Supported
+device", for what is ported). More microcontrollers will follow, one at a time.
 
 ## A taste
 

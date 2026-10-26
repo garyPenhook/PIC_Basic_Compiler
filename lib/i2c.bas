@@ -19,6 +19,308 @@ Module I2c
 ' The module is not reentrant: do not call it from a handler and from the main program. It does
 ' not use the MSSP1 interrupt (SSP1IF is polled and cleared by the module), so keep that interrupt
 ' disabled.
+
+' PIC18F0x/1xQ41 (chosen with `#if _has(I2C1CON0)`): the same routines and status codes, driven in software on
+' two ordinary pins instead of the I2C1 peripheral. Reason: I2C1 counts the bytes of a transfer in hardware
+' (I2C1CNT; Stop or Restart by itself, DS40002214G 36.4.2.7) and its host acknowledges a received byte before
+' the program says whether it wants another, so the one-step-at-a-time Start / Send / Receive(ack) / Restart /
+' Stop used by `Oled`, `Aht30` and programs cannot be mapped onto it without knowing the length first. Pins are
+' numbered 0..23 (RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23); RA3 is input only and refused, port B
+' pins only on the 20-pin parts. SCL and SDA are open drain: the latch bit is 0, the pin pulls low by clearing
+' its TRIS bit and releases by setting it, so the bus needs external pull-ups. A client that stretches the clock
+' is waited for (bounded, status 1). `hz` is 2000..400000; each half period is DelayUS(ceil(500000 / hz)) plus
+' the time of the routines, so the real clock is lower, much lower on a slow `Clock`. Arbitration: SDA is read
+' back after each bit sent; a difference is status 2.
+#if _has(I2C1CON0)
+Dim sclPort As Byte
+Dim sclMask As Byte
+Dim sdaPort As Byte
+Dim sdaMask As Byte
+Dim halfUs As Byte
+Dim ready As Boolean
+Dim lastStatus As Byte
+
+' TRIS bit set: the pin is released (an input, pulled up outside).
+Sub Release(ByVal port As Byte, ByVal m As Byte)
+    If port = 0 Then
+        TRISA = TRISA Or m
+#if _has(TRISB)
+    ElseIf port = 1 Then
+        TRISB = TRISB Or m
+#endif
+    Else
+        TRISC = TRISC Or m
+    End If
+End Sub
+
+' TRIS bit clear with the latch bit 0: the pin pulls the line low.
+Sub PullLow(ByVal port As Byte, ByVal m As Byte)
+    Dim n As Byte
+    n = m Xor 255
+    If port = 0 Then
+        TRISA = TRISA And n
+#if _has(TRISB)
+    ElseIf port = 1 Then
+        TRISB = TRISB And n
+#endif
+    Else
+        TRISC = TRISC And n
+    End If
+End Sub
+
+Function Level(ByVal port As Byte, ByVal m As Byte) As Boolean
+    Dim v As Byte
+    If port = 0 Then
+        v = PORTA
+#if _has(TRISB)
+    ElseIf port = 1 Then
+        v = PORTB
+#endif
+    Else
+        v = PORTC
+    End If
+    Result = (v And m) <> 0
+End Function
+
+' Latch bit 0 and a digital pin, released.
+Sub PinSetup(ByVal port As Byte, ByVal m As Byte)
+    Dim n As Byte
+    n = m Xor 255
+    If port = 0 Then
+        LATA = LATA And n
+        ANSELA = ANSELA And n
+#if _has(TRISB)
+    ElseIf port = 1 Then
+        LATB = LATB And n
+        ANSELB = ANSELB And n
+#endif
+    Else
+        LATC = LATC And n
+        ANSELC = ANSELC And n
+    End If
+    Release(port, m)
+End Sub
+
+Function PinOk(ByVal pin As Byte) As Boolean
+    Result = (pin <= 5 And pin <> 3) Or (pin >= 16 And pin <= 21)
+#if _has(RC6PPS)
+    If pin = 22 Or pin = 23 Then
+        Result = True
+    End If
+#endif
+#if _has(TRISB)
+    If pin >= 12 And pin <= 15 Then
+        Result = True
+    End If
+#endif
+End Function
+
+Sub Half()
+    DelayUS(halfUs)
+End Sub
+
+' Releases SCL and waits for it to be high (a client may hold it low). False on a timeout.
+Function SclHigh() As Boolean
+    Dim n As Word
+    Release(sclPort, sclMask)
+    n = 0
+    Result = False
+    While n < 20000
+        If Level(sclPort, sclMask) Then
+            Result = True
+            Exit
+        End If
+        Inc(n)
+    Wend
+End Function
+
+Sub SdaSet(ByVal one As Boolean)
+    If one Then
+        Release(sdaPort, sdaMask)
+    Else
+        PullLow(sdaPort, sdaMask)
+    End If
+End Sub
+
+' Sets up the two pins as a software host at about `hz` (2000..400000) with SCL on `scl` and SDA on `sda`
+' (different pins). Returns 1, or 0 for a pin that is not allowed or an `hz` out of range.
+Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As Byte) As Byte
+    Dim h As LongWord
+    Result = 0
+    If Not PinOk(scl) Or Not PinOk(sda) Or scl = sda Or hz < 2000 Or hz > 400000 Then
+        Exit
+    End If
+    h = (500000 + hz - 1) / hz
+    halfUs = Byte(h)
+    sclPort = scl >> 3
+    sclMask = 1 << (scl And 7)
+    sdaPort = sda >> 3
+    sdaMask = 1 << (sda And 7)
+    PinSetup(sclPort, sclMask)
+    PinSetup(sdaPort, sdaMask)
+    ready = True
+    lastStatus = 0
+    Result = 1
+End Function
+
+' Gives both pins back as plain inputs (the pins given to I2cInit).
+Public Sub I2cOff(ByVal scl As Byte, ByVal sda As Byte)
+    If PinOk(scl) Then
+        Release(scl >> 3, 1 << (scl And 7))
+    End If
+    If PinOk(sda) Then
+        Release(sda >> 3, 1 << (sda And 7))
+    End If
+    ready = False
+End Sub
+
+' The status of the last Start, Restart, Stop, byte or register routine (codes in the header).
+Public Function I2cStatus() As Byte
+    Result = lastStatus
+End Function
+
+' Start condition: SDA falls while SCL is high. A repeated start first releases SDA, then SCL.
+Function Condition(ByVal restart As Boolean) As Byte
+    Result = 0
+    If restart Then
+        SdaSet(True)
+        Half()
+        If Not SclHigh() Then
+            Result = 1
+            Exit
+        End If
+        Half()
+    End If
+    If Not Level(sdaPort, sdaMask) Then
+        Result = 2
+        Exit
+    End If
+    SdaSet(False)
+    Half()
+    PullLow(sclPort, sclMask)
+    Half()
+End Function
+
+Public Function I2cStart() As Byte
+    Result = 4
+    If ready Then
+        Result = Condition(False)
+    End If
+    lastStatus = Result
+End Function
+
+Public Function I2cRestart() As Byte
+    Result = 4
+    If ready Then
+        Result = Condition(True)
+    End If
+    lastStatus = Result
+End Function
+
+' Stop condition: SDA rises while SCL is high.
+Public Function I2cStop() As Byte
+    Result = 4
+    If ready Then
+        Result = 0
+        SdaSet(False)
+        Half()
+        If SclHigh() Then
+            Half()
+            SdaSet(True)
+            Half()
+            If Not Level(sdaPort, sdaMask) Then
+                Result = 2
+            End If
+        Else
+            Result = 1
+        End If
+    End If
+    lastStatus = Result
+End Function
+
+' One clock pulse with SDA at `one`; returns SDA as read while SCL is high. SCL is left low. A stuck clock sets
+' lastStatus to 1.
+Function Clk(ByVal one As Boolean) As Boolean
+    SdaSet(one)
+    Half()
+    If SclHigh() Then
+        Result = Level(sdaPort, sdaMask)
+        Half()
+    Else
+        Result = False
+        lastStatus = 1
+    End If
+    PullLow(sclPort, sclMask)
+End Function
+
+' Sends a byte (an address with its R/W bit, or data), MSb first, then reads the acknowledge. Returns 0 when the
+' client acknowledged, 3 when it did not, 2 when SDA differs from what was sent, 1 on a stuck clock.
+Public Function I2cSend(ByVal b As Byte) As Byte
+    Dim i As Byte
+    Dim one As Boolean
+    Dim got As Boolean
+    Result = 4
+    If Not ready Then
+        lastStatus = Result
+        Exit
+    End If
+    Result = 0
+    lastStatus = 0
+    i = 0
+    While i < 8 And Result = 0
+        one = (b And 128) <> 0
+        got = Clk(one)
+        If lastStatus <> 0 Then
+            Result = lastStatus
+        ElseIf got <> one Then
+            Result = 2
+        End If
+        b = b << 1
+        Inc(i)
+    Wend
+    If Result = 0 Then
+        got = Clk(True)
+        If lastStatus <> 0 Then
+            Result = lastStatus
+        ElseIf got Then
+            Result = 3
+        End If
+    End If
+    lastStatus = Result
+End Function
+
+' Receives a byte and then sends an acknowledge (`ack` = True, more bytes follow) or a not acknowledge (False,
+' for the last byte). On an error it returns 0 and I2cStatus is not 0.
+Public Function I2cReceive(ByVal ack As Boolean) As Byte
+    Dim i As Byte
+    Dim v As Byte
+    Dim got As Boolean
+    Result = 0
+    lastStatus = 4
+    If Not ready Then
+        Exit
+    End If
+    lastStatus = 0
+    v = 0
+    i = 0
+    While i < 8 And lastStatus = 0
+        got = Clk(True)
+        v = v << 1
+        If got Then
+            v = v Or 1
+        End If
+        Inc(i)
+    Wend
+    If lastStatus = 0 Then
+        got = Clk(Not ack)
+    End If
+    If lastStatus = 0 Then
+        Result = v
+    End If
+    SdaSet(True)
+End Function
+
+#else
 Dim FlagSsp As PIR3.0
 Dim FlagBcl As PIR3.1
 Dim BitRcen As SSP1CON2.3
@@ -262,6 +564,7 @@ Public Function I2cReceive(ByVal ack As Boolean) As Byte
         lastStatus = Condition(16)
     End If
 End Function
+#endif
 
 ' True when a client answers (acknowledges) the 7-bit address `addr` (0..127) for writing.
 Public Function I2cPing(ByVal addr As Byte) As Boolean

@@ -100,6 +100,7 @@ pub struct ConfigSetting {
     pub register: String,
     pub field: String,
     pub value: u32,
+    pub span: Span,
 }
 
 #[derive(Default)]
@@ -498,10 +499,29 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.ctx = Ctx::main();
         }
         self.check_recursion();
+        self.check_vector_table();
         self.check_ram();
         self.check_clock_setup();
         let off = self.a.options.warn_off.clone();
         self.diags.items.retain(|d| !(d.severity == crate::diag::Severity::Warning && off.contains(d.code)));
+    }
+
+    /// The vectored interrupt controller (`MVECEN` in the configuration words) is on after a reset.
+    /// The compiler's handlers sit at the two fixed vectors (0008h and 0018h), which is what the
+    /// controller does with `MVECEN = OFF` `[DS40002214G p.114]`; so a program with a handler gets
+    /// that setting, and a program that asks for the vector table is refused.
+    fn check_vector_table(&mut self) {
+        let Some(dev) = self.a.device.clone() else { return };
+        let Some((reg, field)) = dev.config.iter().find_map(|r| r.fields.iter().find(|f| f.name == "MVECEN").map(|f| (r, f))) else { return };
+        if !self.a.symbols.iter().any(|s| matches!(s.kind, SymKind::Interrupt { .. })) {
+            return;
+        }
+        let Some(off) = field.settings.iter().find(|s| s.name == "OFF").map(|s| s.value) else { return };
+        match self.a.config.iter().find(|c| c.field == "MVECEN") {
+            Some(c) if c.value != off => self.diags.error("E-CONFIG", c.span, "MVECEN = ON gives each interrupt its own vector table entry, which the compiler does not generate; use MVECEN = OFF (the default for a program with an Interrupt)"),
+            Some(_) => {}
+            None => self.a.config.push(ConfigSetting { register: reg.name.clone(), field: field.name.clone(), value: off, span: Span::default() }),
+        }
     }
 
     /// `Clock` only tells the compiler the speed to expect. When it differs from the speed the
@@ -634,7 +654,12 @@ impl<'p, 'd> Sema<'p, 'd> {
         add(self, "ipHigh", BYTE, CVal::Int(2));
         if let Some(d) = &self.a.device {
             let n = d.device.name.clone();
+            let (flash, eeprom, ram) = (d.memory.program.size, d.memory.eeprom.size, d.memory.data.usable_gpr);
             add(self, "_Device", Ty::Str(n.len() as u32), CVal::Str(n));
+            // Sizes the library modules cannot learn from a register name (a data EEPROM of 1024 or 512 bytes).
+            add(self, "_FlashBytes", LONGWORD, CVal::Int(flash as i128));
+            add(self, "_EepromBytes", WORD, CVal::Int(eeprom as i128));
+            add(self, "_RamBytes", WORD, CVal::Int(ram as i128));
         }
     }
 
@@ -702,7 +727,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                 *v as u32
             }
         };
-        self.a.config.push(ConfigSetting { register: reg.name.clone(), field: field.name.clone(), value });
+        self.a.config.push(ConfigSetting { register: reg.name.clone(), field: field.name.clone(), value, span: it.name.span });
     }
 
     // ---- declarations --------------------------------------------------------------------
@@ -1393,7 +1418,11 @@ impl<'p, 'd> Sema<'p, 'd> {
                 self.block(body);
                 self.ctx.saves -= 1;
             }
-            StmtKind::Asm { preserves, .. } => {
+            StmtKind::Asm { preserves, lines } => {
+                // A block that stores into the routine's `<ROUTINE>__RESULT` assigns it.
+                if lines.iter().any(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|t| t.ends_with("__RESULT"))) {
+                    self.ctx.result_assigned = true;
+                }
                 for p in preserves {
                     let k = p.key();
                     let known = k == "w" || self.a.device.as_ref().is_some_and(|d| d.find_sfr(&k).is_some());

@@ -87,7 +87,7 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
         "18xxxx" => Ok(FamilyFacts {
             family: "pic18",
             vectors: (0x00, 0x08, 0x18),
-            vectors_source: "PIC18F27/47Q10 data sheet DS40002043F p.108 and p.193 (fixed vectors: reset 0000h, high 0008h, low 0018h)",
+            vectors_source: "PIC18F27/47Q10 data sheet DS40002043F p.108 and p.193 (fixed vectors: reset 0000h, high 0008h, low 0018h); PIC18F0x/1xQ41 data sheet DS40002214G p.57 and p.114 (reset 000000h; with MVECEN = 0 the IVTBASE default 000008h is the high vector and the low vector is eight words on, 000018h)",
         }),
         // Enhanced mid-range: one interrupt vector, so high and low are both 0004h.
         "16Exxx" => Ok(FamilyFacts {
@@ -237,7 +237,10 @@ fn memory(root: roxmltree::Node, family: &str) -> Res<Memory> {
     }
     sfr.sort_by_key(|r| r.start);
 
+    let hw_stack = descendants(root, "MemTraits").next().and_then(|n| attr(n, "hwstackdepth")).map(num).transpose()?.unwrap_or(0);
+
     Ok(Memory {
+        hw_stack,
         program,
         eeprom,
         user_id,
@@ -372,6 +375,11 @@ fn joined(root: roxmltree::Node, sfrs: &[Sfr]) -> Res<Vec<Joined>> {
                 }
             }
         }
+        // The pack declares DAC1DAT (and the like) as 16 bits wide although it has one byte member
+        // (DS40002214G p.765: DAC1DATL is 8 bits). A single byte is an ordinary SFR, not a join.
+        if members.len() == 1 && children(j, "SFRDef").count() == 1 {
+            continue;
+        }
         if members.len() < 2 {
             return Err(format!("cannot resolve the byte members of joined register {name} at {addr:#x}"));
         }
@@ -389,6 +397,9 @@ fn joined(root: roxmltree::Node, sfrs: &[Sfr]) -> Res<Vec<Joined>> {
 struct Expect {
     source: ExpectSource,
     memory: ExpectMemory,
+    /// Values the pack gives that differ from the data sheet, each with the reason it is accepted.
+    #[serde(default)]
+    accepted: BTreeMap<String, Accepted>,
     vectors: ExpectVectors,
     /// SFR-name pattern (`#` = one digit) -> expected count, with the data sheet feature it checks.
     counts: BTreeMap<String, u32>,
@@ -401,9 +412,22 @@ struct ExpectSource {
 }
 
 #[derive(Deserialize)]
+struct Accepted {
+    pack: u32,
+    reason: String,
+}
+
+#[derive(Deserialize)]
 struct ExpectMemory {
     program_bytes: u32,
+    /// The data sheet's SRAM figure.
     sram_bytes: u32,
+    /// RAM the pack lists on top of `sram_bytes` that the data sheet reserves (the NVM buffer bank).
+    #[serde(default)]
+    system_ram_bytes: u32,
+    /// Levels of the hardware return stack, when the data sheet gives them.
+    #[serde(default)]
+    hw_stack_levels: Option<u32>,
     eeprom_bytes: u32,
     config_bytes: u32,
     user_id_bytes: u32,
@@ -423,14 +447,25 @@ fn check(dev: &Path, expect: &Path) -> Res<()> {
 
     let mut bad = d.validate();
     let mut compared = 0usize;
+    let accepted = &e.accepted;
     let mut cmp = |what: &str, got: u32, want: u32| {
         compared += 1;
-        if got != want {
-            bad.push(format!("{what}: description says {got}, data sheet says {want}"));
+        let key = what.split(" (").next().unwrap_or(what);
+        match accepted.get(key) {
+            Some(a) if got == a.pack && got != want => println!("note: {key}: pack says {got}, data sheet says {want}; accepted ({})", a.reason),
+            _ if got != want => bad.push(format!("{what}: description says {got}, data sheet says {want}")),
+            _ => {}
         }
     };
     cmp("program memory bytes", d.memory.program.size, e.memory.program_bytes);
-    cmp("SRAM bytes (total GPR)", d.memory.data.total_gpr, e.memory.sram_bytes);
+    if e.memory.system_ram_bytes > 0 {
+        // The data sheet's figure leaves the system RAM out, so it is what the compiler may allocate.
+        cmp("SRAM bytes (usable GPR)", d.memory.data.usable_gpr, e.memory.sram_bytes);
+    }
+    cmp("SRAM bytes (total GPR)", d.memory.data.total_gpr, e.memory.sram_bytes + e.memory.system_ram_bytes);
+    if let Some(levels) = e.memory.hw_stack_levels {
+        cmp("hardware stack levels", d.memory.hw_stack, levels);
+    }
     cmp("data EEPROM bytes", d.memory.eeprom.size, e.memory.eeprom_bytes);
     cmp("configuration bytes", d.memory.config.size, e.memory.config_bytes);
     cmp("user ID bytes", d.memory.user_id.size, e.memory.user_id_bytes);

@@ -16,6 +16,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../target/debug/basil"))
 ap.add_argument("--mdb", default=None)
 ap.add_argument("--keep", action="store_true")
+ap.add_argument("--device", default="18F27Q10", help="part to build for and simulate; the program's Device line is replaced")
 ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for the reference build")
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()
@@ -27,6 +28,11 @@ fails = 0
 for src in a.files:
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
+    if a.device != "18F27Q10":
+        # Same program, other part: only the Device header changes (pins and peripherals are not touched).
+        text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, open(src).read(), count=1, flags=re.M | re.I)
+        src = os.path.join(work, name + ".bas")
+        open(src, "w").write(text)
     r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL {name}: compile\n{r.stderr}")
@@ -50,7 +56,7 @@ for src in a.files:
     cy = re.search(r"^'\s*cycles:\s*(\d+)\s+(\d+)", head, re.M)
     jobs.append((name, hexf, syms, vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None))
 
-script = ["device PIC18F27Q10", "hwtool SIM"]
+script = [f"device PIC{a.device}", "hwtool SIM"]
 for name, hexf, syms, vars_, expect, cyc_range in jobs:
     script += [f"program {hexf}", f"break *0x{syms['__halt']:X}", "run", "wait 60000", "stopwatch"]
     for k in expect:

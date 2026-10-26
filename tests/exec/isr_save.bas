@@ -6,6 +6,13 @@ Program Iss
 Device = 18F27Q10
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+#if _has(PIR3.TMR1IF)
+Dim SwIf As PIR3.4
+Dim SwIe As PIE3.4
+#else
+Dim SwIf As PIR0.0
+Dim SwIe As PIE0.0
+#endif
 Dim hits As Byte
 Dim a As Byte
 Dim b As Byte
@@ -20,7 +27,7 @@ End Function
 Function Other() As Byte
     Dim z As Byte
     z = 55
-    PIR0.0 = 1
+    SwIf = 1
     While hits < 1
     Wend
     Result = z
@@ -28,7 +35,7 @@ End Function
 
 Interrupt H()
     Dim i As Byte
-    PIR0.0 = 0
+    SwIf = 0
     Inc(hits)
     keep = 77
     For i = 1 To 3
@@ -54,7 +61,7 @@ Interrupt H()
     keep = 99
 End Interrupt
 
-PIE0.0 = 1
+SwIe = 1
 Enable(H)
 b = Other()
 Disable(H)

@@ -8,6 +8,24 @@ Program Isrd
 Device = 18F27Q10
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+#if _has(PIR3.TMR0IF)
+Dim T0If As PIR3.7
+Dim T0Ie As PIE3.7
+Dim T0Ip As IPR3.7
+#else
+Dim T0If As PIR0.5
+Dim T0Ie As PIE0.5
+Dim T0Ip As IPR0.5
+#endif
+#if _has(PIR3.TMR1IF)
+Dim SwIf As PIR3.4
+Dim SwIe As PIE3.4
+Dim SwIp As IPR3.4
+#else
+Dim SwIf As PIR0.0
+Dim SwIe As PIE0.0
+Dim SwIp As IPR0.0
+#endif
 Dim hh As Word
 Dim lh As Word
 Dim hsum As LongWord
@@ -187,7 +205,7 @@ End Function
 Interrupt Hi(ipHigh)
     Dim p As Word
     Dim q As Word
-    PIR0.0 = 0
+    SwIf = 0
     If inlow = 1 Then
         Inc(nest)
     End If
@@ -198,7 +216,7 @@ Interrupt Hi(ipHigh)
         q = Mix(p)
     Restore
     If hh < 150 Then
-        PIR0.0 = 1
+        SwIf = 1
     End If
 End Interrupt
 
@@ -206,12 +224,12 @@ Interrupt Lo(ipLow)
     Dim p As Word
     Dim q As Word
     Dim k As Byte
-    PIR0.5 = 0
+    T0If = 0
     inlow = 1
     For k = 1 To (lh And 15)
         Inc(p)
     Next
-    PIR0.0 = 1
+    SwIf = 1
     Inc(lh)
     p = lh * 13
     lsum = lsum + p
@@ -226,9 +244,10 @@ Interrupt Lo(ipLow)
     inlow = 0
 End Interrupt
 
-IPR0.5 = 0
-PIE0.5 = 1
-PIE0.0 = 1
+T0Ip = 0
+SwIp = 1
+T0Ie = 1
+SwIe = 1
 Enable(Hi)
 Enable(Lo)
 r1 = Work()

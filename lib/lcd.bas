@@ -6,7 +6,7 @@ Module Lcd
 ' [Table 6]: 50 us for 37 us instructions, 2 ms for Clear display (1.52 ms) and Return home.
 '
 ' Pins are numbered 0..23: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23 (the Adc/I2c/Spi
-' numbering with port A added). LcdInit makes the six pins digital outputs. The pins can be shared with
+' numbering with port A added). A part without port B (the 14-pin PIC18-Q41) refuses pins 8..15. LcdInit makes the six pins digital outputs. The pins can be shared with
 ' other outputs of the same ports only if nothing else changes a LATx register while a Lcd routine
 ' runs (the pins are set with read-modify-write on LATA/LATB/LATC): do not use the module from an
 ' interrupt handler and from the main program.
@@ -42,11 +42,13 @@ Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
             LATA = LATA And (m Xor 255)
         End If
     ElseIf pin < 16 Then
+#if _has(LATB)
         If level Then
             LATB = LATB Or m
         Else
             LATB = LATB And (m Xor 255)
         End If
+#endif
     Else
         If level Then
             LATC = LATC Or m
@@ -66,8 +68,10 @@ Sub PinOutput(ByVal pin As Byte)
         ANSELA = ANSELA And n
         TRISA = TRISA And n
     ElseIf pin < 16 Then
+#if _has(LATB)
         ANSELB = ANSELB And n
         TRISB = TRISB And n
+#endif
     Else
         ANSELC = ANSELC And n
         TRISC = TRISC And n
@@ -81,6 +85,12 @@ Function Claim(ByVal pin As Byte) As Boolean
     If pin > 23 Then
         Exit
     End If
+#if not _has(LATB)
+    ' The 14-pin PIC18-Q41 parts have no port B (DS40002214G Table 3-1).
+    If pin >= 8 And pin < 16 Then
+        Exit
+    End If
+#endif
     mask = LongWord(1) << pin
     If (used And mask) = 0 Then
         used = used Or mask
