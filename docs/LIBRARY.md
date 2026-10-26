@@ -36,6 +36,7 @@ so the 16F column is checked against the data sheet and the preprocessing only, 
 | `lcd` | done | **not ported** | port B does not exist on the 14-pin part; choose the pins |
 | `oled` | done | **not ported** | uses `TBLPTR` / `TABLAT` (PIC18 table reads); needs an alternative for the enhanced mid-range core |
 | `eeprom` | done | **not ported** | different NVM registers (no `NVMCON0`, `NVMADRU`); different unlock and access sequence |
+| `flashwrite` | done | **not ported** (`#error`) | same NVM differences as `eeprom`; the 16F errata 1.9.1 equivalent has not been read |
 | `aht30`, `floatlib` | done | portable if the core generator supports them | check once `pic16e` code generation exists |
 
 How to port a module (the pattern used so far):
@@ -143,6 +144,25 @@ until one write succeeds, so it is not used as the error flag: success is the re
 `NVMERR`. A write takes the device's programming time, during which the routine waits (the CPU is not stalled
 by the hardware, but the next write cannot start). Not reentrant: do not call it from a handler and from the
 main program.
+
+## flashwrite (program flash self-write)
+Addresses are PFM **word** addresses, 0..65535 (byte address / 2); a sector is 128 words (256 bytes), sectors 0..511.
+| Routine | Effect |
+|---|---|
+| `FlashReadWord(addr)` | the word at `addr` (65535 when erased); no unlock needed |
+| `FlashEraseSector(sector)` | erases sector 0..511 (about 10 ms, CPU stalled). Returns 1; 0 for a sector above 511 (nothing is erased) or when `NVMERR` was set (write-protected) |
+| `FlashWriteWord(addr, value)` | programs one **erased** word (about 50 us). Returns 1 when it reads back as `value` |
+| `FlashUpdateWord(addr, value)` | replaces one word and keeps the other 127 of its sector (about 20 ms): nothing if it already holds `value`, a plain word write if erased, otherwise sector read, erase, `TBLWT` of the two bytes, sector write (Example 12-4). Returns 1 when it reads back as `value` |
+| `FlashSectorAddr(sector)` | word address of the first word of the sector |
+| `FlashSectorWords`, `FlashLastSector` | constants 128 and 511 |
+
+Every unlock sequence ends `BSF NVMCON1,x` followed by two all-zero `NOP`s in the same `Asm` block: errata 1.9.1
+(DS80000832G p.7), the first instruction after a self-write may not execute. Errata 1.6.2: no flash writes above 85 degrees C.
+`NVMERR` is cleared before each operation and read right after it (errata 1.6.1), and writes are verified by read-back.
+Global interrupts are off for each operation and `GIE` is restored; the CPU stalls during erase and write, so interrupts are
+served late. Endurance is 10k erase/write cycles per sector. The compiler fills flash from address 0, so keep data in the
+last sector (`FlashLastSector`) unless `basil --report` shows the code ends well below it; erasing a sector holding code
+destroys it. Write protection (`WRTn` configuration bits) makes a write return 0. Not reentrant.
 
 ## pwm (CCP1, CCP2, PWM3, PWM4 on Timer2)
 | Routine | Effect |
@@ -282,5 +302,5 @@ even; infinities and NaN propagate; denormals are flushed to zero. Float work di
 routine and call that inside `Save(…) … Restore`. Cost: about 700 words for `+`, 800 for `*`, 470 for `/`, plus about 250 shared. See D51.
 
 ## Tests
-`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` and `lib_aht30.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
+`tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_flashwrite.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` and `lib_aht30.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,
 timer overflows); `tests/programs/library_all.bas` (built by `tests/backend.rs`) includes every module. Not yet checked on hardware (D6).

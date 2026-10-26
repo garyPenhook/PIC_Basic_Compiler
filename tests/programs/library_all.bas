@@ -10,6 +10,7 @@ Include "serial"
 Include "serial2"
 Include "adc"
 Include "eeprom"
+Include "flashwrite"
 Include "pwm"
 Include "i2c"
 Include "spi"
@@ -55,6 +56,10 @@ r = Eeprom.EepromRead(0)
 r = Eeprom.EepromWrite(0, r)
 x = Eeprom.EepromReadWord(2)
 r = Eeprom.EepromWriteWord(2, x)
+x = Flashwrite.FlashReadWord(Flashwrite.FlashSectorAddr(Flashwrite.FlashLastSector))
+r = Flashwrite.FlashEraseSector(Flashwrite.FlashLastSector)
+r = Flashwrite.FlashWriteWord(65408, x)
+r = Flashwrite.FlashUpdateWord(65408, x)
 r = Pwm.PwmInit(5000)
 r = Pwm.PwmStart(1, 18, 100)
 r = Pwm.PwmStart(3, 0, 200)

@@ -83,6 +83,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `serial`, `serial2` | EUSART1 and EUSART2: send/receive bytes, strings and numbers |
 | `adc` | 10-bit ADC reads, averaging, millivolts, FVR reference (silicon errata worked around) |
 | `eeprom` | data EEPROM read/write (bytes and words) |
+| `flashwrite` | program flash self-write: read, sector erase, word write, word update (errata 1.9.1 NOPs) |
 | `i2c` | I2C host on MSSP1: write, read, register access, bus ping, bounded waits |
 | `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
@@ -92,7 +93,6 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 
 ## Still to do
 
-* **Library:** program-flash self-write.
 * **Language:** overloading, `Reentrant` routines (parsed, rejected by the back end), a few remaining
   string and structure forms (the compiler reports these clearly rather than miscompiling them),
   structure initialisers, arrays of strings and multi-dimensional arrays.

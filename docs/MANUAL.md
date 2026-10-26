@@ -2629,6 +2629,81 @@ w = EepromReadWord(10)
 
 ---
 
+## flashwrite  (`Include "flashwrite"`, program flash self-write)
+
+Addresses are program flash **word** addresses, 0..65535 (byte address / 2). A sector is 128 words (256
+bytes); there are 512 sectors. The compiler fills flash from address 0, so keep data in the last sector
+(`FlashLastSector`) unless `basil --report` shows the code ends well below it: erasing a sector that holds
+code destroys that code. Global interrupts are held off for each operation and restored; the CPU stalls
+while a sector erases (10 ms typical) or writes, so interrupts are served late. Errata 1.9.1: the module
+puts two all-zero `NOP`s straight after every self-write instruction. Errata 1.6.2: do not write flash
+above 85 degrees C. Endurance is 10k erase/write cycles per sector. Reading stored values is **not
+verifiable in the simulator** (it does not model flash reads); test on hardware.
+
+### FlashReadWord
+
+**Syntax**
+```basic
+w = FlashReadWord(addr)
+```
+**Overview** Reads one 16-bit word; needs no unlock sequence.
+
+**Parameters** `addr` a `Word`, 0..65535.
+
+**Returns** `Word`; 65535 when the word is erased.
+
+### FlashEraseSector
+
+**Syntax**
+```basic
+ok = FlashEraseSector(sector)
+```
+**Parameters** `sector` a `Word`, 0..511.
+
+**Returns** `Byte`: 1; 0 for a sector above 511 (nothing is erased) or when `NVMERR` was set (write-protected sector).
+
+### FlashWriteWord
+
+**Syntax**
+```basic
+ok = FlashWriteWord(addr, value)
+```
+**Overview** Programs one word that is still erased, about 50 us. A word that was not erased fails the
+read-back.
+
+**Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
+
+### FlashUpdateWord
+
+**Syntax**
+```basic
+ok = FlashUpdateWord(addr, value)
+```
+**Overview** Replaces one word and keeps the rest of its sector, about 20 ms. Does nothing if the word
+already holds `value`; uses the quick word write if it is erased; otherwise reads the sector into the
+holding registers, erases it, writes the two bytes with `TBLWT` and writes the sector back. If it fails
+part way the sector may be left erased.
+
+**Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
+
+### FlashSectorAddr / FlashSectorWords / FlashLastSector
+
+`FlashSectorAddr(sector)` is the word address of the sector's first word; `FlashSectorWords` is 128 and
+`FlashLastSector` is 511.
+
+**Example**
+```basic
+Include "flashwrite"
+Dim ok As Byte
+Dim a As Word
+a = FlashSectorAddr(FlashLastSector)
+ok = FlashEraseSector(FlashLastSector)
+ok = FlashWriteWord(a, 1234)
+ok = FlashUpdateWord(a + 1, 99)
+```
+
+---
+
 ## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
 
 Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
@@ -3757,6 +3832,7 @@ Work down this list. Each item names what to observe.
 16. `i2c`: `I2cPing` against a known device; read a register; remove the pull-up and confirm status 1.
 17. `spi`: loop MOSI to MISO and confirm `SpiTransfer` returns what was sent, in all four modes.
 18. `eeprom`: write, power-cycle, read back; byte and word forms; an out-of-range address.
+    `flashwrite`: erase the last sector, write and update words, power-cycle, read back; confirm the program still runs after a write (errata 1.9.1).
 19. `timer`: Timer0/1/2 flag periods; Timer1 as an external counter on RC0; gate and pulse measurement.
 20. `lcd` and `oled`: text, cursor, custom character, contrast, invert, flip.
 21. `intosc`/`system`: `Clock` at several values; `SysClockHz()` and `SysClockOk()` agree with a scope;

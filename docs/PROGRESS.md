@@ -479,3 +479,12 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - The font table is now a `Const Font(475)` array instead of an `Asm` block (text-only program 625 -> 604 words); the old table had
   one stray trailing byte.
 - `tests/exec/lib_oled.bas` checks the buffer logic in the simulator. Nothing runs on a panel (D6).
+
+## Flash self-write library (done 2026-10-26, 0.1.31)
+- `lib/flashwrite.bas`: `FlashReadWord`, `FlashEraseSector`, `FlashWriteWord`, `FlashUpdateWord`, `FlashSectorAddr`; word addresses
+  (0..65535), 128-word sectors. Unlock codes from Table 12-4, registers from 12.5.1-12.5.5, sequences from Examples 12-3..12-5 (DS40002043F).
+- Errata 1.9.1 (DS80000832G p.7): two all-zero `NOP`s after each `BSF NVMCON1,x`, in the same `Asm` block (checked in the emitted .S).
+  1.6.2 (no writes above 85 C) is documentation only; 1.6.1 is handled by clearing `NVMERR` before and reading it after each operation.
+- `tests/exec/lib_flashwrite.bas`: the simulator does not model flash reads, so it checks `NVMADR`, `NVMEN`, `GIE` restore, `NVMERR`,
+  and `TBLPTRL`/`TABLAT` left by the sector read-modify-write. A scratch run showed `NVMERR` clear after SECRD, SECER and SECWR.
+  `FlashEraseSector` rejects a sector above 511 (it would wrap onto a lower one). Nothing runs on hardware (D6).
