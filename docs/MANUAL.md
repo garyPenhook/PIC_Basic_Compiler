@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.35**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.36**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -87,7 +87,7 @@ whether the chosen device has a register or bit field with `#if _has(REG)` / `#i
 
 ```
 basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
-       [--devices DIR] [--pic-as PATH] [--version] <program.bas>
+       [--devices DIR] [--pic-as PATH] [--version] [--help] <program.bas>
 ```
 
 | Option | Meaning |
@@ -104,7 +104,8 @@ basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `-L DIR` | Add a library folder (repeatable). |
 | `--devices DIR` | Folder holding the device descriptions. |
 | `--pic-as PATH` | The `pic-as` assembler (otherwise `$BASIL_PICAS`, then `/opt/microchip/xc8/*/pic-as/bin/pic-as`). |
-| `--version` | Print the version. |
+| `--version`, `-V` | Print the version. |
+| `--help`, `-h` | Print the option summary and exit. |
 
 `lib/` and `devices/` are found by looking in the source file's folder and then each parent folder
 (only the nearest of each is used), so keep programs inside the repository (for example
@@ -3812,7 +3813,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.35 |
+| Feature of other BASIC compilers | basil 0.1.36 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -3845,7 +3846,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basil --version` prints `0.1.35`. `basil --check` on a program with a deliberate error prints a
+1. `basil --version` prints `0.1.36`. `basil --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.

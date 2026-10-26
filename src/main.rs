@@ -12,7 +12,34 @@ use basil::sema::{SemaConfig, analyze};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: basil [--check] [-S] [--report] [-O0] [--keep-vars] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
+const USAGE: &str = "usage: basil [options] <program.bas>\nTry 'basil --help' for more information.";
+
+const HELP: &str = "basil - BASIC compiler for PIC microcontrollers
+
+usage: basil [options] <program.bas>
+
+Compiles <program.bas> to <program>.hex, with <program>.S (assembly) and
+<program>.map beside it.
+
+options:
+  -o FILE         write the hex file to FILE
+  --check         front end only (syntax, types, declarations); no output files
+  -S              stop after writing the assembly
+  --report        also print words per routine and every RAM object
+  -O0             no optimisation (-O1, -O2 and -Os mean the default, optimise)
+  -g              debug build: line, variable and routine information in <program>.elf
+  --keep-vars     keep stores to variables nothing reads (for simulator tests)
+  -D NAME         define a preprocessor name (repeatable)
+  -L DIR          add a library folder (repeatable)
+  --devices DIR   folder holding the device descriptions
+  --pic-as PATH   the pic-as assembler (default: $BASIL_PICAS, then
+                  /opt/microchip/xc8/*/pic-as/bin/pic-as)
+  -V, --version   print the version and exit
+  -h, --help      print this help and exit
+
+lib/ and devices/ are found in the source file's folder or the nearest parent.
+Full documentation: docs/MANUAL.md
+";
 
 /// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
 /// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
@@ -38,6 +65,10 @@ fn main() -> ExitCode {
         match a.as_str() {
             "--version" | "-V" => {
                 println!("basil {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            "--help" | "-h" => {
+                print!("{HELP}");
                 return ExitCode::SUCCESS;
             }
             "--check" => check_only = true,
