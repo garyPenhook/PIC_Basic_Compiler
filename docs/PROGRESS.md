@@ -512,6 +512,7 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - `.github/workflows/release.yml`: pushing a tag `vX.Y.Z` builds `basil` for Linux x86_64, macOS arm64, macOS x86_64 (cross-built on the
   arm64 runner; the `macos-13` Intel runner never started) and Windows x86_64, packs each with `lib/`, `devices/` and the docs, and
   attaches them to a GitHub release. To release: bump `version` in `Cargo.toml`, commit, `git tag vX.Y.Z`, `git push origin vX.Y.Z`.
+  The release also carries `Basil_Manual.pdf`, built in CI from `docs/MANUAL.md` by `scripts/build-manual-pdf.sh` (pandoc + weasyprint).
   A tag cannot be reused after a failed build; bump the version instead (`v0.1.32` has a tag but no release).
 - The release binaries have been built by CI but not run on macOS or Windows.
 - `tests/exec/arith_mulconst.bas` takes about 2 minutes to compile with a release build (31,088 words) and much longer in a debug build;

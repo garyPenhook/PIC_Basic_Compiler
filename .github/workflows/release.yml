@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag such as v0.1.32 to build the compiler for Linux, macOS and Windows and attach the
-# archives to a GitHub release.
+# archives, and Basil_Manual.pdf built from docs/MANUAL.md, to a GitHub release.
 on:
   push:
     tags: ["v*"]
@@ -47,8 +47,20 @@ jobs:
           name: ${{ matrix.name }}
           path: ${{ env.ASSET }}
 
+  manual:
+    name: build (manual)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y pandoc weasyprint
+      - run: scripts/build-manual-pdf.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manual
+          path: docs/Basil_Manual.pdf
+
   publish:
-    needs: build
+    needs: [build, manual]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:

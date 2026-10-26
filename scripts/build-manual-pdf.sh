@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build docs/MANUAL.pdf from docs/MANUAL.md (needs pandoc + weasyprint).
+# Build docs/Basil_Manual.pdf from docs/MANUAL.md (needs pandoc + weasyprint).
 # The hand-written "# Contents" list is dropped; pandoc generates the index with page numbers.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -19,5 +19,5 @@ cp "$here/manual.css" "$tmp/"
   --metadata title="Basil Manual" \
   --metadata subtitle="PIC18F27Q10 + PIC18-Q41 · basil ${version}" \
   --metadata date="$(date +%F)" -c manual.css -o m.html)
-weasyprint "$tmp/m.html" "$docs/MANUAL.pdf"
-echo "wrote docs/MANUAL.pdf"
+weasyprint "$tmp/m.html" "$docs/Basil_Manual.pdf"
+echo "wrote docs/Basil_Manual.pdf"
