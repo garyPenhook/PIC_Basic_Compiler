@@ -131,6 +131,21 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
 * **Label table**: the generated file ends with `;SYM name 0xADDR` lines (byte addresses) for tools.
 * **Interrupt entry**: see the vector and context-save notes above.
 
+## 7. Planned: calling C functions and C libraries
+
+The compiler should be able to call C functions and link C libraries in the near future. Not
+implemented yet. What it needs:
+
+* A source form to declare an external C routine (name, parameter types, return type) so calls
+  are type-checked like any other routine.
+* A bridge to the C compiler's calling convention (argument and return registers/locations, which
+  registers a C function may clobber, how the C side's stack and `FSR` use interact with the
+  static frames and `Reentrant` routines described in §3). These facts must come from the C
+  compiler's documentation, not from memory.
+* Linking: the C object files (or library archive) are passed to the same pic-as/linker step as
+  the generated assembly, with symbol names mapped per §4.
+* Calls from C into Basic routines are a possible later addition.
+
 ## 6. Open questions for M1/M4
 
 1. ~~Exact Access Bank split and GPR ranges per bank~~ — resolved in M1 (FACTS §1–2).

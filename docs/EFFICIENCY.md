@@ -214,6 +214,37 @@ Constant folding of float and integer-to-float constants is already done (`f1 = 
 | **F7** `Cmp` returns −1/0/1/2 in a byte which the caller re-tests (`movf RESULT,w; xorlw 0xFF; bnz`) | return the three outcomes in `Z`/`C`/`N` so the caller branches directly | −2 words per comparison site, −3 cycles |
 | **F8** `Byte`/`Word` to `Float` goes through the 32-bit `FFromLong` (zero-fills the upper bytes at the call site) | a byte entry point normalises 8 bits instead of up to 32 | ≈ −60 cycles for Byte sources (estimate; unmeasured) |
 
+### 5.1 Whole-program breakdown: the OLED Float self-test
+
+Measured on `my_src/first_test/main.bas` (basil 0.1.35, `--report` plus the generated `.S`): 2806 words (5612 B). Words are program-memory
+words; `movff`, `call` and `goto` are 2 words each.
+
+| Part | Words | Bytes |
+|---|---|---|
+| Float library (`FADD` 200, `FSUB` 30, `FMUL` 195, `FDIV` 150, `PACK` 53, `CMP` 86, `FTOLONG` 92, `FFROMLONG` 32, `FROMMAG` 31) | 869 | 1738 |
+| `ShowLine` (with `WriteFloat` inlined) | 261 | 522 |
+| Start-up and program body | 642 | 1284 |
+| OLED and I2C library | ≈650 | ≈1300 |
+| String literals | 272 | 544 |
+
+Most of the Float cost outside the library is operand shuffling, not arithmetic:
+
+| Source | Words | Bytes |
+|---|---|---|
+| Program body: each of the 6 `ShowLine(..)` calls copies 2 operands into the helper frame (8 `movff`), the result into `ShowLine__V` (4 `movff`) and loads the expected constant (4 `movlw`/`movwf` pairs): ≈170 `movff` words + 46 constant-load words | ≈216 | ≈430 |
+| `ShowLine`: 74 of its 130 instructions are `movff` operand copies | 148 | 296 |
+| Library entry and exit copies (frame to `__A`..`__D` and back): `FADD`/`FMUL`/`FDIV` 16 + 8, `Cmp` 16 + 2, `FToLong`/`FFromLong` 8 + 8 each | ≈130 | ≈260 |
+
+Patterns seen in the `ShowLine` code that the table above already lists as findings:
+
+* `neg = f < 0` builds a four-byte zero (4 `clrf`), copies `f` (8 words) and calls `Cmp`, then re-tests the result (`xorlw 0xFF; bnz`): **F4** and **F7**.
+* `f - Float(whole)` parks `f` in `WRITEFLOAT__TMP` (4 `movff` out, 4 back) while `FFromLong` runs: **F2**.
+* Every chain step (`FSub` → `FMul` → `FAdd` → `FToLong`) stores its result to the next routine's frame (4 `movff` each): **F1b**.
+
+The ≈430 B of program-body call-site overhead is the part F1 shrinks at the call site (operands loaded straight into `__A`/`__B`, result left in
+`__A`), together with the ≈260 B of library entry/exit copies. These figures are counted from the listing; no before/after build exists for F1 yet, so
+the gain is an estimate until it is implemented and re-measured with `--report`.
+
 ## 6. RAM
 
 * **Float frames (12 bytes):** gone with F1 (the frames were already overlaid, so the saving is the whole 12 bytes, not 12 per routine).

@@ -39,7 +39,9 @@ device is a data-and-validation task, not a compiler rewrite.
    **Every byte saved matters**: these parts have small flash and RAM, and small savings add up
    across a program, so a one-word or one-cycle gain is worth taking whenever it is safe. Compile-time checks (stack depth, RAM overflow, bank usage) also catch
    mistakes before the chip does.
-5. A device-description mechanism so that **additional micros are added slowly over time**
+5. **Near future: call C functions and link C libraries** from Basic programs (design notes in
+   `docs/ABI.md` §7).
+6. A device-description mechanism so that **additional micros are added slowly over time**
    (§9) without redesigning anything.
 
 ### Non-goals (for now)
