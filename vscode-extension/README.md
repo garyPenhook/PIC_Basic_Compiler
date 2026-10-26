@@ -24,6 +24,11 @@ Editor support for the `basil` PIC BASIC compiler (`.bas` files).
 Requirements: the Microchip *MPLAB Extension Pack* and the device pack of the target (basil needs it anyway);
 a programmer/debugger only for physical hardware (the simulator needs none).
 
+### Quick start
+
+New Project, pick the device and 4000000 Hz, *Select Programmer/Debugger* (Simulator), **Ctrl+F7**, then **F5**.
+Hardware: select the tool, **Ctrl+F7** and F5 to debug it, or **F8** to program it.
+
 ### Commands
 
 Open the Command Palette (Ctrl+Shift+P) and type *PIC BASIC*. The editor title bar also has buttons for
@@ -58,6 +63,19 @@ globals and parameters); the VS Code Locals and Watch views use the same ELF but
 Edit `launch.json` to change the tool, `stopOnEntry` or the `dap.log` path. When reporting a problem include the
 VS Code, basil, MPLAB Extension Pack and device pack versions, the device, the tool, a minimal project, the
 build output and `dap.log`.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| The debugger cannot find `dist/<name>.elf` | Run **Build Debug (Ctrl+F7)** first; F7 and the plain Build also write an ELF, but only Ctrl+F7 has the BASIC line and variable information. |
+| A breakpoint does not stop | The ELF is older than the source, or was built without `-g`. Rebuild with Ctrl+F7. |
+| Stepping shows assembly or a library file | Normal: compiler-added code is shown under the nearest statement, and library routines (`serial.bas`, `intosc.bas`) are real source files you step into. |
+| A variable is missing or shows another routine's value | Routines share RAM. Only variables of the routine you are stopped in are valid; an inlined routine's locals are not listed. |
+| Locals/Watch empty | Not yet exercised in VS Code. The simulator's `print NAME` and the call-stack parameters work on the same ELF; send `dap.log`. |
+| "cannot run basil" / no `.hex` | Set `picbasic.compilerPath`; `pic-as` (MPLAB XC8) and the device pack must be installed. |
+| Programming does nothing | The simulator cannot program a chip. Select a PICkit/ICD/Snap, check cabling and target power. |
+| Device list empty | Set `picbasic.devicesPath` to the folder holding the device `.toml` files. |
 
 ### Project settings (`picbasic.json`)
 

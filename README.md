@@ -102,6 +102,33 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * **More devices:** only the PIC18F27Q10 is supported; each further device is added only after it
   passes its own tests.
 
+## Debugging
+
+Build with `-g` and the ELF describes the program in BASIC terms: breakpoints and stepping on `.bas` lines
+(library modules included), the call stack with routine names and parameter values, and global, parameter and
+local variables with their types.
+
+```
+basil -g blink.bas      # blink.hex is identical to a build without -g; blink.elf gains the debug information
+```
+
+**In VS Code** (extension `vscode-extension/`, needs Microchip's *MPLAB Extension Pack* and the device pack):
+
+1. *PIC BASIC: New Project* (or open a folder with a `.bas` file), then *Select Programmer/Debugger*: the simulator needs no hardware.
+2. **Ctrl+F7** builds with `-g` and copies `.hex`/`.elf` into `dist/`.
+3. **F5** starts debugging. F9 breakpoint, F10 step over, F11 step into, Shift+F11 step out, Shift+F5 stop.
+4. **F7** builds a release, **F8** programs the chip with the selected PICkit / ICD / Snap.
+
+**From the command line**, with the MPLAB X simulator: put `device PIC18F27Q10`, `hwtool sim`, `program blink.elf`,
+`break blink.bas:37`, `run`, `wait 5000`, `where`, `print ticks` and `quit` in a file and run it with
+`/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh`.
+
+Notes: code the compiler adds (start-up, runtime helpers) is shown under the nearest statement; a routine
+inlined into its single caller has no frame of its own, so its locals are not listed; routines share RAM, so a
+variable only means something while its routine is running. Checked with the simulator's command-line debugger;
+the VS Code Locals/Watch panels have not been exercised. Full details, options and troubleshooting: *Debugging*
+in `docs/MANUAL.md` and `vscode-extension/README.md`.
+
 ## Tools
 
 * **VS Code extension** (`vscode-extension/`): highlighting, snippets, keyword and register-name
