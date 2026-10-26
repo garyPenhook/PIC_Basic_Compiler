@@ -19,6 +19,34 @@ Editor support for the `basil` PIC BASIC compiler (`.bas` files).
 * **Hover and completion everywhere** — hover shows documentation for: reserved words; your own and library routines (parameters, return type, doc comment, where defined); `Module.Member` and `Include "name"` (what the library does and its public routines); parameters and locals; registers and bits of the program's `Device` (address, width, bit fields, mask, datasheet) including what a `Dim x As PORTB.0` alias points at; `Config` fields and their allowed values; and numeric literals (decimal, hex, binary). Completion offers the same, plus registers, bits and `Module.` members after a dot, and `Config` fields and values.
 * **Build** — *PIC BASIC: Build / Check / Show Resource Report* commands and a `picbasic` task type with the `$basil` problem matcher.
 
+## Planned: project, programming and debugging support
+
+Modelled on the feature set of the Swordfish BASIC VS Code beta. None of this exists yet.
+
+* **New Project wizard** — pick a project name, PIC device and oscillator frequency; generates the `.bas` source,
+  a project settings file, `launch.json`, `tasks.json` and a `dist` output directory.
+* **Device catalog and target selection** — choose the target device from inside VS Code from every device
+  description in `devices/`.
+* **Build shortcuts** — F7 normal build, Ctrl+F7 debug build (with debug information), *Show Build Output*.
+* **Programming** — F8 programs the device through a programmer chosen with *Select Programmer/Debugger*
+  (PICkit, ICD, Snap).
+* **Debugging through the Microchip MPLAB extension pack** — simulator (no hardware) and hardware debugging,
+  source-level breakpoints and stepping (F5, F9, F10, F11, Shift+F11), procedure parameters and locals in the
+  Locals view, globals through the Watch view, and BASIC type information including bit metadata.
+* **ELF/DWARF converter** — turn basil's listing/debug map and HEX output into a Microchip-compatible
+  `dist/project.elf` for the MPLAB debugger, implemented in TypeScript inside the extension so Python is not needed.
+
+Requirements for these features: the official Microchip *MPLAB Extension Pack* and the matching device packs;
+a programmer/debugger only for physical hardware.
+
+Known limitations to expect: a final call such as `DelayMs()` may lose its source cursor when the compiler emits
+it as a tail branch into shared runtime code; hardware support depends on the Microchip extension, device packs,
+tool firmware, target power and wiring; code completion beyond what is listed above is separate work.
+
+When reporting a problem with these features, include: VS Code version, basil version, MPLAB Extension Pack and
+device pack versions, PIC device, selected simulator/programmer/debugger, a minimal project, the exact steps to
+reproduce, and the build output, Debug Console output and `dap.log` where available.
+
 ## Settings
 
 | Setting | Default |
