@@ -86,13 +86,13 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `i2c` | I2C host on MSSP1: write, read, register access, bus ping, bounded waits |
 | `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
-| `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), fill, contrast, invert, flip |
+| `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), bitmaps, pixel/line/rectangle drawing in a frame buffer, fill, contrast, invert, flip |
 | `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
 
 ## Still to do
 
-* **Library:** program-flash self-write; OLED pixel drawing and bitmaps (`Const` arrays now exist, so a bitmap font table is possible).
+* **Library:** program-flash self-write.
 * **Language:** overloading, `Reentrant` routines (parsed, rejected by the back end), a few remaining
   string and structure forms (the compiler reports these clearly rather than miscompiling them),
   structure initialisers, arrays of strings and multi-dimensional arrays.

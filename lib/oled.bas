@@ -27,68 +27,51 @@ Include "spi"
 ' The module is not reentrant: do not use it from a handler and from the main program, nor an
 ' interrupt handler that uses `I2c` or `Spi`.
 
-' Byte `idx` (0..474) of the font table: 5 column bytes for each code 32..126, bit 0 on top. The
-' table is in program memory, inside this routine's assembly, behind a branch that jumps over it, and
-' is read with TBLRD [the compiler does the same for string literals]. The compiler has no Const
-' arrays yet.
+' The font: 5 column bytes for each code 32..126 (475 bytes), bit 0 on top. It lives in program memory.
+Const Font(475) As Byte = ( _
+    0, 0, 0, 0, 0, 0, 0, 94, 0, 0, 0, 14, 0, 14, 0, _
+    40, 124, 40, 124, 40, 8, 84, 124, 84, 32, 38, 16, 8, 100, 0, _
+    40, 84, 40, 64, 0, 0, 0, 14, 0, 0, 0, 60, 66, 0, 0, _
+    0, 66, 60, 0, 0, 0, 84, 56, 84, 0, 16, 16, 124, 16, 16, _
+    0, 128, 96, 32, 0, 16, 16, 16, 16, 0, 0, 96, 96, 0, 0, _
+    32, 16, 8, 4, 0, 0, 60, 66, 60, 0, 0, 68, 126, 64, 0, _
+    68, 98, 82, 76, 0, 34, 74, 74, 54, 0, 24, 20, 126, 16, 0, _
+    46, 74, 74, 50, 0, 60, 74, 74, 48, 0, 2, 98, 26, 6, 0, _
+    52, 74, 74, 52, 0, 12, 82, 82, 60, 0, 0, 108, 108, 0, 0, _
+    128, 108, 44, 0, 0, 0, 16, 40, 68, 0, 40, 40, 40, 40, 0, _
+    0, 68, 40, 16, 0, 0, 4, 82, 12, 0, 60, 66, 90, 28, 0, _
+    124, 18, 18, 124, 0, 126, 74, 74, 52, 0, 60, 66, 66, 36, 0, _
+    126, 66, 66, 60, 0, 126, 74, 74, 66, 0, 126, 10, 10, 2, 0, _
+    60, 66, 82, 116, 0, 126, 8, 8, 126, 0, 0, 66, 126, 66, 0, _
+    32, 64, 64, 62, 0, 126, 24, 36, 66, 0, 126, 64, 64, 64, 0, _
+    126, 12, 12, 126, 0, 126, 12, 48, 126, 0, 60, 66, 66, 60, 0, _
+    126, 18, 18, 12, 0, 60, 98, 66, 188, 0, 126, 18, 50, 76, 0, _
+    36, 74, 82, 36, 0, 0, 2, 126, 2, 0, 62, 64, 64, 62, 0, _
+    30, 96, 96, 30, 0, 126, 48, 48, 126, 0, 102, 24, 24, 102, 0, _
+    0, 14, 112, 14, 0, 98, 82, 74, 70, 0, 0, 126, 66, 66, 0, _
+    4, 8, 16, 32, 0, 0, 66, 66, 126, 0, 0, 4, 2, 4, 0, _
+    64, 64, 64, 64, 0, 0, 2, 4, 0, 0, 48, 72, 40, 120, 0, _
+    126, 72, 72, 48, 0, 48, 72, 72, 0, 0, 48, 72, 72, 126, 0, _
+    48, 104, 88, 16, 0, 16, 124, 18, 4, 0, 80, 168, 168, 152, 0, _
+    126, 8, 8, 112, 0, 0, 72, 122, 64, 0, 0, 64, 128, 122, 0, _
+    126, 16, 40, 64, 0, 0, 66, 126, 64, 0, 120, 16, 24, 112, 0, _
+    120, 8, 8, 112, 0, 48, 72, 72, 48, 0, 248, 72, 72, 48, 0, _
+    48, 72, 72, 248, 0, 120, 8, 8, 16, 0, 80, 88, 104, 40, 0, _
+    8, 62, 72, 64, 0, 56, 64, 64, 120, 0, 0, 56, 64, 56, 0, _
+    120, 96, 96, 120, 0, 72, 48, 48, 72, 0, 24, 160, 64, 56, 0, _
+    72, 104, 88, 72, 0, 0, 8, 60, 66, 0, 0, 0, 126, 0, 0, _
+    0, 66, 60, 8, 0, 4, 2, 4, 2, 0)
+
+' Byte `idx` (0..474) of the font table.
 Public Function FontByte(ByVal idx As Word) As Byte
-    Result = 0
-    Asm
-        movlw low(OLED_FONTTAB)
-        addwf OLED_FONTBYTE__IDX, w, c
-        movwf TBLPTRL, c
-        movlw high(OLED_FONTTAB)
-        addwfc OLED_FONTBYTE__IDX+1, w, c
-        movwf TBLPTRH, c
-        movlw highword(OLED_FONTTAB)
-        movwf TBLPTRU, c
-        movlw 0
-        addwfc TBLPTRU, f, c
-        tblrd*
-        movf TABLAT, w, c
-        movwf OLED_FONTBYTE__RESULT, c
-        bra OLED_FONTEND
-OLED_FONTTAB:
-        db 0, 0, 0, 0, 0, 0, 0, 94, 0, 0, 0, 14, 0, 14, 0
-        db 40, 124, 40, 124, 40, 8, 84, 124, 84, 32, 38, 16, 8, 100, 0
-        db 40, 84, 40, 64, 0, 0, 0, 14, 0, 0, 0, 60, 66, 0, 0
-        db 0, 66, 60, 0, 0, 0, 84, 56, 84, 0, 16, 16, 124, 16, 16
-        db 0, 128, 96, 32, 0, 16, 16, 16, 16, 0, 0, 96, 96, 0, 0
-        db 32, 16, 8, 4, 0, 0, 60, 66, 60, 0, 0, 68, 126, 64, 0
-        db 68, 98, 82, 76, 0, 34, 74, 74, 54, 0, 24, 20, 126, 16, 0
-        db 46, 74, 74, 50, 0, 60, 74, 74, 48, 0, 2, 98, 26, 6, 0
-        db 52, 74, 74, 52, 0, 12, 82, 82, 60, 0, 0, 108, 108, 0, 0
-        db 128, 108, 44, 0, 0, 0, 16, 40, 68, 0, 40, 40, 40, 40, 0
-        db 0, 68, 40, 16, 0, 0, 4, 82, 12, 0, 60, 66, 90, 28, 0
-        db 124, 18, 18, 124, 0, 126, 74, 74, 52, 0, 60, 66, 66, 36, 0
-        db 126, 66, 66, 60, 0, 126, 74, 74, 66, 0, 126, 10, 10, 2, 0
-        db 60, 66, 82, 116, 0, 126, 8, 8, 126, 0, 0, 66, 126, 66, 0
-        db 32, 64, 64, 62, 0, 126, 24, 36, 66, 0, 126, 64, 64, 64, 0
-        db 126, 12, 12, 126, 0, 126, 12, 48, 126, 0, 60, 66, 66, 60, 0
-        db 126, 18, 18, 12, 0, 60, 98, 66, 188, 0, 126, 18, 50, 76, 0
-        db 36, 74, 82, 36, 0, 0, 2, 126, 2, 0, 62, 64, 64, 62, 0
-        db 30, 96, 96, 30, 0, 126, 48, 48, 126, 0, 102, 24, 24, 102, 0
-        db 0, 14, 112, 14, 0, 98, 82, 74, 70, 0, 0, 126, 66, 66, 0
-        db 4, 8, 16, 32, 0, 0, 66, 66, 126, 0, 0, 4, 2, 4, 0
-        db 64, 64, 64, 64, 0, 0, 2, 4, 0, 0, 48, 72, 40, 120, 0
-        db 126, 72, 72, 48, 0, 48, 72, 72, 0, 0, 48, 72, 72, 126, 0
-        db 48, 104, 88, 16, 0, 16, 124, 18, 4, 0, 80, 168, 168, 152, 0
-        db 126, 8, 8, 112, 0, 0, 72, 122, 64, 0, 0, 64, 128, 122, 0
-        db 126, 16, 40, 64, 0, 0, 66, 126, 64, 0, 120, 16, 24, 112, 0
-        db 120, 8, 8, 112, 0, 48, 72, 72, 48, 0, 248, 72, 72, 48, 0
-        db 48, 72, 72, 248, 0, 120, 8, 8, 16, 0, 80, 88, 104, 40, 0
-        db 8, 62, 72, 64, 0, 56, 64, 64, 120, 0, 0, 56, 64, 56, 0
-        db 120, 96, 96, 120, 0, 72, 48, 48, 72, 0, 24, 160, 64, 56, 0
-        db 72, 104, 88, 72, 0, 0, 8, 60, 66, 0, 0, 0, 126, 0, 0
-        db 0, 66, 60, 8, 0, 4, 2, 4, 2, 0, 0
-OLED_FONTEND:
-    End Asm
+    Result = Font(idx)
 End Function
 Dim mode As Byte
 Dim addr7 As Byte
 Dim pDc As Byte
 Dim pCs As Byte
 Dim err As Byte
+
 
 ' Output level of pin 0..23.
 Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
@@ -439,4 +422,234 @@ Public Sub OledWriteHex(ByVal v As Byte)
         h = h + 7
     End If
     OledWriteChar(48 + h)
+End Sub
+
+' ---- Bitmaps and pixel drawing ----
+
+' Draws an image straight to the display (no frame buffer): `w` columns starting at column `x`,
+' page `page` (0..7), one byte per column, bit 0 on top, so the image is 8 pixel rows high; a taller
+' image is drawn one page-high strip at a time with the `Const` array of that strip. The columns past
+' the right edge (127) are dropped. Example: Oled.OledBitmap(0, 2, 8, Logo).
+Public Sub OledBitmap(ByVal x As Byte, ByVal page As Byte, ByVal w As Byte, ByRefConst d() As Byte)
+    Dim i As Byte
+    If mode = 0 Or x > 127 Or page > 7 Then
+        Exit
+    End If
+    If w > 128 - x Then
+        w = 128 - x
+    End If
+    OledGoto(x, page)
+    Begin(True)
+    i = 0
+    While i < w
+        Put(d(i))
+        Inc(i)
+    Wend
+    Finish()
+End Sub
+
+' The frame buffer: the whole picture, 1024 bytes in the same layout as the display RAM (byte
+' x + 128 * page, bit 0 on top). The pixel commands change the buffer only; OledUpdate sends it. A
+' program that never calls a pixel command does not link the buffer.
+Dim fb(1024) As Byte
+
+' Sets (on = True) or clears one pixel of the frame buffer; x 0..127 left to right, y 0..63 top to
+' bottom. A point outside the screen is ignored.
+Public Sub OledPixel(ByVal x As Byte, ByVal y As Byte, ByVal on As Boolean)
+    Dim i As Word
+    Dim m As Byte
+    If x > 127 Or y > 63 Then
+        Exit
+    End If
+    i = Word(y >> 3) * 128 + x
+    m = 1 << (y And 7)
+    If on Then
+        fb(i) = fb(i) Or m
+    Else
+        fb(i) = fb(i) And (m Xor 255)
+    End If
+End Sub
+
+' The pixel at x, y as 1 or 0 (0 outside the screen).
+Public Function OledPoint(ByVal x As Byte, ByVal y As Byte) As Byte
+    Result = 0
+    If x < 128 And y < 64 Then
+        If (fb(Word(y >> 3) * 128 + x) And (1 << (y And 7))) <> 0 Then
+            Result = 1
+        End If
+    End If
+End Function
+
+' Sets every byte of the frame buffer to `pattern` (0 = all pixels off, 255 = all on).
+Public Sub OledBufFill(ByVal pattern As Byte)
+    Dim i As Word
+    i = 0
+    While i < 1024
+        fb(i) = pattern
+        Inc(i)
+    Wend
+End Sub
+
+Public Sub OledBufClear()
+    OledBufFill(0)
+End Sub
+
+' Sends the frame buffer to the display (1024 bytes in one transfer).
+Public Sub OledUpdate()
+    Dim i As Word
+    If mode = 0 Then
+        Exit
+    End If
+    OledGoto(0, 0)
+    Begin(True)
+    i = 0
+    While i < 1024
+        Put(fb(i))
+        Inc(i)
+    Wend
+    Finish()
+End Sub
+
+' Straight line from (x0, y0) to (x1, y1), both ends included (Bresenham). Parts outside the screen
+' are not drawn.
+Public Sub OledLine(ByVal x0 As Integer, ByVal y0 As Integer, ByVal x1 As Integer, ByVal y1 As Integer, ByVal on As Boolean)
+    Dim dx As Integer
+    Dim dy As Integer
+    Dim sx As Integer
+    Dim sy As Integer
+    Dim e As Integer
+    Dim e2 As Integer
+    dx = x1 - x0
+    sx = 1
+    If dx < 0 Then
+        dx = -dx
+        sx = -1
+    End If
+    dy = y0 - y1
+    sy = 1
+    If dy > 0 Then
+        dy = -dy
+        sy = -1
+    End If
+    e = dx + dy
+    While True
+        If x0 >= 0 And x0 < 128 And y0 >= 0 And y0 < 64 Then
+            OledPixel(Byte(x0), Byte(y0), on)
+        End If
+        If x0 = x1 And y0 = y1 Then
+            Exit
+        End If
+        e2 = e + e
+        If e2 >= dy Then
+            e = e + dy
+            x0 = x0 + sx
+        End If
+        If e2 <= dx Then
+            e = e + dx
+            y0 = y0 + sy
+        End If
+    Wend
+End Sub
+
+' Rectangle outline with its top left corner at (x, y), `w` wide and `h` high (both at least 1; keep
+' x + w and y + h within 255, as the sums wrap). OledClear and OledFill clear the display, not the frame buffer.
+Public Sub OledRect(ByVal x As Byte, ByVal y As Byte, ByVal w As Byte, ByVal h As Byte, ByVal on As Boolean)
+    Dim i As Byte
+    If w = 0 Or h = 0 Then
+        Exit
+    End If
+    i = 0
+    While i < w
+        OledPixel(x + i, y, on)
+        OledPixel(x + i, y + h - 1, on)
+        Inc(i)
+    Wend
+    i = 0
+    While i < h
+        OledPixel(x, y + i, on)
+        OledPixel(x + w - 1, y + i, on)
+        Inc(i)
+    Wend
+End Sub
+
+' Filled rectangle, same arguments as OledRect.
+Public Sub OledFillRect(ByVal x As Byte, ByVal y As Byte, ByVal w As Byte, ByVal h As Byte, ByVal on As Boolean)
+    Dim i As Byte
+    Dim j As Byte
+    j = 0
+    While j < h
+        i = 0
+        While i < w
+            OledPixel(x + i, y + j, on)
+            Inc(i)
+        Wend
+        Inc(j)
+    Wend
+End Sub
+
+' Draws a bitmap into the frame buffer at pixel position (x, y): `w` columns of `d`, each one byte
+' per 8 rows (bit 0 on top) and `pages` such byte rows one after the other (`d` holds w * pages
+' bytes, the first row of columns first). Pixels set in the image are set in the buffer, clear ones
+' are left alone (or cleared when `opaque` is True). The position is any pixel, not only page edges.
+Public Sub OledBufBitmap(ByVal x As Byte, ByVal y As Byte, ByVal w As Byte, ByVal pages As Byte, ByVal opaque As Boolean, ByRefConst d() As Byte)
+    Dim c As Byte
+    Dim r As Byte
+    Dim b As Byte
+    Dim k As Byte
+    Dim idx As Word
+    idx = 0
+    r = 0
+    While r < pages
+        c = 0
+        While c < w
+            b = d(idx)
+            k = 0
+            While k < 8
+                If (b And (1 << k)) <> 0 Then
+                    OledPixel(x + c, y + r * 8 + k, True)
+                ElseIf opaque Then
+                    OledPixel(x + c, y + r * 8 + k, False)
+                End If
+                Inc(k)
+            Wend
+            Inc(idx)
+            Inc(c)
+        Wend
+        Inc(r)
+    Wend
+End Sub
+
+' Writes one character into the frame buffer with its top left pixel at (x, y), in the 5 x 7 font
+' (a 6 x 8 cell with the blank column and row); set pixels only, so text can be laid over a picture.
+Public Sub OledBufChar(ByVal x As Byte, ByVal y As Byte, ByVal ch As Byte, ByVal on As Boolean)
+    Dim base As Word
+    Dim c As Byte
+    Dim b As Byte
+    Dim k As Byte
+    If ch < 32 Or ch > 126 Then
+        ch = 63
+    End If
+    base = Word(ch - 32) * 5
+    c = 0
+    While c < 5
+        b = Font(base + c)
+        k = 0
+        While k < 7
+            If (b And (1 << k)) <> 0 Then
+                OledPixel(x + c, y + k, on)
+            End If
+            Inc(k)
+        Wend
+        Inc(c)
+    Wend
+End Sub
+
+Public Sub OledBufText(ByVal x As Byte, ByVal y As Byte, ByVal on As Boolean, ByRefConst s As String(80))
+    Dim i As Byte
+    i = 0
+    While s(i) <> #0
+        OledBufChar(x, y, Byte(s(i)), on)
+        x = x + 6
+        Inc(i)
+    Wend
 End Sub

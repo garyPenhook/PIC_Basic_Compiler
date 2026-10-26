@@ -470,3 +470,12 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
 - `tools/pic-config`: Clock drop-down that prepends `Device`/`Clock` and appends `Include "intosc"`, with a `CSWEN` warning.
 - Not done: `movlw 0 ; movwf` to `clrf` (the delay counters are in cycle-exact code; the `TBLPTR` bytes are label parts) and
   `bcf` after `clrf` of the same register.
+
+
+## OLED drawing commands (done 2026-10-26, 0.1.30)
+- `lib/oled.bas`: `OledBitmap` (Const image straight to the display), and a 1024-byte frame buffer with `OledPixel`, `OledPoint`,
+  `OledBufFill/Clear`, `OledUpdate`, `OledLine` (Bresenham, clipped), `OledRect`, `OledFillRect`, `OledBufBitmap`, `OledBufChar`,
+  `OledBufText`. The buffer is not linked unless a program calls one of them.
+- The font table is now a `Const Font(475)` array instead of an `Asm` block (text-only program 625 -> 604 words); the old table had
+  one stray trailing byte.
+- `tests/exec/lib_oled.bas` checks the buffer logic in the simulator. Nothing runs on a panel (D6).

@@ -247,7 +247,20 @@ Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tab
 | `OledTextGoto(x, line)` | character cell 0..20, line 0..7 (6 x 8 pixel cells) |
 | `OledData(b)` / `OledFill(pattern)` / `OledClear()` | one column byte / whole RAM / clear |
 | `OledWriteChar(ch)` / `OledWrite(s)` / `OledWriteWord(v)` / `OledWriteHex(v)` | text in a 5 x 7 font (X11 "5x7", public domain; ASCII 32..126) |
-| `FontByte(i)` | byte `i` (0..474) of the font table (kept in flash inside an `Asm` block, read with `TBLRD`) |
+| `FontByte(i)` | byte `i` (0..474) of the font table (a `Const` array in program memory) |
+| `OledBitmap(x, page, w, img)` | draws `w` columns of the `Const` byte array `img` straight to the display at column `x`, page `page` (no frame buffer; 8 pixel rows high, bit 0 on top) |
+
+Pixel drawing uses a 1024-byte frame buffer in RAM (the display cannot be read back). It is linked only by a program that calls one of the commands below, so text-only programs pay nothing. The commands change the buffer; `OledUpdate` sends it to the display. Coordinates: `x` 0..127 left to right, `y` 0..63 top to bottom; points outside the screen are ignored.
+
+| Routine | Effect |
+|---|---|
+| `OledPixel(x, y, on)` / `OledPoint(x, y)` | set or clear one pixel / read it back (1 or 0) |
+| `OledBufFill(pattern)` / `OledBufClear()` | fill or clear the whole buffer |
+| `OledUpdate()` | send the buffer to the display |
+| `OledLine(x0, y0, x1, y1, on)` | line, `Integer` coordinates, clipped to the screen |
+| `OledRect(x, y, w, h, on)` / `OledFillRect(x, y, w, h, on)` | rectangle outline / filled |
+| `OledBufBitmap(x, y, w, pages, opaque, img)` | `Const` image into the buffer at any pixel position: `w` columns, `pages` rows of 8 pixels; `opaque` also clears the image's clear pixels |
+| `OledBufChar(x, y, ch, on)` / `OledBufText(x, y, on, s)` | 5 x 7 text at any pixel position, set pixels only (so text can go over a picture) |
 
 ## aht30 (AHT30 temperature and humidity sensor, I2C)
 Source: the Aosong AHT30 data sheet (Sep 2023): address 0x38 (5.1), measurement command 0xAC 0x33 0x00 and 80 ms wait (5.2), status word (Table 9), CRC8 (5.2), conversion formulas (5.2), I2C timing (Table 8). The caller sets up the bus first (`I2cInit` at no more than 400 kHz, external pull-ups); sample at most once a second to keep self-heating under 0.1 C (2.4). Results: temperature `Integer` in 1/100 degree C, humidity `Word` in 1/100 %RH, rounded to nearest, written only on status 0.

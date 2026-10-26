@@ -3267,10 +3267,11 @@ writing text.
 
 Set up the bus first: `I2cInit` at no more than 400 kHz, or `SpiInit` in mode 0 at no more than 10 MHz.
 The module owns no pins except D/C#, CS# and RES# (pins 0..23; 255 for CS# or RES# means not
-controlled). The panel supply (about 12 V) is external: switch it on after RES#. There is **no frame
-buffer** (the serial interfaces are write-only): you write pages of 8 pixel rows, one byte per column,
-bit 0 on top, with `OledGoto` and `OledData`. Text uses a 5 x 7 font in 6 x 8 cells (21 characters on
-each of 8 lines) for ASCII 32..126. There is no pixel, line or bitmap drawing. If a module shows every
+controlled). The panel supply (about 12 V) is external: switch it on after RES#. The serial interfaces
+are write-only, so text and `OledBitmap` write pages of 8 pixel rows straight to the display, one byte
+per column, bit 0 on top (`OledGoto`, `OledData`); pixel drawing uses a 1024-byte frame buffer in RAM
+(see "Pixel drawing" below), which is linked only by a program that calls one of those commands. Text uses a 5 x 7 font in 6 x 8 cells (21 characters on
+each of 8 lines) for ASCII 32..126. If a module shows every
 other line or an upside-down picture, use `OledFlip`.
 
 ### OledInitI2c
@@ -3506,13 +3507,113 @@ OledWriteWord(1234)
 OledWriteHex($FF)
 ```
 
+### OledBitmap
+
+**Syntax**
+```basic
+OledBitmap(x, page, w, img)
+```
+**Overview** Draws `w` columns of the `Const` byte array `img` straight to the display, starting at column `x` of `page` (no frame buffer). One byte per column, bit 0 on top, so the image is 8 pixel rows high; draw a taller image one strip at a time. Columns past 127 are dropped.
+
+**Parameters** `x` 0..127, `page` 0..7, `w` columns, `img` a `Const` `Byte` array.
+
+**Example**
+```basic
+Const Logo(8) As Byte = (60, 66, 165, 129, 165, 153, 66, 60)
+OledBitmap(0, 0, 8, Logo)
+```
+
+---
+
+### Pixel drawing
+
+The commands below draw into a 1024-byte frame buffer (the layout of the display RAM: byte `x + 128 * page`, bit 0 on top); `OledUpdate` sends it to the display. `x` is 0..127 from the left, `y` 0..63 from the top; points outside the screen are ignored. `OledClear` and `OledFill` clear the display, not the buffer.
+
+### OledPixel / OledPoint
+
+**Syntax**
+```basic
+OledPixel(x, y, on)
+b = OledPoint(x, y)
+```
+**Overview** Sets (`on` = True) or clears one pixel / reads it back (1 or 0; 0 outside the screen).
+
+---
+
+### OledBufFill / OledBufClear / OledUpdate
+
+**Syntax**
+```basic
+OledBufFill(pattern)
+OledBufClear()
+OledUpdate()
+```
+**Overview** Fills the buffer with a byte (0 = all pixels off, 255 = all on) / clears it / sends the whole buffer to the display in one transfer.
+
+---
+
+### OledLine
+
+**Syntax**
+```basic
+OledLine(x0, y0, x1, y1, on)
+```
+**Overview** Line between two points, both ends included (Bresenham). The coordinates are `Integer`, so a line may start or end off screen; the visible part is drawn.
+
+---
+
+### OledRect / OledFillRect
+
+**Syntax**
+```basic
+OledRect(x, y, w, h, on)
+OledFillRect(x, y, w, h, on)
+```
+**Overview** Rectangle outline / filled rectangle with its top left corner at (`x`, `y`), `w` wide and `h` high. Keep `x + w` and `y + h` within 255 (the sums wrap).
+
+---
+
+### OledBufBitmap
+
+**Syntax**
+```basic
+OledBufBitmap(x, y, w, pages, opaque, img)
+```
+**Overview** Draws a `Const` image into the buffer at any pixel position: `w` columns and `pages` rows of 8 pixels, `img` holding `w * pages` bytes (the first row of columns first, bit 0 on top). Set pixels of the image are set in the buffer; clear ones are left alone, or cleared when `opaque` is True.
+
+**Example**
+```basic
+OledBufClear()
+OledBufBitmap(20, 13, 8, 1, False, Logo)
+OledUpdate()
+```
+
+---
+
+### OledBufChar / OledBufText
+
+**Syntax**
+```basic
+OledBufChar(x, y, ch, on)
+OledBufText(x, y, on, s)
+```
+**Overview** 5 x 7 text with its top left pixel at (`x`, `y`) (6 pixels per character), at any pixel position. Only the set pixels of the font are drawn, so text can be laid over a picture.
+
+**Example**
+```basic
+OledBufText(10, 50, True, "Hello")
+OledUpdate()
+```
+
+---
+
 ### FontByte
 
 **Syntax**
 ```basic
 b = FontByte(idx)
 ```
-**Overview** Byte `idx` of the font table: 5 column bytes for each code 32..126, bit 0 on top.
+**Overview** Byte `idx` of the font table (a `Const` array in program memory): 5 column bytes for each code 32..126, bit 0 on top.
 
 **Parameters** `idx` a `Word`, 0..474.
 
