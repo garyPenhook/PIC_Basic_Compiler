@@ -39,6 +39,9 @@ impl SourceMap {
     pub fn texts(&self) -> impl Iterator<Item = &str> {
         self.files.iter().map(|f| f.1.as_str())
     }
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.files.iter().map(|f| f.0.as_str())
+    }
     pub fn name(&self, file: u32) -> &str {
         self.files.get(file as usize).map(|f| f.0.as_str()).unwrap_or("<unknown>")
     }

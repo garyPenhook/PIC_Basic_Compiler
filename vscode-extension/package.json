@@ -2,55 +2,245 @@
   "name": "picbasic",
   "displayName": "PIC BASIC (basil)",
   "description": "Language support for the basil PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
-  "version": "0.1.6",
+  "version": "0.2.3",
   "publisher": "garypenhook",
   "license": "UNLICENSED",
-  "engines": { "vscode": "^1.80.0" },
-  "categories": ["Programming Languages", "Formatters", "Snippets", "Linters"],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Snippets",
+    "Linters"
+  ],
   "main": "./src/extension.js",
   "activationEvents": [],
   "contributes": {
     "languages": [
       {
         "id": "picbasic",
-        "aliases": ["PIC BASIC", "picbasic"],
-        "extensions": [".bas"],
+        "aliases": [
+          "PIC BASIC",
+          "picbasic"
+        ],
+        "extensions": [
+          ".bas"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
-    "grammars": [{ "language": "picbasic", "scopeName": "source.picbasic", "path": "./syntaxes/picbasic.tmLanguage.json" }],
-    "snippets": [{ "language": "picbasic", "path": "./snippets/picbasic.json" }],
+    "grammars": [
+      {
+        "language": "picbasic",
+        "scopeName": "source.picbasic",
+        "path": "./syntaxes/picbasic.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "picbasic",
+        "path": "./snippets/picbasic.json"
+      }
+    ],
     "commands": [
-      { "command": "picbasic.fixKeywordCase", "title": "Fix Keyword Case", "category": "PIC BASIC" },
-      { "command": "picbasic.check", "title": "Check (front end only)", "category": "PIC BASIC" },
-      { "command": "picbasic.build", "title": "Build (.hex)", "category": "PIC BASIC" },
-      { "command": "picbasic.report", "title": "Show Resource Report", "category": "PIC BASIC" }
+      {
+        "command": "picbasic.fixKeywordCase",
+        "title": "Fix Keyword Case",
+        "category": "PIC BASIC"
+      },
+      {
+        "command": "picbasic.check",
+        "title": "Check (front end only)",
+        "category": "PIC BASIC"
+      },
+      {
+        "command": "picbasic.build",
+        "title": "Build (.hex)",
+        "category": "PIC BASIC"
+      },
+      {
+        "command": "picbasic.report",
+        "title": "Show Resource Report",
+        "category": "PIC BASIC"
+      },
+      {
+        "command": "picbasic.newProject",
+        "title": "New Project",
+        "category": "PIC BASIC",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "picbasic.pickDevice",
+        "title": "Pick Target Device",
+        "category": "PIC BASIC"
+      },
+      {
+        "command": "picbasic.selectTool",
+        "title": "Select Programmer/Debugger",
+        "category": "PIC BASIC",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "picbasic.buildRelease",
+        "title": "Build (F7)",
+        "category": "PIC BASIC",
+        "icon": "$(play)"
+      },
+      {
+        "command": "picbasic.buildDebug",
+        "title": "Build Debug (Ctrl+F7)",
+        "category": "PIC BASIC",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "picbasic.program",
+        "title": "Program Device (F8)",
+        "category": "PIC BASIC",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "picbasic.showOutput",
+        "title": "Show Build Output",
+        "category": "PIC BASIC"
+      }
     ],
     "menus": {
-      "editor/title": [{ "command": "picbasic.build", "when": "resourceLangId == picbasic", "group": "navigation" }]
+      "editor/title": [
+        {
+          "command": "picbasic.buildRelease",
+          "when": "resourceLangId == picbasic",
+          "group": "navigation@1"
+        },
+        {
+          "command": "picbasic.buildDebug",
+          "when": "resourceLangId == picbasic",
+          "group": "navigation@2"
+        },
+        {
+          "command": "picbasic.program",
+          "when": "resourceLangId == picbasic",
+          "group": "navigation@3"
+        },
+        {
+          "command": "picbasic.selectTool",
+          "when": "resourceLangId == picbasic",
+          "group": "navigation@4"
+        }
+      ]
     },
     "configuration": {
       "title": "PIC BASIC",
       "properties": {
-        "picbasic.compilerPath": { "type": "string", "default": "basil", "description": "Path to the basil executable." },
-        "picbasic.compilerArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra arguments for every basil run (for example [\"-L\", \"/path/lib\", \"--pic-as\", \"/path/pic-as\"])." },
-        "picbasic.autoCorrectKeywords": { "type": "boolean", "default": true, "description": "Correct the case of a reserved word as soon as it is typed (dim becomes Dim)." },
-        "picbasic.fixKeywordCaseOnSave": { "type": "boolean", "default": true, "description": "Correct the case of all reserved words when a file is saved." },
-        "picbasic.autoCorrectDeviceNames": { "type": "boolean", "default": true, "description": "Also correct the case of register and bit names from the device description (lata becomes LATA). The device comes from the program's `Device` line." },
-        "picbasic.devicesPath": { "type": "string", "default": "", "description": "Directory holding the device descriptions (for example 18F27Q10.toml). Empty: the nearest `devices` folder above the file, then the workspace and the compiler's own folder." },
-        "picbasic.formatIndentation": { "type": "boolean", "default": true, "description": "Formatting also re-indents blocks and trims trailing whitespace." },
-        "picbasic.diagnostics": { "type": "string", "enum": ["off", "onSave", "onType"], "default": "onSave", "description": "When to run `basil --check` for error and warning squiggles. onType checks a temporary copy shortly after typing stops." }
+        "picbasic.compilerPath": {
+          "type": "string",
+          "default": "basil",
+          "description": "Path to the basil executable."
+        },
+        "picbasic.compilerArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments for every basil run (for example [\"-L\", \"/path/lib\", \"--pic-as\", \"/path/pic-as\"])."
+        },
+        "picbasic.autoCorrectKeywords": {
+          "type": "boolean",
+          "default": true,
+          "description": "Correct the case of a reserved word as soon as it is typed (dim becomes Dim)."
+        },
+        "picbasic.fixKeywordCaseOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Correct the case of all reserved words when a file is saved."
+        },
+        "picbasic.autoCorrectDeviceNames": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also correct the case of register and bit names from the device description (lata becomes LATA). The device comes from the program's `Device` line."
+        },
+        "picbasic.devicesPath": {
+          "type": "string",
+          "default": "",
+          "description": "Directory holding the device descriptions (for example 18F27Q10.toml). Empty: the nearest `devices` folder above the file, then the workspace and the compiler's own folder."
+        },
+        "picbasic.formatIndentation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Formatting also re-indents blocks and trims trailing whitespace."
+        },
+        "picbasic.diagnostics": {
+          "type": "string",
+          "enum": [
+            "off",
+            "onSave",
+            "onType"
+          ],
+          "default": "onSave",
+          "description": "When to run `basil --check` for error and warning squiggles. onType checks a temporary copy shortly after typing stops."
+        }
       }
     },
     "problemMatchers": [
       {
         "name": "basil",
         "owner": "picbasic",
-        "fileLocation": ["autoDetect", "${workspaceFolder}"],
-        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+): (error|warning)\\[([^\\]]+)\\]: (.*)$", "file": 1, "line": 2, "column": 3, "severity": 4, "code": 5, "message": 6 }
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+): (error|warning)\\[([^\\]]+)\\]: (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
       }
     ],
-    "taskDefinitions": [{ "type": "picbasic", "required": ["file"], "properties": { "file": { "type": "string" }, "mode": { "type": "string", "enum": ["build", "check"] } } }]
+    "taskDefinitions": [
+      {
+        "type": "picbasic",
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "build",
+              "check"
+            ]
+          }
+        }
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "picbasic.buildRelease",
+        "key": "f7",
+        "when": "resourceLangId == picbasic"
+      },
+      {
+        "command": "picbasic.buildDebug",
+        "key": "ctrl+f7",
+        "when": "resourceLangId == picbasic"
+      },
+      {
+        "command": "picbasic.program",
+        "key": "f8",
+        "when": "resourceLangId == picbasic"
+      }
+    ]
   },
-  "scripts": { "test": "node test/test.js", "package": "npx --yes @vscode/vsce package" }
+  "scripts": {
+    "test": "node test/test.js",
+    "package": "npx --yes @vscode/vsce package"
+  }
 }

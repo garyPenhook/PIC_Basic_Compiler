@@ -166,30 +166,47 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
             let words = pc - start;
             let mut lines = Vec::new();
             let mut skip_n = 0;
+            // pic-as counts source lines after a `#line`, so each instruction repeats the current one.
+            let mut cur: Option<&str> = None;
             for (i, it) in items.iter().enumerate() {
                 match it {
                     Item::Label(l) => lines.push(format!("{l}:")),
-                    Item::Ins(t) => lines.push(format!("    {t}")),
-                    Item::Raw(t) => lines.push(format!("    {t}")),
+                    Item::Ins(t) | Item::Raw(t) => {
+                        lines.extend(cur.map(str::to_string));
+                        lines.push(format!("    {t}"));
+                    }
+                    Item::Comment(t) if t.starts_with("#line ") => cur = Some(t),
                     Item::Comment(t) => lines.push(format!("    ; {t}")),
                     Item::Fence | Item::Keep(_) => {}
                     Item::Org(w) => lines.push(format!("    ORG 0x{:04X}", w * 2)),
                     Item::Data(b) => {
+                        lines.extend(cur.map(str::to_string));
                         let text: Vec<String> = b.iter().map(|x| format!("0x{x:02X}")).collect();
                         lines.push(format!("    db {}", text.join(", ")));
                     }
                     Item::Br(cc, t) => match (forms[i], cc) {
-                        (Form::Short, _) => lines.push(format!("    {} {t}", cc.mnemonic())),
-                        (Form::Long, Cc::Always) => lines.push(format!("    goto {t}")),
+                        (Form::Short, _) => {
+                            lines.extend(cur.map(str::to_string));
+                            lines.push(format!("    {} {t}", cc.mnemonic()));
+                        }
+                        (Form::Long, Cc::Always) => {
+                            lines.extend(cur.map(str::to_string));
+                            lines.push(format!("    goto {t}"));
+                        }
                         (Form::Long, cc) => {
                             skip_n += 1;
                             let l = format!("__skip{skip_n}");
+                            lines.extend(cur.map(str::to_string));
                             lines.push(format!("    {} {l}", cc.invert().mnemonic()));
+                            lines.extend(cur.map(str::to_string));
                             lines.push(format!("    goto {t}"));
                             lines.push(format!("{l}:"));
                         }
                     },
-                    Item::Call(t) => lines.push(format!("    {} {t}", if forms[i] == Form::Short { "rcall" } else { "call" })),
+                    Item::Call(t) => {
+                        lines.extend(cur.map(str::to_string));
+                        lines.push(format!("    {} {t}", if forms[i] == Form::Short { "rcall" } else { "call" }));
+                    }
                 }
             }
             return Assembled { lines, labels, words };

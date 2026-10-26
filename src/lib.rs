@@ -4,6 +4,7 @@ pub mod asm;
 pub mod ast;
 pub mod codegen;
 pub mod diag;
+pub mod dwarf;
 pub mod driver;
 pub mod ir;
 pub mod lexer;

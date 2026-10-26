@@ -192,3 +192,38 @@ for (const f of fs.readdirSync(path.join(root, 'lib')).filter((x) => x.endsWith(
   assert.ok(hd.moduleDoc(fs.readFileSync(path.join(root, 'lib', 'serial.bas'), 'utf8')).includes('EUSART1'));
 }
 console.log('ok');
+
+// Project files, device catalog, tool names.
+{
+  const os = require('os');
+  const proj = require('../src/project');
+  const devs = proj.listDevices([path.join(__dirname, '../../devices')]);
+  assert.ok(devs.some((d) => d.name === '18F27Q10' && d.pack === 'PIC18F-Q_DFP' && d.packVersion), 'device catalog');
+  assert.ok(devs.every((d) => !/expect/i.test(d.name)));
+  assert.strictEqual(proj.mplabDevice('18f27q10'), 'PIC18F27Q10');
+  assert.strictEqual(proj.mplabDevice('PIC18F27Q10'), 'PIC18F27Q10');
+  assert.strictEqual(proj.toolName('pk4'), 'PICkit 4');
+  assert.deepStrictEqual(proj.parseTools([[{ name: 'PICkit 4', serial: 'BUR1' }], 'MPLAB Snap']).map((t) => [t.tool, t.serial]), [['PICkit 4', 'BUR1'], ['Snap', undefined]]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'picbasic-'));
+  const target = path.join(dir, 'Blink');
+  const src = proj.createProject(target, { name: 'Blink', device: 'PIC18F27Q10', clockHz: 4000000, pack: devs.find((d) => d.name === '18F27Q10') });
+  assert.ok(/Device = 18F27Q10\nClock = 4000000/.test(fs.readFileSync(src, 'utf8')));
+  const launch = JSON.parse(fs.readFileSync(path.join(target, '.vscode/launch.json'), 'utf8')).configurations[0];
+  assert.deepStrictEqual([launch.type, launch.device, launch.tool, launch.packName, launch.program], ['mplab-core-da', 'PIC18F27Q10', 'Simulator', 'PIC18F-Q_DFP', '${workspaceFolder}/dist/Blink.elf']);
+  assert.ok(!('interface' in launch));
+  assert.throws(() => proj.createProject(target, { name: 'Blink', device: '18F27Q10', clockHz: 1 }), /not empty/);
+  proj.updateLaunch(target, { name: 'Blink', device: '18F27Q10', tool: 'PICkit 4', serial: 'X1' });
+  const l2 = JSON.parse(fs.readFileSync(path.join(target, '.vscode/launch.json'), 'utf8')).configurations;
+  assert.strictEqual(l2.length, 1);
+  assert.deepStrictEqual([l2[0].tool, l2[0].interface, l2[0].serial], ['PICkit 4', 'ICSP', 'X1']);
+  proj.updateLaunch(target, { name: 'Blink', device: '18F27Q10', tool: 'Simulator' });
+  const l3 = JSON.parse(fs.readFileSync(path.join(target, '.vscode/launch.json'), 'utf8')).configurations[0];
+  assert.ok(!('serial' in l3) && !('interface' in l3));
+  const prog = proj.launchConfig({ name: 'Blink', device: '18F27Q10', tool: 'Snap', programOnly: true });
+  assert.ok(prog.noDebug && /\.hex$/.test(prog.program) && !('stopOnEntry' in prog));
+  fs.writeFileSync(path.join(target, 'Blink.hex'), ':00000001FF\n');
+  assert.deepStrictEqual(proj.collectArtifacts(src), ['Blink.hex']);
+  assert.ok(fs.existsSync(path.join(target, 'dist/Blink.hex')));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+console.log('project ok');

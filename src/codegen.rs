@@ -32,6 +32,9 @@ pub struct Target {
     pub opt: bool,
     /// Keep stores to variables nothing reads (`--keep-vars`).
     pub keep_vars: bool,
+    /// Source file name per `Span::file` id; when set (`-g`) every statement is preceded by a `#line`
+    /// directive so pic-as writes DWARF line information for the BASIC source.
+    pub debug_files: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2378,9 +2381,22 @@ impl<'p> Gen<'p> {
 
     fn block(&mut self, ss: &[S]) {
         for s in ss {
+            self.line_marker(s.span);
             self.stmt(s);
             // Nothing is carried in WREG or the scratch registers from one statement to the next.
             self.items.push(Item::Fence);
+        }
+    }
+
+    /// `#line` for the statement about to be emitted (debug builds only; the peephole pass skips comments).
+    fn line_marker(&mut self, span: Span) {
+        let Some(name) = self.tgt.debug_files.get(span.file as usize) else { return };
+        if span.line == 0 {
+            return;
+        }
+        let m = format!("#line {} \"{}\"", span.line, name.replace('\\', "/"));
+        if !matches!(self.items.iter().rev().find(|i| !matches!(i, Item::Fence)), Some(Item::Comment(t)) if *t == m) {
+            self.items.push(Item::Comment(m));
         }
     }
 
@@ -3230,6 +3246,8 @@ pub struct Generated {
     pub objs: Vec<Obj>,
     pub layout: Layout,
     pub errors: Vec<(Span, String)>,
+    /// Variables and routine ranges for the debugger (`-g` only).
+    pub debug: crate::dwarf::DebugInfo,
 }
 
 /// Runs one generation pass over the whole program.
@@ -3467,6 +3485,11 @@ fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usi
             // Drop the routine (and its heading comment), put the body at the call.
             let from = if s > 0 && matches!(&items[s - 1], Item::Comment(t) if t.starts_with("Sub/Function ")) { s - 1 } else { s };
             let c = calls[0];
+            // The caller's line, put back once the routine's own lines end.
+            let resume = items[..c].iter().rev().find_map(|it| match it {
+                Item::Comment(t) if t.starts_with("#line ") => Some(it.clone()),
+                _ => None,
+            });
             let mut map = vec![0usize; items.len() + 1];
             let mut out: Vec<Item> = Vec::with_capacity(items.len());
             for (i, it) in std::mem::take(&mut items).into_iter().enumerate() {
@@ -3476,6 +3499,7 @@ fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usi
                 }
                 if i == c {
                     out.extend(inl.iter().cloned());
+                    out.extend(resume.clone());
                 } else {
                     out.push(it);
                 }
@@ -3571,7 +3595,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     }
     let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
-        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors };
+        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() };
     };
     let items = if tgt.opt {
         let items = inline_single_calls(items, ranges);
@@ -3609,6 +3633,14 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
                 continue;
             }
             let note = if i < nvars { format!("  ; {} ({} byte{})", p.vars[i].name, o.bytes, if o.bytes == 1 { "" } else { "s" }) } else { String::new() };
+            if i < nvars && o.bytes > 0 && !tgt.debug_files.is_empty() {
+                // A real symbol (not an `equ`), so the debugger can show the variable by name; a global
+                // also answers to its BASIC name, which the DWARF entry describes.
+                let basic = &p.vars[i].name;
+                let alias = if matches!(p.vars[i].kind, VarKind::Global) && *basic != o.name && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic}:\n") } else { String::new() };
+                text.push_str(&format!("PSECT dbg{i},class=RAM,space=1,abs,delta=1,noexec\n    ORG 0x{a:03X}\nGLOBAL {n}\n{n}:\n{alias}DS {}{note}\n", o.bytes, n = o.name, alias = alias));
+                continue;
+            }
             text.push_str(&format!("{} equ 0x{:03X}{}\n", o.name, a, note));
         }
     }
@@ -3645,5 +3677,39 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         let end = starts.get(i + 1).map(|s| s.1).unwrap_or(asmd.words);
         func_words.push((n.clone(), end - a));
     }
-    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors }
+    let mut debug = crate::dwarf::DebugInfo::default();
+    if !tgt.debug_files.is_empty() {
+        debug.end = asmd.words * 2;
+        // A routine runs up to the next routine, helper or interrupt handler (or the start-up code).
+        let mut bounds: Vec<u32> = starts.iter().map(|s| s.1).collect();
+        bounds.extend(asmd.labels.get("__reset").copied());
+        for (f, _) in &p.isrs {
+            bounds.extend(asmd.labels.get(&p.funcs[*f].asm).copied());
+        }
+        bounds.push(asmd.words);
+        let mut scope_of = vec![None; p.funcs.len()];
+        for (f, func) in p.funcs.iter().enumerate() {
+            if let Some(&low) = asmd.labels.get(&func.asm) {
+                let high = bounds.iter().copied().filter(|&b| b > low).min().unwrap_or(asmd.words);
+                scope_of[f] = Some(debug.funcs.len());
+                debug.funcs.push(crate::dwarf::DFunc { name: func.name.clone(), low: low * 2, high: high * 2 });
+            }
+        }
+        for (i, v) in p.vars.iter().enumerate() {
+            let Some(addr) = layout.addr[i] else { continue };
+            if v.bytes == 0 || matches!(v.kind, VarKind::Hidden) || objs[i].bytes == 0 {
+                continue;
+            }
+            let scope = match (v.kind, v.owner) {
+                (VarKind::Global, _) | (_, None) => None,
+                (_, Some(o)) => match scope_of[o] {
+                    Some(s) => Some(s),
+                    // A routine that was inlined has no range of its own: skip its locals.
+                    None => continue,
+                },
+            };
+            debug.vars.push(crate::dwarf::DVar { name: v.name.clone(), ty: if v.by_ref { crate::types::WORD } else { v.ty.clone() }, bytes: v.bytes, addr, scope, param: matches!(v.kind, VarKind::Param) });
+        }
+    }
+    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }
 }

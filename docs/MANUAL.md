@@ -24,6 +24,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 1. Compiler overview
    - Supported device
    - Running the compiler
+   - Debugging
    - Program layout
    - Identifiers, labels, comments, line continuation
    - Numeric representations and literals
@@ -83,7 +84,7 @@ whether the chosen device has a register or bit field with `#if _has(REG)` / `#i
 ## Running the compiler
 
 ```
-basil [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR]
+basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
        [--devices DIR] [--pic-as PATH] [--version] <program.bas>
 ```
 
@@ -94,6 +95,7 @@ basil [--check] [-S] [--report] [-O0] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `-S` | Stop after writing the assembly (`prog.S`). |
 | `--report` | Also print words per routine and every RAM object. |
 | `--keep-vars` | Keep stores to variables that nothing reads (the optimiser normally drops them), so a test can inspect them in RAM. A `Volatile` variable is always kept. |
+| `-g` | Debug build: adds line, variable and routine information to `prog.elf` for a debugger (see Debugging). The hex file is identical to a build without it. |
 | `-O0` | No optimisation (the test suite builds everything both ways and compares). `-O1`, `-O2`, `-Os` are accepted and mean "optimise" (the default). |
 | `-o FILE` | Output hex path. |
 | `-D NAME` | Define a preprocessor name (visible in every file). |
@@ -116,6 +118,71 @@ basil: blink.bas -> blink.hex (28 words, 56 bytes)
 
 Errors print as `file:line:col: error[CODE]: message`, with the source line and a caret. Several
 errors are reported per run. Exit status is non-zero if any error was reported.
+
+## Debugging
+
+`basil -g prog.bas` builds as usual and also makes `prog.elf` describe the program to a debugger
+in terms of the BASIC source:
+
+* **Lines.** Every statement is preceded by a `#line` directive in `prog.S`, so pic-as writes a DWARF
+  line table that points at the `.bas` files (library modules included), not at `prog.S`. Breakpoints
+  and stepping work on BASIC lines. Code the compiler adds itself (start-up, runtime helpers) is shown
+  under the nearest preceding statement.
+* **Variables and routines.** After pic-as has run, basil appends one DWARF unit to the ELF: each
+  global, and each routine's parameters and locals, with their types and fixed RAM addresses
+  (`Byte`, `ShortInt`, `Word`, `Integer`, `LongWord`, `LongInt`, `Float`, `Char`, `Boolean`, strings and
+  arrays; structures appear as their bytes). Interrupt handlers and routines that were not inlined
+  appear as functions, so the call stack shows names and parameter values. The locals of a routine
+  the compiler inlined into its one caller are not listed. Several routines may share RAM
+  addresses, so only the variables of the routine being stopped in are meaningful.
+* **Symbols.** Each variable is also a real ELF symbol (`BLINK_TICKS`, the assembly name), and a global is
+  also known by its BASIC name (`ticks`), so command-line debuggers can find it.
+
+`-g` changes nothing in the generated code: the hex file is byte-identical with and without it (checked
+over the whole `tests/exec` suite). A build without `-g` carries none of this information.
+`prog.hex` and `prog.elf` are written next to the source (or beside `-o`).
+
+### Debugging with the MPLAB X simulator (`mdb`)
+
+Put these lines in `cmds.txt`:
+
+```
+device PIC18F27Q10
+hwtool sim
+program prog.elf
+break prog.bas:37
+run
+wait 5000
+where
+print ticks
+step
+quit
+```
+
+then run `basil -g prog.bas` and `/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh cmds.txt`.
+`break file:line` takes a BASIC line, `where` shows the routine with its parameters, `print NAME`
+prints a variable and `step` moves to the next BASIC line. A library routine is found by its own file
+(for example `serial.bas`).
+
+### Debugging in VS Code
+
+The VS Code extension (`vscode-extension/`) runs the debug build and starts Microchip's debugger on the
+result. It needs the *MPLAB Extension Pack* and the device pack of the target. Hardware (PICkit, ICD,
+Snap) is only needed for a real chip; the simulator needs none.
+
+| Command (Ctrl+Shift+P, "PIC BASIC: ...") | Key | What it does |
+|---|---|---|
+| New Project | | Creates a folder with the `.bas`, `picbasic.json`, `.vscode/launch.json`, `tasks.json` and `dist/`. |
+| Pick Target Device | | Changes the `Device` line, `picbasic.json` and `launch.json`. |
+| Select Programmer/Debugger | | Simulator or a connected PICkit / ICD / Snap, stored per project. |
+| Build | F7 | `basil`, then copies `.hex`, `.elf`, `.map` into `dist/`. |
+| Build Debug | Ctrl+F7 | `basil -g`, then the same copy. |
+| Program Device | F8 | Builds and programs `dist/<name>.hex` with the selected hardware tool. |
+| Show Build Output | | Opens the output channel. |
+
+Start debugging with F5 (configuration `PIC BASIC: Debug`; F9 breakpoint, F10 / F11 / Shift+F11 step).
+Run Build Debug first, or the debugger will not find `dist/<name>.elf`. The extension's settings are
+listed in `vscode-extension/README.md`.
 
 ## Program layout
 

@@ -20,7 +20,7 @@ pub fn target_of(dev: &Device) -> Target {
         }
     }
     let sfr = dev.sfr.iter().map(|s| (s.name.clone(), s.addr)).collect();
-    Target { ram, access: (dev.memory.data.access_ram.start, dev.memory.data.access_ram.end), access_sfr: dev.memory.data.access_sfr.start, sfr, opt: true, keep_vars: false }
+    Target { ram, access: (dev.memory.data.access_ram.start, dev.memory.data.access_ram.end), access_sfr: dev.memory.data.access_sfr.start, sfr, opt: true, keep_vars: false, debug_files: Vec::new() }
 }
 
 /// The newest installed pic-as, or the one named by `BASIL_PICAS`.

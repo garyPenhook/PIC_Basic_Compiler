@@ -12,7 +12,7 @@ use basil::sema::{SemaConfig, analyze};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: basil [--check] [-S] [--report] [-O0] [--keep-vars] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
+const USAGE: &str = "usage: basil [--check] [-S] [--report] [-O0] [--keep-vars] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR] [--devices DIR] [--pic-as PATH] [--version] <program.bas>";
 
 /// The nearest folder called `name` in `start` or one of its parents. Only the nearest is used,
 /// so a stray `lib` or `devices` folder higher up cannot shadow the project's own.
@@ -28,6 +28,7 @@ fn main() -> ExitCode {
     let mut want_report = false;
     let mut optimise = true;
     let mut keep_vars = false;
+    let mut debug = false;
     let mut out_hex: Option<PathBuf> = None;
     let mut pic_as: Option<PathBuf> = None;
     let mut defines = Vec::new();
@@ -44,6 +45,7 @@ fn main() -> ExitCode {
             "--report" => want_report = true,
             "-O0" => optimise = false,
             "--keep-vars" => keep_vars = true,
+            "-g" => debug = true,
             "-O1" | "-O2" | "-Os" => optimise = true,
             "-o" => match args.next() {
                 Some(v) => out_hex = Some(PathBuf::from(v)),
@@ -112,6 +114,10 @@ fn main() -> ExitCode {
         let mut target = target_of(dev);
         target.opt = optimise;
         target.keep_vars = keep_vars;
+        if debug {
+            // Absolute paths, so the debugger finds the sources wherever it is started.
+            target.debug_files = project.sources.names().map(|n| std::fs::canonicalize(n).map(|p| p.display().to_string()).unwrap_or_else(|_| n.to_string())).collect();
+        }
         let g = generate(p, &target);
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());
@@ -170,6 +176,14 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("basil: {e}");
             return ExitCode::from(1);
+        }
+    }
+    if debug {
+        let elf = hex.with_extension("elf");
+        let source = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+        let done = std::fs::read(&elf).map_err(|e| e.to_string()).and_then(|mut b| basil::dwarf::augment(&mut b, &generated.debug, &source.display().to_string()).and_then(|_| std::fs::write(&elf, b).map_err(|e| e.to_string())));
+        if let Err(e) = done {
+            eprintln!("basil: warning: no variable information in {}: {e}", elf.display());
         }
     }
     eprintln!("basil: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);

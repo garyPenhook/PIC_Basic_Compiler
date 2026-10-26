@@ -106,7 +106,9 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 
 * **VS Code extension** (`vscode-extension/`): highlighting, snippets, keyword and register-name
   case correction, formatting, diagnostics from `basil --check`, outline, go to definition, hover,
-  completion, signature help, and Build / Check / Report commands.
+  completion, signature help, Build / Check / Report commands, a New Project wizard, device and
+  programmer selection, programming (F8) and source-level debugging (F5) through Microchip's MPLAB
+  extension. Debug builds use `basil -g` (see *Debugging* in the manual).
 * **pic-config** (`tools/pic-config/`): a Qt 6 helper that turns drop-down choices into a `Config`
   line (or XC8 `#pragma config` lines) to paste into a program. Changed settings are marked and
   can be reverted one by one or all at once. Its Clock drop-down adds `Device`, `Clock` and
@@ -124,7 +126,7 @@ target/release/basil prog.bas
 ```
 
 Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-check only), `-O0`
-(no optimisation).
+(no optimisation), `-g` (debug build: BASIC line, variable and routine information in `prog.elf`).
 
 Documentation: the user manual `docs/MANUAL.md` (also `docs/MANUAL.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
 diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`. For contributors: `PLAN.md`,

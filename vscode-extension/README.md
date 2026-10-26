@@ -19,33 +19,55 @@ Editor support for the `basil` PIC BASIC compiler (`.bas` files).
 * **Hover and completion everywhere** — hover shows documentation for: reserved words; your own and library routines (parameters, return type, doc comment, where defined); `Module.Member` and `Include "name"` (what the library does and its public routines); parameters and locals; registers and bits of the program's `Device` (address, width, bit fields, mask, datasheet) including what a `Dim x As PORTB.0` alias points at; `Config` fields and their allowed values; and numeric literals (decimal, hex, binary). Completion offers the same, plus registers, bits and `Module.` members after a dot, and `Config` fields and values.
 * **Build** — *PIC BASIC: Build / Check / Show Resource Report* commands and a `picbasic` task type with the `$basil` problem matcher.
 
-## Planned: project, programming and debugging support
+## Project, programming and debugging
 
-Modelled on the feature set of the Swordfish BASIC VS Code beta. None of this exists yet.
+Requirements: the Microchip *MPLAB Extension Pack* and the device pack of the target (basil needs it anyway);
+a programmer/debugger only for physical hardware (the simulator needs none).
 
-* **New Project wizard** — pick a project name, PIC device and oscillator frequency; generates the `.bas` source,
-  a project settings file, `launch.json`, `tasks.json` and a `dist` output directory.
-* **Device catalog and target selection** — choose the target device from inside VS Code from every device
-  description in `devices/`.
-* **Build shortcuts** — F7 normal build, Ctrl+F7 debug build (with debug information), *Show Build Output*.
-* **Programming** — F8 programs the device through a programmer chosen with *Select Programmer/Debugger*
-  (PICkit, ICD, Snap).
-* **Debugging through the Microchip MPLAB extension pack** — simulator (no hardware) and hardware debugging,
-  source-level breakpoints and stepping (F5, F9, F10, F11, Shift+F11), procedure parameters and locals in the
-  Locals view, globals through the Watch view, and BASIC type information including bit metadata.
-* **ELF/DWARF converter** — turn basil's listing/debug map and HEX output into a Microchip-compatible
-  `dist/project.elf` for the MPLAB debugger, implemented in TypeScript inside the extension so Python is not needed.
+### Commands
 
-Requirements for these features: the official Microchip *MPLAB Extension Pack* and the matching device packs;
-a programmer/debugger only for physical hardware.
+Open the Command Palette (Ctrl+Shift+P) and type *PIC BASIC*. The editor title bar also has buttons for
+Build, Build Debug, Program and Select Programmer/Debugger on `.bas` files.
 
-Known limitations to expect: a final call such as `DelayMs()` may lose its source cursor when the compiler emits
-it as a tail branch into shared runtime code; hardware support depends on the Microchip extension, device packs,
-tool firmware, target power and wiring; code completion beyond what is listed above is separate work.
+| Command | Key | What it does |
+|---|---|---|
+| New Project | | Pick a folder, name, device (from the `devices/` descriptions) and oscillator frequency. Creates the `.bas`, `picbasic.json` (project settings), `.vscode/launch.json`, `.vscode/tasks.json`, `dist/` and a `.gitignore`. |
+| Pick Target Device | | Changes the `Device` line, `picbasic.json` and `launch.json` together. |
+| Select Programmer/Debugger | | Simulator, or a PICkit / ICD / Snap the MPLAB extension reports as connected (a fixed list if none is). Stored in `picbasic.json` and `launch.json`. |
+| Build (F7) | F7 | `basil`, then copies `.hex`, `.elf` and `.map` into `dist/`. |
+| Build Debug (Ctrl+F7) | Ctrl+F7 | `basil -g`, then the same copy. |
+| Program Device (F8) | F8 | Builds, then programs `dist/<name>.hex` through the MPLAB extension with the selected tool. Refuses the simulator. |
+| Show Build Output | | Opens the output channel. |
 
-When reporting a problem with these features, include: VS Code version, basil version, MPLAB Extension Pack and
-device pack versions, PIC device, selected simulator/programmer/debugger, a minimal project, the exact steps to
-reproduce, and the build output, Debug Console output and `dap.log` where available.
+F7, Ctrl+F7 and F8 apply while a `.bas` file is active. A second build is refused while one is running.
+
+### Debugging
+
+1. *Select Programmer/Debugger* (the simulator is the default).
+2. **Build Debug (Ctrl+F7)**. This runs `basil -g`, which puts BASIC line numbers, variables and routines
+   into `dist/<name>.elf`.
+3. **F5** starts the `PIC BASIC: Debug` configuration of `.vscode/launch.json` (`mplab-core-da`, stop on entry).
+   F9 sets a breakpoint, F10 steps over, F11 steps into, Shift+F11 steps out, Shift+F5 stops.
+
+Breakpoints and stepping work on the `.bas` lines (library modules included). The debugger sees global variables
+and each routine's parameters and locals with their BASIC types (Byte, Word, Integer, String, arrays; structures
+as bytes). Interrupt handlers and routines that were not inlined appear as functions; the locals of an inlined routine
+are not listed. Code the compiler adds (start-up, helpers) is shown under the nearest statement.
+This was checked with the MPLAB X simulator's command-line debugger (call stack with parameters, `print` of
+globals and parameters); the VS Code Locals and Watch views use the same ELF but have not been exercised.
+Edit `launch.json` to change the tool, `stopOnEntry` or the `dap.log` path. When reporting a problem include the
+VS Code, basil, MPLAB Extension Pack and device pack versions, the device, the tool, a minimal project, the
+build output and `dap.log`.
+
+### Project settings (`picbasic.json`)
+
+```json
+{ "name": "Blink", "device": "18F27Q10", "clockHz": 4000000, "source": "Blink.bas",
+  "debug": { "tool": "Simulator" }, "programming": { "tool": "PICkit 4" } }
+```
+
+`debug.serial` / `programming.serial` name a specific connected tool. `source` tells the commands which file to build
+when no `.bas` file is open.
 
 ## Settings
 
@@ -65,4 +87,4 @@ Set `"[picbasic]": { "editor.formatOnSave": true }` to format on save.
 ## Install
 
     cd vscode-extension && npm test && npx @vscode/vsce package
-    code --install-extension picbasic-0.1.0.vsix
+    code --install-extension picbasic-0.2.3.vsix

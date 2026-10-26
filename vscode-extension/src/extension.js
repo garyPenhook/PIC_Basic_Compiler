@@ -9,6 +9,7 @@ const { parseSymbols, parseIncludes } = require('./symbols');
 const { CANONICAL, ALIASES, KEYWORDS, TYPES, DOCS } = require('./keywords');
 const { deviceOf, loadNames, loadInfo, devicesAbove } = require('./devicenames');
 const docs = require('./hoverdocs');
+const proj = require('./project');
 
 const LANG = 'picbasic';
 const cfg = () => vscode.workspace.getConfiguration('picbasic');
@@ -617,10 +618,10 @@ function check(doc, typing) {
 
 function taskFor(file, mode) {
   const exe = cfg().get('compilerPath') || 'basil';
-  const args = compilerArgs(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : []);
+  const args = compilerArgs(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : mode === 'debug' ? ['-g'] : []);
   const exec = new vscode.ShellExecution(exe, [...args, { value: file, quoting: vscode.ShellQuoting.Strong }], { cwd: path.dirname(file) });
-  const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basil');
-  t.group = mode === 'build' ? vscode.TaskGroup.Build : undefined;
+  const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : mode === 'debug' ? 'Debug build' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basil');
+  t.group = mode === 'build' || mode === 'debug' ? vscode.TaskGroup.Build : undefined;
   return t;
 }
 
@@ -631,6 +632,201 @@ function activeBas() {
     return null;
   }
   return ed.document.save().then(() => ed.document.uri.fsPath);
+}
+
+
+// --- project, programming and debugging -------------------------------------------------------
+
+/** Where the compiler's device descriptions live, for the device catalog. */
+function catalogDirs() {
+  const dirs = [];
+  const extra = cfg().get('devicesPath');
+  if (extra) dirs.push(extra);
+  for (const f of vscode.workspace.workspaceFolders || []) dirs.push(...devicesAbove(f.uri.fsPath));
+  const ed = vscode.window.activeTextEditor;
+  if (ed && ed.document.uri.scheme === 'file') dirs.push(...devicesAbove(path.dirname(ed.document.uri.fsPath)));
+  const exe = cfg().get('compilerPath');
+  if (exe && path.isAbsolute(exe)) dirs.push(...devicesAbove(path.dirname(exe)));
+  return dirs;
+}
+
+async function pickDevice(current) {
+  const devices = proj.listDevices(catalogDirs());
+  if (!devices.length) {
+    vscode.window.showErrorMessage('PIC BASIC: no device descriptions found. Set picbasic.devicesPath.');
+    return undefined;
+  }
+  const cur = proj.basilDevice(current);
+  const pick = await vscode.window.showQuickPick(
+    devices.map((d) => ({ label: d.name, description: d.family, detail: d.pack && `${d.pack} ${d.packVersion}`, picked: d.name === cur, device: d })),
+    { title: 'Target Device', placeHolder: 'Search the device descriptions' }
+  );
+  return pick && pick.device;
+}
+
+/** The project of the active .bas file: its folder, settings and source. */
+function activeProject() {
+  const ed = vscode.window.activeTextEditor;
+  let file = ed && ed.document.languageId === LANG && ed.document.uri.scheme === 'file' ? ed.document.uri.fsPath : null;
+  const root = (vscode.workspace.workspaceFolders || [])[0];
+  if (!file && root) {
+    const dir = root.uri.fsPath;
+    const src = proj.readSettings(dir).source;
+    if (src && fs.existsSync(path.join(dir, src))) file = path.join(dir, src);
+  }
+  if (!file) {
+    vscode.window.showErrorMessage('PIC BASIC: open a .bas file or a folder created by New Project.');
+    return null;
+  }
+  const dir = path.dirname(file);
+  const settings = proj.readSettings(dir);
+  const device = deviceOf(scan(fs.readFileSync(file, 'utf8'))) || settings.device || '';
+  return { dir, file, settings, device, name: path.basename(file, '.bas') };
+}
+
+function packOf(device) {
+  return proj.listDevices(catalogDirs()).find((d) => d.name === proj.basilDevice(device));
+}
+
+async function newProject() {
+  const parent = await vscode.window.showOpenDialog({ title: 'Parent folder for the new project', canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Select Folder' });
+  if (!parent || !parent[0]) return;
+  const name = await vscode.window.showInputBox({
+    title: 'Project name',
+    prompt: 'Becomes the folder, the .bas file and the output name',
+    validateInput: (v) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.trim()) ? undefined : 'Letters, digits and underscores, starting with a letter.'),
+  });
+  if (!name) return;
+  const device = await pickDevice('18F27Q10');
+  if (!device) return;
+  const clock = await vscode.window.showInputBox({ title: 'Oscillator frequency (Hz)', value: '4000000', validateInput: (v) => (/^\d+$/.test(v.trim()) ? undefined : 'Enter a whole number.') });
+  if (!clock) return;
+  const dir = path.join(parent[0].fsPath, name.trim());
+  let source;
+  try {
+    source = proj.createProject(dir, { name: name.trim(), device: device.name, clockHz: Number(clock), pack: device });
+  } catch (e) {
+    vscode.window.showErrorMessage(`PIC BASIC: ${e.message}`);
+    return;
+  }
+  const open = await vscode.window.showInformationMessage(`PIC BASIC: created ${name.trim()}`, 'Open Project');
+  if (open) await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dir), false);
+  else await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(source));
+}
+
+async function pickTarget() {
+  const p = activeProject();
+  if (!p) return;
+  const device = await pickDevice(p.device);
+  if (!device) return;
+  const text = fs.readFileSync(p.file, 'utf8');
+  const next = /^(\s*device\s*=\s*)\w+/im.test(text) ? text.replace(/^(\s*device\s*=\s*)\w+/im, `$1${device.name}`) : `Device = ${device.name}\n${text}`;
+  if (next !== text) {
+    const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === p.file);
+    if (open) {
+      const all = new vscode.Range(0, 0, open.lineCount, 0);
+      const we = new vscode.WorkspaceEdit();
+      we.replace(open.uri, all, next);
+      await vscode.workspace.applyEdit(we);
+      await open.save();
+    } else fs.writeFileSync(p.file, next);
+  }
+  proj.writeSettings(p.dir, (j) => ({ ...j, device: device.name }));
+  const dbg = proj.readSettings(p.dir).debug || {};
+  proj.updateLaunch(p.dir, { name: p.name, device: device.name, tool: dbg.tool, serial: dbg.serial, packName: device.pack, packVersion: device.packVersion });
+  vscode.window.showInformationMessage(`PIC BASIC: target ${device.name}`);
+}
+
+async function connectedTools() {
+  const sets = await Promise.all(['mplab-core-da.listConnectedTools', 'mplab-core-da.listConnectedKits'].map((c) => Promise.resolve(vscode.commands.executeCommand(c)).catch(() => [])));
+  return proj.parseTools(sets);
+}
+
+async function pickTool() {
+  const found = await connectedTools();
+  const items = new Map();
+  for (const t of found.length ? [{ tool: 'Simulator', description: 'Software simulator' }, ...found] : proj.FALLBACK_TOOLS.map((tool) => ({ tool }))) items.set(`${t.tool}\0${t.serial || ''}`, t);
+  const pick = await vscode.window.showQuickPick([...items.values()].map((t) => ({ label: t.tool, description: t.serial ? `Serial ${t.serial}` : t.description, t })), {
+    title: 'Programmer / Debugger',
+    placeHolder: found.length ? 'Simulator or a connected Microchip tool' : 'No connected tools reported; choose one',
+  });
+  return pick && pick.t;
+}
+
+async function selectTool() {
+  const p = activeProject();
+  if (!p) return;
+  const t = await pickTool();
+  if (!t) return;
+  const sim = t.tool === 'Simulator';
+  proj.writeSettings(p.dir, (j) => {
+    const entry = { tool: t.tool, ...(t.serial && !sim ? { serial: t.serial } : {}) };
+    // The simulator cannot program a chip, so programming keeps its last hardware tool.
+    return { ...j, debug: entry, programming: sim ? j.programming || { tool: 'PICkit 4' } : entry };
+  });
+  const dev = packOf(p.device);
+  proj.updateLaunch(p.dir, { name: p.name, device: p.device, tool: t.tool, serial: t.serial, packName: dev && dev.pack, packVersion: dev && dev.packVersion });
+  vscode.window.showInformationMessage(`PIC BASIC: ${t.tool}${t.serial ? ` (${t.serial})` : ''} for ${p.name}`);
+}
+
+/** Runs the build task, then copies the hex/elf/map into dist/. Resolves true on success. */
+let building = false;
+async function buildProject(debug) {
+  if (building) {
+    vscode.window.showWarningMessage('PIC BASIC: a build is already running.');
+    return false;
+  }
+  const p = activeProject();
+  if (!p) return false;
+  building = true;
+  try {
+    return await runBuild(p, debug);
+  } finally {
+    building = false;
+  }
+}
+
+async function runBuild(p, debug) {
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === p.file);
+  if (doc) await doc.save();
+  const task = taskFor(p.file, debug ? 'debug' : 'build');
+  let sub;
+  const ended = new Promise((resolve) => {
+    sub = vscode.tasks.onDidEndTaskProcess((e) => {
+      if (e.execution.task.definition.file === p.file && e.execution.task.definition.type === 'picbasic') resolve(e.exitCode);
+    });
+  });
+  await vscode.tasks.executeTask(task);
+  const code = await ended;
+  sub.dispose();
+  if (code !== 0) return false;
+  const copied = proj.collectArtifacts(p.file);
+  const need = debug ? `${p.name}.elf` : `${p.name}.hex`;
+  if (!copied.includes(need)) {
+    vscode.window.showErrorMessage(`PIC BASIC: the build did not produce ${need}.`);
+    return false;
+  }
+  output.appendLine(`PIC BASIC: dist/ now holds ${copied.join(', ')}`);
+  return true;
+}
+
+async function programDevice() {
+  const p = activeProject();
+  if (!p) return;
+  if (!(await buildProject(false))) return;
+  let prog = p.settings.programming || {};
+  if (!prog.tool || prog.tool === 'Simulator') {
+    const t = await pickTool();
+    if (!t) return;
+    prog = { tool: t.tool, serial: t.serial };
+  }
+  if (prog.tool === 'Simulator') {
+    vscode.window.showErrorMessage('PIC BASIC: the simulator cannot program a device. Select PICkit, ICD or Snap.');
+    return;
+  }
+  const dev = packOf(p.device);
+  const cfgLaunch = proj.launchConfig({ name: p.name, device: p.device, tool: prog.tool, serial: prog.serial, packName: dev && dev.pack, packVersion: dev && dev.packVersion, program: path.join(p.dir, 'dist', `${p.name}.hex`), programOnly: true });
+  await vscode.debug.startDebugging(undefined, cfgLaunch);
 }
 
 function activate(ctx) {
@@ -675,6 +871,13 @@ function activate(ctx) {
       if (file) vscode.tasks.executeTask(taskFor(file, mode));
     }));
   }
+  reg(vscode.commands.registerCommand('picbasic.newProject', newProject));
+  reg(vscode.commands.registerCommand('picbasic.pickDevice', pickTarget));
+  reg(vscode.commands.registerCommand('picbasic.selectTool', selectTool));
+  reg(vscode.commands.registerCommand('picbasic.buildRelease', () => buildProject(false)));
+  reg(vscode.commands.registerCommand('picbasic.buildDebug', () => buildProject(true)));
+  reg(vscode.commands.registerCommand('picbasic.program', programDevice));
+  reg(vscode.commands.registerCommand('picbasic.showOutput', () => output.show()));
   reg(vscode.tasks.registerTaskProvider('picbasic', {
     provideTasks: () => {
       const ed = vscode.window.activeTextEditor;

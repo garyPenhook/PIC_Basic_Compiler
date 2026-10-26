@@ -358,3 +358,47 @@ fn several_literals_share_a_flash_table() {
     assert!(asm.contains("db 0x6F, 0x6E, 0x65, 0x00, 0x74, 0x68, 0x72, 0x65, 0x65, 0x00"), "{asm}");
 }
 
+
+/// `-g` points the asm's `#line` directives at the BASIC source and leaves the generated hex unchanged.
+#[test]
+fn debug_flag_maps_code_to_basic_lines_without_changing_the_hex() {
+    let dir = scratch("debug_lines");
+    let bas = dir.join("dbg.bas");
+    std::fs::copy(root().join("tests/exec/arith_byte.bas"), &bas).unwrap();
+    let run = |extra: &[&str], hex: &str| {
+        let out = Command::new(basil()).args(extra).arg("-o").arg(dir.join(hex)).arg(&bas).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    run(&["-S"], "plain.hex");
+    let asm_plain = std::fs::read_to_string(dir.join("plain.S")).unwrap();
+    run(&["-S", "-g"], "dbg.hex");
+    let asm_dbg = std::fs::read_to_string(dir.join("dbg.S")).unwrap();
+    assert!(!asm_plain.contains("#line ") && !asm_plain.contains("PSECT dbg"));
+    assert!(asm_dbg.contains("PSECT dbg"), "no variable symbols");
+    assert!(asm_dbg.lines().any(|l| l.starts_with("#line ") && l.contains("dbg.bas")), "no #line for the program");
+    // Only the code differs in nothing but `#line` lines; `-g` also names the variables as symbols.
+    let strip = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");
+    assert_eq!(strip(&asm_plain), strip(&asm_dbg), "-g changed the generated code");
+}
+
+/// `-g` appends a DWARF unit naming the program's variables and routines to the ELF.
+#[test]
+fn debug_flag_adds_variables_and_routines_to_the_elf() {
+    if !have_pic_as() {
+        return;
+    }
+    let dir = scratch("debug_vars");
+    let bas = dir.join("vars.bas");
+    std::fs::write(&bas, "Program T\nDevice = 18F27Q10\nClock = 1\nDim counter As Word = 0\nSub Bump(amount As Byte)\n    Dim local_tmp As Byte\n    local_tmp = amount\n    counter = counter + local_tmp\nEnd Sub\nDo\n    Bump(3)\nLoop\n").unwrap();
+    let out = Command::new(basil()).arg("-g").arg(&bas).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("no variable information"));
+    let elf = std::fs::read(dir.join("vars.elf")).unwrap();
+    let has = |needle: &[u8]| elf.windows(needle.len()).any(|w| w == needle);
+    assert!(has(b"counter\0") && has(b"basil\0") && has(b"Word\0"), "variable and type names missing from the ELF");
+    let plain = scratch("debug_vars_plain").join("vars.bas");
+    std::fs::copy(&bas, &plain).unwrap();
+    assert!(Command::new(basil()).arg(&plain).output().unwrap().status.success());
+    let elf2 = std::fs::read(plain.with_extension("elf")).unwrap();
+    assert!(!elf2.windows(6).any(|w| w == b"basil\0"), "plain build carries debug-only data");
+}

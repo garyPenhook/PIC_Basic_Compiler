@@ -1,2 +1,5 @@
 test/**
 .gitignore
+vscode_mecanique.swordfish-basic-*/**
+vscode_mecanique.swordfish-basic-*.zip
+picbasic-*.vsix
