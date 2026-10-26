@@ -152,6 +152,10 @@ in `docs/MANUAL.md` and `vscode-extension/README.md`.
   line (or XC8 `#pragma config` lines) to paste into a program. Changed settings are marked and
   can be reverted one by one or all at once. Its Clock drop-down adds `Device`, `Clock` and
   `Include "intosc"` lines (with a note when `CSWEN = ON` is needed) so the output is a whole header.
+  Covers every device basil supports (PIC18F27Q10, PIC18-Q41, PIC16F17126/17146); more parts are a
+  `.cfgdata` file away (see `tools/pic-config/README.md`).
+
+  ![pic-config](docs/images/pic-config.png)
 * **devgen** (`tools/devgen/`): generates a device description (`devices/*.toml`) from a Microchip device pack and cross-checks it against numbers read from the data sheet.
 
 ## Using it

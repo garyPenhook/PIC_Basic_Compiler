@@ -38,7 +38,9 @@ QString formatConfig(const DeviceDef &dev, const Selection &sel, OutputFormat fm
                 if (set.name == QLatin1String("RSTOSC")) rstosc = set.values[idx].name;
                 else if (set.name == QLatin1String("CSWEN")) cswen = set.values[idx].name;
             }
-        const bool startsAtClock = rstosc == QStringLiteral("HFINTOSC_%1MHZ").arg(clockMhz);
+        // The PIC16F171xx cfgdata spells it "MHz", the PIC18 ones "MHZ".
+        const bool startsAtClock = rstosc.compare(QStringLiteral("HFINTOSC_%1MHZ").arg(clockMhz),
+                                                  Qt::CaseInsensitive) == 0;
         if (!startsAtClock && cswen != QLatin1String("ON"))
             warning = QStringLiteral("' WARNING: Clock = %1 needs CSWEN = ON for Include \"intosc\"\n")
                           .arg(clockMhz);

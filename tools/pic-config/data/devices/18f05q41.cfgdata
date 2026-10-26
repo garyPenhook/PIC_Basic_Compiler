@@ -1,0 +1,251 @@
+# Generated 02/09/2026 GMT
+
+# Copyright (c) 2026 Microchip Technology Inc. and its subsidiaries.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#   http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Microchip PIC18F05Q41 Configuration Word Definitions
+
+# File Syntax:
+# Each configuration register is given as:
+# 
+#     CWORD:<address>:<mask>:<default value>[:<name>[,<alias list>]]
+# 
+# for each CWORD the configuration settings are listed as
+# 
+#     CSETTING:<mask>:<name>[,<alias list>]:<description>
+# 
+# lastly for each CSETTING all possible values are listed as
+# 
+#     CVALUE:<value>:<name>[,<alias list>]:<description>
+# 
+# All numerical values are given in unqualified hex.  In terms of
+# #pragma config, note the following correspondence:
+# 
+#    #pragma config CSETTING<name> = CVALUE<name>
+# 
+# The compiler may also emit a message when it detects certain programming.
+# This behaviour is defined by the following record
+# 
+#     CMSG:<CSETTING name>=<CVALUE name>[,...]:<message number>
+# 
+# If the compiler encounters the given programming then it will emit the
+# with the corresponding numnber.  Note that these records must appear last
+# in the file.
+# 
+# Comments are also permitted.  Any line beginning with a '#'
+# character will be treated as a comment.
+
+CWORD:300000:77:FF:CONFIG1
+CSETTING:7:FEXTOSC:External Oscillator Selection
+CVALUE:0:LP:LP (crystal oscillator) optimized for 32.768 kHz
+CVALUE:1:XT:XT (crystal oscillator) above 100 kHz, below 8 MHz
+CVALUE:2:HS:HS (crystal oscillator) above 8 MHz
+CVALUE:4:OFF:Oscillator not enabled
+CVALUE:5:ECL:EC (external clock) below 100 kHz
+CVALUE:6:ECM:EC (external clock) for 500 kHz to 8 MHz
+CVALUE:7:ECH:EC (external clock) above 8 MHz
+CSETTING:70:RSTOSC:Reset Oscillator Selection
+CVALUE:0:HFINTOSC_64MHZ:HFINTOSC with HFFRQ = 64 MHz and CDIV = 1:1
+CVALUE:20:EXTOSC_4PLL:EXTOSC with 4x PLL, with EXTOSC operating per FEXTOSC bits
+CVALUE:40:SOSC:Secondary Oscillator
+CVALUE:50:LFINTOSC:Low-Frequency Oscillator
+CVALUE:60:HFINTOSC_1MHZ:HFINTOSC with HFFRQ = 4 MHz and CDIV = 4:1
+CVALUE:70:EXTOSC:EXTOSC operating per FEXTOSC bits (device manufacturing default)
+CWORD:300001:EB:FF:CONFIG2
+CSETTING:1:CLKOUTEN:Clock out Enable bit
+CVALUE:1:OFF:CLKOUT function is disabled
+CVALUE:0:ON:CLKOUT function is enabled
+CSETTING:2:PR1WAY:PRLOCKED One-Way Set Enable bit
+CVALUE:2:ON:PRLOCKED bit can be cleared and set only once
+CVALUE:0:OFF:PRLOCKED bit can be set and cleared repeatedly
+CSETTING:8:CSWEN:Clock Switch Enable bit
+CVALUE:0:OFF:The NOSC and NDIV bits cannot be changed by user software
+CVALUE:8:ON:Writing to NOSC and NDIV is allowed
+CSETTING:20:FCMEN:Fail-Safe Clock Monitor Enable bit
+CVALUE:0:OFF:Fail-Safe Clock Monitor disabled
+CVALUE:20:ON:Fail-Safe Clock Monitor enabled
+CSETTING:40:FCMENP:Fail-Safe Clock Monitor - Primary XTAL Enable bit
+CVALUE:0:OFF:Fail-Safe Clock Monitor disabled
+CVALUE:40:ON:Fail-Safe Clock Monitor enabled; timer will flag FSCMP bit and OSFIF interrupt on EXTOSC failure.
+CSETTING:80:FCMENS:Fail-Safe Clock Monitor - Secondary XTAL Enable bit
+CVALUE:0:OFF:Fail-Safe Clock Monitor Disabled
+CVALUE:80:ON:Fail-Safe Clock Monitor enabled; timer will flag FSCMP bit and OSFIF interrupt on SOSC failure.
+CWORD:300002:FF:FF:CONFIG3
+CSETTING:1:MCLRE:MCLR Enable bit
+CVALUE:1:EXTMCLR:If LVP = 0, MCLR pin is MCLR; If LVP = 1, RE3 pin function is MCLR
+CVALUE:0:INTMCLR:If LVP = 0, MCLR pin function is port defined function; If LVP =1, RE3 pin fuction is MCLR
+CSETTING:6:PWRTS:Power-up timer selection bits
+CVALUE:6:PWRT_OFF:PWRT is disabled
+CVALUE:4:PWRT_64:PWRT set at 64ms
+CVALUE:2:PWRT_16:PWRT set at 16ms
+CVALUE:0:PWRT_1:PWRT set at 1ms
+CSETTING:8:MVECEN:Multi-vector enable bit
+CVALUE:8:ON:Multi-vector enabled, Vector table used for interrupts
+CVALUE:0:OFF:Interrupt contoller does not use vector table to prioritze interrupts
+CSETTING:10:IVT1WAY:IVTLOCK bit One-way set enable bit
+CVALUE:10:ON:IVTLOCKED bit can be cleared and set only once
+CVALUE:0:OFF:IVTLOCKED bit can be cleared and set repeatedly
+CSETTING:20:LPBOREN:Low Power BOR Enable bit
+CVALUE:20:OFF:Low-Power BOR disabled
+CVALUE:0:ON:Low-Power BOR enabled
+CSETTING:C0:BOREN:Brown-out Reset Enable bits
+CVALUE:C0:SBORDIS:Brown-out Reset enabled , SBOREN bit is ignored
+CVALUE:80:NOSLP:Brown-out Reset enabled while running, disabled in Sleep; SBOREN is ignored
+CVALUE:40:ON:Brown-out Reset enabled according to SBOREN
+CVALUE:0:OFF:Brown-out Reset disabled
+CWORD:300003:BF:FF:CONFIG4
+CSETTING:3:BORV:Brown-out Reset Voltage Selection bits
+CVALUE:3:VBOR_1P9:Brown-out Reset Voltage (VBOR) set to 1.9V
+CVALUE:2:VBOR_2P45:Brown-out Reset Voltage (VBOR) set to 2.45V
+CVALUE:1:VBOR_2P7:Brown-out Reset Voltage (VBOR) set to 2.7V
+CVALUE:0:VBOR_2P85:Brown-out Reset Voltage (VBOR) set to 2.8V
+CSETTING:4:ZCD:ZCD Disable bit
+CVALUE:4:OFF:ZCD module is disabled. ZCD can be enabled by setting the ZCDSEN bit of ZCDCON
+CVALUE:0:ON:ZCD module is always enabled; ZCDMD and ZCDSEN bits are ignored
+CSETTING:8:PPS1WAY:PPSLOCK bit One-Way Set Enable bit
+CVALUE:8:ON:PPSLOCKED bit can be cleared and set only once; PPS registers remain locked after one clear/set cycle
+CVALUE:0:OFF:PPSLOCKED bit can be set and cleared repeatedly (subject to the unlock sequence)
+CSETTING:10:STVREN:Stack Full/Underflow Reset Enable bit
+CVALUE:10:ON:Stack full/underflow will cause Reset
+CVALUE:0:OFF:Stack full/underflow will not cause Reset
+CSETTING:20:LVP:Low Voltage Programming Enable bit
+CVALUE:20:ON:Low voltage programming enabled. MCLR/VPP pin function is MCLR. MCLRE configuration bit is ignored
+CVALUE:0:OFF:HV on MCLR/VPP must be used for programming
+CSETTING:80:XINST:Extended Instruction Set Enable bit
+CVALUE:80:OFF:Extended Instruction Set and Indexed Addressing Mode disabled
+CVALUE:0:ON:Extended Instruction Set and Indexed Addressing Mode enabled
+CWORD:300004:7F:FF:CONFIG5
+CSETTING:1F:WDTCPS:WDT Period selection bits
+CVALUE:0:WDTCPS_0:Divider ratio 1:32
+CVALUE:1:WDTCPS_1:Divider ratio 1:64
+CVALUE:2:WDTCPS_2:Divider ratio 1:128
+CVALUE:3:WDTCPS_3:Divider ratio 1:256
+CVALUE:4:WDTCPS_4:Divider ratio 1:512
+CVALUE:5:WDTCPS_5:Divider ratio 1:1024
+CVALUE:6:WDTCPS_6:Divider ratio 1:2048
+CVALUE:7:WDTCPS_7:Divider ratio 1:4096
+CVALUE:8:WDTCPS_8:Divider ratio 1:8192
+CVALUE:9:WDTCPS_9:Divider ratio 1:16384
+CVALUE:A:WDTCPS_10:Divider ratio 1:32768
+CVALUE:B:WDTCPS_11:Divider ratio 1:65536
+CVALUE:C:WDTCPS_12:Divider ratio 1:131072
+CVALUE:D:WDTCPS_13:Divider ratio 1:262144
+CVALUE:E:WDTCPS_14:Divider ratio 1:524299
+CVALUE:F:WDTCPS_15:Divider ratio 1:1048576
+CVALUE:10:WDTCPS_16:Divider ratio 1:2097152
+CVALUE:11:WDTCPS_17:Divider ratio 1:4194304
+CVALUE:12:WDTCPS_18:Divider ratio 1:8388608
+CVALUE:13:WDTCPS_19:Divider ratio 1:32
+CVALUE:14:WDTCPS_20:Divider ratio 1:32
+CVALUE:15:WDTCPS_21:Divider ratio 1:32
+CVALUE:16:WDTCPS_22:Divider ratio 1:32
+CVALUE:17:WDTCPS_23:Divider ratio 1:32
+CVALUE:18:WDTCPS_24:Divider ratio 1:32
+CVALUE:19:WDTCPS_25:Divider ratio 1:32
+CVALUE:1A:WDTCPS_26:Divider ratio 1:32
+CVALUE:1B:WDTCPS_27:Divider ratio 1:32
+CVALUE:1C:WDTCPS_28:Divider ratio 1:32
+CVALUE:1D:WDTCPS_29:Divider ratio 1:32
+CVALUE:1E:WDTCPS_30:Divider ratio 1:32
+CVALUE:1F:WDTCPS_31:Divider ratio 1:65536; software control of WDTPS
+CSETTING:60:WDTE:WDT operating mode
+CVALUE:0:OFF:WDT Disabled; SWDTEN is ignored
+CVALUE:20:SWDTEN:WDT enabled/disabled by SWDTEN bit
+CVALUE:40:NSLEEP:WDT enabled while sleep=0, suspended when sleep=1; SWDTEN ignored
+CVALUE:60:ON:WDT enabled regardless of sleep; SWDTEN is ignored
+CWORD:300005:3F:FF:CONFIG6
+CSETTING:7:WDTCWS:WDT Window Select bits
+CVALUE:0:WDTCWS_0:window delay = 87.5; no software control; keyed access required
+CVALUE:1:WDTCWS_1:window delay = 75 percent of time; no software control; keyed access required
+CVALUE:2:WDTCWS_2:window delay = 62.5 percent of time; no software control; keyed access required
+CVALUE:3:WDTCWS_3:window delay = 50 percent of time; no software control; keyed access required
+CVALUE:4:WDTCWS_4:window delay = 37.5 percent of time; no software control; keyed access required
+CVALUE:5:WDTCWS_5:window delay = 25 percent of time; no software control; keyed access required
+CVALUE:6:WDTCWS_6:window always open (100%); no software control; keyed access required
+CVALUE:7:WDTCWS_7:window always open (100%); software control; keyed access not required
+CSETTING:38:WDTCCS:WDT input clock selector
+CVALUE:0:LFINTOSC:WDT reference clock is the 31.0 kHz LFINTOSC
+CVALUE:8:MFINTOSC:WDT reference clock is the 31.25kHz MFINTOSC output
+CVALUE:10:SOSC:WDT reference clock is SOSC
+CVALUE:38:SC:Software Control
+CWORD:300006:3F:FF:CONFIG7
+CSETTING:7:BBSIZE:Boot Block Size selection bits
+CVALUE:7:BBSIZE_512:Boot Block size is 512 words
+CVALUE:6:BBSIZE_1024:Boot Block size is 1024 words
+CVALUE:5:BBSIZE_2048:Boot Block size is 2048 words
+CVALUE:4:BBSIZE_4096:Boot Block size is 4096 words
+CVALUE:3:BBSIZE_8192:Boot Block size is 8192 words
+CSETTING:8:BBEN:Boot Block enable bit
+CVALUE:8:OFF:Boot block disabled
+CVALUE:0:ON:Boot block enabled
+CSETTING:10:SAFEN:Storage Area Flash enable bit
+CVALUE:10:OFF:SAF disabled
+CVALUE:0:ON:SAF enabled
+CSETTING:20:DEBUG:Background Debugger
+CVALUE:20:OFF:Background Debugger disabled
+CVALUE:0:ON:Background Debugger enabled
+CWORD:300007:8F:FF:CONFIG8
+CSETTING:1:WRTB:Boot Block Write Protection bit
+CVALUE:1:OFF:Boot Block not Write protected
+CVALUE:0:ON:Boot Block Write protected
+CSETTING:2:WRTC:Configuration Register Write Protection bit
+CVALUE:2:OFF:Configuration registers not Write protected
+CVALUE:0:ON:Configuration registers Write protected
+CSETTING:4:WRTD:Data EEPROM Write Protection bit
+CVALUE:4:OFF:Data EEPROM not Write protected
+CVALUE:0:ON:Data EEPROM Write protected
+CSETTING:8:WRTSAF:SAF Write protection bit
+CVALUE:8:OFF:SAF not Write Protected
+CVALUE:0:ON:SAF Write Protected
+CSETTING:80:WRTAPP:Application Block write protection bit
+CVALUE:80:OFF:Application Block not write protected
+CVALUE:0:ON:Application Block write protected
+CWORD:300008:1:FF:CONFIG9
+CSETTING:1:CP:PFM and Data EEPROM Code Protection bit
+CVALUE:1:OFF:PFM and Data EEPROM code protection disabled
+CVALUE:0:ON:PFM and Data EEPROM code protection enabled
+CWORD:200000:FFFF:FFFF:IDLOC0
+CWORD:200002:FFFF:FFFF:IDLOC1
+CWORD:200004:FFFF:FFFF:IDLOC2
+CWORD:200006:FFFF:FFFF:IDLOC3
+CWORD:200008:FFFF:FFFF:IDLOC4
+CWORD:20000A:FFFF:FFFF:IDLOC5
+CWORD:20000C:FFFF:FFFF:IDLOC6
+CWORD:20000E:FFFF:FFFF:IDLOC7
+CWORD:200010:FFFF:FFFF:IDLOC8
+CWORD:200012:FFFF:FFFF:IDLOC9
+CWORD:200014:FFFF:FFFF:IDLOC10
+CWORD:200016:FFFF:FFFF:IDLOC11
+CWORD:200018:FFFF:FFFF:IDLOC12
+CWORD:20001A:FFFF:FFFF:IDLOC13
+CWORD:20001C:FFFF:FFFF:IDLOC14
+CWORD:20001E:FFFF:FFFF:IDLOC15
+CWORD:200020:FFFF:FFFF:IDLOC16
+CWORD:200022:FFFF:FFFF:IDLOC17
+CWORD:200024:FFFF:FFFF:IDLOC18
+CWORD:200026:FFFF:FFFF:IDLOC19
+CWORD:200028:FFFF:FFFF:IDLOC20
+CWORD:20002A:FFFF:FFFF:IDLOC21
+CWORD:20002C:FFFF:FFFF:IDLOC22
+CWORD:20002E:FFFF:FFFF:IDLOC23
+CWORD:200030:FFFF:FFFF:IDLOC24
+CWORD:200032:FFFF:FFFF:IDLOC25
+CWORD:200034:FFFF:FFFF:IDLOC26
+CWORD:200036:FFFF:FFFF:IDLOC27
+CWORD:200038:FFFF:FFFF:IDLOC28
+CWORD:20003A:FFFF:FFFF:IDLOC29
+CWORD:20003C:FFFF:FFFF:IDLOC30
+CWORD:20003E:FFFF:FFFF:IDLOC31
+CMSG:XINST=ON:1504
+CMSG:SAFEN=ON:1604

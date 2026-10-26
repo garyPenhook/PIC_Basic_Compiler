@@ -1,5 +1,7 @@
 # pic-config
 
+![pic-config](../../docs/images/pic-config.png)
+
 Qt 6 / C++ helper that turns drop-down choices into a `Config` line (basil) or `#pragma config`
 lines (XC8) to paste into a source file.
 

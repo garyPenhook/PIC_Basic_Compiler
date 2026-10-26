@@ -15,6 +15,7 @@ head, rest = s.split('\n', 1)          # first line is the manual title; the cov
 open(sys.argv[2], 'w').write('# About this manual\n' + rest)
 P
 cp "$here/manual.css" "$tmp/"
+cp -r "$docs/images" "$tmp/"
 (cd "$tmp" && pandoc m.md -f gfm -t html5 -s --toc --toc-depth=2 \
   --metadata title="Basil Manual" \
   --metadata subtitle="PIC18F27Q10 + PIC18-Q41 · basil ${version}" \

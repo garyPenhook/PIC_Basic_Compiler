@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.36**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.37**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -922,6 +922,37 @@ after the `.`: `Include "serial"` then `Serial.SerialInit(115200)`.
 ```basic
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 ```
+
+### Choosing Config values with pic-config
+
+`tools/pic-config/` is a small Qt 6 program that builds the `Config` line from drop-downs, so the setting
+and value names do not have to be looked up. It knows PIC18F27Q10, PIC18F04/05/06/14/15/16Q41 and
+PIC16F17126/17146.
+
+![pic-config showing a PIC18F05Q41](images/pic-config.png)
+
+* **Device** lists the parts it has data for; one drop-down per configuration setting, grouped by
+  configuration word with its address. Each value shows its meaning.
+* **Output** is `Config NAME = VALUE` for basil or `#pragma config` lines for XC8. The text pane is what you
+  paste into the program; **Copy to clipboard** copies it. Below it are the resulting configuration word
+  values.
+* A setting changed from its default is shown in bold with a revert button; **Clear all changes** puts
+  every setting back. **Only settings changed from default** limits the output to those. **Comments**
+  adds a line explaining each changed value.
+* **Clock** adds `Device`, `Clock` and `Include "intosc"` lines so the output is a whole program header, and
+  warns when the chosen speed needs `CSWEN = ON`.
+* **Add device file...** loads another Microchip `.cfgdata` (found under `xc8/pic/dat/cfgdata/` in the
+  device pack) without rebuilding.
+
+Build and run (needs Qt 6 and CMake):
+
+```
+cmake -S tools/pic-config -B tools/pic-config/build -G Ninja -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/gcc_64
+cmake --build tools/pic-config/build
+tools/pic-config/build/pic-config
+```
+
+To add a part, drop its `<device>.cfgdata` into `tools/pic-config/data/devices/` and re-run cmake.
 
 ## Preprocessor
 
@@ -3853,7 +3884,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.36 |
+| Feature of other BASIC compilers | basil 0.1.37 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -3886,7 +3917,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basil --version` prints `0.1.36`. `basil --check` on a program with a deliberate error prints a
+1. `basil --version` prints `0.1.37`. `basil --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.
