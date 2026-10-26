@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.21**, target device **PIC18F27Q10**.
+Revision for **basil 0.1.35**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -3812,9 +3812,9 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.9 |
+| Feature of other BASIC compilers | basil 0.1.35 |
 |---|---|
-| Other devices | only PIC18F27Q10 |
+| Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
 | `Declare` switches (LCD pins, baud, pin routing) | only `Declare Xtal`; peripherals take arguments in `...Init(...)` calls |
 | `PinHigh`, `PinLow`, `PinSet`, `PinGet`, `PinMode`, pin numbers in `High` | use register bits / aliases |
@@ -3845,7 +3845,7 @@ reports these rather than miscompiling them.
 Work down this list. Each item names what to observe.
 
 **Build and size**
-1. `basil --version` prints `0.1.9`. `basil --check` on a program with a deliberate error prints a
+1. `basil --version` prints `0.1.35`. `basil --check` on a program with a deliberate error prints a
    code, line, column and caret.
 2. Compile `my_src/first_test/main.bas`; confirm `.hex`, `.S`, `.map` appear and the size line prints.
 3. Compile the same program with `-O0`; it should behave the same and be larger.
