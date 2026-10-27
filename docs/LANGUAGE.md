@@ -355,7 +355,7 @@ are plain bit operations and are allowed. A 4-byte Float is not read atomically 
 ## 9. Modules, includes and visibility
 
 * `Include "name"` loads `name.bas` from the including file's folder, then the project `lib/`
-  folder, then the configured library path. Loaded once per compilation. (SF)
+  folder, then the configured library path, then the modules built into the compiler. Loaded once per compilation. (SF)
 * Only `Public` declarations of an included module are visible. Module statements are
   initialisation code and run before the main program, in include order. (SF)
 * Qualified names (`Module.Name`) resolve ambiguity between modules. (SF)

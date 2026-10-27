@@ -18,9 +18,10 @@ ln -sf "$PWD/target/release/basil" ~/.local/bin/basil     # any folder on your P
 basil --version
 ```
 
-`basil` finds the `lib/` and `devices/` folders of the nearest parent directory of your source file,
-so keep your programs inside this repository (for example in `my_src/`) or pass `-L LIBDIR` and
-`--devices DIR`.
+`basil` finds the `lib/` and `devices/` folders of the nearest parent directory of your source file.
+It also carries a copy of both, so the binary works from any folder; a `lib/` or `devices/` next to
+your program, or `-L LIBDIR` and `--devices DIR`, take priority over the built-in copy. The built-in copy
+is unpacked on first use into `~/.cache/basil/` (or `$XDG_CACHE_HOME/basil/`).
 
 ## 3. First program
 

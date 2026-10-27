@@ -37,7 +37,8 @@ options:
   -V, --version   print the version and exit
   -h, --help      print this help and exit
 
-lib/ and devices/ are found in the source file's folder or the nearest parent.
+lib/ and devices/ are found in the source file's folder or the nearest parent; the
+modules and devices built into basil are used last.
 Full documentation: docs/MANUAL.md
 ";
 
@@ -111,10 +112,11 @@ fn main() -> ExitCode {
     let start = file.canonicalize().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
     lib_dirs.extend(nearest_with(&start, "lib"));
     dev_dirs.extend(nearest_with(&start, "devices"));
-    // Last resort for a development build run outside the project tree.
-    let home = Path::new(env!("CARGO_MANIFEST_DIR"));
-    lib_dirs.push(home.join("lib"));
-    dev_dirs.push(home.join("devices"));
+    // Last resort: the modules and device descriptions built into this compiler.
+    if let Some((lib, dev)) = basil::embedded::dirs() {
+        lib_dirs.push(lib);
+        dev_dirs.push(dev);
+    }
 
     let mut diags = Diagnostics::default();
     let project = load(&file, &LoadConfig { lib_dirs, defines, devices_dirs: dev_dirs.clone() }, &mut diags);

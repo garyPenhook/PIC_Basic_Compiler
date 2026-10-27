@@ -254,6 +254,29 @@ Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Sched
 reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,
 FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/benchmarks).
 
+## Backlog: DMA library module (`Include "dma"`)
+Decision (2026-10-27): support DMA as a library module, not as language commands. Same pattern as the other peripherals
+(LIBRARY.md): only called routines are compiled in, and `#if _has(DMA1CON0)` gates it per device (the Q10 has no DMA registers in
+`devices/18F27Q10.toml`; the PIC18-Q41 files have `DMA1..4`; the 16F17126/46 files mention DMA, not yet checked).
+- Nothing is implemented. Read the DMA chapter and errata (pic-docs) before any register value goes in; cite section and page.
+- The module configures and starts transfers and exposes flags; it declares no `Interrupt` handler (LIBRARY.md rule). The program
+  writes its own completion handler, or uses a callback like `Timer0OnExpire`.
+- Sketch of the API (names not final): `DmaCopy(channel, src, dst, count)` memory to memory; `DmaStart(channel, trigger)`,
+  `DmaDone(channel)`, `DmaStop(channel)` for peripheral-triggered transfers (ADC result to an array, array to UART/SPI).
+- Addresses: `AddressOf(x)` / `@x` already exists (a `Word` for a RAM object, a `LongWord` for a constant table or routine,
+  LANGUAGE.md section 12), so the module needs no new intrinsic. Still to check: that the DMA address registers take those values.
+- Order: `DmaCopy` on the Q41 first, then peripheral-triggered transfers; then review the 16F17126/46. Add a row to the
+  LIBRARY.md "Device support" table and a section to MANUAL.md when it lands.
+
+## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
+- `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
+  `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a
+  copied `basil` binary works from any folder. A `lib/` or `devices/` next to the program, `-L` and `--devices` still win.
+- Removed the `CARGO_MANIFEST_DIR` fallback (it pointed at the build machine's checkout).
+- The cache folder is named by a hash of the contents, so a rebuilt compiler never reads stale modules; a `complete` marker is written
+  last and each file is renamed into place, so two `basil` runs starting together are safe.
+- Not done: `BASIL_LIB` / `BASIL_DEVICES` variables, a per-user folder, `basil init`, `basil lib list|extract`, a project `basil.toml`.
+
 ## M7 — Route B evaluation (done 2026-10-24: decision D46, drop for now)
 - The LLVM tree's three PIC symlinks (`llvm/lib/Target/PIC`, `tools/pic-llc`, `tools/pic-mc` under
   `~/.local/src/llvm-pic`) pointed at the deleted `~/Documents/PIC_Compiler`. They now point at

@@ -6,6 +6,7 @@ pub mod codegen;
 pub mod diag;
 pub mod dwarf;
 pub mod driver;
+pub mod embedded;
 pub mod ir;
 pub mod lexer;
 pub mod lower;
