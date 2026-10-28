@@ -9,8 +9,17 @@ Each program names its expectations in comments near the top:
 Usage: exec-test.py [--basil PATH] [--keep] prog.bas ...
 Variables are named by their assembly symbols (see `basil --report`). The program must reach
 `__halt` (a Terminate, or falling off the end of the program).
+
+MDB has no DMA model. A program with a `' dma:` line runs instead in a live MDB session with the DMA model of
+dma_sim.py attached (the line's words: `mailbox=SYMBOL` for the command byte the program writes to raise peripheral
+requests, `slow` to let a started message wait for step commands, `sfr=NAME:1,2,3` for the bytes a DMA read of that
+SFR returns, `ee=OFFSET:1,2,3` for data put in the EEPROM before the run). A `' dma-writes: NAME=1,2,3` line checks the bytes the DMA wrote, in order, to an SFR or address.
+Expectations may name SFRs of the part as well as program variables.
 """
 import argparse, glob, os, re, subprocess, sys, tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dma_sim
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../target/debug/basil"))
@@ -54,10 +63,31 @@ for src in a.files:
         fails += 1
         continue
     cy = re.search(r"^'\s*cycles:\s*(\d+)\s+(\d+)", head, re.M)
-    jobs.append((name, hexf, syms, vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None))
+    dma = None
+    dl = re.search(r"^'\s*dma:(.*)$", head, re.M)
+    if dl:
+        dma = {"mailbox": None, "slow": False, "sfr": {}, "writes": {}, "ee": []}
+        for w in dl.group(1).split():
+            if w == "slow":
+                dma["slow"] = True
+            elif w.startswith("mailbox="):
+                dma["mailbox"] = w[8:]
+            elif w.startswith("sfr="):
+                k, v = w[4:].split(":")
+                dma["sfr"][k] = [int(x, 0) for x in v.split(",")]
+            elif w.startswith("ee="):
+                k, v = w[3:].split(":")
+                dma["ee"].append((int(k, 0), [int(x, 0) for x in v.split(",")]))
+        for line in re.findall(r"^'\s*dma-writes:(.*)$", head, re.M):
+            for kv in line.split():
+                k, v = kv.split("=")
+                dma["writes"][k] = [int(x, 0) for x in v.split(",")]
+    jobs.append((name, hexf, syms, vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None, dma))
 
 script = [f"device PIC{a.device}", "hwtool SIM"]
-for name, hexf, syms, vars_, expect, cyc_range in jobs:
+for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
+    if dma:
+        continue
     script += [f"program {hexf}", f"break *0x{syms['__halt']:X}", "run", "wait 60000", "stopwatch"]
     for k in expect:
         if k not in vars_:
@@ -69,13 +99,74 @@ for name, hexf, syms, vars_, expect, cyc_range in jobs:
 script.append("quit")
 sp = os.path.join(work, "run.mdb")
 open(sp, "w").write("\n".join(script) + "\n")
-out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout
+out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout if any(not j[6] for j in jobs) else ""
 if a.keep:
     open(os.path.join(work, "mdb.log"), "w").write(out)
     print("work dir:", work)
 
+def run_dma(name, hexf, syms, vars_, expect, dma):
+    """The program in MDB with the replayed DMA model; returns (problems, cycles)."""
+    info = dma_sim.DeviceInfo(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"../devices/{a.device}.toml"))
+    bad = []
+
+    def addr_of(k):
+        if k in vars_:
+            return vars_[k]
+        if k in info.sfr:
+            return info.sfr[k], 1
+        if re.fullmatch(r"0x[0-9A-Fa-f]+|\d+", k):
+            return int(k, 0), 1
+        return None
+
+    mailbox = None
+    if dma["mailbox"]:
+        if dma["mailbox"] not in vars_:
+            return [f"mailbox {dma['mailbox']}: no such symbol"], None
+        mailbox = vars_[dma["mailbox"]][0]
+    feed = {}
+    for k, v in dma["sfr"].items():
+        loc = addr_of(k)
+        if loc is None:
+            return [f"dma sfr {k}: unknown"], None
+        feed[loc[0]] = v
+    plan = []  # (key, address, size) of what to read back at the end
+    for k in expect:
+        loc = addr_of(k)
+        if loc is None:
+            bad.append(f"{k}: no such symbol")
+        else:
+            plan.append((k, loc[0], loc[1]))
+    lo = min(ad for ad, _ in vars_.values())
+    hi = max(ad + sz for ad, sz in vars_.values())
+    rp = dma_sim.Replay(mdb, a.device, hexf, syms["__halt"], info, mailbox, feed, dma["slow"], [(ad, sz, "r") for _, ad, sz in plan], (lo, hi - lo), dma["ee"])
+    cyc = None
+    try:
+        cyc, blocks, writes = rp.run()
+        for (k, ad, sz), blk in zip(plan, blocks):
+            got = sum(b << (8 * i) for i, b in enumerate(blk[:sz]))
+            want = expect[k] & ((1 << (8 * sz)) - 1)
+            if got != want:
+                bad.append(f"{k}: want {want} got {got}")
+        for k, want in dma["writes"].items():
+            loc = addr_of(k)
+            got = writes.get(loc[0], []) if loc else None
+            if got != want:
+                bad.append(f"dma writes to {k}: want {want} got {got}")
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        bad.append(str(e))
+    return bad, cyc
+
+
 pos = 0
-for name, hexf, syms, vars_, expect, cyc_range in jobs:
+for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
+    if dma:
+        bad, cy_ = run_dma(name, hexf, syms, vars_, expect, dma)
+        if bad:
+            fails += 1
+            print(f"FAIL {name}: " + "; ".join(bad))
+        else:
+            print(f"ok   {name}  (DMA model)")
+        continue
     end = out.find("END_" + name, pos)
     seg = out[pos:end if end >= 0 else len(out)]
     pos = end + 1 if end >= 0 else pos

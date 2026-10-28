@@ -175,7 +175,7 @@ Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-che
 Documentation: the user manual `docs/MANUAL.md` (also `docs/MANUAL.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
 diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`, efficiency worklist `docs/EFFICIENCY.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
-`BASIL_MDB=1 cargo test --test backend` for the simulator suite.
+`BASIL_MDB=1 cargo test --test backend` for the simulator suite. MDB has no DMA, so DMA tests run with the model in `scripts/dma_sim.py` (see the manual, "Testing DMA code in the simulator").
 
 Personal-use project. Vendor manuals under `reference/` are not part of the repository and must
 not be redistributed.

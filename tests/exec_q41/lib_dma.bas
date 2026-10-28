@@ -1,5 +1,5 @@
 ' expect: LD_R1=1 LD_CON0=160 LD_CON1=66 LD_SSA_OK=1 LD_DSA_OK=1 LD_SSZL=8 LD_DSZL=8 LD_SSZH=0 LD_DONE=0 LD_AGAIN=0 LD_BAD0=0 LD_BAD1=0 LD_BAD2=0 LD_BAD3=0 LD_BAD4=1 LD_LOCK=1 LD_SEL=1 LD_STP=0
-' DMA library on the PIC18F16Q41. The simulator does not model the DMA engine (DGO stays set and no byte moves),
+' DMA library on the PIC18F16Q41. Plain MDB does not model the DMA engine (DGO stays set and no byte moves; lib_dma_move.bas runs the DMA model),
 ' so the test checks what DmaCopy leaves in channel 2's registers: addresses, sizes of 8, DMAnCON1 = 42h
 ' (both pointers increment, SFR/GPR source), EN and DGO set (A0h), PRLOCKED set. A second copy on the busy channel
 ' is refused, and a channel outside 1..4, a count of 0 and a count above 4095 are refused.

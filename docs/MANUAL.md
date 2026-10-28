@@ -2972,8 +2972,31 @@ Four channels move bytes between SFR/GPR addresses while the program keeps runni
 All channels share one register set selected by `DMASELECT`, so do not call the module from a handler and from
 the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
 priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
-(the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: the simulator does not model DMA, so the test
-checks the registers `DmaCopy`, `DmaCopyFlash`, `DmaCopyEeprom`, `DmaOnTrigger` and `DmaAbortOn` leave behind, not the bytes moved.
+(the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: MPLAB X's simulator does not model DMA, so the tests run it with a DMA model
+written from the data sheet (`scripts/dma_sim.py`): they check the registers `DmaCopy`, `DmaCopyFlash`, `DmaCopyEeprom`, `DmaOnTrigger` and `DmaAbortOn` leave behind
+and that the bytes arrive, but that is the model's reading of the data sheet, not a result from a part.
+
+### Testing DMA code in the simulator
+
+MPLAB X's simulator (MDB) has no DMA model for the Q41 parts and keeps a single DMA register set instead of one per channel. The repository adds both in `scripts/dma_sim.py`, a
+four-channel DMA engine written from the data sheet (DS40002214G chapter 16). `scripts/exec-test.py` uses it for any test program whose header has a `' dma:` line. The simulator stops
+on every write to `DMASELECT` and `DMAnCON0`, the engine acts on it (starts or stops a message, moves the bytes, updates counters, pointers, `DMAnCON0` and the interrupt flags) and the
+results are written back into the simulator.
+
+| Header line | Meaning |
+|---|---|
+| `' dma: mailbox=SYMBOL` | A variable the program writes to raise a peripheral request or an abort. Bits 7:6 are the command (0 start requests, 1 abort after n transactions, 2 run n transactions, 3 level request), bits 5:4 the channel minus 1, bits 3:0 the count. |
+| `' dma: slow` | A started message waits for the step commands instead of completing at once. |
+| `' dma: sfr=U1RXB:9,8,7` | The bytes a DMA read of that SFR returns. |
+| `' dma: ee=16:1,2,3,4` | Data put in the EEPROM before the run (offset, bytes). |
+| `' dma-writes: U1TXB=1,2,3` | The bytes the DMA must have written to that SFR, in order. |
+
+`' expect:` lines may name SFRs of the part as well as program variables. Examples: `tests/exec_q41/lib_dma_move.bas`, `lib_dma_trigmove.bas`, `lib_dma_srcmove.bas`, `lib_dma_abortmove.bas`.
+Run them with `BASIL_MDB=1 cargo test q41`; each takes one to three minutes. `python3 scripts/test_dma_sim.py` checks the engine alone and runs with plain `cargo test`.
+
+**Limits.** The engine is the data sheet as read here, not silicon. It does not model bus timing (a message completes at once), the one-cycle stop latency, `XIP` or `DMAnBUF` in flight,
+the trigger sources (the test decides when a request arrives), interrupt vectors or channel priorities. The EEPROM source address is taken as a byte offset (see `DmaCopyEeprom`).
+A pass in the simulator is not a hardware result.
 
 ### DmaCopy
 

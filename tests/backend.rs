@@ -304,6 +304,14 @@ fn exec_programs_in_simulator() {
     }
 }
 
+/// The DMA model that gives the simulator tests a DMA engine (`scripts/dma_sim.py`) against the data sheet's rules.
+#[test]
+fn dma_model_unit_tests() {
+    let r = Command::new("python3").arg(root().join("scripts/test_dma_sim.py")).output().unwrap();
+    let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+    assert!(r.status.success(), "{text}");
+}
+
 /// A chain of `n` nested subroutines called from the main program, plus an interrupt handler when
 /// `isr` is set (its entry takes one more level of the 31-level hardware stack).
 fn chain_program(n: u32, isr: bool) -> String {

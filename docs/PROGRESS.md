@@ -296,6 +296,19 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Test: `tests/exec_q41/lib_dma_eeprom.bas` (registers and bounds). Not run on a real part; first hardware check: bytes from `EepromWrite` appear in RAM. Fallback if wrong: `380000h`, the NVM address.
 - Not done: completion interrupts, channel priorities (`DMAxPR`), resuming after an abort, the 16F17126/46.
 
+## DMA model for the simulator tests (done 2026-10-28, 0.1.44)
+- MDB (MPLAB X 6.35, the newest installed) has no DMA model for any Q41 part (`docs/FeatureSupport/SimPeripheralSupport.csv`) and keeps one flat register set where the part overlays four channels by `DMASELECT`.
+  It cannot be patched, so `scripts/dma_sim.py` adds both: a four-channel engine written from DS40002214G chapter 16 (Tables 16-3 to 16-5, message end on the smaller counter, SSTP/DSTP, EN hard stop, DGO soft stop,
+  AIRQ abort, the four flags, `PRLOCKED`, SFR/GPR, flash and EEPROM sources) and a replay driver.
+- Driver: an interactive MDB session does not resume after a watchpoint stop (checked: the first stop works, later `run`/`continue` do nothing), so it works with scripts. A script stops on every write to `DMASELECT`,
+  `DMAnCON0` and the test's mailbox byte and logs the registers, memory and flags; the engine replays the log and the script is built again with `write` commands that put the moved bytes, counters, `DMAnCON0` and flags in
+  MDB after the stop they answer; passes repeat until the commands stop changing (about 3-6, 1-3 minutes a test).
+- Tests opt in with a `' dma:` header line (`mailbox=SYM` for peripheral requests and aborts, `slow`, `sfr=NAME:1,2,3`, `ee=OFFSET:1,2`; `' dma-writes:` checks bytes written to an SFR): `lib_dma_move`, `lib_dma_trigmove`, `lib_dma_srcmove`,
+  `lib_dma_abortmove` in `tests/exec_q41/`. The model itself has 15 unit tests: `python3 scripts/test_dma_sim.py` (also run by `cargo test`).
+- Not modelled: bus timing (a message completes at once, or on `step` commands in `slow` mode), the one-cycle stop latency, XIP/`DMAnBUF` in flight, the trigger sources (the test says when a request comes), priorities.
+  The model is the data sheet as read here, not silicon: the EEPROM source address is taken as an offset (TB3164), as the library assumes. Nothing here is a hardware result.
+- Not done: completion interrupts in the model (the flags are set, no vector is taken), the 16F17126/46.
+
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
   `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a
