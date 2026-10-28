@@ -24,7 +24,9 @@ Module Dma
 ' byte per request and the source pointer carries on from message to message. With DmaOnce the stop bit of the side
 ' that runs through the buffer (SSTP or DSTP) clears SIRQEN when that counter reloads, i.e. after `count` bytes
 ' [16.4.2], and DmaDone then reports 1. Trigger numbers are the vector numbers of Table 16-6 (DMAnSIRQ); the same
-' table lists the abort sources (DMAnAIRQ), which this module does not use.
+' table also lists the abort sources (DMAnAIRQ), selected by DmaAbortOn. An abort request soft-stops the channel: DGO,
+' SIRQEN and AIRQEN are cleared, DMAxAIF is set, and a message in progress is cut after the access under way
+' [16.3.4.2.2, 16.8.6, 16.8.7]. DmaDone then reports 1; DmaAborted tells it from a normal end.
 '
 ' The program keeps running during a copy: do not read the destination, or change the source, before DmaDone.
 #if not _has(DMAnCON0)
@@ -32,6 +34,11 @@ Module Dma
 #endif
 Dim IntEn As INTCON0.7
 Dim PrLocked As PRLOCK.0
+Dim AirqEn As DMAnCON0.2
+Dim Aif1 As PIR2.7
+Dim Aif2 As PIR6.7
+Dim Aif3 As PIR9.7
+Dim Aif4 As PIR10.7
 
 ' Number of DMA channels, 1..DmaChannels.
 Public Const DmaChannels = 4
@@ -176,6 +183,47 @@ Public Function DmaOnTrigger(ByVal channel As Byte, ByVal trigger As Byte, ByVal
                 End If
             End If
         End If
+    End If
+End Function
+
+' Makes requests from `trigger` (the numbers of DmaOnTrigger, 1..93) abort `channel`. Call it after DmaOnTrigger or
+' DmaCopy has armed the channel: clearing EN returns DMAnAIRQ to its reset value, so a stopped channel refuses.
+' Returns 1 when set, 0 for a channel outside 1..4, a trigger outside 1..93 or a channel that is not enabled (EN clear).
+' The abort is one-shot: the hardware clears AIRQEN when it fires, so call DmaAbortOn again after DmaAborted.
+Public Function DmaAbortOn(ByVal channel As Byte, ByVal trigger As Byte) As Byte
+    Result = 0
+    If channel >= 1 Then
+        If channel <= DmaChannels Then
+            If trigger >= 1 Then
+                If trigger <= 93 Then
+                    PickChannel(channel)
+                    If (DMAnCON0 And 128) <> 0 Then
+                        DMAnAIRQ = trigger
+                        AirqEn = 1
+                        Result = 1
+                    End If
+                End If
+            End If
+        End If
+    End If
+End Function
+
+' 1 when `channel` has been aborted since the last call (its DMAxAIF flag was set), and clears the flag; else 0.
+' A channel outside 1..4 reports 0. After an abort the channel is stopped but keeps its set-up: DmaStop, then arm it again.
+Public Function DmaAborted(ByVal channel As Byte) As Byte
+    Result = 0
+    If channel = 1 Then
+        Result = Aif1
+        Aif1 = 0
+    ElseIf channel = 2 Then
+        Result = Aif2
+        Aif2 = 0
+    ElseIf channel = 3 Then
+        Result = Aif3
+        Aif3 = 0
+    ElseIf channel = 4 Then
+        Result = Aif4
+        Aif4 = 0
     End If
 End Function
 

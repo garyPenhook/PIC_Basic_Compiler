@@ -273,6 +273,13 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Test: `tests/exec_q41/lib_dma_trig.bas` (register contents for a feed, a receive with `DmaOnce`, a feed with `DmaOnce`, refusals). Simulator does not model the engine; not run on a real part.
 - Not done: abort triggers (`DMAnAIRQ`), flash/EEPROM sources (`SMR`), completion interrupts, channel priorities (`DMAxPR`), the 16F17126/46.
 
+## DMA library module, abort triggers (done 2026-10-28, 0.1.41)
+- `lib/dma.bas`: `DmaAbortOn(channel, trigger)` writes `DMAnAIRQ` then sets `AIRQEN` (a single `bsf`, so `DGO`/`SIRQEN` changed by hardware are not rewritten) and refuses a channel with `EN` clear
+  (clearing `EN` resets `DMAnAIRQ`, 16.9); `DmaAborted(channel)` reads and clears `DMAxAIF` (`PIR2.7`, `PIR6.7`, `PIR9.7`, `PIR10.7`, checked with the data sheet).
+  Facts: DS40002214G 16.3.4.2.2, 16.8.6, 16.8.7, 16.13.14. An abort clears `DGO`, `SIRQEN` and `AIRQEN`, so `DmaDone` reports 1; `DmaAborted` tells it from a normal end.
+- Test: `tests/exec_q41/lib_dma_abort.bas` (registers and the flag). Not run on a real part; the simulator does not model the engine.
+- Not done: flash/EEPROM sources (`SMR`), completion interrupts, channel priorities (`DMAxPR`), resuming after an abort, the 16F17126/46.
+
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
   `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a
