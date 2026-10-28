@@ -70,7 +70,7 @@ Program the `.hex` with your usual tool (MPLAB IPE, a Curiosity Nano, …).
 
 ## 5. Using a library module
 
-Modules live in `lib/` (`gpio`, `serial`, `i2c`, `spi`, `adc`, `pwm`, `timer`, `lcd`, `oled`, `eeprom`, …).
+Modules live in `lib/` (`gpio`, `serial`, `i2c`, `spi`, `adc`, `pwm`, `timer`, `lcd`, `oled`, `eeprom`, `dma`, …).
 Add `Include "name"` after `Config`, and call routines as `Module.Routine`:
 
 ```basic
