@@ -14,6 +14,7 @@ Include "eeprom"
 Include "flashwrite"
 Include "spi"
 Include "system"
+Include "dma"
 Include "lcd"
 Include "i2c"
 Include "pwm"
@@ -60,3 +61,6 @@ r = Pwm.PwmInit(5000)
 r = Pwm.PwmStart(1, 18, 100)
 Pwm.PwmPercent(1, 50)
 Pwm.PwmStop(1)
+r = Dma.DmaCopy(1, @x, @hz, 2)
+r = Dma.DmaDone(1)
+Dma.DmaStop(1)

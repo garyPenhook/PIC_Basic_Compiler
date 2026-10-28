@@ -14,6 +14,7 @@ Include "eeprom"
 Include "flashwrite"
 Include "spi"
 Include "system"
+Include "dma"
 Include "lcd"
 Include "i2c"
 Include "pwm"
@@ -64,3 +65,6 @@ Pwm.PwmPercent(1, 50)
 Pwm.PwmStop(1)
 r = Oled.OledInitI2c(60, 255)
 Aht30.Aht30Init()
+r = Dma.DmaCopy(1, @x, @hz, 2)
+r = Dma.DmaDone(1)
+Dma.DmaStop(1)

@@ -254,19 +254,16 @@ Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Sched
 reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,
 FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/benchmarks).
 
-## Backlog: DMA library module (`Include "dma"`)
-Decision (2026-10-27): support DMA as a library module, not as language commands. Same pattern as the other peripherals
-(LIBRARY.md): only called routines are compiled in, and `#if _has(DMA1CON0)` gates it per device (the Q10 has no DMA registers in
-`devices/18F27Q10.toml`; the PIC18-Q41 files have `DMA1..4`; the 16F17126/46 files mention DMA, not yet checked).
-- Nothing is implemented. Read the DMA chapter and errata (pic-docs) before any register value goes in; cite section and page.
-- The module configures and starts transfers and exposes flags; it declares no `Interrupt` handler (LIBRARY.md rule). The program
-  writes its own completion handler, or uses a callback like `Timer0OnExpire`.
-- Sketch of the API (names not final): `DmaCopy(channel, src, dst, count)` memory to memory; `DmaStart(channel, trigger)`,
-  `DmaDone(channel)`, `DmaStop(channel)` for peripheral-triggered transfers (ADC result to an array, array to UART/SPI).
-- Addresses: `AddressOf(x)` / `@x` already exists (a `Word` for a RAM object, a `LongWord` for a constant table or routine,
-  LANGUAGE.md section 12), so the module needs no new intrinsic. Still to check: that the DMA address registers take those values.
-- Order: `DmaCopy` on the Q41 first, then peripheral-triggered transfers; then review the 16F17126/46. Add a row to the
-  LIBRARY.md "Device support" table and a section to MANUAL.md when it lands.
+## DMA library module, first step (done 2026-10-28, 0.1.39)
+Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language commands; `#if not _has(DMAnCON0)` gives `#error`.
+- `lib/dma.bas`: `DmaCopy(channel, src, dst, count)` (RAM/SFR to RAM/SFR, increment both, 1..4095 bytes, returns at once), `DmaDone`, `DmaStop`,
+  constants `DmaChannels`, `DmaMaxBytes`. Facts from DS40002214G: 16.3.4.1.1 (EN then DGO), 16.3.3 (DGO clears when the smaller counter
+  reloads), 16.8 (set-up order), 16.12 (`DMASELECT` = channel - 1), 16.13.3 (`DMAnCON1` = 42h), 7.1.1 (`PRLOCKED` sequence). No DMA erratum
+  beyond the vector numbers of Table 11-2 (DS80000901H 2.1). `AddressOf` values feed the address registers directly.
+- Test: `tests/exec_q41/lib_dma.bas` checks the registers left behind. The MPLAB X simulator does not model the engine (`DGO` stays set, no byte
+  moves) nor the `DMASELECT` overlay, so data movement and a second channel are untested. Not run on a real part.
+- Not done: peripheral-triggered transfers (SIRQ/AIRQ, `DMAnSIRQ`/`DMAnAIRQ` codes), flash/EEPROM sources (`SMR`), non-incrementing
+  modes, completion interrupts, channel priorities (`DMAxPR`), the 16F17126/46 (its data sheet has not been read for DMA).
 
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to

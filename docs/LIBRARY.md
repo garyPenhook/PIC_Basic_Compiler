@@ -40,9 +40,10 @@ so the 16F column is checked against the data sheet and the preprocessing only, 
 | `pwm` | done | **not ported** | done with different channels: 1..6 = PWM1S1P1 … PWM3S1P2, one shared period (CCP1 not offered) | the 16F has CCP1/CCP2 and PWM1/PWM2 of a different kind, no PWM3/PWM4, no `CCPTMRS`; pin routing |
 | `oled` | done | **not ported** | done (over the software `i2c`, or `spi`) | uses `TBLPTR` / `TABLAT` (PIC18 table reads); needs an alternative for the enhanced mid-range core |
 | `aht30` | done | portable if the core generator supports them | done (over the software `i2c`) | |
+| `dma` | not applicable (no DMA) | not checked (the 16F17126/46 data sheet has not been read for DMA) | written for software-started RAM/SFR copies (`DmaCopy`; builds, register set-up tested, bytes not seen moving); a part without `DMAnCON0` gets `#error` | peripheral-triggered transfers (SIRQ/AIRQ), flash and EEPROM sources, interrupts, priorities; data movement not seen on a real part (the simulator does not model DMA) |
 | `floatlib` | done | portable if the core generator supports them | builds (no device registers); not run on the Q41 | check once `pic16e` code generation exists; run the float tests on the Q41 simulator |
 
-On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled` and `Aht30` tests (those in
+On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check
 register values and set-up, not waveforms (no part of the PIC18-Q41 transfer code ran against a real bus). Limits of the simulator: it
 does not shift the UART transmit buffer out (so `lib_serial` sends one byte and does not flush), and it does

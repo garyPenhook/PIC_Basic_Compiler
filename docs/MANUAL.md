@@ -2964,6 +2964,63 @@ PwmStop(1)
 
 ---
 
+---
+
+## dma  (`Include "dma"`, PIC18-Q41 DMA, software-started copy)
+
+Four channels move bytes between SFR/GPR addresses while the program keeps running (DS40002214G chapter 16).
+All channels share one register set selected by `DMASELECT`, so do not call the module from a handler and from
+the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
+priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
+(the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: the simulator does not model DMA, so the test
+checks the registers `DmaCopy` leaves behind, not the bytes moved.
+
+### DmaCopy
+
+**Syntax**
+```basic
+ok = DmaCopy(channel, src, dst, count)
+```
+**Overview** Sets `channel` up to copy `count` bytes from address `src` to address `dst`, both incrementing, and starts it.
+Returns at once.
+
+**Parameters** `channel` 1..4 (`DmaChannels`); `src`, `dst` `Word` addresses (`@x`); `count` 1..4095 (`DmaMaxBytes`).
+
+**Returns** `Byte`: 1 when started; 0 for a channel outside 1..4, a bad count, a channel still copying or armed for a hardware trigger, or a priority lock that did not take.
+
+**Example**
+```basic
+Dim a(8) As Byte
+Dim b(8) As Byte
+Dim ok As Byte
+ok = DmaCopy(1, @a, @b, 8)
+If ok = 1 Then
+    While DmaDone(1) = 0
+    Wend
+End If
+```
+**Notes** Nothing checks that `count` fits the destination: too large a count overwrites the variables after it. Do not read the destination or change the source until `DmaDone`. The source and destination should not overlap.
+
+### DmaDone
+
+**Syntax**
+```basic
+d = DmaDone(channel)
+```
+**Overview** Tells whether `channel` is idle (`DGO` clear).
+
+**Returns** `Byte`: 1 when idle or the channel is outside 1..4, 0 while a copy is in progress.
+
+### DmaStop
+
+**Syntax**
+```basic
+DmaStop(channel)
+```
+**Overview** Clears `EN`: stops the channel and returns its registers to their reset values. A copy in progress is cut short.
+
+---
+
 ## i2c  (`Include "i2c"`, MSSP1 host)
 
 I2C host (master). SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
