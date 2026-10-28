@@ -314,6 +314,12 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `pp_if` tests `_device = 18F27Q10`; `regs` drives `PORTB.0`/`LATB.0`, which the 18F16Q41 does not have (it implements `LATB7..4`).
 - `exec-test.py` reads `' expect-<DEVICE>:` lines (added to the `' expect:` ones for that part) and `' devices:` (the program is skipped on other parts). Used by the four programs above.
 
+## exec-test.py review fixes (done 2026-10-28, 0.1.46)
+- From the review of 0.1.45: skipped programs are counted and printed, and a run in which every program is skipped fails (a typo in a `' devices:` line no longer passes with no coverage);
+  `' devices:` takes spaces or commas; the device name in the `expect-` pattern is escaped; the file is read once per program; the docstring says an `expect-<DEVICE>` name overrides the same name in `expect:`
+  and the others are kept; `__pycache__/` is in `.gitignore`.
+- Not done: Q41 variants of `regs` (RB4) and `pp_if`, so these two have no simulator coverage on the Q41.
+
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
   `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a

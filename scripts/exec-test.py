@@ -4,8 +4,9 @@
 Each program names its expectations in comments near the top:
 
     ' expect: T_A=5 T_B=300      (variable symbol = decimal value; little endian, size from the .S)
-    ' expect-18F16Q41: T_A=7    (optional: replaces/adds expectations when building for that part, e.g. other RAM addresses)
-    ' devices: 18F27Q10         (optional: run only for the listed parts; others are skipped, e.g. a program that tests _device or RB0)
+    ' expect-18F16Q41: T_A=7    (optional: for that part, each name given overrides the same name in the ' expect: lines; names not given keep that value)
+    ' devices: 18F27Q10 18F16Q41 (optional: run only for the listed parts (separated by spaces or commas); others are skipped, e.g. a program that tests _device or RB0.
+                                  Skipped programs are counted, and a run in which every program is skipped fails)
     ' cycles: LO HI              (optional: total cycles to __halt must lie in LO..HI)
 
 Usage: exec-test.py [--basil PATH] [--keep] prog.bas ...
@@ -36,16 +37,19 @@ work = tempfile.mkdtemp(prefix="basil-exec-")
 
 jobs = []
 fails = 0
+skipped = 0
 for src in a.files:
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
-    only = re.search(r"^'\s*devices:(.*)$", open(src).read(), re.M)
-    if only and a.device not in only.group(1).split():
+    text = open(src).read()
+    only = re.search(r"^'\s*devices:(.*)$", text, re.M)
+    if only and a.device not in re.split(r"[,\s]+", only.group(1).strip()):
         print(f"skip {name}  (only for {only.group(1).strip()})")
+        skipped += 1
         continue
     if a.device != "18F27Q10":
         # Same program, other part: only the Device header changes (pins and peripherals are not touched).
-        text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, open(src).read(), count=1, flags=re.M | re.I)
+        text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, text, count=1, flags=re.M | re.I)
         src = os.path.join(work, name + ".bas")
         open(src, "w").write(text)
     r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
@@ -58,9 +62,9 @@ for src in a.files:
     vars_ = {}
     for m in re.finditer(r"^(\w+) equ 0x([0-9A-F]+)(?:  ; .*\((\d+) bytes?\))?", asm, re.M):
         vars_[m.group(1)] = (int(m.group(2), 16), int(m.group(3) or 1))
-    head = open(src).read()
+    head = text
     expect = {}
-    for line in re.findall(r"^'\s*expect:(.*)$", head, re.M) + re.findall(rf"^'\s*expect-{a.device}:(.*)$", head, re.M):
+    for line in re.findall(r"^'\s*expect:(.*)$", head, re.M) + re.findall(rf"^'\s*expect-{re.escape(a.device)}:(.*)$", head, re.M):
         for kv in line.split():
             k, v = kv.split("=")
             expect[k] = int(v, 0)
@@ -204,4 +208,9 @@ for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
         print(f"FAIL {name}: " + "; ".join(bad))
     else:
         print(f"ok   {name}  ({cyc[0] if cyc else '?'} cycles)")
+if skipped:
+    print(f"{skipped} skipped for {a.device}")
+if skipped == len(a.files):
+    print("FAIL: every program was skipped")
+    fails += 1
 sys.exit(1 if fails else 0)

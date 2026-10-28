@@ -15,3 +15,4 @@ my_src/**/*.hxl
 my_src/**/*.i
 my_src/**/*.sdb
 my_src/**/*.sym
+__pycache__/
