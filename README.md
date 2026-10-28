@@ -98,7 +98,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), bitmaps, pixel/line/rectangle drawing in a frame buffer, fill, contrast, invert, flip |
 | `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
-| `dma` | PIC18-Q41 DMA: software-started copy and trigger-started feed on four channels, done flag, stop |
+| `dma` | PIC18-Q41 DMA: software-started copy (RAM/SFR or flash source), trigger-started feed with abort triggers, on four channels, done flag, stop |
 
 ## Still to do
 

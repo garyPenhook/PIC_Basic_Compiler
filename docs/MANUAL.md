@@ -2966,14 +2966,14 @@ PwmStop(1)
 
 ---
 
-## dma  (`Include "dma"`, PIC18-Q41 DMA, software-started copy and trigger-started feed)
+## dma  (`Include "dma"`, PIC18-Q41 DMA: copies, trigger-started feeds, abort triggers)
 
 Four channels move bytes between SFR/GPR addresses while the program keeps running (DS40002214G chapter 16).
 All channels share one register set selected by `DMASELECT`, so do not call the module from a handler and from
 the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
 priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
 (the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: the simulator does not model DMA, so the test
-checks the registers `DmaCopy` and `DmaOnTrigger` leave behind, not the bytes moved.
+checks the registers `DmaCopy`, `DmaCopyFlash`, `DmaOnTrigger` and `DmaAbortOn` leave behind, not the bytes moved.
 
 ### DmaCopy
 
@@ -3044,6 +3044,26 @@ a = DmaAborted(channel)
 **Overview** Returns 1 if `channel` has been aborted since the last call (its `DMAxAIF` flag was set) and clears the flag.
 
 **Returns** `Byte`: 1 or 0; 0 for a channel outside 1..4.
+
+### DmaCopyFlash
+
+**Syntax**
+```basic
+ok = DmaCopyFlash(channel, src, dst, count)
+```
+**Overview** As `DmaCopy`, but `src` is a program-flash byte address (`@table` of a `Const` array gives one) and `dst` a SFR/GPR address. The flash pointer increments, as does the destination.
+
+**Parameters** `src` `LongWord`; the others as `DmaCopy`.
+
+**Returns** `Byte`, as `DmaCopy`.
+
+**Example**
+```basic
+Const msg(5) As Byte = (1, 2, 3, 4, 5)
+Dim buf(5) As Byte
+ok = DmaCopyFlash(1, @msg, @buf, 5)
+```
+**Notes** Data EEPROM as a source is not offered: DS40002214G gives the source-region bits (`SMR`) but not the `DMAnSSA` value that addresses the EEPROM. `DmaDone` and `DmaStop` apply as for `DmaCopy`.
 
 ### DmaDone
 
@@ -4046,6 +4066,7 @@ Work down this list. Each item names what to observe.
 19. `timer`: Timer0/1/2 flag periods; Timer1 as an external counter on RC0; gate and pulse measurement.
 20. `lcd` and `oled`: text, cursor, custom character, contrast, invert, flip.
     `dma` (Q41): `DmaCopy` between two arrays on each of the four channels, `DmaDone` going to 1 when the bytes have arrived; a refused copy on a busy channel; `PRLOCKED` set afterwards.
+    `DmaCopyFlash` from a `Const` table; `DmaOnTrigger` feeding the UART1 transmit buffer (`DmaTrigU1Tx`, `DmaFixedDst + DmaOnce`) and filling a buffer from the receive buffer (`DmaFixedSrc + DmaOnce`), `DmaDone` going to 1 at the end; `DmaAbortOn` with a second trigger stopping a feed part-way, `DmaAborted` returning 1 once. Data movement has not been seen on any part.
 21. `intosc`/`system`: `Clock` at several values; `SysClockHz()` and `SysClockOk()` agree with a scope;
     `SysResetCause()` after power-on, MCLR and a watchdog reset.
 

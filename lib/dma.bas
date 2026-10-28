@@ -121,6 +121,42 @@ Public Function DmaCopy(ByVal channel As Byte, ByVal src As Word, ByVal dst As W
     End If
 End Function
 
+' As DmaCopy, but the source is program flash: `src` is a flash byte address (@table of a Const array gives one) and
+' the destination is a SFR/GPR address. SMR = 01 selects the flash [DMAnCON1, 16.13.3], set up as in the example of
+' 16.11. Data EEPROM is not offered: the data sheet does not say which DMAnSSA value addresses it. Returns at once, with
+' the results of DmaCopy. Nothing checks that `count` bytes fit the destination object.
+Public Function DmaCopyFlash(ByVal channel As Byte, ByVal src As LongWord, ByVal dst As Word, ByVal count As Word) As Byte
+    Result = 0
+    If channel >= 1 Then
+        If channel <= DmaChannels Then
+            If count >= 1 Then
+                If count <= DmaMaxBytes Then
+                    PickChannel(channel)
+                    If (DMAnCON0 And 96) = 0 Then
+                        DMAnCON0 = 0
+                        DMAnSSAU = Byte(src >> 16)
+                        DMAnSSAH = Byte(src >> 8)
+                        DMAnSSAL = Byte(src)
+                        DMAnDSAH = Byte(dst >> 8)
+                        DMAnDSAL = Byte(dst)
+                        DMAnSSZH = Byte(count >> 8)
+                        DMAnSSZL = Byte(count)
+                        DMAnDSZH = Byte(count >> 8)
+                        DMAnDSZL = Byte(count)
+                        DMAnCON1 = 74
+                        LockPriority()
+                        If PrLocked = 1 Then
+                            DMAnCON0 = 128
+                            DMAnCON0 = 160
+                            Result = 1
+                        End If
+                    End If
+                End If
+            End If
+        End If
+    End If
+End Function
+
 ' Arms `channel` so that each request from `trigger` (DmaTrig..., 1..93, a reserved number of Table 16-6 is not
 ' checked) starts a message, and returns at once. Returns 1 when armed, 0 for the refusals of DmaCopy or a trigger
 ' outside 1..93. `options` is DmaFixedSrc (the source is one register such as a receive buffer: its size is 1 and the

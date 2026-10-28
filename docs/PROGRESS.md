@@ -280,6 +280,14 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Test: `tests/exec_q41/lib_dma_abort.bas` (registers and the flag). Not run on a real part; the simulator does not model the engine.
 - Not done: flash/EEPROM sources (`SMR`), completion interrupts, channel priorities (`DMAxPR`), resuming after an abort, the 16F17126/46.
 
+## DMA library module, flash source (done 2026-10-28, 0.1.42)
+- `lib/dma.bas`: `DmaCopyFlash(channel, src, dst, count)`, `src` a `LongWord` flash byte address; `DMAnCON1` = 4Ah (SMR = 01, both pointers increment), `DMAnSSAU` takes bits 23:16.
+  Facts: DS40002214G 16.13.3 (SMR), 16.13.5 (SSA is 22 bits), 16.11 (the flash example uses SMR = 01 with `DMAnCON1` = 0Bh), Table 16-1.
+  It is a separate function, not a shared helper: sharing the body with `DmaCopy` cost 24 more bytes for a program using only `DmaCopy`.
+- Test: `tests/exec_q41/lib_dma_flash.bas` (registers, 22-bit address, refusal on a busy channel). Not run on a real part.
+- Decision (2026-10-28): the data EEPROM source is left out because the data sheet does not give the `DMAnSSA` value for it (SMR = 1x); needs Microchip's answer or a hardware test.
+- Not done: EEPROM source, completion interrupts, channel priorities (`DMAxPR`), resuming after an abort, the 16F17126/46.
+
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
   `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a
