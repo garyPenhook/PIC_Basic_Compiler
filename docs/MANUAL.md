@@ -2966,14 +2966,14 @@ PwmStop(1)
 
 ---
 
-## dma  (`Include "dma"`, PIC18-Q41 DMA, software-started copy)
+## dma  (`Include "dma"`, PIC18-Q41 DMA, software-started copy and trigger-started feed)
 
 Four channels move bytes between SFR/GPR addresses while the program keeps running (DS40002214G chapter 16).
 All channels share one register set selected by `DMASELECT`, so do not call the module from a handler and from
 the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
 priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
 (the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: the simulator does not model DMA, so the test
-checks the registers `DmaCopy` leaves behind, not the bytes moved.
+checks the registers `DmaCopy` and `DmaOnTrigger` leave behind, not the bytes moved.
 
 ### DmaCopy
 
@@ -3001,15 +3001,37 @@ End If
 ```
 **Notes** Nothing checks that `count` fits the destination: too large a count overwrites the variables after it. Do not read the destination or change the source until `DmaDone`. The source and destination should not overlap.
 
+### DmaOnTrigger
+
+**Syntax**
+```basic
+ok = DmaOnTrigger(channel, trigger, src, dst, count, options)
+```
+**Overview** Arms `channel` so that each request from the peripheral `trigger` starts a message, and returns at once. The side that is a buffer has `count` bytes and its pointer increments; a fixed side (one register) has size 1, so each request moves one byte and the buffer pointer carries on from request to request.
+
+**Parameters** `trigger` 1..93: the number of Table 16-6 of the data sheet, `DmaTrigU1Tx`, `DmaTrigU1Rx`, `DmaTrigU2Tx`, `DmaTrigU2Rx`, `DmaTrigSpi1Tx`, `DmaTrigSpi1Rx`, `DmaTrigI2c1Tx`, `DmaTrigI2c1Rx`, `DmaTrigAdc`, `DmaTrigTmr0`, `DmaTrigTmr1`, `DmaTrigTmr2`, `DmaTrigIoc` (a reserved number is not checked; the part must have the peripheral). `options` is the sum of `DmaFixedSrc` (the source is one register, e.g. a receive buffer), `DmaFixedDst` (the destination is one register, e.g. a transmit buffer) and `DmaOnce` (stop after `count` bytes). Other parameters as `DmaCopy`.
+
+**Returns** `Byte`: 1 when armed; 0 for the refusals of `DmaCopy` or a trigger outside 1..93.
+
+**Example**
+```basic
+Dim msg(8) As Byte
+Dim ok As Byte
+ok = DmaOnTrigger(1, DmaTrigU1Tx, @msg, @U1TXB, 8, DmaFixedDst + DmaOnce)
+While DmaDone(1) = 0
+Wend
+```
+**Notes** With both sides fixed `count` is ignored. Without `DmaOnce` the channel goes on round the buffer for as long as requests come. A UART, SPI or I2C request is a level: it stays up while the peripheral wants data, so use `DmaOnce` or the channel runs past the end of the buffer. The abort trigger (`DMAnAIRQ`) and the DMA interrupt flags are not used by the module (the flags are in `PIR`). The peripheral itself must be set up by the program.
+
 ### DmaDone
 
 **Syntax**
 ```basic
 d = DmaDone(channel)
 ```
-**Overview** Tells whether `channel` is idle (`DGO` clear).
+**Overview** Tells whether `channel` is idle (`DGO` and `SIRQEN` clear).
 
-**Returns** `Byte`: 1 when idle or the channel is outside 1..4, 0 while a copy is in progress.
+**Returns** `Byte`: 1 when idle or the channel is outside 1..4, 0 while a copy is in progress or the channel is armed for triggers.
 
 ### DmaStop
 

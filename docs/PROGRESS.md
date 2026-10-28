@@ -262,8 +262,16 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   beyond the vector numbers of Table 11-2 (DS80000901H 2.1). `AddressOf` values feed the address registers directly.
 - Test: `tests/exec_q41/lib_dma.bas` checks the registers left behind. The MPLAB X simulator does not model the engine (`DGO` stays set, no byte
   moves) nor the `DMASELECT` overlay, so data movement and a second channel are untested. Not run on a real part.
-- Not done: peripheral-triggered transfers (SIRQ/AIRQ, `DMAnSIRQ`/`DMAnAIRQ` codes), flash/EEPROM sources (`SMR`), non-incrementing
+- Not done (see 0.1.40 for SIRQ): flash/EEPROM sources (`SMR`), non-incrementing
   modes, completion interrupts, channel priorities (`DMAxPR`), the 16F17126/46 (its data sheet has not been read for DMA).
+
+## DMA library module, hardware triggers (done 2026-10-28, 0.1.40)
+- `lib/dma.bas`: `DmaOnTrigger(channel, trigger, src, dst, count, options)` arms a channel for SIRQ-started messages (`DmaFixedSrc`, `DmaFixedDst`, `DmaOnce`),
+  with `DmaTrig...` constants for common sources (Table 16-6). A fixed side has size 1; `DmaOnce` sets SSTP (or DSTP when only the destination is the buffer)
+  so SIRQEN clears after `count` bytes [16.4.2]. `DmaDone` now also waits for SIRQEN to clear. Facts from DS40002214G 16.3.3, 16.3.4.1.2, 16.4, 16.5, 16.8,
+  16.13.2, 16.13.3, 16.13.13; the DS80000901H vector-number erratum agrees with Table 16-6.
+- Test: `tests/exec_q41/lib_dma_trig.bas` (register contents for a feed, a receive with `DmaOnce`, a feed with `DmaOnce`, refusals). Simulator does not model the engine; not run on a real part.
+- Not done: abort triggers (`DMAnAIRQ`), flash/EEPROM sources (`SMR`), completion interrupts, channel priorities (`DMAxPR`), the 16F17126/46.
 
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
