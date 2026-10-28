@@ -309,6 +309,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   The model is the data sheet as read here, not silicon: the EEPROM source address is taken as an offset (TB3164), as the library assumes. Nothing here is a hardware result.
 - Not done: completion interrupts in the model (the flags are set, no vector is taken), the 16F17126/46.
 
+## Simulator tests: per-part expectations (done 2026-10-28, 0.1.45)
+- `q41_programs_in_simulator` failed on `addressof`, `addressof_byref`, `pp_if` and `regs`: not compiler bugs, the expectations were Q10 values. The Q41 RAM starts at 0x500 and PORTB is 0x04CF (DS40002214G);
+  `pp_if` tests `_device = 18F27Q10`; `regs` drives `PORTB.0`/`LATB.0`, which the 18F16Q41 does not have (it implements `LATB7..4`).
+- `exec-test.py` reads `' expect-<DEVICE>:` lines (added to the `' expect:` ones for that part) and `' devices:` (the program is skipped on other parts). Used by the four programs above.
+
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
   `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a

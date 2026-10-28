@@ -1,4 +1,5 @@
 ' expect: T_X=170 T_Y=1 T_Z=0
+' devices: 18F27Q10
 Program T
 Device = 18F27Q10
 Clock = 64

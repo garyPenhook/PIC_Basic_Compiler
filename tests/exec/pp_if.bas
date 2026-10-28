@@ -1,4 +1,5 @@
 ' expect: PPIF_A=1 PPIF_B=2 PPIF_C=3 PPIF_D=4 PPIF_F=6
+' devices: 18F27Q10
 Program PpIf
 Device = 18F27Q10
 Clock = 16

@@ -4,6 +4,8 @@
 Each program names its expectations in comments near the top:
 
     ' expect: T_A=5 T_B=300      (variable symbol = decimal value; little endian, size from the .S)
+    ' expect-18F16Q41: T_A=7    (optional: replaces/adds expectations when building for that part, e.g. other RAM addresses)
+    ' devices: 18F27Q10         (optional: run only for the listed parts; others are skipped, e.g. a program that tests _device or RB0)
     ' cycles: LO HI              (optional: total cycles to __halt must lie in LO..HI)
 
 Usage: exec-test.py [--basil PATH] [--keep] prog.bas ...
@@ -37,6 +39,10 @@ fails = 0
 for src in a.files:
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
+    only = re.search(r"^'\s*devices:(.*)$", open(src).read(), re.M)
+    if only and a.device not in only.group(1).split():
+        print(f"skip {name}  (only for {only.group(1).strip()})")
+        continue
     if a.device != "18F27Q10":
         # Same program, other part: only the Device header changes (pins and peripherals are not touched).
         text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, open(src).read(), count=1, flags=re.M | re.I)
@@ -54,7 +60,7 @@ for src in a.files:
         vars_[m.group(1)] = (int(m.group(2), 16), int(m.group(3) or 1))
     head = open(src).read()
     expect = {}
-    for line in re.findall(r"^'\s*expect:(.*)$", head, re.M):
+    for line in re.findall(r"^'\s*expect:(.*)$", head, re.M) + re.findall(rf"^'\s*expect-{a.device}:(.*)$", head, re.M):
         for kv in line.split():
             k, v = kv.split("=")
             expect[k] = int(v, 0)

@@ -1,4 +1,5 @@
 ' expect: T_P1=12 T_P2=28 T_P3=13 T_P4=15 T_P5=3981 T_PR=172 T_PT=176
+' expect-18F16Q41: T_P1=1292 T_P2=1308 T_P3=1293 T_P4=1295 T_P5=1231
 ' AddressOf and @: RAM variables, registers, arrays and elements give a Word; a routine and a constant table give a LongWord program-memory address. Values are the symbol addresses in the .S file.
 Program T
 Device = 18F27Q10
