@@ -123,7 +123,7 @@ End Function
 
 ' As DmaCopy, but the source is program flash: `src` is a flash byte address (@table of a Const array gives one) and
 ' the destination is a SFR/GPR address. SMR = 01 selects the flash [DMAnCON1, 16.13.3], set up as in the example of
-' 16.11. Data EEPROM is not offered: the data sheet does not say which DMAnSSA value addresses it. Returns at once, with
+' 16.11. DmaCopyEeprom reads the data EEPROM. Returns at once, with
 ' the results of DmaCopy. Nothing checks that `count` bytes fit the destination object.
 Public Function DmaCopyFlash(ByVal channel As Byte, ByVal src As LongWord, ByVal dst As Word, ByVal count As Word) As Byte
     Result = 0
@@ -149,6 +149,47 @@ Public Function DmaCopyFlash(ByVal channel As Byte, ByVal src As LongWord, ByVal
                             DMAnCON0 = 128
                             DMAnCON0 = 160
                             Result = 1
+                        End If
+                    End If
+                End If
+            End If
+        End If
+    End If
+End Function
+
+' As DmaCopy, but the source is the data EEPROM: `src` is an EEPROM byte offset, 0 for the first byte, and the copy must
+' lie inside the EEPROM (`src + count` at most _EepromBytes), else it returns 0. SMR = 11 selects the EEPROM [DMAnCON1,
+' 16.13.3: 1x]. DS40002214G does not say how DMAnSSA addresses the EEPROM; the offset form is the one of Microchip's
+' example in TB3164 section 7.1 (SSA = 0, SMR = 11, 512 bytes to RAM). That brief covers 8-bit PIC DMA in general, not
+' the Q41 in particular, and this has not been run on a Q41. Returns at once, with the results of DmaCopy.
+Public Function DmaCopyEeprom(ByVal channel As Byte, ByVal src As Word, ByVal dst As Word, ByVal count As Word) As Byte
+    Result = 0
+    If channel >= 1 Then
+        If channel <= DmaChannels Then
+            If count >= 1 Then
+                If count <= DmaMaxBytes Then
+                    If src < _EepromBytes Then
+                        If count <= _EepromBytes - src Then
+                            PickChannel(channel)
+                            If (DMAnCON0 And 96) = 0 Then
+                                DMAnCON0 = 0
+                                DMAnSSAU = 0
+                                DMAnSSAH = Byte(src >> 8)
+                                DMAnSSAL = Byte(src)
+                                DMAnDSAH = Byte(dst >> 8)
+                                DMAnDSAL = Byte(dst)
+                                DMAnSSZH = Byte(count >> 8)
+                                DMAnSSZL = Byte(count)
+                                DMAnDSZH = Byte(count >> 8)
+                                DMAnDSZL = Byte(count)
+                                DMAnCON1 = 90
+                                LockPriority()
+                                If PrLocked = 1 Then
+                                    DMAnCON0 = 128
+                                    DMAnCON0 = 160
+                                    Result = 1
+                                End If
+                            End If
                         End If
                     End If
                 End If

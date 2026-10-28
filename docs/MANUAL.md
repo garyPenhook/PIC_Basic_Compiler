@@ -2973,7 +2973,7 @@ All channels share one register set selected by `DMASELECT`, so do not call the 
 the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
 priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
 (the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: the simulator does not model DMA, so the test
-checks the registers `DmaCopy`, `DmaCopyFlash`, `DmaOnTrigger` and `DmaAbortOn` leave behind, not the bytes moved.
+checks the registers `DmaCopy`, `DmaCopyFlash`, `DmaCopyEeprom`, `DmaOnTrigger` and `DmaAbortOn` leave behind, not the bytes moved.
 
 ### DmaCopy
 
@@ -3063,7 +3063,24 @@ Const msg(5) As Byte = (1, 2, 3, 4, 5)
 Dim buf(5) As Byte
 ok = DmaCopyFlash(1, @msg, @buf, 5)
 ```
-**Notes** Data EEPROM as a source is not offered: DS40002214G gives the source-region bits (`SMR`) but not the `DMAnSSA` value that addresses the EEPROM. `DmaDone` and `DmaStop` apply as for `DmaCopy`.
+**Notes** `DmaDone` and `DmaStop` apply as for `DmaCopy`. For the data EEPROM see `DmaCopyEeprom`.
+
+### DmaCopyEeprom
+
+**Syntax**
+```basic
+ok = DmaCopyEeprom(channel, src, dst, count)
+```
+**Overview** As `DmaCopy`, but the source is the data EEPROM: `src` is a byte offset into it (0 is the first byte) and `dst` a SFR/GPR address.
+
+**Returns** `Byte`, as `DmaCopy`; also 0 when `src + count` runs past the end of the EEPROM (`_EepromBytes`).
+
+**Example**
+```basic
+Dim buf(16) As Byte
+ok = DmaCopyEeprom(1, 0, @buf, 16)
+```
+**Notes** **Not confirmed for the Q41.** The data sheet (DS40002214G) gives the source-region bits (`SMR = 1x` is the EEPROM) but not the value of `DMAnSSA` that addresses it. The module uses the offset form of Microchip's example in the technical brief TB3164 (section 7.1: `DMA1SSA = 0`, `DMA1CON1 = 0x7A` with `SMR = 11`, 512 bytes of EEPROM to RAM), which covers 8-bit PIC DMA in general. The simulator does not model the engine, so only the registers are checked. If the bytes read are wrong on a real part, try the NVM address (`380000h`) in `DMAnSSA` and report it.
 
 ### DmaDone
 
@@ -4066,7 +4083,7 @@ Work down this list. Each item names what to observe.
 19. `timer`: Timer0/1/2 flag periods; Timer1 as an external counter on RC0; gate and pulse measurement.
 20. `lcd` and `oled`: text, cursor, custom character, contrast, invert, flip.
     `dma` (Q41): `DmaCopy` between two arrays on each of the four channels, `DmaDone` going to 1 when the bytes have arrived; a refused copy on a busy channel; `PRLOCKED` set afterwards.
-    `DmaCopyFlash` from a `Const` table; `DmaOnTrigger` feeding the UART1 transmit buffer (`DmaTrigU1Tx`, `DmaFixedDst + DmaOnce`) and filling a buffer from the receive buffer (`DmaFixedSrc + DmaOnce`), `DmaDone` going to 1 at the end; `DmaAbortOn` with a second trigger stopping a feed part-way, `DmaAborted` returning 1 once. Data movement has not been seen on any part.
+    `DmaCopyFlash` from a `Const` table; `DmaCopyEeprom` of bytes written with `EepromWrite` (the first check of the offset convention); `DmaOnTrigger` feeding the UART1 transmit buffer (`DmaTrigU1Tx`, `DmaFixedDst + DmaOnce`) and filling a buffer from the receive buffer (`DmaFixedSrc + DmaOnce`), `DmaDone` going to 1 at the end; `DmaAbortOn` with a second trigger stopping a feed part-way, `DmaAborted` returning 1 once. Data movement has not been seen on any part.
 21. `intosc`/`system`: `Clock` at several values; `SysClockHz()` and `SysClockOk()` agree with a scope;
     `SysResetCause()` after power-on, MCLR and a watchdog reset.
 

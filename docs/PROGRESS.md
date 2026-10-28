@@ -288,6 +288,14 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Decision (2026-10-28): the data EEPROM source is left out because the data sheet does not give the `DMAnSSA` value for it (SMR = 1x); needs Microchip's answer or a hardware test.
 - Not done: EEPROM source, completion interrupts, channel priorities (`DMAxPR`), resuming after an abort, the 16F17126/46.
 
+## DMA library module, EEPROM source (done 2026-10-28, 0.1.43)
+- Research: DS40002214G/242F give `SMR = 1x` for the EEPROM (16.13.3) and say Table 16-1 allows EEPROM to GPR/SFR, but not the `DMAnSSA` value. Microchip's technical brief TB3164
+  (Direct Memory Access on 8-bit PIC Microcontrollers, section 7.1 Example-1) copies 512 EEPROM bytes to RAM with `DMA1SSA = 0x000000`, `DMA1CON1 = 0x7A` (`SMR = 11`): an offset from the
+  start of the EEPROM. It is a family-level document, not the Q41 data sheet. No Q41-specific statement was found (searched the two Q41 data sheets and Microchip's online DMA pages).
+- `lib/dma.bas`: `DmaCopyEeprom(channel, src, dst, count)`: `DMAnCON1` = 5Ah (`SMR = 11`), `SSAU` = 0, refuses a copy past `_EepromBytes`. Separate function (the shared-helper version cost 24 bytes for `DmaCopy` users).
+- Test: `tests/exec_q41/lib_dma_eeprom.bas` (registers and bounds). Not run on a real part; first hardware check: bytes from `EepromWrite` appear in RAM. Fallback if wrong: `380000h`, the NVM address.
+- Not done: completion interrupts, channel priorities (`DMAxPR`), resuming after an abort, the 16F17126/46.
+
 ## Library and devices built into the compiler (done 2026-10-27, 0.1.38)
 - `build.rs` embeds `lib/*.bas` and `devices/<part>.toml` (not the `*.expect.toml` files). `src/embedded.rs` writes them once to
   `$XDG_CACHE_HOME/basil/<content hash>/{lib,devices}` (else `~/.cache`, else the temp folder) and `main.rs` searches that copy last, so a
