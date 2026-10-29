@@ -18,6 +18,10 @@ Module Eeprom
 ' until one write succeeds, so NVMERR is not a reliable error flag. EepromWrite therefore reports
 ' success by reading the byte back and clears NVMERR itself. 1.6.2 concerns program flash only.
 ' The module is not reentrant: do not call it from a handler and from the main program.
+#if Not _has(PRODL)
+#error "eeprom: not ported to the enhanced mid-range core (PIC16F171xx) yet"
+#endif
+
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim IntEn As INTCON0.7

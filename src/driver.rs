@@ -23,6 +23,18 @@ pub fn target_of(dev: &Device) -> Target {
     let hw_context = sfr.contains_key("SHADCON");
     let data_top = dev.memory.data.gpr.iter().map(|g| g.end).chain(dev.memory.data.sfr.iter().map(|r| r.end)).max().unwrap_or(0);
     let acc = &dev.memory.data.access_sfr;
+    let pic16 = (dev.device.family == "pic16e").then(|| {
+        let mut gpr = Vec::new();
+        let mut common = (0, 0);
+        for g in dev.memory.data.gpr.iter().filter(|g| !g.system) {
+            if g.start & 0x7F >= 0x70 {
+                common = (g.start, g.end);
+            } else {
+                gpr.push((g.start, g.end));
+            }
+        }
+        crate::codegen::Pic16Mem { gpr, common, prog_words: dev.memory.program.size }
+    });
     Target {
         ram,
         access: (dev.memory.data.access_ram.start, dev.memory.data.access_ram.end),
@@ -34,6 +46,7 @@ pub fn target_of(dev: &Device) -> Target {
         opt: true,
         keep_vars: false,
         debug_files: Vec::new(),
+        pic16,
     }
 }
 
@@ -170,6 +183,9 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, hex: &Path, map: &Pat
         // The configuration words keep the bits the pack leaves out of `implemented` at 1 (lower.rs), which pic-as
         // reports as "truncated by" although it writes them to the hex as given.
         .arg("-Wno-1388")
+        // A `call`/`goto` past the first 2K words of the enhanced mid-range core keeps only 11 address bits on purpose
+        // (PCLATH, set by the `movlp` before it, holds the rest); the assembler reports that as a fixup overflow.
+        .args(if dev.device.family == "pic16e" { vec!["-Wno-2092"] } else { vec![] })
         .arg(format!("-Wl,-Map={}", map.display()))
         .arg("-o")
         .arg(hex)
@@ -203,9 +219,10 @@ fn usage_line(label: &str, used: u32, size: u32, unit: &str, color: bool) -> Str
 
 /// The flash and RAM use against what the chosen device has, printed after every successful build.
 pub fn usage_summary(dev: &Device, g: &Generated, color: bool) -> String {
-    let flash_bytes = dev.memory.program.size;
+    // The enhanced mid-range description counts program memory in 14-bit words, the PIC18 ones in bytes.
+    let (flash_used, flash_size, unit) = if dev.device.family == "pic16e" { (g.out.words, dev.memory.program.size, "words") } else { (g.out.words * 2, dev.memory.program.size, "bytes") };
     let mut s = format!("{}:\n", dev.device.name);
-    s.push_str(&usage_line("Flash", g.out.words * 2, flash_bytes, "bytes", color));
+    s.push_str(&usage_line("Flash", flash_used, flash_size, unit, color));
     s.push_str(&usage_line("RAM", ram_used(g), dev.memory.data.usable_gpr, "bytes", color));
     s
 }

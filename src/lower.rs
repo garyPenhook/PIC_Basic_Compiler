@@ -276,7 +276,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         // compiler writes them: on the PIC18-Q41 the mask omits DEBUG (CONFIG7 bit 5) and WRTAPP (CONFIG8
         // bit 7), which are real bits whose 0 means "debug mode" and "application block write-protected"
         // [DS40002214G 8.6 p.53, 8.1 p.43]; clearing them made self-writes to program flash fail.
-        config.push((reg.name.clone(), reg.addr, v as u8));
+        config.push((reg.name.clone(), reg.addr, v as u16));
     }
 
     let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default() };

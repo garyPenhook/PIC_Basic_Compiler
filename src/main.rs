@@ -236,7 +236,9 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     }
-    if debug {
+    if debug && dev.device.family == "pic16e" {
+        eprintln!("basil: warning: -g does not add line and variable information for the enhanced mid-range core yet");
+    } else if debug {
         let elf = hex.with_extension("elf");
         let source = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
         let mut info = generated.debug.clone();
@@ -259,7 +261,11 @@ fn main() -> ExitCode {
             eprintln!("basil: warning: no variable information in {}: {e}", elf.display());
         }
     }
-    eprintln!("basil: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);
+    if dev.device.family == "pic16e" {
+        eprintln!("basil: {} -> {} ({} words)", file.display(), hex.display(), generated.out.words);
+    } else {
+        eprintln!("basil: {} -> {} ({} words, {} bytes)", file.display(), hex.display(), generated.out.words, generated.out.words * 2);
+    }
     let color = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none();
     eprint!("{}", usage_summary(analysis.device.as_ref().unwrap(), &generated, color));
     ExitCode::SUCCESS

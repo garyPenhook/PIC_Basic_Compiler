@@ -182,6 +182,29 @@ are not all visible. Frames are static, so there is no recursion through C.
 
 Not supported: an `Extern` call from a handler, structure or array arguments by value, `Export` array parameters.
 
+## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50)
+
+The calling convention of section 3 is unchanged: static frames that overlay when two routines are never live together, arguments
+stored straight into the callee's parameters, the result in the callee's `Result` variable (read into `WREG` or `__A` by the
+caller). What differs is the register file and the memory:
+
+| | PIC18 | enhanced mid-range |
+|---|---|---|
+| Scratch `__A..__D` | Access Bank | common RAM (`70h..7Fh`, visible from every bank); only the bytes used are allocated |
+| Bank | `movlb` + Access Bank | `movlb` for any address in `20h..6Fh` of a bank; core registers (`00h..0Bh`) and common RAM need none |
+| Pointers | FSR0..FSR2, `TBLPTR` | FSR0 (work pointer, string/array access), FSR1 (second pointer, constant tables, copies); no FSR2 |
+| A `ByRef` argument | 16-bit data address | the address an FSR uses: `2000h + bank * 80 + offset - 20h` for banked RAM (linear data memory), the plain address for common RAM and registers |
+| Constant data | `TBLRD`, bytes packed two to a word | one `retlw` per byte, read through an FSR with bit 7 of `FSRnH` set (reads the low 8 bits of the word) |
+| Calls and jumps | `rcall`/`bra`, `call`/`goto` with 20-bit targets | `bra` (+-256 words); `call`/`goto` carry 11 bits, so a program over 2K words sets PCLATH first (`movlp`) |
+| Conditional branch | `bz`, `bnc` ... | a flag or bit test that skips a `bra` (`Item::SkipBr`); no `N`/`OV` flags |
+| Return stack | 31 levels | 16 levels, one of them taken by an interrupt |
+| Recursion (`Reentrant`) | frame pushed through FSR2 | frame pushed through FSR0 on `__SWSTK`, pointer `__SSP` (common RAM) |
+| Interrupt entry | vectors at 08h/18h; hardware saves WREG/STATUS/BSR (fast) | one vector at 04h; hardware saves WREG, STATUS, BSR, FSR0/1 and PCLATH; software saves the scratch bytes the handler uses |
+| Multiply | `mullw`/`mulwf` | shift and add (`__mul1..4`) |
+
+`AddressOf` of a routine or table gives its program **word** address (15 bits). It is not an FSR address; to read a table through an
+FSR, set bit 7 of the high byte.
+
 ## 6. Open questions for M1/M4
 
 1. ~~Exact Access Bank split and GPR ranges per bank~~ — resolved in M1 (FACTS §1–2).

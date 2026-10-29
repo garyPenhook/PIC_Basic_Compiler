@@ -540,11 +540,20 @@ impl<'p, 'd> Sema<'p, 'd> {
     fn check_clock_setup(&mut self) {
         let (Some(clock), Some(span)) = (self.a.clock_mhz, self.a.clock_span) else { return };
         let Some(rst) = self.a.config.iter().find(|c| c.field == "RSTOSC") else { return };
-        let reset_mhz = match rst.value {
-            0 => 64.0,
-            6 => 1.0,
-            _ => return,
-        };
+        // The speed comes from the setting's name in the device description (`HFINTOSC_64MHZ`, `HFINTOSC_32MHz`, ...).
+        let Some(dev) = &self.a.device else { return };
+        let reset_mhz = dev
+            .config
+            .iter()
+            .flat_map(|c| c.fields.iter())
+            .filter(|f| f.name.eq_ignore_ascii_case("RSTOSC"))
+            .flat_map(|f| f.settings.iter())
+            .find(|st| st.value == rst.value)
+            .and_then(|st| {
+                let n = st.name.to_ascii_uppercase();
+                n.strip_prefix("HFINTOSC_")?.strip_suffix("MHZ")?.parse::<f64>().ok()
+            });
+        let Some(reset_mhz) = reset_mhz else { return };
         if (clock - reset_mhz).abs() < 1e-9 {
             return;
         }
@@ -640,8 +649,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                     Ok(d) => {
                         if !d.device.name.eq_ignore_ascii_case(&name) {
                             self.diags.error("E-DEVICE", span, format!("{} describes {}, not {name}", p.display(), d.device.name));
-                        } else if d.device.family != "pic18" {
-                            self.diags.error("E-DEVICE", span, format!("{} is described, but Basil has no code generator for the {} family yet (only pic18)", d.device.name, d.device.family));
+                        } else if d.device.family != "pic18" && d.device.family != "pic16e" {
+                            self.diags.error("E-DEVICE", span, format!("{} is described, but Basil has no code generator for the {} family yet (only pic18 and pic16e)", d.device.name, d.device.family));
                         } else {
                             self.a.device = Some(d);
                         }

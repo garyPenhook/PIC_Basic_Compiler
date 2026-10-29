@@ -15,6 +15,10 @@ Module FloatLib
 ' bit 31, 23 fraction bits below it, then eight more bits (guard first, sticky merged into bit 0).
 ' Pack rounds that form and assembles the result.
 
+#if Not _has(PRODL)
+#error "floatlib is written in PIC18 assembly (PRODL, movff); Float is not available on the enhanced mid-range core yet"
+#endif
+
 Const NaNBits As LongWord = $7FC00000
 Const SignBit As LongWord = $80000000
 

@@ -25,6 +25,10 @@ Module Spi
 ' TSCK 95 ns [Table 48-21]). A byte is exchanged in BMODE = 1 with TWIDTH = 0 (8 bits) and TXR = RXR = 1: writing
 ' SPI1TXB starts the transfer [35.3.1], and SPI1RXIF (PIR3 bit 0, read only) is set while the receive FIFO holds
 ' data [35.6.1]. CKP = idle level of SCK, CKE = 1 for modes 0 and 2, SMP = 0 (sampled mid-bit) [35.7.2].
+#if Not _has(PRODL)
+#error "spi: not ported to the enhanced mid-range core (PIC16F171xx) yet"
+#endif
+
 #if _has(SPI1CON0)
 Dim RxIf As PIR3.0
 Dim ready As Boolean

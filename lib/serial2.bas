@@ -14,6 +14,10 @@ Module Serial2
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
+#if Not _has(PRODL)
+#error "serial2: not ported to the enhanced mid-range core (PIC16F171xx) yet"
+#endif
+
 #if _has(U2CON0)
 Dim TxFull As U2FIFO.4
 Dim TxBufEmpty As U2FIFO.5

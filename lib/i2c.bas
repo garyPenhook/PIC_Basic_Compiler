@@ -31,6 +31,10 @@ Module I2c
 ' is waited for (bounded, status 1). `hz` is 2000..400000; each half period is DelayUS(ceil(500000 / hz)) plus
 ' the time of the routines, so the real clock is lower, much lower on a slow `Clock`. Arbitration: SDA is read
 ' back after each bit sent; a difference is status 2.
+#if Not _has(PRODL)
+#error "i2c: not ported to the enhanced mid-range core (PIC16F171xx) yet"
+#endif
+
 #if _has(I2C1CON0)
 Dim sclPort As Byte
 Dim sclMask As Byte

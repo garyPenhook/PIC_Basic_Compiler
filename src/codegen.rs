@@ -43,6 +43,19 @@ pub struct Target {
     /// Source file name per `Span::file` id; when set (`-g`) every statement is preceded by a `#line`
     /// directive so pic-as writes DWARF line information for the BASIC source.
     pub debug_files: Vec<String>,
+    /// Set for the enhanced mid-range core (PIC16F1xxxx): banked 80-byte RAM blocks, 14-bit program words.
+    pub pic16: Option<Pic16Mem>,
+}
+
+/// Memory facts of an enhanced mid-range part that the PIC16 code generator needs.
+#[derive(Clone, Debug)]
+pub struct Pic16Mem {
+    /// General-purpose RAM blocks `[start, end)` in data addresses (`bank * 128 + offset`), lowest first, common RAM left out.
+    pub gpr: Vec<(u32, u32)>,
+    /// Common RAM, visible from every bank.
+    pub common: (u32, u32),
+    /// Program memory in words.
+    pub prog_words: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3781,6 +3794,9 @@ fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usi
 }
 
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
+    if tgt.pic16.is_some() {
+        return crate::codegen16::generate(p, tgt);
+    }
     // Pass 1 sizes the objects; later passes emit code against the layout and repeat with the
     // sizes they actually needed until the two agree.
     let (g1, items1) = run_pass(p, tgt, None, None);

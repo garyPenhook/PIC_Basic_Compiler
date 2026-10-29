@@ -58,6 +58,9 @@ pub enum Item {
     Br(Cc, String),
     /// `rcall` or `call`.
     Call(String),
+    /// Enhanced mid-range: a skip instruction (`btfsc f,b`, `decfsz f,f` ...) and a branch to the label taken when
+    /// the instruction does not skip. Written as one item because the branch can be one word (`bra`) or several.
+    SkipBr(String, String),
     /// Lines from an `Asm` block, passed through.
     Raw(String),
     Comment(String),
@@ -112,6 +115,7 @@ fn size_of(it: &Item, f: Form) -> u32 {
         Item::Br(Cc::Always, _) => if f == Form::Short { 1 } else { 2 },
         Item::Br(_, _) => if f == Form::Short { 1 } else { 3 },
         Item::Call(_) => if f == Form::Short { 1 } else { 2 },
+        Item::SkipBr(..) => unreachable!("SkipBr is for the enhanced mid-range core"),
         Item::Data(b) => b.len().div_ceil(2) as u32,
         Item::Org(_) => 0,
     }
@@ -208,9 +212,196 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
                         lines.extend(cur.map(str::to_string));
                         lines.push(format!("    {} {t}", if forms[i] == Form::Short { "rcall" } else { "call" }));
                     }
+                    Item::SkipBr(..) => unreachable!("SkipBr is for the enhanced mid-range core"),
                 }
             }
             return Assembled { lines, labels, words };
         }
+    }
+}
+
+// ---- enhanced mid-range (PIC16F1xxxx) -----------------------------------------------------------------
+
+/// Words an instruction of the enhanced mid-range core occupies, from its mnemonic. `fcall` and `ljmp` are the
+/// assembler's two-word forms (`movlp` plus `call`/`goto`).
+pub fn words_of16(text: &str) -> u32 {
+    let t = text.trim();
+    let m = t.split(|c: char| c.is_whitespace()).next().unwrap_or("").to_ascii_lowercase();
+    match m.as_str() {
+        "fcall" | "ljmp" => 2,
+        "" => 0,
+        "db" | "dw" => t[2..].split(',').count() as u32,
+        _ if m.ends_with(':') => 0,
+        _ if m.starts_with(';') || m.starts_with('#') => 0,
+        _ => 1,
+    }
+}
+
+/// STATUS bit tested for a condition, and whether the condition is "bit set".
+fn flag16(cc: Cc) -> (u8, bool) {
+    match cc {
+        Cc::Z => (2, true),
+        Cc::Nz => (2, false),
+        Cc::C => (0, true),
+        Cc::Nc => (0, false),
+        _ => panic!("the enhanced mid-range core has no {cc:?} condition"),
+    }
+}
+
+fn size16(it: &Item, long: bool, multipage: bool) -> u32 {
+    match it {
+        Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Org(_) => 0,
+        Item::Ins(t) | Item::Raw(t) => words_of16(t),
+        Item::Br(Cc::Always, _) => match (long, multipage) {
+            (false, _) | (true, false) => 1,
+            (true, true) => 2,
+        },
+        Item::Br(_, _) => match (long, multipage) {
+            (false, _) | (true, false) => 2,
+            (true, true) => 4,
+        },
+        Item::SkipBr(..) => match (long, multipage) {
+            (false, _) | (true, false) => 2,
+            (true, true) => 5,
+        },
+        Item::Call(_) => if multipage { 2 } else { 1 },
+        Item::Data(b) => b.len() as u32,
+    }
+}
+
+/// Like `assemble` for the enhanced mid-range core. `bra` reaches -256..255 words; farther jumps are `goto`, with
+/// `movlp` first when the program spans more than one 2K-word page (`multipage`), because `call` and `goto` carry
+/// only 11 address bits and take the rest from PCLATH. A conditional branch is a flag test that skips a `bra`.
+/// Constant tables are one `retlw` per byte, so they can be read through an FSR (low 8 bits of the word) or called.
+pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
+    let mut long = vec![false; items.len()];
+    let mut labels: HashMap<String, u32> = HashMap::new();
+    loop {
+        labels.clear();
+        let mut pc = start;
+        let mut at = vec![0u32; items.len()];
+        for (i, it) in items.iter().enumerate() {
+            if let Item::Org(w) = it {
+                assert!(pc <= *w, "code runs past the fixed address 0x{:04X}", w);
+                pc = *w;
+            }
+            at[i] = pc;
+            match it {
+                Item::Label(l) => {
+                    labels.insert(l.clone(), pc);
+                }
+                Item::Raw(t) if t.trim().ends_with(':') && !t.trim().contains(' ') => {
+                    labels.insert(t.trim().trim_end_matches(':').to_string(), pc);
+                }
+                _ => {}
+            }
+            pc += size16(it, long[i], multipage);
+        }
+        let mut changed = false;
+        for (i, it) in items.iter().enumerate() {
+            if long[i] {
+                continue;
+            }
+            let (target, from) = match it {
+                Item::Br(Cc::Always, t) => (t, at[i]),
+                Item::Br(_, t) | Item::SkipBr(_, t) => (t, at[i] + 1),
+                _ => continue,
+            };
+            let ok = labels.get(target).is_some_and(|&t| (-256..=255).contains(&(t as i64 - (from as i64 + 1))));
+            if !ok {
+                long[i] = true;
+                changed = true;
+            }
+        }
+        if changed {
+            continue;
+        }
+        let words = pc - start;
+        let mut lines = Vec::new();
+        let mut cur: Option<&str> = None;
+        let mut skip_n = 0;
+        let hi = |t: &str| labels.get(t).map_or(0, |a| (a >> 8) & 0x7F);
+        for (i, it) in items.iter().enumerate() {
+            match it {
+                Item::Label(l) => lines.push(format!("{l}:")),
+                Item::Ins(t) | Item::Raw(t) => {
+                    lines.extend(cur.map(str::to_string));
+                    lines.push(format!("    {t}"));
+                }
+                Item::Comment(t) if t.starts_with("#line ") => cur = Some(t),
+                Item::Comment(t) => lines.push(format!("    ; {t}")),
+                Item::Fence | Item::Keep(_) => {}
+                Item::Org(w) => lines.push(format!("    ORG 0x{w:04X}")),
+                Item::Data(b) => {
+                    lines.extend(cur.map(str::to_string));
+                    for x in b {
+                        lines.push(format!("    retlw 0x{x:02X}"));
+                    }
+                }
+                Item::Br(Cc::Always, t) => {
+                    lines.extend(cur.map(str::to_string));
+                    match (long[i], multipage) {
+                        (false, _) => lines.push(format!("    bra {t}")),
+                        (true, false) => lines.push(format!("    goto {t}")),
+                        (true, true) => {
+                            lines.push(format!("    movlp 0x{:02X}", hi(t)));
+                            lines.push(format!("    goto {t}"));
+                        }
+                    }
+                }
+                Item::Br(cc, t) => {
+                    lines.extend(cur.map(str::to_string));
+                    let (bit, set) = flag16(*cc);
+                    // Skip the jump when the condition is false.
+                    let skip_false = if set { "btfsc" } else { "btfss" };
+                    match (long[i], multipage) {
+                        (false, _) => {
+                            lines.push(format!("    {skip_false} STATUS, {bit}"));
+                            lines.push(format!("    bra {t}"));
+                        }
+                        (true, false) => {
+                            lines.push(format!("    {skip_false} STATUS, {bit}"));
+                            lines.push(format!("    goto {t}"));
+                        }
+                        (true, true) => {
+                            skip_n += 1;
+                            let l = format!("__skip{skip_n}");
+                            let skip_true = if set { "btfss" } else { "btfsc" };
+                            lines.push(format!("    {skip_true} STATUS, {bit}"));
+                            lines.push(format!("    bra {l}"));
+                            lines.push(format!("    movlp 0x{:02X}", hi(t)));
+                            lines.push(format!("    goto {t}"));
+                            lines.push(format!("{l}:"));
+                        }
+                    }
+                }
+                Item::SkipBr(ins, t) => {
+                    lines.extend(cur.map(str::to_string));
+                    lines.push(format!("    {ins}"));
+                    match (long[i], multipage) {
+                        (false, _) => lines.push(format!("    bra {t}")),
+                        (true, false) => lines.push(format!("    goto {t}")),
+                        (true, true) => {
+                            skip_n += 1;
+                            let (go, over) = (format!("__skipg{skip_n}"), format!("__skipo{skip_n}"));
+                            lines.push(format!("    bra {go}"));
+                            lines.push(format!("    bra {over}"));
+                            lines.push(format!("{go}:"));
+                            lines.push(format!("    movlp 0x{:02X}", hi(t)));
+                            lines.push(format!("    goto {t}"));
+                            lines.push(format!("{over}:"));
+                        }
+                    }
+                }
+                Item::Call(t) => {
+                    lines.extend(cur.map(str::to_string));
+                    if multipage {
+                        lines.push(format!("    movlp 0x{:02X}", hi(t)));
+                    }
+                    lines.push(format!("    call {t}"));
+                }
+            }
+        }
+        return Assembled { lines, labels, words };
     }
 }

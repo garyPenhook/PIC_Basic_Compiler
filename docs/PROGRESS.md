@@ -662,3 +662,37 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `scripts/exec-test.py` copies the `CFile`s when it rewrites the program for another `--device`.
 - Not done: an `Extern` call from a handler, `Export` array parameters, structure/array by value, hardware runs, checking the C
   file against the declarations beyond what the linker does.
+
+## Enhanced mid-range code generator: PIC16F17126 / PIC16F17146 (done 2026-10-28, 0.1.50)
+- `Device = 16F17126` and `16F17146` compile and run: `src/codegen16.rs` and `src/codegen16/` (`layout`, `emit`, `expr`, `stmt`,
+  `helpers`, `opt`), selected by `Target::pic16` (set by `driver::target_of` for `family = "pic16e"`). The front end, the IR and the
+  lowering are shared with the PIC18 generator; `Program::config` words are now 16 bits wide. Facts and page cites:
+  `docs/FACTS-16F1714x.md`.
+- **Value model** as the PIC18 generator: 8 bits in WREG, wider in `__A0..__A3`; `__B`, `__C`, `__D` for the multiply, divide and shift
+  helpers. They sit in **common RAM** (70h..7Fh, visible from every bank), so they never need `movlb`.
+- **Memory.** Banked RAM is 80-byte blocks (`bank * 128 + 20h..6Fh`). Objects up to 80 bytes stay in one block; bigger arrays run
+  across banks, which the FSR sees as one run in linear data memory (`2000h + bank * 80 + ...`, `plan_layout16`). `movlb` is tracked
+  while generating and a post-pass (`opt::drop_redundant_movlb`) removes the ones the data flow proves redundant. Run-time indices,
+  `ByRef`, copies and string work go through FSR0/FSR1 with `moviw`/`movwi`.
+- **Code.** There are no conditional branches, only skips: `Item::SkipBr(skip instruction, label)` is a skip instruction plus the jump
+  taken when it does not skip, sized by `assemble16` (`bra` when in range, else `goto`, with `movlp` first in a program over 2K
+  words, because `call`/`goto` carry 11 address bits). No `N`/`OV` flags: a signed compare flips both sign bits. `x = x op y` and
+  `Inc`/`Dec` work on the variable's own bytes (`in_place`, `add_const`).
+- **Constant tables and string literals** are one `retlw` per byte; they are read through an FSR with bit 7 of FSRnH set
+  (`(high label) | 80h`; plain `high label` does not set the bit). `FlashSeek` loads FSR1, `FlashNext` loads are `moviw FSR1++`.
+- **Multiply / divide** are shift-and-add / restoring loops (`helpers.rs`, 1 to 4 bytes, signed divide on top of the unsigned one).
+- **Interrupts.** One vector at 0004h. The hardware saves WREG, STATUS, BSR, FSR0/1 and PCLATH; the handler saves the scratch bytes it
+  (or anything it calls) uses. `Save ... Restore` copies registers, variables and the frames of the routines it can reach.
+  `Reentrant` routines push their frame on a software stack addressed through FSR0 (`__SSP` pointer, `__SWSTK` area, 16 levels).
+- **Delays** are cycle exact as on the PIC18 (`delay_1ms` 8000 cycles at 32 MHz); a variable `DelayUs` needs 28 MHz or more.
+- Tests: `tests/exec_p16/` (programs written for the part: delays at 32 MHz, `isr_single` on Timer0, `lib_serial`), the portable
+  `tests/exec` programs listed in `P16_PORTABLE` (`tests/backend.rs`), run in the simulator by `p16_programs_in_simulator`
+  (`BASIL_MDB=1`) and built for both parts by `p16_parts_build_the_standard_programs`. `scripts/exec-test.py --device 16F17146`
+  rewrites `Config` and `Clock = 64` for the part.
+- Also fixed: the `W-CLOCK` check read the reset speed from the PIC18 `RSTOSC` numbers; it now takes it from the setting's name
+  (`HFINTOSC_32MHz`), so it works for both families.
+- Not done: `Float` (the `floatlib` routines are PIC18 assembly; `#error` on this core), the `i2c`, `spi`, `pwm`, `eeprom`,
+  `flashwrite`, `serial2`, `lcd` (pins), `oled` library modules for this core (they refuse to build), `AddressOf` of a routine or
+  table gives the program word address (not an FSR address), strings over 255 characters, hardware runs, the PIC18 peephole
+  passes (only the `movlb` clean-up exists), inlining of single-call routines. The `isr_single` handler multiplies in software and can outlast the
+  timer period, so it switches the timer interrupt off with the timer after the last hit.

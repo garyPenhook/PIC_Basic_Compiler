@@ -3,6 +3,7 @@
 pub mod asm;
 pub mod ast;
 pub mod codegen;
+pub mod codegen16;
 pub mod diag;
 pub mod dwarf;
 pub mod driver;

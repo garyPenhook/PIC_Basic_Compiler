@@ -30,6 +30,10 @@ Module Pwm
 ' PR is full), so PwmSteps steps give 100 %. Outputs go to any pin of RA0..RA5 (not RA3), RB4..RB7, RC0..RC7 through
 ' RxyPPS = 9 + channel [Table 21-2]. Timer2 is not used. The buffered registers are copied when the module is
 ' enabled and by a reload (LD) at the end of the period; a new duty is written and LD is set [30.5].
+#if Not _has(PRODL)
+#error "pwm: not ported to the enhanced mid-range core (PIC16F171xx) yet"
+#endif
+
 #if _has(PWMEN)
 Dim steps As Word
 Dim cpre As Byte

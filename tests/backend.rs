@@ -545,6 +545,80 @@ fn q41_programs_in_simulator() {
     assert!(r.status.success(), "{text}");
 }
 
+const P16_PARTS: [&str; 2] = ["16F17126", "16F17146"];
+
+/// The programs of `tests/exec` that run on the enhanced mid-range core with only the `Device`, `Config` and
+/// `Clock` lines changed (the others use PIC18 registers, PIC18 assembly or cycle counts of a 64 MHz part).
+const P16_PORTABLE: &[&str] = &[
+    "absminmax", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
+    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "strings", "structinit", "structs", "structstr", "tablewalk", "overload",
+    "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd",
+];
+
+/// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.
+fn for_p16(src: &Path, device: &str, into: &Path) -> PathBuf {
+    let text = std::fs::read_to_string(src).unwrap();
+    let mut out = String::new();
+    let mut device_done = false;
+    for line in text.lines() {
+        let t = line.trim_start().to_ascii_lowercase();
+        if !device_done && t.starts_with("device") {
+            out += &format!("Device = {device}\n");
+            device_done = true;
+        } else if t.starts_with("config ") {
+            out += "Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\n";
+        } else if t.starts_with("clock") && t.contains("64") {
+            out += "Clock = 32\n";
+        } else {
+            out += line;
+            out.push('\n');
+        }
+    }
+    std::fs::write(into, out).unwrap();
+    into.to_path_buf()
+}
+
+/// The portable programs, and the programs written for the part (`tests/exec_p16`), build for both PIC16F171x6 parts.
+#[test]
+fn p16_parts_build_the_standard_programs() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("p16parts");
+    let mut failures = Vec::new();
+    for dev in P16_PARTS {
+        let mut programs: Vec<PathBuf> = P16_PORTABLE.iter().map(|p| for_p16(&root().join(format!("tests/exec/{p}.bas")), dev, &out.join(format!("{p}_{dev}.bas")))).collect();
+        for f in bas_files(&root().join("tests/exec_p16")) {
+            let name = f.file_stem().unwrap().to_string_lossy().into_owned();
+            programs.push(for_p16(&f, dev, &out.join(format!("{name}_{dev}.bas"))));
+        }
+        for src in programs {
+            let r = Command::new(basil()).arg(&src).arg("-o").arg(src.with_extension("hex")).output().unwrap();
+            let text = String::from_utf8_lossy(&r.stderr).into_owned();
+            if !r.status.success() || text.contains("pic-as:") {
+                failures.push(format!("{} for {dev}:\n{text}", src.display()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// With `BASIL_MDB=1` the portable programs and `tests/exec_p16` run on the simulator's `PIC16F17146`.
+#[test]
+fn p16_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let mut files: Vec<PathBuf> = P16_PORTABLE.iter().map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
+    files.extend(bas_files(&root().join("tests/exec_p16")));
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F17146").args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
 /// A program that calls C routines is linked by xc8-cc (`CFile` / `Extern`); the simulator run of the same
 /// program is `tests/exec_c`.
 #[test]

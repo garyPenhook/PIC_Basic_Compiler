@@ -1,0 +1,6 @@
+' cycles: 4000000 4000020
+Program T
+Device = 16F17146
+Clock = 32
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON
+DelayMS(500)

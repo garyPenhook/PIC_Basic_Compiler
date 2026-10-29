@@ -19,8 +19,10 @@ A module adapts with `#if _has(REG)` / `#if _has(REG.FIELD)` (MANUAL §Preproces
 device description whether a register or bit field exists, so most of a new part in a known layout
 needs no module change. **A new device or family needs this table reviewed**, because a module that
 is not listed as ported either does not compile on the new part or, worse, compiles and writes the
-wrong register. Nothing here can be built for the PIC16F171xx until a `pic16e` code generator exists,
-so the 16F column is checked against the data sheet and the preprocessing only, not run on hardware.
+wrong register. The PIC16F171xx column is checked against the data sheet; since 0.1.50 the code generator for the part exists, so
+`delay`, `gpio`, `timer`, `serial`, `lcd` build and run in the simulator (`tests/exec_p16`, `P16_PORTABLE` in `tests/backend.rs`);
+`intosc`, `system` and `adc` build, with their register values read from the data sheet but not yet run (the simulator has no ADC
+for the part); a module that is not ported stops with `#error`. Nothing was run on a real part.
 
 | Module | PIC18F27/47Q10 | PIC16F17126/46 (DS40002343F) | PIC18F0x/1xQ41 (DS40002214G, DS40002242F) | Still to do |
 |---|---|---|---|---|
@@ -30,18 +32,18 @@ so the 16F column is checked against the data sheet and the preprocessing only, 
 | `system` | done | done | done (`PCON0` at `04F0h`, same bits) | none |
 | `timer` | done | done (flags in PIR1/PIR2, own source constants) | done (flags in `PIR3`; own `T1Clk*`, `T1Gate*`, `T2Rst*` constants) | `T1Gate*` / `T2Rst*` lists hold only the sources checked so far |
 | `serial` | done (TX RC6, RX RC7) | done (TX RC4, RX RC5) | done (UART1, TX RC4, RX RC5) | an override for other pins |
-| `serial2` | done (TX RB6, RX RB7) | **not ported** | done (UART2, TX RC2, RX RC1) | pins (`RB6PPS` missing on the 14-pin 16F part, no port B), `RX2PPS` encoding, flags in another PIR |
+| `serial2` | done (TX RB6, RX RB7) | **not ported** (`#error`) | done (UART2, TX RC2, RX RC1) | pins (`RB6PPS` missing on the 14-pin 16F part, no port B), `RX2PPS` encoding, flags in another PIR |
 | `adc` | done (10 bits) | done (channels 58..62; erratum 1.1.2 noted; 12 bits) | done (12 bits, `AdcMax` = 4095, channels 58..63, charge pump on, 8 us acquisition) | none |
-| `eeprom` | done (1024 bytes) | **not ported** | done (512 bytes, `NVMLOCK` unlock) | the 16F: different NVM registers (no `NVMCON0`, `NVMADRU`), different unlock and access sequence |
+| `eeprom` | done (1024 bytes) | **not ported** (`#error`) | done (512 bytes, `NVMLOCK` unlock) | the 16F: different NVM registers (no `NVMCON0`, `NVMADRU`), different unlock and access sequence |
 | `flashwrite` | done | **not ported** (`#error`) | done (`FlashLastSector` from the flash size; page read, erase, write through the NVM buffer bank) | the 16F: same NVM differences as `eeprom`; the 16F errata 1.9.1 equivalent has not been read |
-| `spi` | done | **not ported** | done (SPI1, any of RA/RB4..7/RC pins through PPS, at most 10 MHz) | default pins for MSSP1, `RxyPPS` codes and `SSP1xPPS` for the 16F, `RB*PPS` missing on the 14-pin part |
-| `lcd` | done | **not ported** | done (port B pins refused on the 14-pin parts) | the 16F: port B does not exist on the 14-pin part; choose the pins |
-| `i2c` | done | **not ported** | done, **in software** on two pins (see below) | the 16F; a driver around the I2C1 peripheral would need the byte count first (FACTS-18F-Q41.md section 6, errata 1.3.x) |
-| `pwm` | done | **not ported** | done with different channels: 1..6 = PWM1S1P1 … PWM3S1P2, one shared period (CCP1 not offered) | the 16F has CCP1/CCP2 and PWM1/PWM2 of a different kind, no PWM3/PWM4, no `CCPTMRS`; pin routing |
-| `oled` | done | **not ported** | done (over the software `i2c`, or `spi`) | uses `TBLPTR` / `TABLAT` (PIC18 table reads); needs an alternative for the enhanced mid-range core |
-| `aht30` | done | portable if the core generator supports them | done (over the software `i2c`) | |
+| `spi` | done | **not ported** (`#error`) | done (SPI1, any of RA/RB4..7/RC pins through PPS, at most 10 MHz) | default pins for MSSP1, `RxyPPS` codes and `SSP1xPPS` for the 16F, `RB*PPS` missing on the 14-pin part |
+| `lcd` | done | done (20-pin part; port B pins refused on the 14-pin one) | done (port B pins refused on the 14-pin parts) | the 16F: port B does not exist on the 14-pin part; choose the pins |
+| `i2c` | done | **not ported** (`#error`) | done, **in software** on two pins (see below) | the 16F; a driver around the I2C1 peripheral would need the byte count first (FACTS-18F-Q41.md section 6, errata 1.3.x) |
+| `pwm` | done | **not ported** (`#error`) | done with different channels: 1..6 = PWM1S1P1 … PWM3S1P2, one shared period (CCP1 not offered) | the 16F has CCP1/CCP2 and PWM1/PWM2 of a different kind, no PWM3/PWM4, no `CCPTMRS`; pin routing |
+| `oled` | done | **not ported** (`#error`) | done (over the software `i2c`, or `spi`) | uses `TBLPTR` / `TABLAT` (PIC18 table reads); needs an alternative for the enhanced mid-range core |
+| `aht30` | done | **not ported** (`#error`, needs `i2c`) | done (over the software `i2c`) | |
 | `dma` | not applicable (no DMA) | not checked (the 16F17126/46 data sheet has not been read for DMA) | written for software-started RAM/SFR copies (`DmaCopy`) trigger-started feeds (`DmaOnTrigger`) with abort triggers (`DmaAbortOn`) and flash- and EEPROM-source copies (`DmaCopyFlash`, `DmaCopyEeprom`; the EEPROM address form comes from Microchip's TB3164, not the Q41 data sheet); builds, register set-up tested, bytes moved checked only against a DMA model of the data sheet (`scripts/dma_sim.py`); a part without `DMAnCON0` gets `#error` | interrupts, priorities; data movement not seen on a real part (MDB has no DMA; the tests use the model) |
-| `floatlib` | done | portable if the core generator supports them | builds (no device registers); not run on the Q41 | check once `pic16e` code generation exists; run the float tests on the Q41 simulator |
+| `floatlib` | done | **not ported** (`#error`: the routines are PIC18 assembly) | builds (no device registers); not run on the Q41 | a Float library for the enhanced mid-range core; run the float tests on the Q41 simulator |
 
 On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check

@@ -358,7 +358,7 @@ fn flags_live(items: &[Item], i: usize, mut needed: u8) -> bool {
             Item::Fence => return false,
             // Both paths of a branch are not followed: assume the flags are read. A callee gets
             // none from its caller.
-            Item::Br(..) => return true,
+            Item::Br(..) | Item::SkipBr(..) => return true,
             Item::Call(_) => return false,
             Item::Ins(t) => match effect(t) {
                 None => return true,

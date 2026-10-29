@@ -427,7 +427,7 @@ pub struct Program {
     pub device: String,
     pub clock_mhz: f64,
     /// `CONFIGnX` register name and the byte written to it.
-    pub config: Vec<(String, u32, u8)>,
+    pub config: Vec<(String, u32, u16)>,
     /// Interrupt handlers (each is also an entry of `funcs`).
     pub isrs: Vec<(FuncId, Level)>,
     /// Number of `Save` blocks (`St::Save::id` is below this).
