@@ -299,6 +299,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         isrs: lw.isrs,
         n_saves: lw.n_saves,
         isr_shadow: a.options.isr_shadow,
+        speed: a.options.optimize == crate::sema::Optimize::Speed,
     })
 }
 

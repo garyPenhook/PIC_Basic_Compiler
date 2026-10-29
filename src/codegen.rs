@@ -1973,8 +1973,75 @@ impl<'p> Gen<'p> {
         true
     }
 
+    /// A 16-bit multiplier `m` and shift `s` (16..=31) with `n * m >> s == n / k` for every Word `n`.
+    fn recip_word(k: u32) -> Option<(u32, u32)> {
+        if !(3..=0xFFFF).contains(&k) || k.is_power_of_two() {
+            return None;
+        }
+        (16..=31).find_map(|s| {
+            let m = (1u64 << s).div_ceil(k as u64);
+            if m > 0xFFFF {
+                return None;
+            }
+            (0..=0xFFFFu64).all(|n| (n * m) >> s == n / k as u64).then_some((m as u32, s))
+        })
+    }
+
+    /// Unsigned Word `l / k` and `l Mod k` with a constant `k`: a 16 x 16 multiply by the reciprocal and a shift of the
+    /// 32-bit product, instead of the helper. `Mod` multiplies the quotient back and subtracts it from the dividend.
+    fn div_word_const(&mut self, op: BinKind, l: &Ex, k: u32) -> bool {
+        let Some((m, s)) = Self::recip_word(k) else { return false };
+        let t = if op == BinKind::Mod {
+            let t = self.spill(l);
+            self.src_to_acc(&Src::Mem(t.clone(), 2), 2);
+            Some(t)
+        } else {
+            self.gen_to_acc(l);
+            None
+        };
+        let mut pairs = Vec::new();
+        for j in 0..2 {
+            let mj = (m >> (8 * j)) as u8;
+            for i in 0..2 {
+                if mj != 0 {
+                    pairs.push((i, j, Fac::Lit(mj)));
+                }
+            }
+        }
+        self.mul_partials(4, pairs);
+        let q = s / 8;
+        for i in 0..2 {
+            let a = self.a(i);
+            if i + q < 4 {
+                let src = self.a(i + q);
+                self.movff(&a, &src);
+            } else {
+                self.fo("clrf", &a);
+            }
+        }
+        if s % 8 > 0 {
+            self.shift_acc(false, false, s % 8, 2);
+        }
+        if let Some(t) = t {
+            let pairs = (0..2).flat_map(|j| (0..2 - j).map(move |i| (i, j, (k >> (8 * j)) as u8))).filter(|p| p.2 != 0);
+            self.mul_partials(2, pairs.map(|(i, j, b)| (i, j, Fac::Lit(b))).collect());
+            self.rsub(&t, 2);
+            self.free(2);
+        }
+        true
+    }
+
     fn gen_div(&mut self, op: BinKind, l: &Ex, r: &Ex, e: &Ex) {
         let n = Self::nb(e);
+        if n == 2
+            && !e.signed
+            && self.tgt.opt
+            && self.p.speed
+            && let Some(k) = r.as_const()
+            && self.div_word_const(op, l, k as u32)
+        {
+            return;
+        }
         if n == 1
             && !e.signed
             && self.tgt.opt
