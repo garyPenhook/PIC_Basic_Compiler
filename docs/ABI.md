@@ -182,7 +182,7 @@ are not all visible. Frames are static, so there is no recursion through C.
 
 Not supported: an `Extern` call from a handler, structure or array arguments by value, `Export` array parameters.
 
-## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50, library and `Float` in 0.1.51)
+## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50, library and `Float` in 0.1.51, assembly `Float` in 0.1.52)
 
 The calling convention of section 3 is unchanged: static frames that overlay when two routines are never live together, arguments
 stored straight into the callee's parameters, the result in the callee's `Result` variable (read into `WREG` or `__A` by the

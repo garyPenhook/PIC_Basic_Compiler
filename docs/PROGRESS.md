@@ -714,7 +714,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - **`Float`.** `lib/floatlib.bas` has a Basic branch (`#else` of `#if _has(PRODL)`) on `LongWord` arithmetic: the PIC18 routines are assembly (`movff`,
   `mulwf`, `cpfseq`). The results are bit for bit those of the assembly: the six float tests of `tests/exec` pass on both cores, and
   `tests/exec_p16/float_random.bas` (64 operand pairs of specials, near exponents, cancellation and overflow/underflow edges, from
-  `scripts/gen_float_vectors.py` with an exact `Fraction` reference) passes on the PIC18 assembly and on the PIC16 Basic. The Basic code is about six times
+  `scripts/gen_float_vectors.py` with an exact `Fraction` reference) passes on the PIC18 assembly and on the PIC16 Basic (replaced by assembly in 0.1.52). The Basic code was about six times
   larger (`+` 1.2K words) and slower; replaced by assembly in 0.1.52 (docs/PROGRESS.md).
 - **`AddressOf` of a `Const` array** on the PIC16 gives the FSR address (word address | 8000h); a routine's address is still the plain word address
   (`tests/exec_p16/addressof_table.bas` reads the table through FSR1 with the value).
