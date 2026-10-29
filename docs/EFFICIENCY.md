@@ -28,7 +28,7 @@ the plan applies: one word saved is worth saving.
 
 | # | Where | Change | Flash | Cycles | RAM | Risk |
 |---|---|---|---|---|---|---|
-| P1 | Word/Long `+ - And Or Xor` into a *different* destination | route bytes through W (`movf/addwf/movwf`) instead of `__A` copy-in/copy-out | 16-bit −6 words, 32-bit −12 words per op | 12→6, 24→12 | 0 | low |
+| P1 | Word/Long `+ - And Or Xor` into a *different* destination | route bytes through W (`movf/addwf/movwf`) instead of `__A` copy-in/copy-out (**done, 0.1.56**) | 16-bit −6 words, 32-bit −12 words per op | 12→6, 24→12 | 0 | low |
 | P2 | Word/Long shifts, `* 2^k`, `/ 2^k` on a variable | shift in place; byte moves for k ≥ 8; nibble swaps for k = 4 | `x<<1` 11→3 words; `x<<4` 15→9 | 11→3; 33→9 | 0 | low |
 | P3 | Result forwarding (`movff __C,__A` / `movff __A,dst`) | store the producer's register straight to the destination | −4 words per multiply/array read/shift | −4 | 0 | low |
 | P4 | Division and `Mod` by a constant | reciprocal multiply, verified exhaustively at compile time | Byte `/10`: 7 words, no helper | 120→7 (Byte), 314→41 (Word) | 0 | medium |
