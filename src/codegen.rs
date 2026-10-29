@@ -494,6 +494,24 @@ impl Src {
     }
 }
 
+/// Whether two byte operands may be the same memory (an operand whose address is not known counts as
+/// possibly the same).
+fn same_mem(a: &Mem, b: &Mem) -> bool {
+    let key = |m: &Mem| -> Option<(String, u32)> {
+        let mut parts = m.sym.split('+');
+        let base = parts.next()?.to_string();
+        let mut off = 0;
+        for t in parts {
+            off += t.parse::<u32>().ok()?;
+        }
+        Some((base, off))
+    };
+    match (a.addr, b.addr) {
+        (Some(x), Some(y)) => x == y,
+        _ => key(a).zip(key(b)).is_none_or(|(x, y)| x == y),
+    }
+}
+
 /// Whether the Access Bank (`access` RAM and `sfr` half) maps data address `a`.
 pub fn in_access(access: (u32, u32), sfr: (u32, u32), a: u32) -> bool {
     (access.0..access.1).contains(&a) || (sfr.0..sfr.1).contains(&a)
@@ -2444,6 +2462,30 @@ impl<'p> Gen<'p> {
         {
             return;
         }
+        if n > 1 && self.tgt.opt && let ExK::Bin(op, l, r) = &e.k {
+            // `x << k`, `x >> k` and `x * 2^k` (either way round) on a variable.
+            let shift = match op {
+                BinKind::Shl | BinKind::Shr => r.as_const().map(|k| (&**l, k, *op == BinKind::Shl)),
+                BinKind::Mul => match (l.as_const(), r.as_const()) {
+                    (_, Some(c)) => Some((&**l, c, true)),
+                    (Some(c), None) => Some((&**r, c, true)),
+                    _ => None,
+                }
+                .and_then(|(v, c, left)| {
+                    let c = c & crate::ir::mask(e.w);
+                    (c.is_power_of_two() && c > 1).then(|| (v, c.trailing_zeros(), left))
+                }),
+                _ => None,
+            };
+            if let Some((v, k, left)) = shift
+                && v.w == e.w
+                && let Some(Src::Mem(sm, real)) = self.simple(v)
+                && real == n
+                && self.shift_direct(&dst, &sm, left, e.signed, k, n)
+            {
+                return;
+            }
+        }
         self.gen_val(e);
         if n == 1 {
             self.fo("movwf", &dst);
@@ -2468,19 +2510,7 @@ impl<'p> Gen<'p> {
             }
         }
         // A byte of `dst` written before a later source byte is read would corrupt it (overlapping aliases).
-        let key = |m: &Mem| -> Option<(String, u32)> {
-            let mut parts = m.sym.split('+');
-            let base = parts.next()?.to_string();
-            let mut off = 0;
-            for t in parts {
-                off += t.parse::<u32>().ok()?;
-            }
-            Some((base, off))
-        };
-        let same = |a: &Mem, b: &Mem| match (a.addr, b.addr) {
-            (Some(x), Some(y)) => x == y,
-            _ => key(a).zip(key(b)).is_none_or(|(x, y)| x == y),
-        };
+        let same = same_mem;
         let mut mems: Vec<Mem> = (0..n).map(|i| dst.at(i)).collect();
         for (j, (lb, rb)) in bytes.iter().enumerate() {
             for b in [lb, rb] {
@@ -2569,6 +2599,111 @@ impl<'p> Gen<'p> {
                     }
                 }
             }
+        }
+        true
+    }
+
+    /// `dst = src << k` or `src >> k` for a constant `0 < k < 8n`, with the bytes moved and rotated where they lie
+    /// instead of through `__A` (which costs a `movff` pair per byte). Whole bytes are moved first, then the
+    /// remaining `k % 8` bits are rotated through the carry, in place in `dst`. Returns false, emitting nothing, when
+    /// the operands do not fit that shape.
+    fn shift_direct(&mut self, dst: &Mem, src: &Mem, left: bool, signed: bool, k: u32, n: u32) -> bool {
+        if k == 0 || k >= n * 8 || dst.reg || src.reg {
+            return false;
+        }
+        let (q, r) = (k / 8, k % 8);
+        let strict = |a: &Mem, b: &Mem| a.sym == b.sym && a.addr == b.addr;
+        let in_place = (0..n).all(|i| strict(&dst.at(i), &src.at(i)));
+        // Any other overlap (aliases) would make the byte order matter.
+        if !in_place && (0..n).any(|i| (0..n).any(|j| same_mem(&dst.at(i), &src.at(j)))) {
+            return false;
+        }
+        let (d, s) = (|i: u32| dst.at(i), |i: u32| src.at(i));
+        let m = n - q;
+        let mut passes = r;
+        if q > 0 {
+            if !left && signed {
+                // The fill for the top bytes, read before anything is overwritten.
+                self.ins("movlw 0");
+                self.fbit("btfsc", &s(n - 1), 7);
+                self.ins("movlw 0xFF");
+            }
+            if left {
+                for i in (q..n).rev() {
+                    self.movff(&d(i), &s(i - q));
+                }
+                for i in 0..q {
+                    self.fo("clrf", &d(i));
+                }
+            } else {
+                for i in 0..m {
+                    self.movff(&d(i), &s(i + q));
+                }
+                for i in m..n {
+                    if signed {
+                        self.fo("movwf", &d(i));
+                    } else {
+                        self.fo("clrf", &d(i));
+                    }
+                }
+            }
+        } else if !in_place {
+            let mems: Vec<Mem> = (0..n).flat_map(|i| [d(i), s(i)]).collect();
+            let acc = mems.iter().all(|x| is_access(self.tgt, x.addr));
+            let one_bank = mems.iter().all(|x| !is_access(self.tgt, x.addr)) && mems.iter().all(|x| x.addr.map(|a| a >> 8) == mems[0].addr.map(|a| a >> 8));
+            if acc || one_bank {
+                // The first bit goes straight from `src` to `dst` through W.
+                if !left && signed {
+                    self.fop("rlcf", &s(n - 1), "w");
+                } else {
+                    self.ins("bcf STATUS, 0, c");
+                }
+                for j in 0..n {
+                    let i = if left { j } else { n - 1 - j };
+                    self.fop(if left { "rlcf" } else { "rrcf" }, &s(i), "w");
+                    self.fo("movwf", &d(i));
+                }
+                passes -= 1;
+            } else {
+                for i in 0..n {
+                    self.movff(&d(i), &s(i));
+                }
+            }
+        }
+        if passes == 0 {
+            return true;
+        }
+        let pass = |g: &mut Self| {
+            if left {
+                g.ins("bcf STATUS, 0, c");
+                for i in q..n {
+                    g.fop("rlcf", &d(i), "f");
+                }
+            } else {
+                if signed {
+                    g.fop("rlcf", &d(n - 1), "w");
+                } else {
+                    g.ins("bcf STATUS, 0, c");
+                }
+                for i in (0..m).rev() {
+                    g.fop("rrcf", &d(i), "f");
+                }
+            }
+        };
+        // Unrolled costs `passes * (m + 1)` words, the loop `m + 5`.
+        if passes * (m + 1) <= m + 5 {
+            for _ in 0..passes {
+                pass(self);
+            }
+        } else {
+            let c = self.d(0);
+            self.ins(format!("movlw {passes}"));
+            self.fo("movwf", &c);
+            let l = self.fresh();
+            self.label(&l);
+            pass(self);
+            self.fop("decfsz", &c, "f");
+            self.br(Cc::Always, &l);
         }
         true
     }

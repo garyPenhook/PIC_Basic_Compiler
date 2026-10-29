@@ -994,7 +994,8 @@ fn pass_halt_loop(items: &mut Vec<Item>) -> bool {
     }
     let ends = j > 0
         && match &items[j - 1] {
-            Item::Br(Cc::Always, _) => true,
+            // A `bra` that follows a skip instruction (`decfsz` / `bra` loop) is passed over when the skip is taken.
+            Item::Br(Cc::Always, _) => !matches!(j.checked_sub(2).map(|k| &items[k]), Some(Item::Ins(t)) if is_skip(t)),
             Item::Ins(t) => matches!(t.split_whitespace().next(), Some("return" | "retfie" | "goto" | "retlw")),
             _ => false,
         };
@@ -1717,6 +1718,8 @@ mod tests {
         };
         assert!(!ends(vec![Item::Label("_L1".into()), ins("btg LATB, 0, c"), Item::Br(Cc::Always, "_L1".into())]));
         assert!(ends(vec![ins("btg LATB, 0, c")]));
+        // A counted loop's `decfsz` / `bra` falls through when the count runs out.
+        assert!(ends(vec![Item::Label("_L1".into()), ins("rlcf X, f, c"), ins("decfsz __D0, f, c"), Item::Br(Cc::Always, "_L1".into())]));
     }
 
     fn run16(src: &[Item]) -> Vec<String> {
