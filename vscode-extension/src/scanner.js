@@ -202,7 +202,7 @@ function caseEdits(lines, names) {
 
 // --- indentation -------------------------------------------------------------------------
 
-const MODIFIERS = new Set(['public', 'private', 'inline', 'noinline', 'reentrant']);
+const MODIFIERS = new Set(['public', 'private', 'inline', 'noinline', 'reentrant', 'export']);
 const ROUTINE = new Set(['sub', 'function', 'proc', 'interrupt', 'event', 'structure']);
 const END_KIND = { sub: 'sub', function: 'function', if: 'if', select: 'select', structure: 'structure', interrupt: 'interrupt', event: 'event', asm: 'asm' };
 const SINGLE_CLOSE = { endif: 'if', endselect: 'select', endproc: 'proc', wend: 'while', next: 'for', until: 'repeat', loop: 'do', restore: 'save' };

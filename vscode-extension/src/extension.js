@@ -6,7 +6,7 @@ const cp = require('child_process');
 
 const { scan, caseEdits, indentLevels } = require('./scanner');
 const { parseSymbols, parseIncludes } = require('./symbols');
-const { CANONICAL, ALIASES, KEYWORDS, TYPES, DOCS } = require('./keywords');
+const { CANONICAL, ALIASES, CONTEXTUAL, KEYWORDS, TYPES, DOCS } = require('./keywords');
 const { deviceOf, loadNames, loadInfo, devicesAbove } = require('./devicenames');
 const docs = require('./hoverdocs');
 const proj = require('./project');
@@ -486,7 +486,7 @@ const completion = {
         items.push(it);
       }
     }
-    for (const k of CANONICAL.concat(ALIASES)) {
+    for (const k of CANONICAL.concat(ALIASES, CONTEXTUAL)) {
       const it = new vscode.CompletionItem(k, TYPES.has(k) ? CK.TypeParameter : CK.Keyword);
       it.documentation = DOCS[k] && new vscode.MarkdownString(DOCS[k]);
       it.sortText = '2' + k;

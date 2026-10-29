@@ -105,4 +105,4 @@ Set `"[picbasic]": { "editor.formatOnSave": true }` to format on save.
 ## Install
 
     cd vscode-extension && npm test && npx @vscode/vsce package
-    code --install-extension picbasic-0.2.3.vsix
+    code --install-extension picbasic-0.2.4.vsix

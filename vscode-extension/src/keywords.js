@@ -21,7 +21,10 @@ const CANONICAL = [
 // not in the compiler's KEYWORDS list, so they are kept apart from CANONICAL.
 const ALIASES = ['SByte', 'SWord', 'Long', 'Dword'];
 
-const KEYWORDS = new Map(CANONICAL.concat(ALIASES).map((k) => [k.toLowerCase(), k]));
+// Words the parser reads only where a declaration starts (C interop); ordinary identifiers elsewhere.
+const CONTEXTUAL = ['CFile', 'Export', 'Extern'];
+
+const KEYWORDS = new Map(CANONICAL.concat(ALIASES, CONTEXTUAL).map((k) => [k.toLowerCase(), k]));
 
 const TYPES = new Set(['SByte', 'SWord', 'Long', 'Dword', 'Bit', 'Boolean', 'Byte', 'Char', 'Float', 'Integer', 'LongInt', 'LongWord', 'ShortInt', 'String', 'Word']);
 
@@ -91,6 +94,9 @@ const DOCS = {
   Private: 'Declaration visible only inside its module (the default).',
   Program: '`Program Name` — the main unit.',
   Public: 'Declaration exported from a module.',
+  CFile: '`CFile "name.c"` — a C source file (or XC8 object or library) linked into the program. A header line, before the first `Include`.',
+  Export: '`Export Sub|Function name(...)` — a Basic routine, with a body, that linked C code may call. C reaches Basic only from inside an `Extern` routine; a call cycle through C is `E-RECURSION`.',
+  Extern: '`Extern Sub|Function name(...)` — a function written in C (see `CFile`), declared with no body. The name is the C name, spelled exactly as in the C file.',
   Reentrant: 'Allows the routine to be called recursively or from an interrupt and the main program.',
   Static: '`Static Dim n As Byte` — a local that keeps its value between calls. It has its own RAM, is not cleared on entry, and an initial value is applied once at start-up.',
   Volatile: '`Volatile Dim n As Byte` — a variable that a handler or the hardware may change at any time. Every read and write is performed as written: none is kept in a register, merged or removed.',
@@ -128,4 +134,4 @@ const DOCS = {
   Symbol: '`Symbol Name = value` — alias or constant.',
 };
 
-module.exports = { CANONICAL, ALIASES, KEYWORDS, TYPES, DOCS };
+module.exports = { CANONICAL, ALIASES, CONTEXTUAL, KEYWORDS, TYPES, DOCS };

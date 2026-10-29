@@ -3,7 +3,7 @@
 
 const { scan, code, lower } = require('./scanner');
 
-const MODS = new Set(['public', 'private', 'inline', 'noinline', 'reentrant']);
+const MODS = new Set(['public', 'private', 'inline', 'noinline', 'reentrant', 'export', 'extern']);
 
 /**
  * Extracts declarations from source text.
@@ -33,8 +33,10 @@ function parseSymbols(text) {
 
     let k = 0;
     let vis = 'private';
+    let isExtern = false; // `Extern Sub/Function` has no body, so no End to wait for
     while (k < toks.length - 1 && toks[k].t === 'word' && MODS.has(lower(toks[k]))) {
       if (lower(toks[k]) === 'public') vis = 'public';
+      if (lower(toks[k]) === 'extern') isExtern = true;
       k += 1;
     }
     const w = lower(toks[k]);
@@ -70,7 +72,7 @@ function parseSymbols(text) {
         if (m) returns = m[1];
       }
       const s = add(w, nameTok, { signature: sig, params, returns });
-      open.push(s);
+      if (!isExtern) open.push(s);
     } else if (w === 'structure' && nameTok && nameTok.t === 'word') {
       open.push(add('structure', nameTok));
     } else if (w === 'type' && nameTok && nameTok.t === 'word') {

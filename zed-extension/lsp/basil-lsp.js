@@ -54,7 +54,7 @@ function symbols(text) {
   text.split(/\r?\n/).forEach((line, i) => {
     let m;
     const at = (name, kind, detail) => out.push({ name, kind, detail, line: i, col: line.indexOf(name, m.index) });
-    if ((m = /^\s*(?:(?:Public|Private|Inline|NoInline|Reentrant)\s+)*(Sub|Function|Proc)\s+([A-Za-z_]\w*)/i.exec(line))) at(m[2], K.function, m[1]);
+    if ((m = /^\s*(?:(?:Public|Private|Inline|NoInline|Reentrant|Export|Extern)\s+)*(Sub|Function|Proc)\s+([A-Za-z_]\w*)/i.exec(line))) at(m[2], K.function, m[1]);
     else if ((m = /^\s*Interrupt\s+([A-Za-z_]\w*)/i.exec(line))) at(m[1], K.event, 'Interrupt');
     else if ((m = /^\s*Event\s+([A-Za-z_]\w*)/i.exec(line))) at(m[1], K.event, 'Event');
     else if ((m = /^\s*(?:(?:Public|Private)\s+)?Structure\s+([A-Za-z_]\w*)/i.exec(line))) at(m[1], K.struct, 'Structure');
