@@ -163,6 +163,13 @@ in `docs/MANUAL.md` and `vscode-extension/README.md`.
 Requirements: a Rust toolchain to build the compiler, and Microchip's `pic-as` assembler (from
 MPLAB XC8) to assemble and link. Simulator tests additionally need MPLAB X's `mdb`.
 
+**Microchip's tools are not included and cannot be.** basil does not contain or redistribute MPLAB XC8
+(`pic-as`, `xc8-cc`), the MPLAB X simulator or the device packs: you install them yourself from Microchip
+and accept their licences. The XC8 licence forbids embedding or redistributing the Software and ties its use
+to Microchip parts (`docs/license.txt` in the XC8 install). basil only finds the installed tools and runs them
+(`/opt/microchip/xc8/*/pic-as/bin/pic-as`, `$BASIL_PICAS` or `--pic-as`; packs under `~/.mchp_packs`). Do not
+ship a release archive that bundles them.
+
 ```
 cargo build --release
 target/release/basil prog.bas

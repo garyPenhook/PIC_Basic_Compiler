@@ -4,7 +4,8 @@ From nothing to a `.hex` file for a PIC18F27Q10 (the same steps work for the PIC
 
 ## 1. Prerequisites
 
-* **Rust** (to build the compiler) and **MPLAB XC8** (its `pic-as` assembler does the last step).
+* **Rust** (to build the compiler) and **MPLAB XC8**, installed by you from Microchip (its `pic-as` assembler does the
+  last step; basil does not bundle it and its licence does not allow redistribution).
   `basil` looks for `pic-as` in `/opt/microchip/xc8/*/pic-as/bin/pic-as`; to use another one set
   `BASIL_PICAS=/path/to/pic-as` or pass `--pic-as PATH`.
 * The **device pack** for the part under `~/.mchp_packs/Microchip/<pack>/<version>/xc8`.
