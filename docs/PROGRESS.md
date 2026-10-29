@@ -747,3 +747,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   from exactly one place and referenced nowhere else. The `call` and the `return` go; a `return` that is not last becomes a jump to the end.
   Interrupt handlers are not inlined. `drop_redundant_movlb` runs after it, so a `movlb` made redundant by the join is dropped too.
 - Size over the portable simulator programs and `tests/exec_p16` for the 16F17146: 78563 -> 78031 words (-532). All 63 simulator programs pass.
+- `movlb`-hoist: tried on this core (the PIC18 pass plus `SkipBr`), no change in size over the same programs. No loop head here starts with a `movlb` that a
+  back-branch refers to, because `codegen16::opt::drop_redundant_movlb` already removes the ones the entry state covers. Not kept.
+- `movff`-forward: has no equivalent, there is no `movff`; a copy is `movf s,w` / `movwf d`, which `pass_wreg` and `pass_dead_stores` already forward and drop.
+- Not done: `Float` operands in `__A`/`__B` (EFFICIENCY.md P9). The call sites store each argument into the callee's parameter frame as the evaluation of
+  the next argument may use `__A`/`__B` itself, so it needs a call form in the IR whose arguments are parked in temporaries and then loaded into the registers,
+  in `lower.rs`, both generators and both halves of `floatlib.bas`. About 20 words per routine on this core.
