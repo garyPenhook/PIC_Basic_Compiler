@@ -265,37 +265,30 @@ End Function
 
 Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movff __B3, __D2
-        movff __B2, __C3
-        movff __B1, __C2
-        movff __B0, __B3
-        movff __A0, __B0
-        movff __A1, __B1
-        movff __A2, __B2
         movf __A3, w, c
-        xorwf __D2, w, c
+        xorwf __B3, w, c
         andlw 0x80
         movwf __D0, c
-        rlcf __B2, w, c
+        rlcf __A2, w, c
         rlcf __A3, w, c
         movwf __C0, c
-        rlcf __C3, w, c
-        rlcf __D2, w, c
+        rlcf __B2, w, c
+        rlcf __B3, w, c
         movwf __D2, c
         incf __C0, w, c
         bnz FLM_1
-        movf __B2, w, c
+        movf __A2, w, c
         andlw 0x7F
-        iorwf __B1, w, c
-        iorwf __B0, w, c
+        iorwf __A1, w, c
+        iorwf __A0, w, c
         bnz FLM_NAN
     FLM_1:
         incf __D2, w, c
         bnz FLM_2
-        movf __C3, w, c
+        movf __B2, w, c
         andlw 0x7F
-        iorwf __C2, w, c
-        iorwf __B3, w, c
+        iorwf __B1, w, c
+        iorwf __B0, w, c
         bnz FLM_NAN
     FLM_2:
         incf __C0, w, c
@@ -346,27 +339,33 @@ Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         subwf __C0, f, c
         movlw 0
         subwfb __C1, f, c
+        movff __A1, __C3
+        movff __A2, __B3
+        bsf __B3, 7, c
         bsf __B2, 7, c
-        bsf __C3, 7, c
-        clrf __D1, c
-        clrf __D3, c
-        clrf __A0, c
-        clrf __A1, c
+        movf __B0, w, c
+        mulwf __A0, c
+        movff PRODL, __D1
+        movff PRODH, __D3
+        movf __B1, w, c
+        mulwf __A0, c
+        movf PRODL, w, c
+        addwf __D3, f, c
+        movlw 0
+        addwfc PRODH, w, c
+        movwf __C2, c
+        movf __B2, w, c
+        mulwf __A0, c
+        movf PRODL, w, c
+        addwf __C2, w, c
+        movwf __A0, c
+        movlw 0
+        addwfc PRODH, w, c
+        movwf __A1, c
         clrf __A2, c
         clrf __A3, c
-        movf __B3, w, c
-        mulwf __B0, c
-        movf PRODL, w, c
-        addwf __D1, f, c
-        movf PRODH, w, c
-        addwfc __D3, f, c
-        movlw 0
-        addwfc __A0, f, c
-        addwfc __A1, f, c
-        addwfc __A2, f, c
-        addwfc __A3, f, c
-        movf __C2, w, c
-        mulwf __B0, c
+        movf __B0, w, c
+        mulwf __C3, c
         movf PRODL, w, c
         addwf __D3, f, c
         movf PRODH, w, c
@@ -374,9 +373,22 @@ Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movlw 0
         addwfc __A1, f, c
         addwfc __A2, f, c
-        addwfc __A3, f, c
-        movf __C3, w, c
-        mulwf __B0, c
+        movf __B1, w, c
+        mulwf __C3, c
+        movf PRODL, w, c
+        addwf __A0, f, c
+        movf PRODH, w, c
+        addwfc __A1, f, c
+        movlw 0
+        addwfc __A2, f, c
+        movf __B2, w, c
+        mulwf __C3, c
+        movf PRODL, w, c
+        addwf __A1, f, c
+        movf PRODH, w, c
+        addwfc __A2, f, c
+        movf __B0, w, c
+        mulwf __B3, c
         movf PRODL, w, c
         addwf __A0, f, c
         movf PRODH, w, c
@@ -384,52 +396,16 @@ Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movlw 0
         addwfc __A2, f, c
         addwfc __A3, f, c
-        movf __B3, w, c
-        mulwf __B1, c
-        movf PRODL, w, c
-        addwf __D3, f, c
-        movf PRODH, w, c
-        addwfc __A0, f, c
-        movlw 0
-        addwfc __A1, f, c
-        addwfc __A2, f, c
-        addwfc __A3, f, c
-        movf __C2, w, c
-        mulwf __B1, c
-        movf PRODL, w, c
-        addwf __A0, f, c
-        movf PRODH, w, c
-        addwfc __A1, f, c
-        movlw 0
-        addwfc __A2, f, c
-        addwfc __A3, f, c
-        movf __C3, w, c
-        mulwf __B1, c
+        movf __B1, w, c
+        mulwf __B3, c
         movf PRODL, w, c
         addwf __A1, f, c
         movf PRODH, w, c
         addwfc __A2, f, c
         movlw 0
         addwfc __A3, f, c
-        movf __B3, w, c
-        mulwf __B2, c
-        movf PRODL, w, c
-        addwf __A0, f, c
-        movf PRODH, w, c
-        addwfc __A1, f, c
-        movlw 0
-        addwfc __A2, f, c
-        addwfc __A3, f, c
-        movf __C2, w, c
-        mulwf __B2, c
-        movf PRODL, w, c
-        addwf __A1, f, c
-        movf PRODH, w, c
-        addwfc __A2, f, c
-        movlw 0
-        addwfc __A3, f, c
-        movf __C3, w, c
-        mulwf __B2, c
+        movf __B2, w, c
+        mulwf __B3, c
         movf PRODL, w, c
         addwf __A2, f, c
         movf PRODH, w, c
@@ -462,37 +438,30 @@ End Function
 
 Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movff __B0, __C2
-        movff __B1, __C3
-        movff __B2, __D1
-        movff __B3, __D2
-        movff __A0, __B0
-        movff __A1, __B1
-        movff __A2, __B2
         movf __A3, w, c
-        xorwf __D2, w, c
+        xorwf __B3, w, c
         andlw 0x80
         movwf __D0, c
-        rlcf __B2, w, c
+        rlcf __A2, w, c
         rlcf __A3, w, c
         movwf __C0, c
-        rlcf __D1, w, c
-        rlcf __D2, w, c
+        rlcf __B2, w, c
+        rlcf __B3, w, c
         movwf __D2, c
         incf __C0, w, c
         bnz FLD_1
-        movf __B2, w, c
+        movf __A2, w, c
         andlw 0x7F
-        iorwf __B1, w, c
-        iorwf __B0, w, c
+        iorwf __A1, w, c
+        iorwf __A0, w, c
         bnz FLD_NAN
     FLD_1:
         incf __D2, w, c
         bnz FLD_2
-        movf __D1, w, c
+        movf __B2, w, c
         andlw 0x7F
-        iorwf __C3, w, c
-        iorwf __C2, w, c
+        iorwf __B1, w, c
+        iorwf __B0, w, c
         bnz FLD_NAN
     FLD_2:
         incf __C0, w, c
@@ -535,6 +504,9 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movwf __A3, c
         bra FLD_RET
     FLD_GO:
+        movff __A0, __C2
+        movff __A1, __C3
+        movff __A2, __D1
         clrf __C1, c
         movf __D2, w, c
         subwf __C0, f, c
@@ -544,19 +516,19 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         addwf __C0, f, c
         movlw 0
         addwfc __C1, f, c
-        bsf __B2, 7, c
         bsf __D1, 7, c
-        movf __C2, w, c
-        subwf __B0, w, c
-        movf __C3, w, c
-        subwfb __B1, w, c
-        movf __D1, w, c
-        subwfb __B2, w, c
+        bsf __B2, 7, c
+        movf __B0, w, c
+        subwf __C2, w, c
+        movf __B1, w, c
+        subwfb __C3, w, c
+        movf __B2, w, c
+        subwfb __D1, w, c
         bc FLD_LP0
         bcf STATUS, 0, c
-        rlcf __B0, f, c
-        rlcf __B1, f, c
-        rlcf __B2, f, c
+        rlcf __C2, f, c
+        rlcf __C3, f, c
+        rlcf __D1, f, c
         bsf __D0, 0, c
         movlw 1
         subwf __C0, f, c
@@ -566,21 +538,21 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movlw 32
         movwf __D3, c
     FLD_LP:
-        movf __C2, w, c
-        subwf __B0, f, c
-        movf __C3, w, c
-        subwfb __B1, f, c
-        movf __D1, w, c
-        subwfb __B2, f, c
+        movf __B0, w, c
+        subwf __C2, f, c
+        movf __B1, w, c
+        subwfb __C3, f, c
+        movf __B2, w, c
+        subwfb __D1, f, c
         bc FLD_TAKE
         btfsc __D0, 0, c
         bra FLD_TAKE
-        movf __C2, w, c
-        addwf __B0, f, c
-        movf __C3, w, c
-        addwfc __B1, f, c
-        movf __D1, w, c
-        addwfc __B2, f, c
+        movf __B0, w, c
+        addwf __C2, f, c
+        movf __B1, w, c
+        addwfc __C3, f, c
+        movf __B2, w, c
+        addwfc __D1, f, c
         bcf STATUS, 0, c
         bra FLD_Q
     FLD_TAKE:
@@ -592,16 +564,16 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         rlcf __A3, f, c
         bcf __D0, 0, c
         bcf STATUS, 0, c
-        rlcf __B0, f, c
-        rlcf __B1, f, c
-        rlcf __B2, f, c
+        rlcf __C2, f, c
+        rlcf __C3, f, c
+        rlcf __D1, f, c
         btfsc STATUS, 0, c
         bsf __D0, 0, c
         decfsz __D3, f, c
         bra FLD_LP
-        movf __B0, w, c
-        iorwf __B1, w, c
-        iorwf __B2, w, c
+        movf __C2, w, c
+        iorwf __C3, w, c
+        iorwf __D1, w, c
         btfsc __D0, 0, c
         iorlw 1
         bz FLD_ST
@@ -1127,47 +1099,33 @@ End Function
 
 Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movf __B0, w
-        movwf __D1
-        movf __B1, w
-        movwf __D3
-        movf __B3, w
-        movwf __D2
-        movf __A0, w
-        movwf __B0
-        movf __B2, w
-        movwf __A0
-        movf __A1, w
-        movwf __B1
-        movf __A2, w
-        movwf __B2
         movf __A3, w
-        xorwf __D2, w
+        xorwf __B3, w
         andlw 0x80
         movwf __D0
-        rlf __B2, w
+        rlf __A2, w
         rlf __A3, w
         movwf __C0
-        rlf __A0, w
-        rlf __D2, w
+        rlf __B2, w
+        rlf __B3, w
         movwf __D2
         incf __C0, w
         btfss STATUS, 2
         bra FLM_1
-        movf __B2, w
+        movf __A2, w
         andlw 0x7F
-        iorwf __B1, w
-        iorwf __B0, w
+        iorwf __A1, w
+        iorwf __A0, w
         btfss STATUS, 2
         bra FLM_NAN
     FLM_1:
         incf __D2, w
         btfss STATUS, 2
         bra FLM_2
-        movf __A0, w
+        movf __B2, w
         andlw 0x7F
-        iorwf __D3, w
-        iorwf __D1, w
+        iorwf __B1, w
+        iorwf __B0, w
         btfss STATUS, 2
         bra FLM_NAN
     FLM_2:
@@ -1225,8 +1183,14 @@ Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         subwf __C0, f
         movlw 0
         subwfb __C1, f
+        movf __A0, w
+        movwf __D1
+        movf __A1, w
+        movwf __D3
+        movf __A2, w
+        iorlw 0x80
+        movwf __A0
         bsf __B2, 7
-        bsf __A0, 7
         clrf __A1
         clrf __A2
         clrf __A3
@@ -1277,47 +1241,33 @@ End Function
 
 Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movf __B0, w
-        movwf __C2
-        movf __B1, w
-        movwf __C3
-        movf __B2, w
-        movwf __D1
-        movf __B3, w
-        movwf __D2
-        movf __A0, w
-        movwf __B0
-        movf __A1, w
-        movwf __B1
-        movf __A2, w
-        movwf __B2
         movf __A3, w
-        xorwf __D2, w
+        xorwf __B3, w
         andlw 0x80
         movwf __D0
-        rlf __B2, w
+        rlf __A2, w
         rlf __A3, w
         movwf __C0
-        rlf __D1, w
-        rlf __D2, w
+        rlf __B2, w
+        rlf __B3, w
         movwf __D2
         incf __C0, w
         btfss STATUS, 2
         bra FLD_1
-        movf __B2, w
+        movf __A2, w
         andlw 0x7F
-        iorwf __B1, w
-        iorwf __B0, w
+        iorwf __A1, w
+        iorwf __A0, w
         btfss STATUS, 2
         bra FLD_NAN
     FLD_1:
         incf __D2, w
         btfss STATUS, 2
         bra FLD_2
-        movf __D1, w
+        movf __B2, w
         andlw 0x7F
-        iorwf __C3, w
-        iorwf __C2, w
+        iorwf __B1, w
+        iorwf __B0, w
         btfss STATUS, 2
         bra FLD_NAN
     FLD_2:
@@ -1367,6 +1317,12 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movwf __A3
         bra FLD_RET
     FLD_GO:
+        movf __A0, w
+        movwf __C2
+        movf __A1, w
+        movwf __C3
+        movf __A2, w
+        movwf __D1
         clrf __C1
         movf __D2, w
         subwf __C0, f
@@ -1376,19 +1332,19 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         addwf __C0, f
         movlw 0
         addwfc __C1, f
-        bsf __B2, 7
         bsf __D1, 7
-        movf __C2, w
-        subwf __B0, w
-        movf __C3, w
-        subwfb __B1, w
-        movf __D1, w
-        subwfb __B2, w
+        bsf __B2, 7
+        movf __B0, w
+        subwf __C2, w
+        movf __B1, w
+        subwfb __C3, w
+        movf __B2, w
+        subwfb __D1, w
         btfsc STATUS, 0
         bra FLD_LP0
-        lslf __B0, f
-        rlf __B1, f
-        rlf __B2, f
+        lslf __C2, f
+        rlf __C3, f
+        rlf __D1, f
         bsf __D0, 0
         movlw 1
         subwf __C0, f
@@ -1398,22 +1354,22 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movlw 32
         movwf __D3
     FLD_LP:
-        movf __C2, w
-        subwf __B0, f
-        movf __C3, w
-        subwfb __B1, f
-        movf __D1, w
-        subwfb __B2, f
+        movf __B0, w
+        subwf __C2, f
+        movf __B1, w
+        subwfb __C3, f
+        movf __B2, w
+        subwfb __D1, f
         btfsc STATUS, 0
         bra FLD_TAKE
         btfsc __D0, 0
         bra FLD_TAKE
-        movf __C2, w
-        addwf __B0, f
-        movf __C3, w
-        addwfc __B1, f
-        movf __D1, w
-        addwfc __B2, f
+        movf __B0, w
+        addwf __C2, f
+        movf __B1, w
+        addwfc __C3, f
+        movf __B2, w
+        addwfc __D1, f
         bcf STATUS, 0
         bra FLD_Q
     FLD_TAKE:
@@ -1424,16 +1380,16 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         rlf __A2, f
         rlf __A3, f
         bcf __D0, 0
-        lslf __B0, f
-        rlf __B1, f
-        rlf __B2, f
+        lslf __C2, f
+        rlf __C3, f
+        rlf __D1, f
         btfsc STATUS, 0
         bsf __D0, 0
         decfsz __D3, f
         bra FLD_LP
-        movf __B0, w
-        iorwf __B1, w
-        iorwf __B2, w
+        movf __C2, w
+        iorwf __C3, w
+        iorwf __D1, w
         btfsc __D0, 0
         iorlw 1
         btfsc STATUS, 2

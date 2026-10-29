@@ -36,7 +36,7 @@ the plan applies: one word saved is worth saving.
 | P6 | `lib` decimal printing (`LcdWriteWord`, `Serial2WriteWord`, …) | table-driven repeated subtraction | −68 B (5-digit test) | 5109→439 | 0 | low |
 | P7 | `Min`, `Max`, `Abs` | skip-instruction forms (`CPFSGT`/`CPFSLT`, sign test) | Byte Min/Max 14→4 words; Integer `Abs` 44→6 | 14→4; 44→6 | −1..2 B temp | low |
 | P8 | Byte-indexed array access | `lfsr` + `PLUSW0` (arrays ≤ 128 elements) | 12→4 words | 13→5 | 0 | low |
-| P9 | Float helpers | pass operands and result in `__A`/`__B` like `__mul4` (**done, 0.1.54**) | PIC18 `float_basic` 1281→1146 words; 16F17146 1598→1194 | −24 per op | −61 B | medium |
+| P9 | Float helpers | pass operands and result in `__A`/`__B` like `__mul4` (**done, 0.1.54**; `FMul`/`FDiv` bodies 0.1.55) | PIC18 `float_basic` 1281→1111 words; 16F17146 1598→1178 | −24 per op; `FMul` −27/−8, `FDiv` −8/−8 once (PIC18/mid-range) | −61 B | medium |
 | P10 | `Float * 2^k`, `/ 2^k` | exponent add, no `FMul`/`FDiv` | −345 words when they were the only users | 218→≈20 | −12 B | medium |
 | P11 | Signed compare | fold constant bias; sign-bit test against 0 | `i<0` 13→2 words; `i<K` 11→8 | 13→3 (`i<0`) | −2 B scratch | low |
 | P12 | Word `± 1`, constant compares | `infsnz/incf`, `decf/btfss`, `subfwb` | `x+1` 4→2; `x>K` 9→5 | 4→2; 11→7 | 0 | low |

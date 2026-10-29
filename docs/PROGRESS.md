@@ -769,4 +769,17 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Size (words, `--report` flash): PIC18 `float_basic` 1281 -> 1146, `lib_floatlib_conv` 2358 -> 2282, `float_compare` 1771 -> 1706, `float_random` 3186 -> 3020;
   16F17146 `float_basic` 1598 -> 1194, `lib_floatlib_conv` 3631 -> 2566, `lib_floatlib_edge` 11292 -> 8652, `float_random` 4298 -> 4045. RAM drops by the parameter
   frames (`float_basic` 150 -> 89 bytes on the PIC18).
-- Not done: rewriting the `FMul`/`FDiv` bodies to work on `__A`/`__B` directly (saves the 7-move shuffle in each).
+- Later done: rewriting the `FMul`/`FDiv` bodies to work on `__A`/`__B` directly (saves the 7-move shuffle in each), in 0.1.55 (next section).
+
+## `FMul`/`FDiv` bodies on `__A`/`__B` (done 2026-10-29, 0.1.55)
+- `b` stays where the caller put it: the divisor or multiplicand mantissa is `__B2..__B0`, and the sign, exponent and NaN tests read `a` and `b` in place.
+  Only `a`'s three mantissa bytes move, and only on the finite path, because the product or quotient is built in `__A3..__A0` for `Pack`: `FDiv` moves the
+  dividend to `__D1:__C3:__C2`; the mid-range `FMul` moves it to the bottom of its shift chain (`__A0:__D3:__D1`).
+- The PIC18 `FMul` keeps `a1` in `__C3` and `a2` in `__B3` and multiplies by `a0` while it is still in `__A0`: the first row stores its partial products
+  (`movff PRODL/PRODH`, the middle byte through `__C2`) instead of clearing six bytes and adding, and the second row drops the carry into `__A3`
+  (the first two rows sum to less than 2^40).
+- Size (words): PIC18 `FMul` -27, `FDiv` -8 (`float_basic` 1146 -> 1111, `float_compare` 1682 -> 1655, `lib_floatlib_edge` 7392 -> 7355,
+  `float_random` 3020 -> 2985); 16F17146 -8 each (`float_basic` 1194 -> 1178, `lib_floatlib_edge` 8633 -> 8617, `float_random` 4045 -> 4029).
+- `tests/exec/float_muldiv.bas` (both cores): every special value as either operand of `FMul`/`FDiv` with a finite other one, and mantissas with bytes at
+  or near 0xFF (the largest partial-product carries). Also checked once: `scripts/gen_float_vectors.py` with three other seeds (120 pairs each) and 400 more
+  near-0xFF pairs, on both cores.
