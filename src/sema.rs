@@ -1351,7 +1351,9 @@ impl<'p, 'd> Sema<'p, 'd> {
         for s in &b.stmts {
             self.stmt(s);
         }
-        if kind == Kind::Function && !self.ctx.result_assigned
+        // The FloatLib routines hand their value back in registers (`ir::Func::reg`), not in `Result`.
+        let reg_lib = self.proj.units[self.unit].path.file_stem().is_some_and(|f| f == "floatlib");
+        if kind == Kind::Function && !self.ctx.result_assigned && !reg_lib
             && let Some(r) = routine
         {
             let sp = self.a.symbols[r].span;

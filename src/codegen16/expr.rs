@@ -354,6 +354,10 @@ impl<'p> G<'p> {
             ExK::Call(f, args) => {
                 let rec = self.recursive_call(*f);
                 self.call_func(*f, args, true);
+                // A register-call routine leaves its value in A (WREG when it is a byte).
+                if self.p.funcs[*f].reg && !rec {
+                    return;
+                }
                 let Some(r) = self.p.funcs[*f].result else {
                     self.err("a routine without a result used as a value");
                     return;
@@ -793,6 +797,57 @@ impl<'p> G<'p> {
         if n == 1 {
             let a0 = self.a(0);
             self.fop("movf", &a0, "w");
+        }
+    }
+
+    /// Puts the operands of a register-call routine in `A` and `B` (four bytes each; `b` is absent for a
+    /// routine with one operand). `a` is evaluated before `b` whenever either calls a routine, as the arguments
+    /// of a call are; without calls the order does not show and `b` goes first, which saves a copy.
+    pub fn load_ab(&mut self, a: &Ex, b: Option<&Ex>) {
+        let a = fit(a, 32);
+        let Some(b) = b else {
+            self.ev(&a);
+            return;
+        };
+        let b = fit(b, 32);
+        if !a.has_call() && !b.has_call() {
+            let bo = self.operand(&b);
+            self.ev(&a);
+            self.fill_b(&bo);
+        } else if b.as_const().is_some() {
+            self.ev(&a);
+            self.fill_b(&Opd::K(b.as_const().unwrap()));
+        } else {
+            // `a` waits in the temporary area while `b` is computed (a call in `b` would clobber `A`).
+            self.ev(&a);
+            let t = self.temp(4);
+            self.spill(&t, 4, false);
+            if self.simple(&b) {
+                let bo = self.operand(&b);
+                self.fill_b(&bo);
+            } else {
+                self.ev(&b);
+                for i in 0..4 {
+                    let (a, bm) = (self.a(i), self.b(i));
+                    self.fop("movf", &a, "w");
+                    self.fo("movwf", &bm);
+                }
+            }
+            for i in 0..4 {
+                let a = self.a(i);
+                self.fop("movf", &t.at(i), "w");
+                self.fo("movwf", &a);
+            }
+        }
+    }
+
+    /// Copies the four bytes of `bo` into `B`.
+    fn fill_b(&mut self, bo: &Opd) {
+        for i in 0..4 {
+            let s = self.opd_byte(bo, i);
+            self.ld_w(&s);
+            let bm = self.b(i);
+            self.fo("movwf", &bm);
         }
     }
 

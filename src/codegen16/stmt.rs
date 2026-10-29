@@ -641,6 +641,24 @@ impl<'p> G<'p> {
             }
             self.save_ssp(&lo, &hi);
         }
+        if self.p.funcs[f].reg && !rec {
+            match args {
+                [(_, a)] => self.load_ab(a, None),
+                [(_, a), (_, b)] => match b.sign_flipped() {
+                    Some(x) => {
+                        self.load_ab(a, Some(x));
+                        self.ins("movlw 0x80");
+                        let b3 = self.b(3);
+                        self.fop("xorwf", &b3, "f");
+                    }
+                    None => self.load_ab(a, Some(b)),
+                },
+                _ => self.err("a register-call routine takes one or two operands"),
+            }
+            let asm = self.p.funcs[f].asm.clone();
+            self.call(&asm);
+            return;
+        }
         // An argument that calls a routine is evaluated first, into the temporary area, so the parameters
         // being filled in cannot be overwritten by a nested call to the same routine. A recursive call stores
         // into the very parameters its arguments may read, so with several arguments they all go through

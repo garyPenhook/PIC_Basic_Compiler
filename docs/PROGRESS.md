@@ -750,6 +750,23 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `movlb`-hoist: tried on this core (the PIC18 pass plus `SkipBr`), no change in size over the same programs. No loop head here starts with a `movlb` that a
   back-branch refers to, because `codegen16::opt::drop_redundant_movlb` already removes the ones the entry state covers. Not kept.
 - `movff`-forward: has no equivalent, there is no `movff`; a copy is `movf s,w` / `movwf d`, which `pass_wreg` and `pass_dead_stores` already forward and drop.
-- Not done: `Float` operands in `__A`/`__B` (EFFICIENCY.md P9). The call sites store each argument into the callee's parameter frame as the evaluation of
-  the next argument may use `__A`/`__B` itself, so it needs a call form in the IR whose arguments are parked in temporaries and then loaded into the registers,
-  in `lower.rs`, both generators and both halves of `floatlib.bas`. About 20 words per routine on this core.
+- Not done: `Float` operands in `__A`/`__B` (EFFICIENCY.md P9), done in 0.1.54 (next section).
+
+## Float operands in `__A`/`__B` (done 2026-10-29, 0.1.54; EFFICIENCY.md P9)
+- `ir::Func::reg` marks a *register-call* routine. `lower.rs` sets it for the FloatLib routines `FAdd`, `FMul`, `FDiv`, `Cmp`, `FFromLong`, `FFromULong` and `FToLong`
+  (`reg_routine`: unit `floatlib`, one or two 32-bit parameters, a result). The caller loads the first operand into `__A` and the second into `__B` (the PIC18
+  `prep_ab`, the mid-range `load_ab`, the same code the multiply and divide use) instead of storing them in the parameter frames, and the value comes back in
+  `__A` (WREG for `Cmp`'s byte). The parameters and `Result` of such a routine are never stored, so their RAM is gone and `entry_clears` leaves the routine alone.
+- `peephole::Env::reg_calls` lists their labels: `loc_live` treats a call to one as a read of the scratch registers (a call to any other routine still kills them),
+  otherwise the operand loads would be deleted as dead stores.
+- `a - b` is lowered as `FAdd(a, b Xor $80000000)`; the generators load `b` and flip the sign bit in `__B3` (`btg`, or `movlw 0x80` / `xorwf` on the mid-range core),
+  so there is no `FSub` call. `FSub` itself stays in the library for direct calls.
+- `prep_ab` evaluates a call-free right operand first when neither side is simple (the right one waits in the temporary and moves into `__B`): 16 words for two
+  array elements, down from 24. This also helps the Long multiply and divide.
+- `sema` does not warn that a FloatLib function never assigns `Result`.
+- The routines: `FAdd`, `Cmp`, `FFromLong`, `FFromULong` and `FToLong` lost their prologue and epilogue copies; `FMul` and `FDiv` keep a short register shuffle
+  (their bodies keep the operands in the registers they always used).
+- Size (words, `--report` flash): PIC18 `float_basic` 1281 -> 1146, `lib_floatlib_conv` 2358 -> 2282, `float_compare` 1771 -> 1706, `float_random` 3186 -> 3020;
+  16F17146 `float_basic` 1598 -> 1194, `lib_floatlib_conv` 3631 -> 2566, `lib_floatlib_edge` 11292 -> 8652, `float_random` 4298 -> 4045. RAM drops by the parameter
+  frames (`float_basic` 150 -> 89 bytes on the PIC18).
+- Not done: rewriting the `FMul`/`FDiv` bodies to work on `__A`/`__B` directly (saves the 7-move shuffle in each).

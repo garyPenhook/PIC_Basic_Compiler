@@ -1045,8 +1045,9 @@ impl<'p> Gen<'p> {
             ExK::Call(f, args) => {
                 self.do_call(*f, args, true);
                 let rv = self.p.funcs[*f].result.expect("a value call has a result");
-                // A recursive call has already read its result.
-                if !self.recursive_call(*f) {
+                // A recursive call has already read its result; a register-call routine leaves it in `__A`
+                // (WREG when it is a byte).
+                if !self.recursive_call(*f) && !self.p.funcs[*f].reg {
                     let m = self.mem_obj(rv, self.p.vars[rv].asm.clone());
                     if n == 1 {
                         self.fop("movf", &m, "w");
@@ -1704,6 +1705,16 @@ impl<'p> Gen<'p> {
             self.gen_to_acc(r);
             self.a_to_b(n);
             self.src_to_acc(&ls, n);
+        } else if !l.has_call() && !r.has_call() && Self::nb(l) == n && Self::nb(r) == n {
+            // Nothing in either operand has a side effect, so `r` can wait in the temporary and move into `__B`
+            // while `l` is evaluated straight into `__A`.
+            let t = self.spill(r);
+            self.gen_to_acc(l);
+            for i in 0..n {
+                let b = self.b(i);
+                self.movff(&b, &t.at(i));
+            }
+            self.free(n);
         } else {
             let t = self.spill(l);
             self.gen_to_acc(r);
@@ -2514,7 +2525,21 @@ impl<'p> Gen<'p> {
         // Arguments that contain calls are evaluated first, so a nested call cannot overwrite
         // a parameter that was already stored.
         let nested = args.len() > 1 && args.iter().any(|(_, e)| e.has_call());
-        if self.warg.contains(&f) {
+        if self.p.funcs[f].reg && !rec {
+            // A register-call routine: the operands go in `__A` and `__B`.
+            match args {
+                [(_, a)] => self.gen_to_acc(a),
+                [(_, a), (_, b)] => match b.sign_flipped() {
+                    Some(x) => {
+                        self.prep_ab(a, x, 4);
+                        let b3 = self.b(3);
+                        self.fbit("btg", &b3, 7);
+                    }
+                    None => self.prep_ab(a, b, 4),
+                },
+                _ => self.err("a register-call routine takes one or two operands"),
+            }
+        } else if self.warg.contains(&f) {
             // The one argument goes in WREG; the routine stores it itself.
             if let [(_, e)] = args {
                 if e.w == 8 {
@@ -3893,7 +3918,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
                 plain.insert(n.to_string(), (a, 1));
             }
         }
-        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars })
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect() })
     } else {
         items
     };

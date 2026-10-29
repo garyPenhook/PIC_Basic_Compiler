@@ -84,14 +84,6 @@ End Sub
 
 Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movff FLOATLIB_FADD__A, __A0
-        movff FLOATLIB_FADD__A+1, __A1
-        movff FLOATLIB_FADD__A+2, __A2
-        movff FLOATLIB_FADD__A+3, __A3
-        movff FLOATLIB_FADD__B, __B0
-        movff FLOATLIB_FADD__B+1, __B1
-        movff FLOATLIB_FADD__B+2, __B2
-        movff FLOATLIB_FADD__B+3, __B3
         movf __A3, w, c
         andlw 0x7F
         movwf __C0, c
@@ -268,23 +260,18 @@ Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Pack()
     Asm
     FLA_RET:
-        movff __A0, FLOATLIB_FADD__RESULT
-        movff __A1, FLOATLIB_FADD__RESULT+1
-        movff __A2, FLOATLIB_FADD__RESULT+2
-        movff __A3, FLOATLIB_FADD__RESULT+3
     End Asm
 End Function
 
 Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movff FLOATLIB_FMUL__A, __B0
-        movff FLOATLIB_FMUL__A+1, __B1
-        movff FLOATLIB_FMUL__A+2, __B2
-        movff FLOATLIB_FMUL__A+3, __A3
-        movff FLOATLIB_FMUL__B, __B3
-        movff FLOATLIB_FMUL__B+1, __C2
-        movff FLOATLIB_FMUL__B+2, __C3
-        movff FLOATLIB_FMUL__B+3, __D2
+        movff __B3, __D2
+        movff __B2, __C3
+        movff __B1, __C2
+        movff __B0, __B3
+        movff __A0, __B0
+        movff __A1, __B1
+        movff __A2, __B2
         movf __A3, w, c
         xorwf __D2, w, c
         andlw 0x80
@@ -470,23 +457,18 @@ Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Pack()
     Asm
     FLM_RET:
-        movff __A0, FLOATLIB_FMUL__RESULT
-        movff __A1, FLOATLIB_FMUL__RESULT+1
-        movff __A2, FLOATLIB_FMUL__RESULT+2
-        movff __A3, FLOATLIB_FMUL__RESULT+3
     End Asm
 End Function
 
 Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movff FLOATLIB_FDIV__A, __B0
-        movff FLOATLIB_FDIV__A+1, __B1
-        movff FLOATLIB_FDIV__A+2, __B2
-        movff FLOATLIB_FDIV__A+3, __A3
-        movff FLOATLIB_FDIV__B, __C2
-        movff FLOATLIB_FDIV__B+1, __C3
-        movff FLOATLIB_FDIV__B+2, __D1
-        movff FLOATLIB_FDIV__B+3, __D2
+        movff __B0, __C2
+        movff __B1, __C3
+        movff __B2, __D1
+        movff __B3, __D2
+        movff __A0, __B0
+        movff __A1, __B1
+        movff __A2, __B2
         movf __A3, w, c
         xorwf __D2, w, c
         andlw 0x80
@@ -630,24 +612,12 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Pack()
     Asm
     FLD_RET:
-        movff __A0, FLOATLIB_FDIV__RESULT
-        movff __A1, FLOATLIB_FDIV__RESULT+1
-        movff __A2, FLOATLIB_FDIV__RESULT+2
-        movff __A3, FLOATLIB_FDIV__RESULT+3
     End Asm
 End Function
 
 ' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0); 2 when either is NaN.
 Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
     Asm
-        movff FLOATLIB_CMP__A, __A0
-        movff FLOATLIB_CMP__A+1, __A1
-        movff FLOATLIB_CMP__A+2, __A2
-        movff FLOATLIB_CMP__A+3, __A3
-        movff FLOATLIB_CMP__B, __B0
-        movff FLOATLIB_CMP__B+1, __B1
-        movff FLOATLIB_CMP__B+2, __B2
-        movff FLOATLIB_CMP__B+3, __B3
         movf __A3, w, c
         andlw 0x7F
         xorlw 0x7F
@@ -719,8 +689,6 @@ Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
     FLC_NAN:
         movlw 2
     FLC_ST:
-        movwf __A0, c
-        movff __A0, FLOATLIB_CMP__RESULT
     End Asm
 End Function
 
@@ -765,10 +733,6 @@ End Sub
 
 Public Function FFromLong(ByVal v As LongInt) As LongWord
     Asm
-        movff FLOATLIB_FFROMLONG__V, __A0
-        movff FLOATLIB_FFROMLONG__V+1, __A1
-        movff FLOATLIB_FFROMLONG__V+2, __A2
-        movff FLOATLIB_FFROMLONG__V+3, __A3
         movf __A3, w, c
         andlw 0x80
         movwf __D0, c
@@ -787,37 +751,21 @@ Public Function FFromLong(ByVal v As LongInt) As LongWord
     End Asm
     FromMag()
     Asm
-        movff __A0, FLOATLIB_FFROMLONG__RESULT
-        movff __A1, FLOATLIB_FFROMLONG__RESULT+1
-        movff __A2, FLOATLIB_FFROMLONG__RESULT+2
-        movff __A3, FLOATLIB_FFROMLONG__RESULT+3
     End Asm
 End Function
 
 Public Function FFromULong(ByVal v As LongWord) As LongWord
     Asm
-        movff FLOATLIB_FFROMULONG__V, __A0
-        movff FLOATLIB_FFROMULONG__V+1, __A1
-        movff FLOATLIB_FFROMULONG__V+2, __A2
-        movff FLOATLIB_FFROMULONG__V+3, __A3
         clrf __D0, c
     End Asm
     FromMag()
     Asm
-        movff __A0, FLOATLIB_FFROMULONG__RESULT
-        movff __A1, FLOATLIB_FFROMULONG__RESULT+1
-        movff __A2, FLOATLIB_FFROMULONG__RESULT+2
-        movff __A3, FLOATLIB_FFROMULONG__RESULT+3
     End Asm
 End Function
 
 ' Truncates toward zero; out of range saturates to the LongInt limits, NaN gives 0.
 Public Function FToLong(ByVal a As LongWord) As LongInt
     Asm
-        movff FLOATLIB_FTOLONG__A, __A0
-        movff FLOATLIB_FTOLONG__A+1, __A1
-        movff FLOATLIB_FTOLONG__A+2, __A2
-        movff FLOATLIB_FTOLONG__A+3, __A3
         movf __A3, w, c
         andlw 0x80
         movwf __D0, c
@@ -902,10 +850,6 @@ Public Function FToLong(ByVal a As LongWord) As LongInt
         movlw 0x80
         movwf __A3, c
     FLT_OUT:
-        movff __A0, FLOATLIB_FTOLONG__RESULT
-        movff __A1, FLOATLIB_FTOLONG__RESULT+1
-        movff __A2, FLOATLIB_FTOLONG__RESULT+2
-        movff __A3, FLOATLIB_FTOLONG__RESULT+3
     End Asm
 End Function
 #else
@@ -978,24 +922,6 @@ End Sub
 
 Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movlb FLOATLIB_FADD__A >> 7
-        movf FLOATLIB_FADD__A, w
-        movwf __A0
-        movf FLOATLIB_FADD__A+1, w
-        movwf __A1
-        movf FLOATLIB_FADD__A+2, w
-        movwf __A2
-        movf FLOATLIB_FADD__A+3, w
-        movwf __A3
-        movlb FLOATLIB_FADD__B >> 7
-        movf FLOATLIB_FADD__B, w
-        movwf __B0
-        movf FLOATLIB_FADD__B+1, w
-        movwf __B1
-        movf FLOATLIB_FADD__B+2, w
-        movwf __B2
-        movf FLOATLIB_FADD__B+3, w
-        movwf __B3
         movf __A3, w
         andlw 0x7F
         movwf __C0
@@ -1196,38 +1122,25 @@ bra FLA_FAR
         Pack()
     Asm
     FLA_RET:
-        movf __A0, w
-        movlb FLOATLIB_FADD__RESULT >> 7
-        movwf FLOATLIB_FADD__RESULT
-        movf __A1, w
-        movwf FLOATLIB_FADD__RESULT+1
-        movf __A2, w
-        movwf FLOATLIB_FADD__RESULT+2
-        movf __A3, w
-        movwf FLOATLIB_FADD__RESULT+3
     End Asm
 End Function
 
 Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movlb FLOATLIB_FMUL__A >> 7
-        movf FLOATLIB_FMUL__A, w
-        movwf __B0
-        movf FLOATLIB_FMUL__A+1, w
-        movwf __B1
-        movf FLOATLIB_FMUL__A+2, w
-        movwf __B2
-        movf FLOATLIB_FMUL__A+3, w
-        movwf __A3
-        movlb FLOATLIB_FMUL__B >> 7
-        movf FLOATLIB_FMUL__B, w
+        movf __B0, w
         movwf __D1
-        movf FLOATLIB_FMUL__B+1, w
+        movf __B1, w
         movwf __D3
-        movf FLOATLIB_FMUL__B+2, w
-        movwf __A0
-        movf FLOATLIB_FMUL__B+3, w
+        movf __B3, w
         movwf __D2
+        movf __A0, w
+        movwf __B0
+        movf __B2, w
+        movwf __A0
+        movf __A1, w
+        movwf __B1
+        movf __A2, w
+        movwf __B2
         movf __A3, w
         xorwf __D2, w
         andlw 0x80
@@ -1359,38 +1272,25 @@ Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         Pack()
     Asm
     FLM_RET:
-        movf __A0, w
-        movlb FLOATLIB_FMUL__RESULT >> 7
-        movwf FLOATLIB_FMUL__RESULT
-        movf __A1, w
-        movwf FLOATLIB_FMUL__RESULT+1
-        movf __A2, w
-        movwf FLOATLIB_FMUL__RESULT+2
-        movf __A3, w
-        movwf FLOATLIB_FMUL__RESULT+3
     End Asm
 End Function
 
 Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     Asm
-        movlb FLOATLIB_FDIV__A >> 7
-        movf FLOATLIB_FDIV__A, w
-        movwf __B0
-        movf FLOATLIB_FDIV__A+1, w
-        movwf __B1
-        movf FLOATLIB_FDIV__A+2, w
-        movwf __B2
-        movf FLOATLIB_FDIV__A+3, w
-        movwf __A3
-        movlb FLOATLIB_FDIV__B >> 7
-        movf FLOATLIB_FDIV__B, w
+        movf __B0, w
         movwf __C2
-        movf FLOATLIB_FDIV__B+1, w
+        movf __B1, w
         movwf __C3
-        movf FLOATLIB_FDIV__B+2, w
+        movf __B2, w
         movwf __D1
-        movf FLOATLIB_FDIV__B+3, w
+        movf __B3, w
         movwf __D2
+        movf __A0, w
+        movwf __B0
+        movf __A1, w
+        movwf __B1
+        movf __A2, w
+        movwf __B2
         movf __A3, w
         xorwf __D2, w
         andlw 0x80
@@ -1545,39 +1445,12 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         Pack()
     Asm
     FLD_RET:
-        movf __A0, w
-        movlb FLOATLIB_FDIV__RESULT >> 7
-        movwf FLOATLIB_FDIV__RESULT
-        movf __A1, w
-        movwf FLOATLIB_FDIV__RESULT+1
-        movf __A2, w
-        movwf FLOATLIB_FDIV__RESULT+2
-        movf __A3, w
-        movwf FLOATLIB_FDIV__RESULT+3
     End Asm
 End Function
 
 ' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0); 2 when either is NaN.
 Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
     Asm
-        movlb FLOATLIB_CMP__A >> 7
-        movf FLOATLIB_CMP__A, w
-        movwf __A0
-        movf FLOATLIB_CMP__A+1, w
-        movwf __A1
-        movf FLOATLIB_CMP__A+2, w
-        movwf __A2
-        movf FLOATLIB_CMP__A+3, w
-        movwf __A3
-        movlb FLOATLIB_CMP__B >> 7
-        movf FLOATLIB_CMP__B, w
-        movwf __B0
-        movf FLOATLIB_CMP__B+1, w
-        movwf __B1
-        movf FLOATLIB_CMP__B+2, w
-        movwf __B2
-        movf FLOATLIB_CMP__B+3, w
-        movwf __B3
         movf __A3, w
         andlw 0x7F
         xorlw 0x7F
@@ -1658,8 +1531,6 @@ bra FLC_DIFF
     FLC_NAN:
         movlw 2
     FLC_ST:
-movlb FLOATLIB_CMP__RESULT >> 7
-        movwf FLOATLIB_CMP__RESULT
     End Asm
 End Function
 
@@ -1708,15 +1579,6 @@ End Sub
 
 Public Function FFromLong(ByVal v As LongInt) As LongWord
     Asm
-        movlb FLOATLIB_FFROMLONG__V >> 7
-        movf FLOATLIB_FFROMLONG__V, w
-        movwf __A0
-        movf FLOATLIB_FFROMLONG__V+1, w
-        movwf __A1
-        movf FLOATLIB_FFROMLONG__V+2, w
-        movwf __A2
-        movf FLOATLIB_FFROMLONG__V+3, w
-        movwf __A3
         movf __A3, w
         andlw 0x80
         movwf __D0
@@ -1736,57 +1598,21 @@ Public Function FFromLong(ByVal v As LongInt) As LongWord
     End Asm
         FromMag ()
     Asm
-        movf __A0, w
-        movlb FLOATLIB_FFROMLONG__RESULT >> 7
-        movwf FLOATLIB_FFROMLONG__RESULT
-        movf __A1, w
-        movwf FLOATLIB_FFROMLONG__RESULT+1
-        movf __A2, w
-        movwf FLOATLIB_FFROMLONG__RESULT+2
-        movf __A3, w
-        movwf FLOATLIB_FFROMLONG__RESULT+3
     End Asm
 End Function
 
 Public Function FFromULong(ByVal v As LongWord) As LongWord
     Asm
-        movlb FLOATLIB_FFROMULONG__V >> 7
-        movf FLOATLIB_FFROMULONG__V, w
-        movwf __A0
-        movf FLOATLIB_FFROMULONG__V+1, w
-        movwf __A1
-        movf FLOATLIB_FFROMULONG__V+2, w
-        movwf __A2
-        movf FLOATLIB_FFROMULONG__V+3, w
-        movwf __A3
         clrf __D0
     End Asm
         FromMag ()
     Asm
-        movf __A0, w
-        movlb FLOATLIB_FFROMULONG__RESULT >> 7
-        movwf FLOATLIB_FFROMULONG__RESULT
-        movf __A1, w
-        movwf FLOATLIB_FFROMULONG__RESULT+1
-        movf __A2, w
-        movwf FLOATLIB_FFROMULONG__RESULT+2
-        movf __A3, w
-        movwf FLOATLIB_FFROMULONG__RESULT+3
     End Asm
 End Function
 
 ' Truncates toward zero; out of range saturates to the LongInt limits, NaN gives 0.
 Public Function FToLong(ByVal a As LongWord) As LongInt
     Asm
-        movlb FLOATLIB_FTOLONG__A >> 7
-        movf FLOATLIB_FTOLONG__A, w
-        movwf __A0
-        movf FLOATLIB_FTOLONG__A+1, w
-        movwf __A1
-        movf FLOATLIB_FTOLONG__A+2, w
-        movwf __A2
-        movf FLOATLIB_FTOLONG__A+3, w
-        movwf __A3
         movf __A3, w
         andlw 0x80
         movwf __D0
@@ -1876,15 +1702,6 @@ movwf __A2
         movlw 0x80
         movwf __A3
     FLT_OUT:
-        movf __A0, w
-        movlb FLOATLIB_FTOLONG__RESULT >> 7
-        movwf FLOATLIB_FTOLONG__RESULT
-        movf __A1, w
-        movwf FLOATLIB_FTOLONG__RESULT+1
-        movf __A2, w
-        movwf FLOATLIB_FTOLONG__RESULT+2
-        movf __A3, w
-        movwf FLOATLIB_FTOLONG__RESULT+3
     End Asm
 End Function
 #endif

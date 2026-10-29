@@ -210,6 +210,18 @@ impl Ex {
     pub fn boolean(k: ExK) -> Ex {
         Ex { k, w: 8, signed: false }
     }
+    /// `x` when the expression is `x Xor $80000000`: a Float with its sign bit flipped.
+    pub fn sign_flipped(&self) -> Option<&Ex> {
+        let ExK::Bin(BinKind::Xor, a, b) = &self.k else { return None };
+        if self.w != 32 {
+            return None;
+        }
+        match (a.as_const(), b.as_const()) {
+            (None, Some(0x8000_0000)) => Some(a),
+            (Some(0x8000_0000), None) => Some(b),
+            _ => None,
+        }
+    }
     pub fn has_call(&self) -> bool {
         match &self.k {
             ExK::Call(..) => true,
@@ -335,6 +347,10 @@ pub struct Func {
     pub result: Option<VarId>,
     pub body: Vec<S>,
     pub span: Span,
+    /// A register-call routine (the FloatLib arithmetic): the caller loads the first argument into `__A` and the
+    /// second into `__B` instead of storing them in the parameters, and the value comes back in `__A` (WREG when
+    /// it is a byte). The parameters and `Result` are never stored.
+    pub reg: bool,
 }
 
 /// A routine implemented in C (`Extern`), as the C stub that keeps it in the link declares it.

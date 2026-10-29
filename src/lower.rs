@@ -279,7 +279,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         config.push((reg.name.clone(), reg.addr, v as u16));
     }
 
-    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default() };
+    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default(), reg: false };
     let mut funcs: Vec<Func> = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
     let mut main = main;
     strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
@@ -485,7 +485,7 @@ impl<'a> Lowerer<'a> {
         body.append(&mut rest);
         let mut entry = self.entry_clears(id, &body, i.name.span);
         entry.append(&mut body);
-        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span });
+        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span, reg: false });
         self.isrs.push((id, level));
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
@@ -762,7 +762,7 @@ impl<'a> Lowerer<'a> {
         entry.append(&mut body);
         let mut body = entry;
         body.push(S { st: St::Return, span: e.name.span });
-        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params, result: None, body, span: e.name.span });
+        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params, result: None, body, span: e.name.span, reg: false });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
@@ -835,7 +835,7 @@ impl<'a> Lowerer<'a> {
             let name = if k == 0 { "__EVDISP".to_string() } else { format!("__EVDISP{k}") };
             let mut params = vec![idv];
             params.extend(pvs);
-            self.funcs[id] = Some(Func { asm: name, name: "event".into(), params, result: None, body, span: sp });
+            self.funcs[id] = Some(Func { asm: name, name: "event".into(), params, result: None, body, span: sp, reg: false });
         }
     }
 
@@ -876,11 +876,13 @@ impl<'a> Lowerer<'a> {
         }
         let mut rest = self.block(&r.body.stmts, ui);
         body.append(&mut rest);
-        let mut entry = self.entry_clears(id, &body, r.name.span);
+        let reg = self.reg_routine(ui, &r.name.name, params.len(), result);
+        // A register-call routine leaves its value in the registers and never uses its `Result`.
+        let mut entry = if reg { Vec::new() } else { self.entry_clears(id, &body, r.name.span) };
         entry.append(&mut body);
         let mut body = entry;
         body.push(S { st: St::Return, span: r.name.span });
-        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span });
+        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span, reg });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
@@ -956,7 +958,7 @@ impl<'a> Lowerer<'a> {
         }
         body.push(S { st: St::Return, span });
         sig.entry = asm.trim_start_matches('_').to_string();
-        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span }));
+        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span, reg: false }));
         self.exports.push(sig);
     }
 
@@ -1408,6 +1410,13 @@ impl<'a> Lowerer<'a> {
 
     // ---- Float ---------------------------------------------------------------------------
 
+    /// Whether the routine `name` of unit `ui` is one of the FloatLib routines that take their operands in
+    /// `__A`/`__B` (`Func::reg`): one or two 32-bit parameters by value, and a result of at most four bytes.
+    fn reg_routine(&self, ui: usize, name: &str, nparams: usize, result: Option<VarId>) -> bool {
+        const REG: [&str; 7] = ["fadd", "fmul", "fdiv", "cmp", "ffromlong", "ffromulong", "ftolong"];
+        self.proj.units[ui].path.file_stem().is_some_and(|f| f == "floatlib") && REG.contains(&name.to_ascii_lowercase().as_str()) && (1..=2).contains(&nparams) && result.is_some()
+    }
+
     /// A call of the FloatLib routine `name` on 32-bit operands.
     fn flt_call(&mut self, name: &str, args: Vec<Ex>, span: Span) -> Option<Ex> {
         if self.in_isr {
@@ -1493,6 +1502,11 @@ impl<'a> Lowerer<'a> {
                 _ => ExK::Cmp(CmpKind::Lt, Box::new(Ex::new(ExK::Conv(Box::new(c)), 8, false)), Box::new(Ex::konst(2, 8, false))),
             };
             return Some(Ex::boolean(ex));
+        }
+        if op == BinOp::Sub {
+            // `a - b` is `FAdd(a, b Xor $80000000)`; the call flips the sign of `b` in the register.
+            let flipped = Ex::new(ExK::Bin(BinKind::Xor, Box::new(rv), Box::new(Ex::konst(0x8000_0000, 32, false))), 32, false);
+            return self.flt_call("FAdd", vec![lv, flipped], e.span);
         }
         self.flt_call(name, vec![lv, rv], e.span)
     }

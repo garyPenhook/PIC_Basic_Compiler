@@ -40,6 +40,8 @@ pub struct Env {
     pub access_sfr: (u32, u32),
     /// Do not delete stores to variables nothing reads.
     pub keep_writes: bool,
+    /// Labels of the register-call routines, which read `__A` and `__B` (`ir::Func::reg`).
+    pub reg_calls: Vec<String>,
 }
 
 impl Env {
@@ -512,14 +514,14 @@ enum Live {
 }
 
 /// Whether the value of `l` written by item `i` can be read later in the same straight run.
-fn loc_live(items: &[Item], i: usize, l: Loc) -> Live {
+fn loc_live(items: &[Item], i: usize, l: Loc, env: &Env) -> Live {
     for it in &items[i + 1..] {
         match it {
             Item::Comment(_) => {}
             Item::Fence => return Live::Dead,
-            // A routine takes its arguments from its own frame; only the `__` helpers read the
-            // scratch registers, and a routine is free to overwrite them.
-            Item::Call(t) if matches!(l, Loc::S(_)) && !t.starts_with("__") => return Live::Dead,
+            // A routine takes its arguments from its own frame; only the `__` helpers and the
+            // register-call routines read the scratch registers, and a routine is free to overwrite them.
+            Item::Call(t) if matches!(l, Loc::S(_)) && !t.starts_with("__") && !env.reg_calls.contains(t) => return Live::Dead,
             Item::Ins(t) => match effect(t) {
                 None => return Live::Live,
                 Some(e) => {
@@ -557,7 +559,7 @@ fn pass_dead_stores(items: &mut Vec<Item>, env: &Env) -> bool {
         if !pure_move || !deletable(&e, env) {
             continue;
         }
-        if e.writes.iter().any(|&w| matches!(loc_live(items, i, w), Live::Live)) {
+        if e.writes.iter().any(|&w| matches!(loc_live(items, i, w, env), Live::Live)) {
             continue;
         }
         if e.flags_w != 0 && flags_live(items, i, e.flags_w) {
@@ -1435,7 +1437,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()] }
     }
 
     fn ins(t: &str) -> Item {
@@ -1524,6 +1526,9 @@ mod tests {
         // A routine reads its parameters from memory, so the scratch copy is dead.
         let r = run(&[ins("movff X, __A0"), Item::Call("f".into()), Item::Fence]);
         assert_eq!(r.len(), 2);
+        // A register-call routine reads `__A` and `__B`.
+        let r = run(&[ins("movff X, __A0"), Item::Call("REG".into()), Item::Fence]);
+        assert_eq!(r.len(), 3);
     }
 
     #[test]
