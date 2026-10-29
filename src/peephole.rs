@@ -1304,14 +1304,18 @@ fn pass_forward(items: &mut [Item], env: &Env) -> bool {
                             && m == "movff"
                             && o.len() == 2
                             && loc(o[1]) == Some(Loc::S(r))
-                            && loc(o[0]).is_none()
-                            && env.is_plain(o[0])
-                            && (!needs_access || env.is_access(o[0]))
+                            && match loc(o[0]) {
+                                // Another scratch register is in the Access Bank and tracked.
+                                Some(Loc::S(q)) => q != r,
+                                Some(Loc::W) => false,
+                                None => env.is_plain(o[0]) && (!needs_access || env.is_access(o[0])),
+                            }
                         {
                             // The source must not change between the copy and the read.
                             let s = o[0].to_string();
+                            let sloc = loc(&s);
                             let clobbered = items[k + 1..j].iter().any(|it| match it {
-                                Item::Ins(v) => effect(v).is_none_or(|ev| ev.wmem.iter().any(|m| matches!(m, Mem::Unknown) || *m == Mem::Sym(s.clone()))),
+                                Item::Ins(v) => effect(v).is_none_or(|ev| sloc.is_some_and(|l| ev.writes.contains(&l)) || ev.wmem.iter().any(|m| matches!(m, Mem::Unknown) || *m == Mem::Sym(s.clone()))),
                                 Item::Comment(_) => false,
                                 _ => true,
                             });
@@ -1330,6 +1334,84 @@ fn pass_forward(items: &mut [Item], env: &Env) -> bool {
         new_ops[idx] = s;
         items[j] = Item::Ins(format!("{mn} {}", new_ops.join(", ")));
         changed = true;
+    }
+    changed
+}
+
+/// Result forwarding, the other direction: `movff P, __R` followed (with nothing else touching `__R`) by
+/// `movff __R, v` writes `v` from `P` directly, when `__R` is not read again. The write of `v` moves up past the
+/// instructions in between, which is only done when none of them reads or writes `v`; an indirect access cannot
+/// reach a compiler-placed variable by another name, so it does not count as one.
+fn pass_retarget(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut dead = vec![false; items.len()];
+    for j in 0..items.len() {
+        if keep[j] || dead[j] {
+            continue;
+        }
+        let Item::Ins(t) = &items[j] else { continue };
+        let Some((mn, ops)) = parse(t) else { continue };
+        if mn != "movff" || ops.len() != 2 {
+            continue;
+        }
+        let Some(Loc::S(r)) = loc(ops[0]) else { continue };
+        if loc(ops[1]).is_some() || is_indirect(ops[1]) || !env.is_plain(ops[1]) {
+            continue;
+        }
+        let dst = ops[1].to_string();
+        let Some(da) = env.addr(&dst) else { continue };
+        let same = |m: &str| env.addr(m).is_none_or(|a| a == da) && !is_indirect(m);
+        let mut producer = None;
+        let mut k = j;
+        while k > 0 {
+            k -= 1;
+            if dead[k] {
+                continue;
+            }
+            match &items[k] {
+                Item::Comment(_) => {}
+                Item::Ins(u) => {
+                    let Some(e) = effect(u) else { break };
+                    if keep[k] || e.reads.contains(&Loc::S(r)) {
+                        break;
+                    }
+                    if e.writes.contains(&Loc::S(r)) {
+                        if let Some((m, o)) = parse(u)
+                            && m == "movff"
+                            && o.len() == 2
+                            && loc(o[1]) == Some(Loc::S(r))
+                        {
+                            producer = Some(k);
+                        }
+                        break;
+                    }
+                    let touches = e.rmem.iter().any(|m| same(m)) || e.wmem.iter().any(|m| match m {
+                        Mem::Unknown => false,
+                        Mem::Sym(m) => same(m),
+                    });
+                    if touches {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        let Some(k) = producer else { continue };
+        if matches!(loc_live(items, j, Loc::S(r), env), Live::Live) {
+            continue;
+        }
+        let Item::Ins(u) = &items[k] else { continue };
+        let (_, o) = parse(u).unwrap();
+        items[k] = Item::Ins(format!("movff {}, {}", o[0], dst));
+        dead[j] = true;
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
     }
     changed
 }
@@ -1378,6 +1460,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_forward(&mut items, env);
+        changed |= pass_retarget(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
         if !env.keep_writes {
