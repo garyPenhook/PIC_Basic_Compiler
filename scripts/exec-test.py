@@ -19,7 +19,7 @@ requests, `slow` to let a started message wait for step commands, `sfr=NAME:1,2,
 SFR returns, `ee=OFFSET:1,2,3` for data put in the EEPROM before the run). A `' dma-writes: NAME=1,2,3` line checks the bytes the DMA wrote, in order, to an SFR or address.
 Expectations may name SFRs of the part as well as program variables.
 """
-import argparse, glob, os, re, subprocess, sys, tempfile
+import argparse, glob, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dma_sim
@@ -50,6 +50,8 @@ for src in a.files:
     if a.device != "18F27Q10":
         # Same program, other part: only the Device header changes (pins and peripherals are not touched).
         text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, text, count=1, flags=re.M | re.I)
+        for cf in re.findall(r'^\s*CFile\s+"([^"]+)"', text, re.M | re.I):
+            shutil.copy(os.path.join(os.path.dirname(src), cf), work)
         src = os.path.join(work, name + ".bas")
         open(src, "w").write(text)
     r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)

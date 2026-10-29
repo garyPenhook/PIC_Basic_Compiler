@@ -647,3 +647,18 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   (`BASIL_MDB=1 cargo test q41`), `q41_*` build tests for all six parts, `tests/negative/q41_mvecen_with_handler.bas`. Simulator limits:
   no UART shift-out, no vectoring on `SWIF` (the timer interrupt tests now use aliases chosen with `_has(PIR3.TMR0IF)`).
 - Not done: a hardware I2C1 driver, `floatlib` on the Q41, hardware runs. Nothing was run on a real part, and the I2C transfer code ran against no bus.
+
+## C interop completed: handlers, ByRef/Float, -g, C calling Basic (done 2026-10-28, 0.1.49)
+- **Interrupt handlers with C.** The vectors are absolute psects `basilvhi`/`basilvlo` (08h, 18h) holding a `goto`; the XC8 `intcode`
+  psects are placed at 08h on the Q10 but not on the Q41 (its start-up builds a vector table). A handler cannot reach an `Extern`
+  routine (`E-EXTERN`, `check_isr_extern`). Tests: `c_isr` (Timer0 while C uses FSR/PROD/TBLPTR), `c_isr_dual`; both parts.
+- **Arguments.** `Float` by value and `ByRef`/`ByRefConst` scalars, arrays, `String` and structures (`CArg`). Pointers are typed in the stub
+  (`unsigned int *`, `char *`, `struct Pt *`) because XC8 checks declarations across files. Test: `c_args`.
+- **`-g`.** Worked once the refusal was lifted; the debug addresses are offsets from `_basil_entry`, so `main.rs` adds the address
+  from the map. Also fixed: a variable named `w`, `f`, `a`, ... made `-g` write an invalid assembler label (`GLOBAL w`).
+- **C calling Basic.** `Export Sub|Function` (parser, `Routine.export`, `ExportSig`, thunk `_basil_x_<name>`, C wrapper in the stub).
+  Frames: each `Extern` routine has a call edge to every thunk. Optimiser: exports are pinned like handlers. Test: `c_export`;
+  negatives `export_recursion`, `export_array`.
+- `scripts/exec-test.py` copies the `CFile`s when it rewrites the program for another `--device`.
+- Not done: an `Extern` call from a handler, `Export` array parameters, structure/array by value, hardware runs, checking the C
+  file against the declarations beyond what the linker does.

@@ -6,6 +6,7 @@
 
 use crate::types::Ty;
 
+#[derive(Clone)]
 pub struct DVar {
     pub name: String,
     pub ty: Ty,
@@ -16,6 +17,7 @@ pub struct DVar {
     pub param: bool,
 }
 
+#[derive(Clone)]
 pub struct DFunc {
     pub name: String,
     /// Byte addresses `[low, high)`.
@@ -23,7 +25,7 @@ pub struct DFunc {
     pub high: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DebugInfo {
     pub vars: Vec<DVar>,
     pub funcs: Vec<DFunc>,

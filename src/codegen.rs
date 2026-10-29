@@ -3488,6 +3488,13 @@ pub struct Generated {
 fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, facts: Option<&'p Facts>) -> (Gen<'p>, Vec<Item>) {
     // Safety: the generator borrows `p`, `tgt` and `layout` for the same lifetime.
     let mut g = Gen::new(p, tgt, layout, facts);
+    // C calls the exported routines through their thunks, from inside any `Extern` routine.
+    for e in &p.exports {
+        g.called.insert(e.thunk);
+        for &x in &p.ext_funcs {
+            g.calls[x].insert(e.thunk);
+        }
+    }
     // Vectors. Reset jumps over them; with one handler (IPEN = 0) it sits right at 0x08, with two
     // priorities each vector jumps to its handler, and an unserved vector spins.
     //
@@ -3501,7 +3508,13 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
         g.items.push(Item::Br(Cc::Always, "__reset".into()));
         let hi = p.isrs.iter().position(|x| x.1 != Level::Low);
         let lo = p.isrs.iter().position(|x| x.1 == Level::Low);
-        if p.isrs.iter().any(|x| x.1 != Level::Single) {
+        if p.c_link() {
+            // The vectors are the XC8 psects `intcode` and `intcodelo` (written after the code, see `generate`);
+            // the handlers sit with the rest of the code.
+            for j in [hi, lo].into_iter().flatten() {
+                g.gen_isr(j);
+            }
+        } else if p.isrs.iter().any(|x| x.1 != Level::Single) {
             for (vec, at, label, h) in [("__v_hi", 4, "__ISR_H", hi), ("__v_lo", 12, "__ISR_L", lo)] {
                 g.items.push(Item::Org(at));
                 g.items.push(Item::Label(vec.into()));
@@ -3907,7 +3920,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
                 // A real symbol (not an `equ`), so the debugger can show the variable by name; a global
                 // also answers to its BASIC name, which the DWARF entry describes.
                 let basic = &p.vars[i].name;
-                let alias = if matches!(p.vars[i].kind, VarKind::Global) && *basic != o.name && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic}:\n") } else { String::new() };
+                let alias = if matches!(p.vars[i].kind, VarKind::Global) && *basic != o.name && !matches!(basic.to_ascii_lowercase().as_str(), "a" | "b" | "c" | "f" | "w" | "z" | "n" | "ov" | "dc" | "wreg" | "fast" | "access" | "banked") && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic}:\n") } else { String::new() };
                 text.push_str(&format!("PSECT dbg{i},class=RAM,space=1,abs,delta=1,noexec\n    ORG 0x{a:03X}\nGLOBAL {n}\n{n}:\n{alias}DS {}{note}\n", o.bytes, n = o.name, alias = alias));
                 continue;
             }
@@ -3916,12 +3929,15 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     }
     // A program that calls C is linked by xc8-cc, whose start-up code owns the reset vector and calls
     // `main`; the code is then relocatable and `_basil_entry` is what the generated `main` calls.
-    let c_link = !p.externs.is_empty();
+    let c_link = p.c_link();
     if c_link {
         text.push_str("\nPSECT basilcode,class=CODE,reloc=2,delta=1\n    GLOBAL _basil_entry\n_basil_entry:\n");
         text.push_str("    GLOBAL _basil_io\n");
         for e in &p.externs {
             text.push_str(&format!("    GLOBAL _basil_w_{}\n", e.name));
+        }
+        for e in &p.exports {
+            text.push_str(&format!("    GLOBAL {}\n", p.funcs[e.thunk].asm));
         }
     } else {
         text.push_str("\nPSECT code,class=CODE,abs,delta=1\n    ORG 0x0000\n");
@@ -3929,6 +3945,25 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     for l in &asmd.lines {
         text.push_str(l);
         text.push('\n');
+    }
+    if c_link && !p.isrs.is_empty() {
+        // Absolute psects at the two vectors (the XC8 `intcode` psects are placed at 08h only on some parts; the
+        // Q41 start-up uses a vector table). A vector holds a `goto`: the vectored controller needs one, and the
+        // handler is not at the vector. An unserved vector spins.
+        let hi = p.isrs.iter().any(|x| x.1 != Level::Low);
+        let lo = p.isrs.iter().any(|x| x.1 == Level::Low);
+        let dual = p.isrs.iter().any(|x| x.1 != Level::Single);
+        for (psect, at, vec, label, served) in [("basilvhi", 0x08, "__v_hi", "__ISR_H", hi), ("basilvlo", 0x18, "__v_lo", "__ISR_L", lo)] {
+            if at == 0x18 && !dual {
+                break;
+            }
+            text.push_str(&format!("PSECT {psect},class=CODE,abs,delta=1\n    ORG 0x{at:02X}\n"));
+            if served {
+                text.push_str(&format!("    goto {label}\n"));
+            } else {
+                text.push_str(&format!("{vec}:\n    bra {vec}\n"));
+            }
+        }
     }
     // Label table for tools (simulator harness): byte addresses of the non-local labels.
     let mut syms: Vec<(&String, &u32)> = asmd.labels.iter().filter(|(k, _)| !k.starts_with("_L")).collect();

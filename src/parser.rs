@@ -307,7 +307,7 @@ impl<'a> Parser<'a> {
     fn starts_decl(&self) -> bool {
         match self.peek() {
             Tok::Kw(k) if DECL_STARTERS.contains(k) => true,
-            Tok::Ident(n) if n.eq_ignore_ascii_case("extern") => matches!(self.peek_at(1), Tok::Kw("sub" | "function")),
+            Tok::Ident(n) if n.eq_ignore_ascii_case("extern") || n.eq_ignore_ascii_case("export") => matches!(self.peek_at(1), Tok::Kw("sub" | "function")),
             Tok::Kw("event") => matches!(self.peek_at(1), Tok::Ident(_)),
             _ => false,
         }
@@ -476,7 +476,7 @@ impl<'a> Parser<'a> {
                 DeclKind::Event(EventDecl { name, params, body })
             }
             Tok::Kw("sub" | "function" | "proc" | "inline" | "noinline" | "reentrant") => DeclKind::Routine(self.routine()?),
-            Tok::Ident(n) if n.eq_ignore_ascii_case("extern") => DeclKind::Routine(self.routine()?),
+            Tok::Ident(n) if n.eq_ignore_ascii_case("extern") || n.eq_ignore_ascii_case("export") => DeclKind::Routine(self.routine()?),
             _ => return self.expected("a declaration"),
         };
         Ok(Decl { vis, span, kind })
@@ -644,10 +644,11 @@ impl<'a> Parser<'a> {
         let mut inlining = Inlining::Default;
         let mut reentrant = false;
         let ext = self.at_ident("extern");
-        if ext {
+        let export = self.at_ident("export");
+        if ext || export {
             self.bump();
             if !matches!(self.peek(), Tok::Kw("sub" | "function")) {
-                return self.expected("`Sub` or `Function` after `Extern`");
+                return self.expected(if ext { "`Sub` or `Function` after `Extern`" } else { "`Sub` or `Function` after `Export`" });
             }
         }
         loop {
@@ -691,7 +692,7 @@ impl<'a> Parser<'a> {
         }
         self.end_stmt()?;
         if ext {
-            return Ok(Routine { name, is_function, inlining, reentrant, ext, params, ret, body: Body { decls: Vec::new(), stmts: Vec::new() } });
+            return Ok(Routine { name, is_function, inlining, reentrant, ext, export, params, ret, body: Body { decls: Vec::new(), stmts: Vec::new() } });
         }
         let end = if is_proc {
             "endproc"
@@ -701,7 +702,7 @@ impl<'a> Parser<'a> {
             "endsub"
         };
         let body = self.body(end)?;
-        Ok(Routine { name, is_function, inlining, reentrant, ext, params, ret, body })
+        Ok(Routine { name, is_function, inlining, reentrant, ext, export, params, ret, body })
     }
 
     /// `( [param {, param}] )` of an event type or handler.

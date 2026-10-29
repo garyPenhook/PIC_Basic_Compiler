@@ -106,7 +106,7 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
   `[DS40002043F p.108]`. In testing, a vector psect without an absolute/linker position was
   placed by pic-as at the *end* of flash; the code generator therefore emits absolute positions
   and the driver checks the map file.
-* **Vectors** (only when the program has a handler): `0x0000` is `bra __reset`. One unprioritised
+* **Vectors with C linked:** see section 7. **Vectors** (only when the program has a handler): `0x0000` is `bra __reset`. One unprioritised
   handler (IPEN = 0) is placed at `0x0008`. With priorities (IPEN = 1) `0x0008` and `0x0018` each
   hold a branch to `__ISR_H` / `__ISR_L`, or spin when that level has no handler; the handlers
   follow, then the start-up code. Start-up sets IPEN before anything runs. On the PIC18-Q41 the word at each
@@ -159,8 +159,28 @@ result bytes back. Calls, frame overlay and the optimiser treat it as any routin
 `CFile`s and `<name>_basil.S`. Start-up is XC8's (`goto start` at 0, clear and copy of C data, `goto main`); the Basic code
 is a relocatable psect `basilcode` instead of an absolute one at 0, and its own start-up code then runs from `main`.
 
-Not supported: interrupt handlers in such a program (the vectors belong to the XC8 start-up code), `-g`, C calling Basic,
-`ByRef`/`Float`/structure arguments.
+**Arguments.** `CArg` (`ir.rs`): an integer of 1-4 bytes, a `Float` (4 bytes, XC8's `float` is IEEE 754 single), or a
+pointer (the 16-bit address a `ByRef` parameter holds, cast to `T *` in the wrapper). The stub declares each C function
+with the exact types, so XC8's whole-program check rejects a C definition that differs (`conflicting declarations`);
+that is the only check there is. A structure is `struct <Basic name>` (forward-declared in the stub); a by-reference
+array's length word is not passed.
+
+**Interrupts.** With C linked the vectors are two absolute psects (`basilvhi` at 08h, `basilvlo` at 18h, written after
+the code) holding a `goto` to `__ISR_H` / `__ISR_L`; the handlers are in `basilcode`. The XC8 `intcode` psects are not
+used: the Q41 start-up does not place them at 08h. A handler cannot reach an `Extern` routine (`E-EXTERN`, sema
+`check_isr_extern`), so C never runs inside a handler and `basil_io` is not shared with one. The handler saves the
+registers its own code uses, which is all C needs; C's registers are never touched by it otherwise.
+
+**C calls Basic (`Export`).** For each exported routine `R` the lowerer makes a thunk routine `_basil_x_R` (`ExportSig`):
+`movff` of the argument bytes from `basil_io` into `R`'s parameters, a plain call of `R`, `movff` of the result back. The
+stub defines `R` in C (the name C code calls, with the exported types) as: store the arguments into `basil_io`, call
+`basil_x_R()`, return the result. Consequences in the compiler: the thunks are roots of code generation (`Gen::called`);
+every `Extern` routine gets a call edge to every thunk, so frame overlay (`independent`) never shares storage between a
+routine that waits for C and anything an exported routine runs, and the recursion check sees a cycle through C; the
+optimiser treats an exported routine like a handler (no parameter propagation, no argument in WREG) because its calls
+are not all visible. Frames are static, so there is no recursion through C.
+
+Not supported: an `Extern` call from a handler, structure or array arguments by value, `Export` array parameters.
 
 ## 6. Open questions for M1/M4
 

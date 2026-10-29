@@ -959,8 +959,8 @@ To add a part, drop its `<device>.cfgdata` into `tools/pic-config/data/devices/`
 
 A Basic program can call functions written in C. Use this for code that already exists in C (a checksum, a protocol
 parser, a vendor driver) or that is easier to write there. The C is built by the MPLAB XC8 C compiler, which must be
-installed (`xc8-cc` is looked for beside `pic-as`; `BASIL_XC8CC` names it explicitly). Only calls from Basic into C are
-supported.
+installed (`xc8-cc` is looked for beside `pic-as`; `BASIL_XC8CC` names it explicitly). C can also call Basic routines
+(*Calling Basic from C*, below).
 
 Two things are written in the Basic program:
 
@@ -1037,9 +1037,27 @@ program is `tests/exec_c/c_example.bas` and is run in the simulator by the test 
 | `LongWord` | `unsigned long` | 4 |
 | `LongInt` | `long` | 4 |
 
-Parameters are passed by value. A function result is one of these types; a `Sub` returns nothing (`void`). `Float`,
-strings, arrays, structures, `Bit`, `ByRef` parameters and default values are not supported (`E-EXTERN`). Declare the
-C function with the same types and number of parameters as the `Extern` line; basil cannot check the C file against it.
+A `Float` is a C `float` (four bytes, IEEE 754 single precision, the same bits as in Basic). A function result is one of
+these types or `Float`; a `Sub` returns nothing (`void`). `Bit`, a `String`, array or structure passed by value, and default
+values are not supported (`E-EXTERN`). Declare the C function with the same types and number of parameters as the
+`Extern` line; basil cannot check the C file against it, but the linker refuses a C definition whose types differ from
+the ones basil uses (`conflicting declarations`).
+
+**By reference.** A `ByRef` (or `ByRefConst`) parameter passes the address of the variable, and the C parameter is a
+pointer to the element type, written exactly so:
+
+| Basic parameter | C parameter |
+|---|---|
+| `ByRef a As Word` | `unsigned int *a` |
+| `ByRef a As Float` | `float *a` |
+| `ByRef a() As Byte` (an array) | `unsigned char *a` (the length is not passed; pass it as another parameter) |
+| `ByRef s As String(16)` | `char *s` (the characters, then a Null) |
+| `ByRef p As Pt` (a `Structure`) | `struct Pt *p` (the tag is the Basic name, case included) |
+| `ByRefConst s As String(16)` | `const char *s` |
+
+The fields of a structure are stored in order with no padding, which is what XC8 does for PIC18, so the C `struct` lists
+the same fields with the same types (a `String(n)` field is `char f[n+1]`, an array field `T f[n]`). C may read and
+write through the pointer during the call only.
 
 ### What happens when the program runs and when it is built
 
@@ -1059,11 +1077,61 @@ C function with the same types and number of parameters as the `Extern` line; ba
   wrapper, and the buffer's RAM. Call C for work that is worth that, not for one-instruction operations.
 * The call into C uses a hardware stack level, and the C function's own calls use more. `E-STACK` counts the call but
   not what happens inside the C code, so check the depth of nested C calls yourself.
-* A program that calls C cannot have `Interrupt` handlers (`E-EXTERN`; the XC8 start-up code owns the vectors), cannot
-  be built with `-g` (`E-EXTERN`), and the C code cannot call Basic routines.
+* A program that calls C can have `Interrupt` handlers; basil writes their vectors itself (at 08h and 18h). A handler,
+  and any routine it calls inside `Save`, **cannot call an `Extern` routine** (`E-EXTERN`): C uses static frames and
+  registers the handler does not save. Do not write `__interrupt` functions in the C files; they would use the same
+  vectors. The handler saves what it uses, so C code that is interrupted carries on unharmed.
+* `-g` works: the debugger sees the Basic variables beside the C debug information.
 * The names `main` and `basil_...` are used by the generated C and cannot be `Extern` names.
 * The flash used by a C build starts at 0x1002 in the XC8 layout.
 * Not yet run on hardware.
+
+### Calling Basic from C
+
+`Export Function name(...) As Type` or `Export Sub name(...)` is an ordinary routine, with a body, that C code may call:
+
+```basic
+CFile "work.c"
+Extern Function run(n As Byte) As Word
+
+Dim total As Word
+
+Export Function Square(x As Byte) As Word
+    Result = x * x
+End Function
+
+Export Sub Accum(v As Word)
+    total = total + v
+End Sub
+
+Dim r As Word
+r = run(6)
+```
+
+```c
+extern unsigned int Square(unsigned char x);
+extern void Accum(unsigned int v);
+
+unsigned int run(unsigned char n)
+{
+    unsigned char i;
+    unsigned int s = 0;
+    for (i = 0; i < n; i++) { s += Square(i); Accum(s); }
+    return s;
+}
+```
+
+The C declaration has the types the table above gives (an `Export` parameter or result is an integer, `Char`, `Boolean`
+or `Float`, or a `ByRef` scalar, `String` or structure; no arrays, no defaults, no `Reentrant`). An exported routine can
+also be called from Basic as usual.
+
+* C reaches Basic only from inside an `Extern` routine, because the Basic program is the one that runs first and never
+  returns. The frames of the exported routines are therefore never shared with those of the routines waiting for the C
+  call; basil takes care of that.
+* **No recursion through C.** If an exported routine (or a routine it calls) calls an `Extern` routine, `E-RECURSION`
+  is reported, as the exported routine could be called again while it runs. `Reentrant` does not apply.
+* An `Interrupt` handler cannot call an exported routine from C, as it cannot call C at all.
+* The cost is the same as for a call into C: the arguments pass through `basil_io`.
 
 ### If the build fails
 
@@ -1072,7 +1140,8 @@ C function with the same types and number of parameters as the `Extern` line; ba
 | `xc8-cc not found` | MPLAB XC8 C compiler not installed beside `pic-as`; set `BASIL_XC8CC` |
 | `C file ... not found` | the `CFile` path is relative to the main program's folder |
 | `undefined symbol _name` from the linker | the C function is not in a `CFile`, or the `Extern` name differs from the C name in case or spelling, or the C function is `static` |
-| `E-EXTERN` | parameter or result type not supported, `ByRef`, a default value, an `Interrupt` handler, `-g`, a reserved name, or the same name declared twice with different types |
+| `E-EXTERN` | parameter or result type not supported, a default value, an `Extern` routine called from an `Interrupt` handler, a reserved name, or the same name declared twice with different types |
+| `conflicting declarations for variable "_name"` from the linker | the C definition has other types than the `Extern` line gives (see the tables above) |
 
 ## Preprocessor
 
@@ -1262,8 +1331,9 @@ calls an `Extern` routine is linked by `xc8-cc` (see *Calling C* in chapter 1 fo
 
 **Parameters** `file.c` is relative to the folder of the main program. `CFile` goes with the `Device`, `Clock` and
 `Config` lines, before the first `Include`, and can be given more than once. Each `Extern` parameter is `ByVal` and
-`Byte`, `Char`, `Boolean`, `ShortInt`, `Word`, `Integer`, `LongWord` or `LongInt`, with no default value; the result
-is one of the same, or none for a `Sub`.
+`Byte`, `Char`, `Boolean`, `ShortInt`, `Word`, `Integer`, `LongWord`, `LongInt` or `Float`, with no default value, or
+`ByRef`/`ByRefConst` (a variable, array, `String` or structure, passed as a pointer); the result is one of the
+by-value types, or none for a `Sub`. `Export` (below) is the same declaration with a body, for a routine C calls.
 
 **Example**
 ```basic
@@ -1276,8 +1346,10 @@ c = crc8(c, 0x31)
 total_add(c)
 ```
 **Notes**
-* Errors: `E-EXTERN` for an unsupported type, `ByRef`, a default value, `Reentrant`/`Inline`, a name that is `main` or
-  starts with `basil_`, two `Extern`s of one name with different types, an `Interrupt` handler in the program, or `-g`.
+* Errors: `E-EXTERN` for an unsupported type, a default value, `Reentrant`/`Inline`, a name that is `main` or
+  starts with `basil_`, two `Extern`s of one name with different types, or a call to an `Extern` routine from an
+  `Interrupt` handler. `E-EXPORT` for a name exported twice or also declared `Extern`; `E-RECURSION` for a call cycle
+  through C. An `Export` array parameter is `E-EXTERN`.
 * The generated assembly is `<name>_basil.S`; the stub is `<name>_cstub.c`.
 * Not yet run on hardware.
 
@@ -4185,7 +4257,8 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 | `E-RECURSION` | call cycle |
 | `E-ISR-CALL` | call from a handler without `Save ... Restore` (also float maths) |
 | `E-BACKEND` | valid per the front end but not generated yet (see below) |
-| `E-EXTERN` | bad `Extern` declaration (parameter or result type, `ByRef`, `Reentrant`), two `Extern`s of one C name with different types, or `Extern` together with `Interrupt` |
+| `E-EXTERN` | bad `Extern` or `Export` declaration (parameter or result type, `Reentrant`), two `Extern`s of one C name with different types, or an `Extern` routine called from an `Interrupt` handler |
+| `E-EXPORT` | a name given to `Export` twice, or to `Export` and `Extern` |
 | `E-UNSUPPORTED` | reserved but not available (`BitOf`, `Declare` other than `Xtal`, ...) |
 | `W-CLOCK` | `Clock` differs from the `RSTOSC` speed and nothing sets the oscillator |
 | `W-REGNAME` | a declaration hides a register name |

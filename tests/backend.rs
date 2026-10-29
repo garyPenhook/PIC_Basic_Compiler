@@ -559,11 +559,19 @@ fn c_routines_link() {
     let r = Command::new(basil()).arg(root().join("tests/exec_c/c_basic.bas")).arg("-o").arg(&hex).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     assert!(hex.is_file());
-    // The XC8 start-up code owns the vectors, so a handler is refused.
+    // `-g`: the ELF carries the Basic variables beside the C debug information, at addresses past `_basil_entry`.
+    let r = Command::new(basil()).arg("-g").arg(root().join("tests/exec_c/c_basic.bas")).arg("-o").arg(out.join("g.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(!String::from_utf8_lossy(&r.stderr).contains("warning"), "{}", String::from_utf8_lossy(&r.stderr));
+    let elf = std::fs::read(out.join("g.elf")).unwrap();
+    assert!(elf.windows(13).any(|w| w == b"T_BUMP__RESUL"), "no Basic variable in the debug information");
+    // A handler may coexist with C, but it (or a routine it calls) cannot call a C routine.
     let src = out.join("isr.bas");
-    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nClock = 16\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF\nCFile \"x.c\"\nExtern Sub f()\nInterrupt H()\nEnd Interrupt\nf()\n").unwrap();
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nClock = 16\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF\nCFile \"x.c\"\nExtern Sub f()\nInterrupt H()\n    Save(0, f)\n        f()\n    Restore\nEnd Interrupt\nf()\n").unwrap();
     let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("E-EXTERN"), "{}", String::from_utf8_lossy(&r.stderr));
+    let r = Command::new(basil()).arg(root().join("tests/exec_c/c_isr.bas")).arg("-o").arg(out.join("c_isr.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     std::fs::remove_dir_all(&out).ok();
 }

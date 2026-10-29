@@ -146,6 +146,10 @@ pub struct Analysis {
     pub global_bit_arrays: Vec<(SymId, u32)>,
     /// `CFile` names, in source order.
     pub cfiles: Vec<String>,
+    /// `Extern` routines (implemented in C).
+    pub externs: HashSet<SymId>,
+    /// `Export` routines (Basic routines C may call), in source order.
+    pub exports: Vec<SymId>,
 }
 
 /// Parsed device descriptions by path. The 18F27Q10 file is large, and tests and tools analyse
@@ -504,6 +508,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.ctx = Ctx::main();
         }
         self.check_recursion();
+        self.check_isr_extern();
         self.check_vector_table();
         self.check_ram();
         self.check_clock_setup();
@@ -1233,7 +1238,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             },
             None => None,
         };
-        if r.ext {
+        if r.ext || r.export {
             ok &= self.extern_ok(r, &params, ret.as_ref());
         }
         if !ok {
@@ -1245,6 +1250,12 @@ impl<'p, 'd> Sema<'p, 'd> {
             self.reentrant_ok.insert(id);
         }
         self.in_extern = r.ext;
+        if r.ext {
+            self.a.externs.insert(id);
+        }
+        if r.export {
+            self.a.exports.push(id);
+        }
         self.body(&r.body, if r.is_function { Kind::Function } else { Kind::Sub }, Some(id), ret, Some(r.name.key()), &params_with_ast(&r.params, &params));
         self.in_extern = false;
     }
@@ -1252,26 +1263,36 @@ impl<'p, 'd> Sema<'p, 'd> {
     /// An `Extern` routine is called by value with integer, Char or Boolean arguments (at most
     /// four bytes each way): the thunk the back end writes moves them into XC8's registers.
     fn extern_ok(&mut self, r: &Routine, params: &[ParamInfo], ret: Option<&Ty>) -> bool {
-        let scalar = |t: &Ty| matches!(t, Ty::Bool | Ty::Char | Ty::Int(..));
+        let value = |t: &Ty| matches!(t, Ty::Bool | Ty::Char | Ty::Int(..) | Ty::Float);
         let mut ok = true;
+        let what = if r.export { "Export" } else { "Extern" };
         if r.name.name == "main" || r.name.name.starts_with("basil_") {
             self.diags.error("E-EXTERN", r.name.span, format!("`{}` is a name the generated C stub uses (`main`, `basil_...`)", r.name.name));
             ok = false;
         }
         if r.reentrant || r.inlining != Inlining::Default {
-            self.diags.error("E-EXTERN", r.name.span, "an Extern routine cannot be Reentrant, Inline or NoInline");
+            self.diags.error("E-EXTERN", r.name.span, format!("an {what} routine cannot be Reentrant, Inline or NoInline"));
             ok = false;
         }
         for (ast, p) in r.params.iter().zip(params) {
-            if p.mode != ParamMode::ByVal || p.is_array || !scalar(&p.ty) || p.has_default {
-                self.diags.error("E-EXTERN", ast.name.span, format!("`{}`: an Extern parameter is a ByVal integer, Char or Boolean without a default value", ast.name.name));
+            let elem = match &p.ty {
+                Ty::Array(e, _) => &**e,
+                t => t,
+            };
+            let good = !p.has_default
+                && match p.mode {
+                    ParamMode::ByVal => !p.is_array && value(&p.ty),
+                    ParamMode::ByRef | ParamMode::ByRefConst => (!r.export || !matches!(p.ty, Ty::Array(..))) && value(elem) || matches!(p.ty, Ty::Str(_) | Ty::Struct(_)),
+                };
+            if !good {
+                self.diags.error("E-EXTERN", ast.name.span, format!("`{}`: an {what} parameter is an integer, Char, Boolean or Float (ByVal), or a ByRef variable, array, String or structure, without a default value", ast.name.name));
                 ok = false;
             }
         }
         if let Some(t) = ret
-            && !scalar(t)
+            && !value(t)
         {
-            self.diags.error("E-EXTERN", r.name.span, "an Extern function returns an integer, Char or Boolean");
+            self.diags.error("E-EXTERN", r.name.span, format!("an {what} function returns an integer, Char, Boolean or Float"));
             ok = false;
         }
         ok
@@ -2791,12 +2812,44 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     // ---- whole-program checks ------------------------------------------------------------
 
+    /// C routines use static frames, `basil_io` and registers the handler would not save, and one may be in
+    /// the middle of a call when the interrupt comes: a handler (or anything it calls) cannot call one.
+    fn check_isr_extern(&mut self) {
+        if self.a.externs.is_empty() {
+            return;
+        }
+        let n = self.a.symbols.len();
+        let mut from_isr = vec![false; n];
+        let mut work: Vec<SymId> = (0..n).filter(|i| matches!(self.a.symbols[*i].kind, SymKind::Interrupt { .. })).collect();
+        for &i in &work {
+            from_isr[i] = true;
+        }
+        while let Some(v) = work.pop() {
+            for c in self.a.calls.iter().filter(|c| c.caller == Some(v)) {
+                if !from_isr[c.callee] {
+                    from_isr[c.callee] = true;
+                    work.push(c.callee);
+                }
+            }
+        }
+        let bad: Vec<(Span, String)> = self.a.calls.iter().filter(|c| c.caller.is_some_and(|f| from_isr[f]) && self.a.externs.contains(&c.callee)).map(|c| (c.span, self.a.symbols[c.callee].name.clone())).collect();
+        for (sp, name) in bad {
+            self.diags.error("E-EXTERN", sp, format!("`{name}` is implemented in C and an interrupt handler (or a routine it calls) cannot call it"));
+        }
+    }
+
     fn check_recursion(&mut self) {
         let n = self.a.symbols.len();
         let mut edges: Vec<Vec<(SymId, Span)>> = vec![Vec::new(); n];
         for c in &self.a.calls {
             if let Some(from) = c.caller {
                 edges[from].push((c.callee, c.span));
+            }
+        }
+        // C code called from `x` may call any exported routine.
+        for &x in &self.a.externs {
+            for &e in &self.a.exports {
+                edges[x].push((e, self.a.symbols[e].span));
             }
         }
         // 0 = unvisited, 1 = on the path, 2 = done
@@ -2823,12 +2876,18 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
         }
         for (cycle, sp) in found {
-            if cycle.iter().any(|c| self.reentrant_ok.contains(c)) || !reported.insert(cycle[0]) {
+            // `Reentrant` cannot rescue a cycle through C: the C routines' frames are static.
+            let through_c = cycle.iter().any(|c| self.a.externs.contains(c) || self.a.exports.contains(c));
+            if (cycle.iter().any(|c| self.reentrant_ok.contains(c)) && !through_c) || !reported.insert(cycle[0]) {
                 continue;
             }
             let names: Vec<String> = cycle.iter().map(|c| self.a.symbols[*c].name.clone()).collect();
             let what = if names.len() == 1 { format!("`{}` calls itself", names[0]) } else { format!("calls form a cycle: {}", names.join(" → ")) };
-            self.diags.error("E-RECURSION", sp, format!("{what}; recursion needs the Reentrant attribute (D13)"));
+            if cycle.iter().any(|c| self.a.externs.contains(c) || self.a.exports.contains(c)) {
+                self.diags.error("E-RECURSION", sp, format!("{what}; a routine that C calls back into cannot be reached again while it runs (C frames are static)"));
+            } else {
+                self.diags.error("E-RECURSION", sp, format!("{what}; recursion needs the Reentrant attribute (D13)"));
+            }
         }
     }
 

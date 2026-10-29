@@ -472,7 +472,8 @@ fn propagate_params(p: &mut Program) -> bool {
     for f in &per {
         all.addr.extend(f.addr.iter());
     }
-    let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).collect();
+    // Entered from outside the call graph the pass sees: handlers, and routines C calls.
+    let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).collect();
     let mut changed = false;
     for fi in 0..p.funcs.len() {
         if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || all.save_func {
@@ -542,7 +543,8 @@ fn specialize_literals(p: &mut Program) -> bool {
             text.insert(v, b.clone());
         }
     }
-    let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).collect();
+    // Entered from outside the call graph the pass sees: handlers, and routines C calls.
+    let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).collect();
     let mut changed = false;
     for fi in 0..p.funcs.len() {
         if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || all.save_func {
@@ -1012,6 +1014,7 @@ pub fn reachable_otherwise(p: &Program) -> HashSet<FuncId> {
         collect_asm(f, &mut lines);
     }
     out.extend(all.faddr.iter().copied());
+    out.extend(p.exports.iter().map(|e| e.func));
     for (i, f) in p.funcs.iter().enumerate() {
         if lines.iter().any(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|t| t == f.asm)) {
             out.insert(i);

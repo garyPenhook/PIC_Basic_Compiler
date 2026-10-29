@@ -147,6 +147,8 @@ pub struct Lowerer<'a> {
     len_fwd: Vec<(VarId, VarId)>,
     isrs: Vec<(FuncId, Level)>,
     externs: Vec<ExternSig>,
+    exports: Vec<ExportSig>,
+    ext_funcs: Vec<FuncId>,
     n_saves: usize,
     /// Nesting depth of `Save` blocks being lowered.
     in_save: u32,
@@ -192,6 +194,8 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         len_fwd: Vec::new(),
         isrs: Vec::new(),
         externs: Vec::new(),
+        exports: Vec::new(),
+        ext_funcs: Vec::new(),
         n_saves: 0,
         in_save: 0,
         in_isr: false,
@@ -233,10 +237,18 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         let mut body = lw.block(&lu.unit.stmts, ui);
         main_body.append(&mut body);
     }
+    // An exported routine is lowered although no Basic code calls it.
+    for &sym in &a.exports {
+        let span = a.symbols[sym].span;
+        lw.func_of(sym, span);
+    }
     while let Some(sym) = lw.queue.pop() {
         lw.lower_routine(sym);
     }
     lw.finish_event_dispatch();
+    for &sym in &a.exports {
+        lw.export_thunk(sym);
+    }
     if lw.failed {
         return None;
     }
@@ -272,6 +284,8 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     let mut main = main;
     strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
     Some(Program {
+        exports: lw.exports,
+        ext_funcs: lw.ext_funcs,
         externs: lw.externs,
         cfiles: a.cfiles.clone(),
         vars: lw.vars,
@@ -854,6 +868,7 @@ impl<'a> Lowerer<'a> {
         self.cur_result = result.map(|v| (v, r.name.key()));
         let mut body = Vec::new();
         if r.ext {
+            self.ext_funcs.push(id);
             body.push(S { st: St::Asm(self.extern_thunk(r, &params, result)), span: r.name.span });
         }
         for d in &r.body.decls {
@@ -872,32 +887,105 @@ impl<'a> Lowerer<'a> {
         self.cur_result = saved.3;
     }
 
+    /// How the parameter or result `v` crosses to C. A by-reference one is a pointer to the C type of its
+    /// element (`const` for `ByRefConst`); a `String` points to `char` and a structure to `struct <its name>`.
+    fn carg(&self, v: VarId, konst: bool) -> CArg {
+        let var = &self.vars[v];
+        if var.by_ref {
+            let elem = match &var.ty {
+                Ty::Array(e, _) => &**e,
+                t => t,
+            };
+            let to = match elem {
+                Ty::Str(_) => "char".to_string(),
+                Ty::Struct(s) => format!("struct {}", self.a.symbols[*s].name),
+                Ty::Float => "float".to_string(),
+                t => CArg::Int(t.width().unwrap_or(8) / 8, nat(t).is_some_and(|x| x.1)).c_type(),
+            };
+            CArg::Ptr(if konst { format!("const {to}") } else { to })
+        } else if var.ty == Ty::Float {
+            CArg::Float
+        } else {
+            CArg::Int(var.bytes as u8, nat(&var.ty).is_some_and(|x| x.1))
+        }
+    }
+
+    /// The routine C's wrapper for an `Export` calls (`_basil_x_<name>`, see `ExportSig`).
+    fn export_thunk(&mut self, sym: usize) {
+        let r = self.routines[&sym];
+        let (rid, result, params) = {
+            let fi = &self.sym_func[&sym];
+            (fi.id, fi.result, fi.params.iter().map(|p| p.0).collect::<Vec<_>>())
+        };
+        let name = r.name.name.clone();
+        if self.exports.iter().any(|e| e.name == name) || self.externs.iter().any(|e| e.name == name) {
+            self.diags.error("E-EXPORT", r.name.span, format!("`{name}` is exported or declared Extern twice, but C has one function of that name"));
+            self.failed = true;
+            return;
+        }
+        let mut sig = ExportSig { name: name.clone(), func: rid, thunk: self.funcs.len(), entry: String::new(), params: Vec::new(), ret: None };
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        let mut at = 0;
+        for (i, &p) in params.iter().enumerate() {
+            let k = self.carg(p, r.params[i].mode == ParamMode::ByRefConst);
+            let dst = self.vars[p].asm.clone();
+            for b in 0..u32::from(k.bytes()) {
+                before.push(format!("    movff _basil_io+{}, {dst}+{b}", at + b));
+            }
+            at += u32::from(k.bytes());
+            sig.params.push(k);
+        }
+        if let Some(rv) = result {
+            let k = self.carg(rv, false);
+            let src = self.vars[rv].asm.clone();
+            for b in 0..u32::from(k.bytes()) {
+                after.push(format!("    movff {src}+{b}, _basil_io+{b}"));
+            }
+            sig.ret = Some(k);
+        }
+        let asm = self.unique(format!("_basil_x_{name}"));
+        self.asm_names.insert(format!("{asm}__TMP"));
+        let span = r.name.span;
+        let mut body = Vec::new();
+        if !before.is_empty() {
+            body.push(S { st: St::Asm(before), span });
+        }
+        body.push(S { st: St::Call(rid, Vec::new()), span });
+        if !after.is_empty() {
+            body.push(S { st: St::Asm(after), span });
+        }
+        body.push(S { st: St::Return, span });
+        sig.entry = asm.trim_start_matches('_').to_string();
+        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span }));
+        self.exports.push(sig);
+    }
+
     /// The body of an `Extern` routine: copies the arguments into `basil_io`, a byte array of the C
     /// stub, calls the stub's `basil_w_<name>` (which passes them to the C function the way XC8's own
     /// code generator wants, whatever the optimisation level) and copies the result back out of it.
     /// The stub is `driver.rs::c_stub`.
     fn extern_thunk(&mut self, r: &Routine, params: &[VarId], result: Option<VarId>) -> Vec<String> {
         let c = &r.name.name;
-        let sig = |v: VarId| (self.vars[v].bytes as u8, self.vars[v].ty.clone());
         let mut lines = Vec::new();
         let mut at = 0;
         let mut esig = ExternSig { name: c.clone(), params: Vec::new(), ret: None };
-        for &p in params {
-            let (n, ty) = sig(p);
-            esig.params.push((n, nat(&ty).is_some_and(|x| x.1)));
+        for (i, &p) in params.iter().enumerate() {
+            let k = self.carg(p, r.params[i].mode == ParamMode::ByRefConst);
+            esig.params.push(k.clone());
             let src = self.vars[p].asm.clone();
-            for k in 0..u32::from(n) {
-                lines.push(format!("    movff {src}+{k}, _basil_io+{}", at + k));
+            // A by-reference array's length word, after the address, stays behind.
+            for i in 0..u32::from(k.bytes()) {
+                lines.push(format!("    movff {src}+{i}, _basil_io+{}", at + i));
             }
-            at += u32::from(n);
+            at += u32::from(k.bytes());
         }
         lines.push(format!("    call _basil_w_{c}"));
         if let Some(rv) = result {
-            let (n, ty) = sig(rv);
-            esig.ret = Some((n, nat(&ty).is_some_and(|x| x.1)));
+            let k = self.carg(rv, false);
+            esig.ret = Some(k.clone());
             let dst = self.vars[rv].asm.clone();
-            for k in 0..u32::from(n) {
-                lines.push(format!("    movff _basil_io+{k}, {dst}+{k}"));
+            for i in 0..u32::from(k.bytes()) {
+                lines.push(format!("    movff _basil_io+{i}, {dst}+{i}"));
             }
         }
         match self.externs.iter().find(|e| e.name == esig.name) {

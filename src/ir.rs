@@ -342,13 +342,78 @@ pub struct Func {
 pub struct ExternSig {
     /// The C name, spelled as in the `Extern` declaration.
     pub name: String,
-    /// Byte width and signedness of each parameter, in order.
-    pub params: Vec<(u8, bool)>,
-    pub ret: Option<(u8, bool)>,
+    /// Each parameter, in order.
+    pub params: Vec<CArg>,
+    pub ret: Option<CArg>,
+}
+
+/// How a value crosses to C.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CArg {
+    /// Integer, Char or Boolean of this many bytes; signed or not.
+    Int(u8, bool),
+    /// A Float: four bytes, IEEE 754 single precision, which is XC8's `float`.
+    Float,
+    /// A `ByRef` argument: the 16-bit data address of the object. The text is the C type it points to
+    /// (`unsigned int`, `char`, `const unsigned char`, `struct Pt`), which the C definition must spell the same.
+    Ptr(String),
+}
+
+impl CArg {
+    /// Bytes the value takes in `basil_io`.
+    pub fn bytes(&self) -> u8 {
+        match self {
+            CArg::Int(n, _) => *n,
+            CArg::Float => 4,
+            CArg::Ptr(_) => 2,
+        }
+    }
+
+    /// The C type, as the stub declares it.
+    pub fn c_type(&self) -> String {
+        match self {
+            CArg::Float => "float".into(),
+            CArg::Ptr(to) => format!("{to} *"),
+            CArg::Int(bytes, signed) => match (bytes, signed) {
+                (1, false) => "unsigned char",
+                (1, true) => "signed char",
+                (2, false) => "unsigned int",
+                (2, true) => "int",
+                (3, false) => "__uint24",
+                (3, true) => "__int24",
+                (_, false) => "unsigned long",
+                (_, true) => "long",
+            }
+            .into(),
+        }
+    }
+}
+
+/// A Basic routine C may call (`Export`). `thunk` is the routine C's wrapper calls (`_basil_x_<name>`): it moves
+/// the arguments from `basil_io` into the parameters of `func`, calls it and moves the result back.
+#[derive(Clone, Debug)]
+pub struct ExportSig {
+    pub name: String,
+    pub func: FuncId,
+    pub thunk: FuncId,
+    /// The thunk's name in C (its assembly label without the leading underscore).
+    pub entry: String,
+    pub params: Vec<CArg>,
+    pub ret: Option<CArg>,
+}
+
+impl Program {
+    /// The program is linked with C by `xc8-cc`.
+    pub fn c_link(&self) -> bool {
+        !self.externs.is_empty() || !self.exports.is_empty()
+    }
 }
 
 #[derive(Debug)]
 pub struct Program {
+    /// Routines C may call, and the `Extern` routines through which C runs (each may call any of them).
+    pub exports: Vec<ExportSig>,
+    pub ext_funcs: Vec<FuncId>,
     /// C routines the program calls and the `CFile` sources that provide them.
     pub externs: Vec<ExternSig>,
     pub cfiles: Vec<String>,

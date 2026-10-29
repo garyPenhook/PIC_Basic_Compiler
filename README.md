@@ -108,8 +108,9 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
   Serial output, PWM waveforms, I2C and SPI traffic, external timer inputs and the second EUSART
   are the main things that need a hardware run. `docs/MANUAL.md` Appendix B is the bench checklist.
-* **C interop:** done for calls from Basic into C (`CFile`, `Extern`, 0.1.48). Not yet: interrupt handlers in a
-  program that calls C, C calling Basic, `ByRef`, `Float` and structure arguments (`docs/ABI.md` §7).
+* **C interop:** calls from Basic into C (`CFile`, `Extern`) and from C into Basic (`Export`), with `Float` and `ByRef`
+  arguments, `Interrupt` handlers and `-g` (0.1.49, `docs/ABI.md` §7). Not yet: an `Extern` call from a handler,
+  `ByRef` arrays of structures, hardware runs.
 * **More devices:** only the PIC18F27Q10 is supported; each further device is added only after it
   passes its own tests.
 

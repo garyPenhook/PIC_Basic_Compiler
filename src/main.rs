@@ -151,12 +151,6 @@ fn main() -> ExitCode {
             // Absolute paths, so the debugger finds the sources wherever it is started.
             target.debug_files = project.sources.names().map(|n| std::fs::canonicalize(n).map(|p| p.display().to_string()).unwrap_or_else(|_| n.to_string())).collect();
         }
-        if !p.externs.is_empty() && !p.isrs.is_empty() {
-            diags.error("E-EXTERN", basil::diag::Span::default(), "a program that calls C routines cannot have interrupt handlers yet (the XC8 start-up owns the vectors)");
-        }
-        if debug && !p.externs.is_empty() {
-            diags.error("E-EXTERN", basil::diag::Span::default(), "-g is not supported for a program that calls C routines yet");
-        }
         let g = generate(p, &target);
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());
@@ -187,7 +181,7 @@ fn main() -> ExitCode {
     let hex = out_hex.unwrap_or_else(|| file.with_extension("hex"));
     // xc8-cc names the object of the C code after the output file, so the assembly must not share its stem.
     let stem = hex.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
-    let asm_path = if program.externs.is_empty() { hex.with_extension("S") } else { hex.with_file_name(format!("{stem}_basil.S")) };
+    let asm_path = if !program.c_link() { hex.with_extension("S") } else { hex.with_file_name(format!("{stem}_basil.S")) };
     let map_path = hex.with_extension("map");
     if let Err(e) = std::fs::write(&asm_path, &generated.out.text) {
         eprintln!("basil: cannot write {}: {e}", asm_path.display());
@@ -205,7 +199,7 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     };
     let dev = analysis.device.as_ref().unwrap();
-    let linked = if program.externs.is_empty() {
+    let linked = if !program.c_link() {
         run_pic_as(&pic_as, dev, &asm_path, &hex, &map_path)
     } else {
         let Some(xc8) = find_xc8_cc(&pic_as) else {
@@ -213,7 +207,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         };
         let stub = hex.with_file_name(format!("{stem}_cstub.c"));
-        if let Err(e) = std::fs::write(&stub, c_stub(&program.externs)) {
+        if let Err(e) = std::fs::write(&stub, c_stub(&program.externs, &program.exports)) {
             eprintln!("basil: cannot write {}: {e}", stub.display());
             return ExitCode::from(1);
         }
@@ -245,7 +239,22 @@ fn main() -> ExitCode {
     if debug {
         let elf = hex.with_extension("elf");
         let source = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
-        let done = std::fs::read(&elf).map_err(|e| e.to_string()).and_then(|mut b| basil::dwarf::augment(&mut b, &generated.debug, &source.display().to_string()).and_then(|_| std::fs::write(&elf, b).map_err(|e| e.to_string())));
+        let mut info = generated.debug.clone();
+        if program.c_link() {
+            // The code is relocatable: addresses so far are offsets from `_basil_entry`.
+            let base = std::fs::read_to_string(&map_path).ok().and_then(|m| m.lines().find_map(|l| l.strip_prefix("_basil_entry").and_then(|r| u32::from_str_radix(r.split_whitespace().nth(1)?, 16).ok())));
+            match base {
+                Some(b) => {
+                    for f in &mut info.funcs {
+                        f.low += b;
+                        f.high += b;
+                    }
+                    info.end += b;
+                }
+                None => eprintln!("basil: warning: no _basil_entry in {}; the debug addresses are wrong", map_path.display()),
+            }
+        }
+        let done = std::fs::read(&elf).map_err(|e| e.to_string()).and_then(|mut b| basil::dwarf::augment(&mut b, &info, &source.display().to_string()).and_then(|_| std::fs::write(&elf, b).map_err(|e| e.to_string())));
         if let Err(e) = done {
             eprintln!("basil: warning: no variable information in {}: {e}", elf.display());
         }
