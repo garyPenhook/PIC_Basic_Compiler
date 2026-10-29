@@ -3713,7 +3713,7 @@ impl<'p> Gen<'p> {
 /// A routine called from exactly one place, and from nowhere else (not by address, not by a jump),
 /// is moved into the call: the `rcall` and the `return` go. Its `return`s other than the last
 /// become jumps to the end. `ranges` are the routines' item ranges (label first).
-fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usize)>) -> Vec<Item> {
+pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usize)>) -> Vec<Item> {
     let mut serial = 0;
     'again: loop {
         for r in 0..ranges.len() {
@@ -3758,7 +3758,7 @@ fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usi
                 inl.push(Item::Label(end));
             }
             // Drop the routine (and its heading comment), put the body at the call.
-            let from = if s > 0 && matches!(&items[s - 1], Item::Comment(t) if t.starts_with("Sub/Function ")) { s - 1 } else { s };
+            let from = if s > 0 && matches!(&items[s - 1], Item::Comment(t) if t.starts_with("Sub/Function ") || t.starts_with("helper ")) { s - 1 } else { s };
             let c = calls[0];
             // The caller's line, put back once the routine's own lines end.
             let resume = items[..c].iter().rev().find_map(|it| match it {

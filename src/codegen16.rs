@@ -393,17 +393,20 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         errors.extend(g2.errors.iter().cloned());
         let levels = stack_depth(&g2, &items);
         let helpers: Vec<String> = g2.helpers.iter().cloned().collect();
-        result = Some((objs, layout, items, helpers, levels));
+        let mut ranges: Vec<(String, usize, usize)> = g2.ranges.iter().filter(|(f, _, _)| !isr_mask[*f]).map(|(f, s, e)| (p.funcs[*f].asm.clone(), *s, *e)).collect();
+        ranges.extend(g2.hranges.iter().cloned());
+        result = Some((objs, layout, items, helpers, levels, ranges));
         break;
     }
     if errors.is_empty() && result.is_none() {
         errors = pass1_errors;
     }
-    let Some((objs, layout, items, helpers, stack_levels)) = result else {
+    let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
         return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() };
     };
     let items = if tgt.opt {
+        let items = crate::codegen::inline_single_calls(items, ranges);
         let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
         for (i, o) in objs.iter().enumerate() {
             if let Some(a) = layout.addr[i] && !(i < nvars && p.vars[i].volatile) {

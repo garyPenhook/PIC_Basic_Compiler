@@ -741,3 +741,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Size over the portable simulator programs for the 16F17146: 61460 -> 56473 words (-8.1%).
 - Not done: inlining of single-call routines, the PIC18 `movlb`-hoist and `movff`-forward passes (no equivalents here yet), `Float` operands passed in `__A`/`__B`
   instead of through the parameter frames (EFFICIENCY.md P9), calling C, interrupt priorities, `-g`, hardware runs.
+
+## Enhanced mid-range core: inlining of single-call routines (done 2026-10-29, 0.1.53)
+- `codegen::inline_single_calls` (the PIC18 pass) now also runs on this core, over the routines and the assembly helpers (`__mul4` ...) that are called
+  from exactly one place and referenced nowhere else. The `call` and the `return` go; a `return` that is not last becomes a jump to the end.
+  Interrupt handlers are not inlined. `drop_redundant_movlb` runs after it, so a `movlb` made redundant by the join is dropped too.
+- Size over the portable simulator programs and `tests/exec_p16` for the 16F17146: 78563 -> 78031 words (-532). All 63 simulator programs pass.
