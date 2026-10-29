@@ -544,3 +544,26 @@ fn q41_programs_in_simulator() {
     let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
     assert!(r.status.success(), "{text}");
 }
+
+/// A program that calls C routines is linked by xc8-cc (`CFile` / `Extern`); the simulator run of the same
+/// program is `tests/exec_c`.
+#[test]
+fn c_routines_link() {
+    if !Path::new("/opt/microchip/xc8").is_dir() && std::env::var("BASIL_XC8CC").is_err() {
+        eprintln!("xc8-cc not found; skipping");
+        return;
+    }
+    let out = std::env::temp_dir().join(format!("basil-c-{}", std::process::id()));
+    std::fs::create_dir_all(&out).unwrap();
+    let hex = out.join("c_basic.hex");
+    let r = Command::new(basil()).arg(root().join("tests/exec_c/c_basic.bas")).arg("-o").arg(&hex).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(hex.is_file());
+    // The XC8 start-up code owns the vectors, so a handler is refused.
+    let src = out.join("isr.bas");
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nClock = 16\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF\nCFile \"x.c\"\nExtern Sub f()\nInterrupt H()\nEnd Interrupt\nf()\n").unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("E-EXTERN"), "{}", String::from_utf8_lossy(&r.stderr));
+    std::fs::remove_dir_all(&out).ok();
+}

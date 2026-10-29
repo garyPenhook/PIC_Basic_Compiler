@@ -254,6 +254,17 @@ Facts are recorded (FACTS-18F27Q10.md, ABI.md) but nothing is implemented. Sched
 reentrant functions; work items are in PLAN.md §7.2 (assembler table, XINST mode flag in codegen,
 FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/benchmarks).
 
+## C interop: calling C routines from Basic (done 2026-10-28, 0.1.47)
+- `CFile "x.c"` (header) and `Extern Sub|Function name(...)` (declaration, no body). Facts: XC8 user guide §5.8.5-5.8.6 (W for a first
+  one-byte parameter, `?_func` for the rest, result in W or `?_func`). Design in `docs/ABI.md` §7.
+- Parser/sema: `Routine.ext`, `HeaderKind::CFile`, `E-EXTERN` for parameter/result types that are not integer, Char or Boolean, `ByRef`,
+  defaults, `Reentrant`. Lowering: the body is a generated `Asm` thunk, `Program.externs` / `Program.cfiles`. Codegen: relocatable `basilcode`
+  psect and `_basil_entry` when a C routine is called; `ram_ranges` for `-mreserve`. Driver: `run_xc8_cc`, `c_stub`; `main.rs` refuses
+  `Interrupt` with `Extern` and names the assembly `<name>_basil.S` (xc8-cc names the C object after the hex file).
+- Tests: `tests/exec_c/c_basic` in the simulator (C globals with initial values, an array, 4-byte results; `scripts/exec-test.py` reads the entry
+  address from the map), `tests/backend.rs::c_routines_link`, `tests/negative/extern_bad_param`.
+- Not done: interrupt handlers with C, C calling Basic, `ByRef`/`Float`/structure arguments, hardware runs, `-g` with C.
+
 ## DMA library module, first step (done 2026-10-28, 0.1.39)
 Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language commands; `#if not _has(DMAnCON0)` gives `#error`.
 - `lib/dma.bas`: `DmaCopy(channel, src, dst, count)` (RAM/SFR to RAM/SFR, increment both, 1..4095 bytes, returns at once), `DmaDone`, `DmaStop`,

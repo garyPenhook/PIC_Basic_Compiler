@@ -131,20 +131,31 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
 * **Label table**: the generated file ends with `;SYM name 0xADDR` lines (byte addresses) for tools.
 * **Interrupt entry**: see the vector and context-save notes above.
 
-## 7. Planned: calling C functions and C libraries
+## 7. Calling C functions (implemented, 0.1.47)
 
-The compiler should be able to call C functions and link C libraries in the near future. Not
-implemented yet. What it needs:
+`CFile "x.c"` and `Extern Sub|Function` (MANUAL, *CFile, Extern*). Facts from the MPLAB XC8 C Compiler User
+Guide for PIC (DS-50002737L) §5.8.5-5.8.6, compiled stack, non-reentrant functions:
 
-* A source form to declare an external C routine (name, parameter types, return type) so calls
-  are type-checked like any other routine.
-* A bridge to the C compiler's calling convention (argument and return registers/locations, which
-  registers a C function may clobber, how the C side's stack and `FSR` use interact with the
-  static frames and `Reentrant` routines described in §3). These facts must come from the C
-  compiler's documentation, not from memory.
-* Linking: the C object files (or library archive) are passed to the same pic-as/linker step as
-  the generated assembly, with symbol names mapped per §4.
-* Calls from C into Basic routines are a possible later addition.
+* **Arguments**: a first parameter of one byte goes in `W`; every other parameter goes in the callee's parameter
+  memory, `?_func`, `?_func+1`, ..., packed in prototype order, little endian.
+* **Result**: one byte in `W`; longer (up to four bytes here) in `?_func` upwards.
+* **Names**: the C function is `_name`, its parameter memory `?_name`.
+* **Clobbered**: everything, as for any call (§3).
+
+**Thunk.** An `Extern` routine is an ordinary Basic routine (static frame, `<ROUTINE>__<PARAM>`, `<ROUTINE>__RESULT`)
+whose body is generated `Asm`: `movff` from each parameter variable to `W` or `?_func+k`, `call _func`, `movff` of
+the result back. Calls, overlay of frames and the optimiser therefore treat it as any routine with an `Asm` body.
+
+**Link.** XC8 is a whole-program compiler: it finds the functions to keep and allocates their frames from the
+call graph rooted at `main`, and calls from assembly are invisible to it. The driver therefore writes
+`<name>_cstub.c`, whose `main` calls `basil_entry` (the Basic program, never returns) and then calls every
+`Extern` routine the program uses with zero arguments (not reached, but in the call graph). `xc8-cc` links the
+stub, the `CFile`s and `<name>_basil.S` with `-mreserve=ram@a:b` for every RAM range the Basic program allocated.
+Start-up is XC8's (`goto start` at 0, clear and copy of C data, `goto main`); the Basic code is a relocatable
+psect `basilcode` instead of an absolute one at 0, and its start-up code then runs from `main`.
+
+Not supported: interrupt handlers in such a program (the vectors belong to the XC8 start-up code), C calling
+Basic, `ByRef`/`Float`/structure arguments, C functions that use the software stack (`-mstackcall`, reentrant).
 
 ## 6. Open questions for M1/M4
 

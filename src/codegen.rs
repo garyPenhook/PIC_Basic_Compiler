@@ -3458,6 +3458,21 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
     main + high.unwrap_or(0) + low.unwrap_or(0)
 }
 
+/// The data RAM ranges (start, end exclusive) the program places its own objects in. A build that
+/// calls C hands them to the linker as reserved so that C data goes elsewhere.
+pub fn ram_ranges(objs: &[Obj], layout: &Layout) -> Vec<(u32, u32)> {
+    let mut r: Vec<(u32, u32)> = objs.iter().enumerate().filter_map(|(i, o)| layout.addr.get(i).copied().flatten().filter(|_| o.bytes > 0).map(|a| (a, a + o.bytes))).collect();
+    r.sort();
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for (s, e) in r {
+        match out.last_mut() {
+            Some(l) if s <= l.1 => l.1 = l.1.max(e),
+            _ => out.push((s, e)),
+        }
+    }
+    out
+}
+
 pub struct Generated {
     pub out: Output,
     /// Most hardware-stack levels the program can use at once (see `stack_depth`).
@@ -3899,7 +3914,17 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
             text.push_str(&format!("{} equ 0x{:03X}{}\n", o.name, a, note));
         }
     }
-    text.push_str("\nPSECT code,class=CODE,abs,delta=1\n    ORG 0x0000\n");
+    // A program that calls C is linked by xc8-cc, whose start-up code owns the reset vector and calls
+    // `main`; the code is then relocatable and `_basil_entry` is what the generated `main` calls.
+    let c_link = !p.externs.is_empty();
+    if c_link {
+        text.push_str("\nPSECT basilcode,class=CODE,reloc=2,delta=1\n    GLOBAL _basil_entry\n_basil_entry:\n");
+        for e in &p.externs {
+            text.push_str(&format!("    GLOBAL _{n}, ?_{n}\n", n = e.name));
+        }
+    } else {
+        text.push_str("\nPSECT code,class=CODE,abs,delta=1\n    ORG 0x0000\n");
+    }
     for l in &asmd.lines {
         text.push_str(l);
         text.push('\n');
@@ -3910,7 +3935,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     for (k, v) in syms {
         text.push_str(&format!(";SYM {k} 0x{:04X}\n", v * 2));
     }
-    text.push_str("    END __reset\n");
+    text.push_str(if c_link { "    END\n" } else { "    END __reset\n" });
     // Function sizes from label positions.
     let mut starts: Vec<(String, u32)> = vec![("(start-up and program body)".into(), 0)];
     for f in &p.funcs {

@@ -146,6 +146,7 @@ pub struct Lowerer<'a> {
     /// `(callee parameter, caller parameter)`: an array parameter passed on to another one.
     len_fwd: Vec<(VarId, VarId)>,
     isrs: Vec<(FuncId, Level)>,
+    externs: Vec<ExternSig>,
     n_saves: usize,
     /// Nesting depth of `Save` blocks being lowered.
     in_save: u32,
@@ -190,6 +191,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         packed: HashSet::new(),
         len_fwd: Vec::new(),
         isrs: Vec::new(),
+        externs: Vec::new(),
         n_saves: 0,
         in_save: 0,
         in_isr: false,
@@ -270,6 +272,8 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     let mut main = main;
     strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
     Some(Program {
+        externs: lw.externs,
+        cfiles: a.cfiles.clone(),
         vars: lw.vars,
         funcs,
         flash: lw.flash,
@@ -849,6 +853,9 @@ impl<'a> Lowerer<'a> {
         self.cur_asm = asm.clone();
         self.cur_result = result.map(|v| (v, r.name.key()));
         let mut body = Vec::new();
+        if r.ext {
+            body.push(S { st: St::Asm(self.extern_thunk(r, &params, result)), span: r.name.span });
+        }
         for d in &r.body.decls {
             self.decl(d, ui, &mut body);
         }
@@ -863,6 +870,53 @@ impl<'a> Lowerer<'a> {
         self.cur_asm = saved.1;
         self.labels = saved.2;
         self.cur_result = saved.3;
+    }
+
+    /// The body of an `Extern` routine: moves the arguments from the parameter variables to where
+    /// XC8 expects them, calls the C function and moves the value back (MPLAB XC8 C Compiler User
+    /// Guide DS-50002737L §5.8.5-5.8.6, compiled stack: a first one-byte parameter is passed in W, the
+    /// others in `?_func` upwards in order; a one-byte value comes back in W, a longer one in `?_func`).
+    fn extern_thunk(&mut self, r: &Routine, params: &[VarId], result: Option<VarId>) -> Vec<String> {
+        let c = &r.name.name;
+        let sig = |v: VarId| (self.vars[v].bytes as u8, self.vars[v].ty.clone());
+        let mut lines = Vec::new();
+        let mut at = 0;
+        let mut esig = ExternSig { name: c.clone(), params: Vec::new(), ret: None };
+        for (i, &p) in params.iter().enumerate() {
+            let (n, ty) = sig(p);
+            esig.params.push((n, nat(&ty).is_some_and(|x| x.1)));
+            let src = self.vars[p].asm.clone();
+            if i == 0 && n == 1 {
+                lines.push(format!("    movff {src}, WREG"));
+                continue;
+            }
+            for k in 0..u32::from(n) {
+                lines.push(format!("    movff {src}+{k}, ?_{c}+{}", at + k));
+            }
+            at += u32::from(n);
+        }
+        lines.push(format!("    call _{c}"));
+        if let Some(rv) = result {
+            let (n, ty) = sig(rv);
+            esig.ret = Some((n, nat(&ty).is_some_and(|x| x.1)));
+            let dst = self.vars[rv].asm.clone();
+            if n == 1 {
+                lines.push(format!("    movff WREG, {dst}"));
+            } else {
+                for k in 0..u32::from(n) {
+                    lines.push(format!("    movff ?_{c}+{k}, {dst}+{k}"));
+                }
+            }
+        }
+        match self.externs.iter().find(|e| e.name == esig.name) {
+            None => self.externs.push(esig),
+            Some(e) if e.params != esig.params || e.ret != esig.ret => {
+                self.diags.error("E-EXTERN", r.name.span, format!("`{c}` is declared Extern twice with different parameter or result types, but C has one function of that name"));
+                self.failed = true;
+            }
+            Some(_) => {}
+        }
+        lines
     }
 
     /// Statements that zero the routine's locals and `Result` on entry. Frames are overlaid, so

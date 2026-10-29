@@ -5,7 +5,7 @@
 
 use basil::codegen::generate;
 use basil::diag::{Diagnostics, Render, Severity};
-use basil::driver::{find_pic_as, report, run_pic_as, target_of, usage_summary};
+use basil::driver::{c_stub, find_pic_as, find_xc8_cc, report, run_pic_as, run_xc8_cc, target_of, usage_summary};
 use basil::lower::lower;
 use basil::project::{LoadConfig, load};
 use basil::sema::{SemaConfig, analyze};
@@ -151,6 +151,12 @@ fn main() -> ExitCode {
             // Absolute paths, so the debugger finds the sources wherever it is started.
             target.debug_files = project.sources.names().map(|n| std::fs::canonicalize(n).map(|p| p.display().to_string()).unwrap_or_else(|_| n.to_string())).collect();
         }
+        if !p.externs.is_empty() && !p.isrs.is_empty() {
+            diags.error("E-EXTERN", basil::diag::Span::default(), "a program that calls C routines cannot have interrupt handlers yet (the XC8 start-up owns the vectors)");
+        }
+        if debug && !p.externs.is_empty() {
+            diags.error("E-EXTERN", basil::diag::Span::default(), "-g is not supported for a program that calls C routines yet");
+        }
         let g = generate(p, &target);
         for (span, msg) in &g.errors {
             diags.error("E-BACKEND", *span, msg.clone());
@@ -179,7 +185,9 @@ fn main() -> ExitCode {
     let (program, generated) = (program.unwrap(), generated.unwrap());
 
     let hex = out_hex.unwrap_or_else(|| file.with_extension("hex"));
-    let asm_path = hex.with_extension("S");
+    // xc8-cc names the object of the C code after the output file, so the assembly must not share its stem.
+    let stem = hex.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
+    let asm_path = if program.externs.is_empty() { hex.with_extension("S") } else { hex.with_file_name(format!("{stem}_basil.S")) };
     let map_path = hex.with_extension("map");
     if let Err(e) = std::fs::write(&asm_path, &generated.out.text) {
         eprintln!("basil: cannot write {}: {e}", asm_path.display());
@@ -196,13 +204,36 @@ fn main() -> ExitCode {
         eprintln!("basil: pic-as not found (install MPLAB XC8 or set BASIL_PICAS)");
         return ExitCode::from(1);
     };
-    match run_pic_as(&pic_as, analysis.device.as_ref().unwrap(), &asm_path, &hex, &map_path) {
+    let dev = analysis.device.as_ref().unwrap();
+    let linked = if program.externs.is_empty() {
+        run_pic_as(&pic_as, dev, &asm_path, &hex, &map_path)
+    } else {
+        let Some(xc8) = find_xc8_cc(&pic_as) else {
+            eprintln!("basil: xc8-cc not found (a program that calls C needs the MPLAB XC8 C compiler; set BASIL_XC8CC)");
+            return ExitCode::from(1);
+        };
+        let stub = hex.with_file_name(format!("{stem}_cstub.c"));
+        if let Err(e) = std::fs::write(&stub, c_stub(&program.externs)) {
+            eprintln!("basil: cannot write {}: {e}", stub.display());
+            return ExitCode::from(1);
+        }
+        let cfiles: Vec<PathBuf> = program.cfiles.iter().map(|f| start.join(f)).collect();
+        for f in &cfiles {
+            if !f.is_file() {
+                eprintln!("basil: C file {} not found (CFile names are relative to the program's folder)", f.display());
+                return ExitCode::from(1);
+            }
+        }
+        let reserved = basil::codegen::ram_ranges(&generated.objs, &generated.layout);
+        run_xc8_cc(&xc8, dev, &asm_path, &stub, &cfiles, &reserved, &hex, &map_path)
+    };
+    match linked {
         Ok(run) => {
-            for line in run.output.lines().filter(|l| l.contains("error") || l.contains("warning")) {
+            for line in run.output.lines().filter(|l| !run.ok || l.contains("error") || l.contains("warning")) {
                 eprintln!("pic-as: {line}");
             }
             if !run.ok {
-                eprintln!("basil: pic-as failed; see {}", asm_path.display());
+                eprintln!("basil: the assembler or linker failed; see {}", asm_path.display());
                 return ExitCode::from(1);
             }
         }

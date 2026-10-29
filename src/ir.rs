@@ -337,8 +337,21 @@ pub struct Func {
     pub span: Span,
 }
 
+/// A routine implemented in C (`Extern`), as the C stub that keeps it in the link declares it.
+#[derive(Clone, Debug)]
+pub struct ExternSig {
+    /// The C name, spelled as in the `Extern` declaration.
+    pub name: String,
+    /// Byte width and signedness of each parameter, in order.
+    pub params: Vec<(u8, bool)>,
+    pub ret: Option<(u8, bool)>,
+}
+
 #[derive(Debug)]
 pub struct Program {
+    /// C routines the program calls and the `CFile` sources that provide them.
+    pub externs: Vec<ExternSig>,
+    pub cfiles: Vec<String>,
     pub vars: Vec<Var>,
     pub funcs: Vec<Func>,
     /// Constant tables kept in program memory.

@@ -144,6 +144,8 @@ pub struct Analysis {
     pub unpackable: HashSet<SymId>,
     /// Global `Bit`/`Boolean` arrays with their element counts, for the RAM check.
     pub global_bit_arrays: Vec<(SymId, u32)>,
+    /// `CFile` names, in source order.
+    pub cfiles: Vec<String>,
 }
 
 /// Parsed device descriptions by path. The 18F27Q10 file is large, and tests and tools analyse
@@ -263,6 +265,8 @@ pub struct Sema<'p, 'd> {
     md_cur: Option<Vec<u32>>,
     /// True while the operand of `Bound` is checked: it only needs the array's type.
     in_bound: bool,
+    /// True while the (empty) body of an `Extern` routine is checked: its result is set by C.
+    in_extern: bool,
 }
 
 pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Analysis {
@@ -286,6 +290,7 @@ pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Ana
         reentrant_ok: HashSet::new(),
         md_cur: None,
         in_bound: false,
+        in_extern: false,
     };
     s.run();
     s.a
@@ -669,6 +674,11 @@ impl<'p, 'd> Sema<'p, 'd> {
         for h in &proj.units[unit].unit.headers {
             match &h.kind {
                 HeaderKind::Device(_) => {}
+                HeaderKind::CFile(f) => {
+                    if !self.a.cfiles.contains(f) {
+                        self.a.cfiles.push(f.clone());
+                    }
+                }
                 HeaderKind::Clock(e) => {
                     let Some(v) = self.const_value(e) else { continue };
                     let Some(mhz) = v.as_f64() else {
@@ -1223,6 +1233,9 @@ impl<'p, 'd> Sema<'p, 'd> {
             },
             None => None,
         };
+        if r.ext {
+            ok &= self.extern_ok(r, &params, ret.as_ref());
+        }
         if !ok {
             return;
         }
@@ -1231,7 +1244,37 @@ impl<'p, 'd> Sema<'p, 'd> {
         if r.reentrant {
             self.reentrant_ok.insert(id);
         }
+        self.in_extern = r.ext;
         self.body(&r.body, if r.is_function { Kind::Function } else { Kind::Sub }, Some(id), ret, Some(r.name.key()), &params_with_ast(&r.params, &params));
+        self.in_extern = false;
+    }
+
+    /// An `Extern` routine is called by value with integer, Char or Boolean arguments (at most
+    /// four bytes each way): the thunk the back end writes moves them into XC8's registers.
+    fn extern_ok(&mut self, r: &Routine, params: &[ParamInfo], ret: Option<&Ty>) -> bool {
+        let scalar = |t: &Ty| matches!(t, Ty::Bool | Ty::Char | Ty::Int(..));
+        let mut ok = true;
+        if r.name.name == "main" || r.name.name == "basil_entry" {
+            self.diags.error("E-EXTERN", r.name.span, format!("`{}` is a name the generated C stub uses", r.name.name));
+            ok = false;
+        }
+        if r.reentrant || r.inlining != Inlining::Default {
+            self.diags.error("E-EXTERN", r.name.span, "an Extern routine cannot be Reentrant, Inline or NoInline");
+            ok = false;
+        }
+        for (ast, p) in r.params.iter().zip(params) {
+            if p.mode != ParamMode::ByVal || p.is_array || !scalar(&p.ty) || p.has_default {
+                self.diags.error("E-EXTERN", ast.name.span, format!("`{}`: an Extern parameter is a ByVal integer, Char or Boolean without a default value", ast.name.name));
+                ok = false;
+            }
+        }
+        if let Some(t) = ret
+            && !scalar(t)
+        {
+            self.diags.error("E-EXTERN", r.name.span, "an Extern function returns an integer, Char or Boolean");
+            ok = false;
+        }
+        ok
     }
 
     fn interrupt_decl(&mut self, i: &'p InterruptDecl, vis: Vis) {
@@ -1264,7 +1307,7 @@ impl<'p, 'd> Sema<'p, 'd> {
     fn body(&mut self, b: &'p Body, kind: Kind, routine: Option<SymId>, ret: Option<Ty>, fn_key: Option<String>, params: &[(Ident, ParamInfo)]) {
         let saved_ctx = std::mem::replace(
             &mut self.ctx,
-            Ctx { routine, kind, ret: ret.clone(), fn_key, loops: 0, saves: 0, labels: HashSet::new(), result_assigned: false },
+            Ctx { routine, kind, ret: ret.clone(), fn_key, loops: 0, saves: 0, labels: HashSet::new(), result_assigned: self.in_extern },
         );
         let saved_for = std::mem::take(&mut self.for_vars);
         self.scopes.push(HashMap::new());

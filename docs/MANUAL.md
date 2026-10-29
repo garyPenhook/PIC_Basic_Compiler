@@ -40,6 +40,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
    - Interrupts, events and context saving
    - Modules and `Include`
    - Device, Clock, Config
+   - Calling C
    - Preprocessor
 2. Language commands (alphabetical)
 3. Library modules
@@ -954,6 +955,23 @@ tools/pic-config/build/pic-config
 
 To add a part, drop its `<device>.cfgdata` into `tools/pic-config/data/devices/` and re-run cmake.
 
+## Calling C
+
+A program can call functions written in C (built with the MPLAB XC8 C compiler). The C source is named with `CFile` and each
+function the program uses is declared with a body-less `Extern`:
+
+```basic
+CFile "crc.c"
+Extern Function Crc16(seed As Word, b As Byte) As Word
+
+Dim c As Word
+c = Crc16(0xFFFF, 0x31)
+```
+`basil` then links the program with `xc8-cc` instead of `pic-as` alone: XC8's start-up code runs first (it sets the C data) and then
+enters the Basic program, and the RAM the Basic program uses is kept free of C data. Parameters and results are integers, `Char` or
+`Boolean` of up to four bytes. A program that calls C cannot have `Interrupt` handlers or use `-g` yet, and C cannot call Basic. See
+*CFile, Extern* in chapter 2 for the details and `docs/ABI.md` §7 for the calling convention.
+
 ## Preprocessor
 
 | Directive | Notes |
@@ -1127,6 +1145,50 @@ While True
 Wend
 ```
 **See also** `Continue`, `Exit`.
+
+## CFile, Extern
+
+**Syntax**
+```basic
+CFile "crc.c"
+Extern Function Crc16(data As Word, n As Byte) As Word
+Extern Sub Pulse(width As Byte)
+```
+**Overview** Calls routines written in C. `CFile` names a C source file (or an XC8 object or archive) that is
+linked into the program; it goes with the `Device`, `Clock` and `Config` lines, before the first `Include`.
+`Extern` declares one routine of that code, with the name, parameter types and result type that
+the C function has, and has no body. The call is type-checked and written like any other call. The C name is
+the name as spelled in the `Extern` line (C is case-sensitive).
+
+A program that calls an `Extern` routine is linked by `xc8-cc` (the MPLAB XC8 C compiler, found beside
+`pic-as`, or named by `BASIL_XC8CC`) instead of by `pic-as` alone. The generated assembly is written to
+`<name>_basil.S` and the C stub that keeps the routines in the link to `<name>_cstub.c`. The XC8 start-up code
+runs first (it clears and sets the C data) and then enters the Basic program. C is compiled with `-Os`.
+
+**Parameters** `CFile` file names are relative to the folder of the main program. `Extern` parameters are
+`ByVal` integers, `Char` or `Boolean`, without default values; the result is one of the same, at most four
+bytes each. `Float`, strings, arrays, structures and `ByRef` are not supported.
+
+**Example**
+```basic
+' crc.c:  unsigned int crc16(unsigned int seed, unsigned char b) { ... }
+CFile "crc.c"
+Extern Function crc16(seed As Word, b As Byte) As Word
+Dim c As Word
+c = crc16(0xFFFF, 0x31)
+```
+**Notes**
+* A program that calls C routines cannot have `Interrupt` handlers yet (`E-EXTERN`): the XC8 start-up code
+  owns the vectors. C code cannot call Basic routines.
+* The RAM that Basic allocates is reserved from the linker (`-mreserve`), so C and Basic data do not overlap.
+* The hardware return stack: `E-STACK` counts one level for the call into C, not the calls inside the C code,
+  and the start-up code uses two levels more.
+* An `Extern` routine that nothing calls is not linked. Each call goes through a short generated routine that
+  moves the arguments into XC8's parameter memory and `W`, so a call costs about two words per argument byte.
+* Flash starts at 0x1002 in these builds: XC8's link places its code after the first 4 KB.
+* `-g` is refused for such a program (E-EXTERN). Not run on hardware.
+
+**See also** `Asm`.
 
 ## Clear
 
@@ -4030,6 +4092,7 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 | `E-RECURSION` | call cycle |
 | `E-ISR-CALL` | call from a handler without `Save ... Restore` (also float maths) |
 | `E-BACKEND` | valid per the front end but not generated yet (see below) |
+| `E-EXTERN` | bad `Extern` declaration (parameter or result type, `ByRef`, `Reentrant`), two `Extern`s of one C name with different types, or `Extern` together with `Interrupt` |
 | `E-UNSUPPORTED` | reserved but not available (`BitOf`, `Declare` other than `Xtal`, ...) |
 | `W-CLOCK` | `Clock` differs from the `RSTOSC` speed and nothing sets the oscillator |
 | `W-REGNAME` | a declaration hides a register name |

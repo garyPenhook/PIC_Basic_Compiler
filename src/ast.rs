@@ -48,6 +48,8 @@ pub enum HeaderKind {
     Device(String),
     Clock(Expr),
     Config(Vec<ConfigItem>),
+    /// `CFile "crc.c"`: a C source file linked into the program (see `Extern`).
+    CFile(String),
 }
 
 #[derive(Debug)]
@@ -208,6 +210,8 @@ pub struct Routine {
     pub is_function: bool,
     pub inlining: Inlining,
     pub reentrant: bool,
+    /// `Extern Sub/Function`: implemented in C; the body is empty.
+    pub ext: bool,
     pub params: Vec<Param>,
     pub ret: Option<TypeSpec>,
     pub body: Body,

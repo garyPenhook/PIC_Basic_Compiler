@@ -57,8 +57,19 @@ for src in a.files:
         print(f"FAIL {name}: compile\n{r.stderr}")
         fails += 1
         continue
-    asm = open(os.path.join(work, name + ".S")).read()
-    syms = {m.group(1): int(m.group(2), 16) for m in re.finditer(r"^;SYM (\S+) 0x([0-9A-F]+)", asm, re.M)}
+    asm_path = os.path.join(work, name + ".S")
+    base = 0
+    if not os.path.exists(asm_path):
+        # A program that calls C: the code is relocatable, so the label table holds offsets from `_basil_entry`.
+        asm_path = os.path.join(work, name + "_basil.S")
+        entry = re.search(r"^_basil_entry\s+\w+\s+([0-9A-F]+)", open(os.path.join(work, name + ".map")).read(), re.M)
+        if not entry:
+            print(f"FAIL {name}: no _basil_entry in the map")
+            fails += 1
+            continue
+        base = int(entry.group(1), 16)
+    asm = open(asm_path).read()
+    syms = {m.group(1): base + int(m.group(2), 16) for m in re.finditer(r"^;SYM (\S+) 0x([0-9A-F]+)", asm, re.M)}
     vars_ = {}
     for m in re.finditer(r"^(\w+) equ 0x([0-9A-F]+)(?:  ; .*\((\d+) bytes?\))?", asm, re.M):
         vars_[m.group(1)] = (int(m.group(2), 16), int(m.group(3) or 1))

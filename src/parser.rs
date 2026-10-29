@@ -50,6 +50,10 @@ impl<'a> Parser<'a> {
         *self.next_id += 1;
         *self.next_id
     }
+    fn at_ident(&self, word: &str) -> bool {
+        matches!(self.peek(), Tok::Ident(n) if n.eq_ignore_ascii_case(word))
+    }
+
     fn at_kw(&self, k: &str) -> bool {
         matches!(self.peek(), Tok::Kw(x) if *x == k)
     }
@@ -239,7 +243,15 @@ impl<'a> Parser<'a> {
             let start = self.pos;
             let sp = self.span();
             let r: PResult<()> = (|| {
-                if matches!(self.peek(), Tok::Kw("device" | "clock" | "config" | "declare")) {
+                if self.at_ident("cfile") && matches!(self.peek_at(1), Tok::Str(_)) {
+                    if phase > 0 {
+                        self.diags.error("E-ORDER", sp, "CFile must come before includes and declarations");
+                    }
+                    self.bump();
+                    let Tok::Str(name) = self.bump().tok else { unreachable!() };
+                    self.end_stmt()?;
+                    unit.headers.push(Header { kind: HeaderKind::CFile(name), span: sp });
+                } else if matches!(self.peek(), Tok::Kw("device" | "clock" | "config" | "declare")) {
                     if phase > 0 {
                         self.diags.error("E-ORDER", sp, "Device, Clock and Config must come before includes and declarations");
                     }
@@ -295,6 +307,7 @@ impl<'a> Parser<'a> {
     fn starts_decl(&self) -> bool {
         match self.peek() {
             Tok::Kw(k) if DECL_STARTERS.contains(k) => true,
+            Tok::Ident(n) if n.eq_ignore_ascii_case("extern") => matches!(self.peek_at(1), Tok::Kw("sub" | "function")),
             Tok::Kw("event") => matches!(self.peek_at(1), Tok::Ident(_)),
             _ => false,
         }
@@ -463,6 +476,7 @@ impl<'a> Parser<'a> {
                 DeclKind::Event(EventDecl { name, params, body })
             }
             Tok::Kw("sub" | "function" | "proc" | "inline" | "noinline" | "reentrant") => DeclKind::Routine(self.routine()?),
+            Tok::Ident(n) if n.eq_ignore_ascii_case("extern") => DeclKind::Routine(self.routine()?),
             _ => return self.expected("a declaration"),
         };
         Ok(Decl { vis, span, kind })
@@ -629,6 +643,13 @@ impl<'a> Parser<'a> {
     fn routine(&mut self) -> PResult<Routine> {
         let mut inlining = Inlining::Default;
         let mut reentrant = false;
+        let ext = self.at_ident("extern");
+        if ext {
+            self.bump();
+            if !matches!(self.peek(), Tok::Kw("sub" | "function")) {
+                return self.expected("`Sub` or `Function` after `Extern`");
+            }
+        }
         loop {
             if self.eat_kw("inline") {
                 inlining = Inlining::Inline;
@@ -669,6 +690,9 @@ impl<'a> Parser<'a> {
             is_function = true;
         }
         self.end_stmt()?;
+        if ext {
+            return Ok(Routine { name, is_function, inlining, reentrant, ext, params, ret, body: Body { decls: Vec::new(), stmts: Vec::new() } });
+        }
         let end = if is_proc {
             "endproc"
         } else if is_function {
@@ -677,7 +701,7 @@ impl<'a> Parser<'a> {
             "endsub"
         };
         let body = self.body(end)?;
-        Ok(Routine { name, is_function, inlining, reentrant, params, ret, body })
+        Ok(Routine { name, is_function, inlining, reentrant, ext, params, ret, body })
     }
 
     /// `( [param {, param}] )` of an event type or handler.
