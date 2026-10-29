@@ -11,3 +11,5 @@ unsigned int fill(unsigned char n) {
     for (i = 0; i < n; i++) { table[i] = i * 3 + seed; s += table[i]; }
     return s;
 }
+signed char neg(signed char v) { return -v; }
+unsigned long lw(unsigned long a, unsigned char flag) { return flag ? a + 1 : a; }

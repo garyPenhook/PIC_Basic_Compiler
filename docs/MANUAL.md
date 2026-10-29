@@ -957,20 +957,122 @@ To add a part, drop its `<device>.cfgdata` into `tools/pic-config/data/devices/`
 
 ## Calling C
 
-A program can call functions written in C (built with the MPLAB XC8 C compiler). The C source is named with `CFile` and each
-function the program uses is declared with a body-less `Extern`:
+A Basic program can call functions written in C. Use this for code that already exists in C (a checksum, a protocol
+parser, a vendor driver) or that is easier to write there. The C is built by the MPLAB XC8 C compiler, which must be
+installed (`xc8-cc` is looked for beside `pic-as`; `BASIL_XC8CC` names it explicitly). Only calls from Basic into C are
+supported.
+
+Two things are written in the Basic program:
+
+* `CFile "name.c"` names the C source (or an XC8 object or library) to link in. It is a header line, written with
+  `Device`, `Clock` and `Config`, before the first `Include`. The path is relative to the folder of the main program.
+* `Extern Function name(...) As Type` or `Extern Sub name(...)` declares one C function, with no body. The name is the C
+  name, **spelled exactly as in the C file** (C is case-sensitive; Basic is not). The parameters and the result have the
+  types of the C function. After that, the function is called like any other routine.
+
+### A complete example
+
+`checksum.c` is an ordinary C file; it has no `main()`:
+
+```c
+static unsigned char total;            /* C data: zero at start, like any C program */
+
+/* CRC-8, polynomial 0x07, one byte at a time. */
+unsigned char crc8(unsigned char crc, unsigned char data)
+{
+    unsigned char i;
+    crc ^= data;
+    for (i = 0; i < 8; i++)
+        crc = (crc & 0x80) ? (unsigned char)((crc << 1) ^ 0x07) : (unsigned char)(crc << 1);
+    return crc;
+}
+
+void total_add(unsigned char v) { total += v; }
+
+unsigned int total_get(void) { return total; }
+
+long scale(int v, unsigned char mul) { return (long)v * mul; }
+```
+
+`main.bas`, in the same folder:
 
 ```basic
-CFile "crc.c"
-Extern Function Crc16(seed As Word, b As Byte) As Word
+Program CallC
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF
 
-Dim c As Word
-c = Crc16(0xFFFF, 0x31)
+CFile "checksum.c"
+Extern Function crc8(crc As Byte, data As Byte) As Byte
+Extern Sub total_add(v As Byte)
+Extern Function total_get() As Word
+Extern Function scale(v As Integer, mul As Byte) As LongInt
+
+Dim crc As Byte
+Dim tot As Word
+Dim r As LongInt
+Dim i As Byte
+
+crc = 0
+For i = 1 To 9
+    crc = crc8(crc, 48 + i)        ' the bytes of "123456789"; the CRC-8 of that text is 0xF4
+    total_add(i)
+Next
+tot = total_get()                  ' 1 + 2 + ... + 9 = 45
+
+r = scale(-300, 7)                 ' -2100: a signed argument and a signed 32-bit result
 ```
-`basil` then links the program with `xc8-cc` instead of `pic-as` alone: XC8's start-up code runs first (it sets the C data) and then
-enters the Basic program, and the RAM the Basic program uses is kept free of C data. Parameters and results are integers, `Char` or
-`Boolean` of up to four bytes. A program that calls C cannot have `Interrupt` handlers or use `-g` yet, and C cannot call Basic. See
-*CFile, Extern* in chapter 2 for the details and `docs/ABI.md` §7 for the calling convention.
+
+Build it with `basil main.bas`. When the run reaches the end, `crc` is 244 (0xF4), `tot` is 45 and `r` is -2100. This
+program is `tests/exec_c/c_example.bas` and is run in the simulator by the test suite.
+
+### Types
+
+| Basic | C | Bytes |
+|---|---|---|
+| `Byte`, `Char`, `Boolean` | `unsigned char` | 1 |
+| `ShortInt` | `signed char` | 1 |
+| `Word` | `unsigned int` | 2 |
+| `Integer` | `int` | 2 |
+| `LongWord` | `unsigned long` | 4 |
+| `LongInt` | `long` | 4 |
+
+Parameters are passed by value. A function result is one of these types; a `Sub` returns nothing (`void`). `Float`,
+strings, arrays, structures, `Bit`, `ByRef` parameters and default values are not supported (`E-EXTERN`). Declare the
+C function with the same types and number of parameters as the `Extern` line; basil cannot check the C file against it.
+
+### What happens when the program runs and when it is built
+
+* The XC8 start-up code runs first and sets up the C data (zeroed variables, variables with initial values). It then
+  calls the program, which runs the Basic start-up code and your statements. C variables keep their value between
+  calls, so C can hold state (`total` above).
+* RAM is shared without overlap: the RAM that the Basic program uses is kept away from the C data and C stack.
+* `basil` writes `<name>_basil.S` (the Basic program as assembly), `<name>_cstub.c` (a small generated C file) and the
+  `.hex` and `.map`, and links them with your C files through `xc8-cc` (C is compiled with `-Os`). The linker's messages
+  are shown if it fails.
+* An `Extern` routine that the program never calls is not linked, and `CFile` alone changes nothing.
+
+### Cost and limits
+
+* Each call copies the arguments and the result through a small RAM buffer (`basil_io`, as large as the biggest
+  argument list or result) and a generated C wrapper: about two program words per argument or result byte plus the
+  wrapper, and the buffer's RAM. Call C for work that is worth that, not for one-instruction operations.
+* The call into C uses a hardware stack level, and the C function's own calls use more. `E-STACK` counts the call but
+  not what happens inside the C code, so check the depth of nested C calls yourself.
+* A program that calls C cannot have `Interrupt` handlers (`E-EXTERN`; the XC8 start-up code owns the vectors), cannot
+  be built with `-g` (`E-EXTERN`), and the C code cannot call Basic routines.
+* The names `main` and `basil_...` are used by the generated C and cannot be `Extern` names.
+* The flash used by a C build starts at 0x1002 in the XC8 layout.
+* Not yet run on hardware.
+
+### If the build fails
+
+| Message | Cause |
+|---|---|
+| `xc8-cc not found` | MPLAB XC8 C compiler not installed beside `pic-as`; set `BASIL_XC8CC` |
+| `C file ... not found` | the `CFile` path is relative to the main program's folder |
+| `undefined symbol _name` from the linker | the C function is not in a `CFile`, or the `Extern` name differs from the C name in case or spelling, or the C function is `static` |
+| `E-EXTERN` | parameter or result type not supported, `ByRef`, a default value, an `Interrupt` handler, `-g`, a reserved name, or the same name declared twice with different types |
 
 ## Preprocessor
 
@@ -1150,45 +1252,36 @@ Wend
 
 **Syntax**
 ```basic
-CFile "crc.c"
-Extern Function Crc16(data As Word, n As Byte) As Word
-Extern Sub Pulse(width As Byte)
+CFile "file.c"
+Extern Function name(param As Type, ...) As Type
+Extern Sub name(param As Type, ...)
 ```
-**Overview** Calls routines written in C. `CFile` names a C source file (or an XC8 object or archive) that is
-linked into the program; it goes with the `Device`, `Clock` and `Config` lines, before the first `Include`.
-`Extern` declares one routine of that code, with the name, parameter types and result type that
-the C function has, and has no body. The call is type-checked and written like any other call. The C name is
-the name as spelled in the `Extern` line (C is case-sensitive).
+**Overview** `CFile` names a C source file, XC8 object or library that is linked into the program. `Extern` declares a
+function of that code, with no body. The C name is the name written in the `Extern` line, case included. A program that
+calls an `Extern` routine is linked by `xc8-cc` (see *Calling C* in chapter 1 for the whole picture and the full example).
 
-A program that calls an `Extern` routine is linked by `xc8-cc` (the MPLAB XC8 C compiler, found beside
-`pic-as`, or named by `BASIL_XC8CC`) instead of by `pic-as` alone. The generated assembly is written to
-`<name>_basil.S` and the C stub that keeps the routines in the link to `<name>_cstub.c`. The XC8 start-up code
-runs first (it clears and sets the C data) and then enters the Basic program. C is compiled with `-Os`.
-
-**Parameters** `CFile` file names are relative to the folder of the main program. `Extern` parameters are
-`ByVal` integers, `Char` or `Boolean`, without default values; the result is one of the same, at most four
-bytes each. `Float`, strings, arrays, structures and `ByRef` are not supported.
+**Parameters** `file.c` is relative to the folder of the main program. `CFile` goes with the `Device`, `Clock` and
+`Config` lines, before the first `Include`, and can be given more than once. Each `Extern` parameter is `ByVal` and
+`Byte`, `Char`, `Boolean`, `ShortInt`, `Word`, `Integer`, `LongWord` or `LongInt`, with no default value; the result
+is one of the same, or none for a `Sub`.
 
 **Example**
 ```basic
-' crc.c:  unsigned int crc16(unsigned int seed, unsigned char b) { ... }
-CFile "crc.c"
-Extern Function crc16(seed As Word, b As Byte) As Word
-Dim c As Word
-c = crc16(0xFFFF, 0x31)
+CFile "checksum.c"
+Extern Function crc8(crc As Byte, data As Byte) As Byte    ' unsigned char crc8(unsigned char, unsigned char)
+Extern Sub total_add(v As Byte)                            ' void total_add(unsigned char)
+
+Dim c As Byte
+c = crc8(c, 0x31)
+total_add(c)
 ```
 **Notes**
-* A program that calls C routines cannot have `Interrupt` handlers yet (`E-EXTERN`): the XC8 start-up code
-  owns the vectors. C code cannot call Basic routines.
-* The RAM that Basic allocates is reserved from the linker (`-mreserve`), so C and Basic data do not overlap.
-* The hardware return stack: `E-STACK` counts one level for the call into C, not the calls inside the C code,
-  and the start-up code uses two levels more.
-* An `Extern` routine that nothing calls is not linked. Each call goes through a short generated routine that
-  moves the arguments into XC8's parameter memory and `W`, so a call costs about two words per argument byte.
-* Flash starts at 0x1002 in these builds: XC8's link places its code after the first 4 KB.
-* `-g` is refused for such a program (E-EXTERN). Not run on hardware.
+* Errors: `E-EXTERN` for an unsupported type, `ByRef`, a default value, `Reentrant`/`Inline`, a name that is `main` or
+  starts with `basil_`, two `Extern`s of one name with different types, an `Interrupt` handler in the program, or `-g`.
+* The generated assembly is `<name>_basil.S`; the stub is `<name>_cstub.c`.
+* Not yet run on hardware.
 
-**See also** `Asm`.
+**See also** `Asm`, *Calling C* (chapter 1), `docs/ABI.md` section 7.
 
 ## Clear
 

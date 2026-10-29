@@ -131,31 +131,36 @@ The compiler prints the symbol map with `--report` so `Asm` blocks can name vari
 * **Label table**: the generated file ends with `;SYM name 0xADDR` lines (byte addresses) for tools.
 * **Interrupt entry**: see the vector and context-save notes above.
 
-## 7. Calling C functions (implemented, 0.1.47)
+## 7. Calling C functions (implemented, 0.1.48)
 
-`CFile "x.c"` and `Extern Sub|Function` (MANUAL, *CFile, Extern*). Facts from the MPLAB XC8 C Compiler User
-Guide for PIC (DS-50002737L) §5.8.5-5.8.6, compiled stack, non-reentrant functions:
+`CFile "x.c"` and `Extern Sub|Function` (MANUAL, *Calling C* and *CFile, Extern*).
 
-* **Arguments**: a first parameter of one byte goes in `W`; every other parameter goes in the callee's parameter
-  memory, `?_func`, `?_func+1`, ..., packed in prototype order, little endian.
-* **Result**: one byte in `W`; longer (up to four bytes here) in `?_func` upwards.
-* **Names**: the C function is `_name`, its parameter memory `?_name`.
-* **Clobbered**: everything, as for any call (§3).
+**Why not call the C function directly.** The MPLAB XC8 C Compiler User Guide for PIC (DS-50002737L, §5.8.5-5.8.6) says a
+first one-byte parameter is passed in `W`, the others in `?_func`, and the result in `W` or `?_func`. That holds for an
+unoptimised build only: with `-O1`/`-Os` XC8 compiles all the code at once and gives the parameters their own symbols
+(`func@param`) and drops the `?_func` area when it is not needed (seen in 0.1.47: a function returning one byte read its
+argument from the wrong place). The generated code therefore does not depend on XC8's convention.
+
+**Bridge.** The driver writes `<name>_cstub.c` (`driver.rs::c_stub`):
+
+* `volatile unsigned char basil_io[N]`, N = the largest argument list or result in bytes;
+* for each `Extern` routine a wrapper `void basil_w_<name>(void)` in plain C that reads the arguments from `basil_io`
+  (packed in order, little endian, as `*(volatile T *)(basil_io + offset)`), calls the function and writes the result to
+  `basil_io` from offset 0;
+* `main`, called by the XC8 start-up code: it calls `basil_entry` (the Basic program, which never returns), then every
+  wrapper. Those calls never run; they put the wrappers and the C functions in the call graph XC8 builds from `main`,
+  which keeps them and allocates their frames (calls from assembly are invisible to it).
 
 **Thunk.** An `Extern` routine is an ordinary Basic routine (static frame, `<ROUTINE>__<PARAM>`, `<ROUTINE>__RESULT`)
-whose body is generated `Asm`: `movff` from each parameter variable to `W` or `?_func+k`, `call _func`, `movff` of
-the result back. Calls, overlay of frames and the optimiser therefore treat it as any routine with an `Asm` body.
+whose body is generated `Asm`: `movff` of each parameter byte to `_basil_io+k`, `call _basil_w_<name>`, `movff` of the
+result bytes back. Calls, frame overlay and the optimiser treat it as any routine with an `Asm` body.
 
-**Link.** XC8 is a whole-program compiler: it finds the functions to keep and allocates their frames from the
-call graph rooted at `main`, and calls from assembly are invisible to it. The driver therefore writes
-`<name>_cstub.c`, whose `main` calls `basil_entry` (the Basic program, never returns) and then calls every
-`Extern` routine the program uses with zero arguments (not reached, but in the call graph). `xc8-cc` links the
-stub, the `CFile`s and `<name>_basil.S` with `-mreserve=ram@a:b` for every RAM range the Basic program allocated.
-Start-up is XC8's (`goto start` at 0, clear and copy of C data, `goto main`); the Basic code is a relocatable
-psect `basilcode` instead of an absolute one at 0, and its start-up code then runs from `main`.
+**Link.** `xc8-cc -Os -mreserve=ram@a:b ...` (one range per RAM range the Basic program allocated) with the stub, the
+`CFile`s and `<name>_basil.S`. Start-up is XC8's (`goto start` at 0, clear and copy of C data, `goto main`); the Basic code
+is a relocatable psect `basilcode` instead of an absolute one at 0, and its own start-up code then runs from `main`.
 
-Not supported: interrupt handlers in such a program (the vectors belong to the XC8 start-up code), C calling
-Basic, `ByRef`/`Float`/structure arguments, C functions that use the software stack (`-mstackcall`, reentrant).
+Not supported: interrupt handlers in such a program (the vectors belong to the XC8 start-up code), `-g`, C calling Basic,
+`ByRef`/`Float`/structure arguments.
 
 ## 6. Open questions for M1/M4
 

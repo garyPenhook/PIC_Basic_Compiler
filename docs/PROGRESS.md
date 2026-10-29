@@ -265,6 +265,14 @@ FSR2 software-stack frames, `CALLW` function pointers, simulator support, tests/
   address from the map), `tests/backend.rs::c_routines_link`, `tests/negative/extern_bad_param`.
 - Not done: interrupt handlers with C, C calling Basic, `ByRef`/`Float`/structure arguments, hardware runs, `-g` with C.
 
+## C interop fixed: calls go through a generated wrapper (done 2026-10-28, 0.1.48)
+- 0.1.47 passed arguments in XC8's documented places (`W`, `?_func`). That only holds unoptimised: with `-Os` XC8 names the
+  parameters `func@param` and a function returning one byte read its argument from address 0 (`crc8(0, 1)` returned 0). Found while
+  writing the manual example (`tests/exec_c/c_example`).
+- Now the generated code writes the arguments into `basil_io` and calls `basil_w_<name>`, a C wrapper in the generated stub
+  that calls the function (ABI.md §7). The stub's `basil_io` is volatile. `main`/`basil_...` are reserved `Extern` names.
+- Manual: *Calling C* (chapter 1: complete example, type table, build, cost, troubleshooting) and *CFile, Extern*.
+
 ## DMA library module, first step (done 2026-10-28, 0.1.39)
 Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language commands; `#if not _has(DMAnCON0)` gives `#error`.
 - `lib/dma.bas`: `DmaCopy(channel, src, dst, count)` (RAM/SFR to RAM/SFR, increment both, 1..4095 bytes, returns at once), `DmaDone`, `DmaStop`,

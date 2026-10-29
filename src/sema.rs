@@ -1254,8 +1254,8 @@ impl<'p, 'd> Sema<'p, 'd> {
     fn extern_ok(&mut self, r: &Routine, params: &[ParamInfo], ret: Option<&Ty>) -> bool {
         let scalar = |t: &Ty| matches!(t, Ty::Bool | Ty::Char | Ty::Int(..));
         let mut ok = true;
-        if r.name.name == "main" || r.name.name == "basil_entry" {
-            self.diags.error("E-EXTERN", r.name.span, format!("`{}` is a name the generated C stub uses", r.name.name));
+        if r.name.name == "main" || r.name.name.starts_with("basil_") {
+            self.diags.error("E-EXTERN", r.name.span, format!("`{}` is a name the generated C stub uses (`main`, `basil_...`)", r.name.name));
             ok = false;
         }
         if r.reentrant || r.inlining != Inlining::Default {

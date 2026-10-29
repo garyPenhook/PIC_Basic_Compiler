@@ -3919,8 +3919,9 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let c_link = !p.externs.is_empty();
     if c_link {
         text.push_str("\nPSECT basilcode,class=CODE,reloc=2,delta=1\n    GLOBAL _basil_entry\n_basil_entry:\n");
+        text.push_str("    GLOBAL _basil_io\n");
         for e in &p.externs {
-            text.push_str(&format!("    GLOBAL _{n}, ?_{n}\n", n = e.name));
+            text.push_str(&format!("    GLOBAL _basil_w_{}\n", e.name));
         }
     } else {
         text.push_str("\nPSECT code,class=CODE,abs,delta=1\n    ORG 0x0000\n");

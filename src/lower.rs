@@ -872,40 +872,32 @@ impl<'a> Lowerer<'a> {
         self.cur_result = saved.3;
     }
 
-    /// The body of an `Extern` routine: moves the arguments from the parameter variables to where
-    /// XC8 expects them, calls the C function and moves the value back (MPLAB XC8 C Compiler User
-    /// Guide DS-50002737L §5.8.5-5.8.6, compiled stack: a first one-byte parameter is passed in W, the
-    /// others in `?_func` upwards in order; a one-byte value comes back in W, a longer one in `?_func`).
+    /// The body of an `Extern` routine: copies the arguments into `basil_io`, a byte array of the C
+    /// stub, calls the stub's `basil_w_<name>` (which passes them to the C function the way XC8's own
+    /// code generator wants, whatever the optimisation level) and copies the result back out of it.
+    /// The stub is `driver.rs::c_stub`.
     fn extern_thunk(&mut self, r: &Routine, params: &[VarId], result: Option<VarId>) -> Vec<String> {
         let c = &r.name.name;
         let sig = |v: VarId| (self.vars[v].bytes as u8, self.vars[v].ty.clone());
         let mut lines = Vec::new();
         let mut at = 0;
         let mut esig = ExternSig { name: c.clone(), params: Vec::new(), ret: None };
-        for (i, &p) in params.iter().enumerate() {
+        for &p in params {
             let (n, ty) = sig(p);
             esig.params.push((n, nat(&ty).is_some_and(|x| x.1)));
             let src = self.vars[p].asm.clone();
-            if i == 0 && n == 1 {
-                lines.push(format!("    movff {src}, WREG"));
-                continue;
-            }
             for k in 0..u32::from(n) {
-                lines.push(format!("    movff {src}+{k}, ?_{c}+{}", at + k));
+                lines.push(format!("    movff {src}+{k}, _basil_io+{}", at + k));
             }
             at += u32::from(n);
         }
-        lines.push(format!("    call _{c}"));
+        lines.push(format!("    call _basil_w_{c}"));
         if let Some(rv) = result {
             let (n, ty) = sig(rv);
             esig.ret = Some((n, nat(&ty).is_some_and(|x| x.1)));
             let dst = self.vars[rv].asm.clone();
-            if n == 1 {
-                lines.push(format!("    movff WREG, {dst}"));
-            } else {
-                for k in 0..u32::from(n) {
-                    lines.push(format!("    movff ?_{c}+{k}, {dst}+{k}"));
-                }
+            for k in 0..u32::from(n) {
+                lines.push(format!("    movff _basil_io+{k}, {dst}+{k}"));
             }
         }
         match self.externs.iter().find(|e| e.name == esig.name) {

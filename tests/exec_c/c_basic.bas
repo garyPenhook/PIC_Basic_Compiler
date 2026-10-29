@@ -1,4 +1,4 @@
-' expect: T_X=41 T_W=1041 T_L=100012 T_Y=82 T_F=205 T_X2=41
+' expect: T_N=250 T_LW1=4000000001 T_X=41 T_W=1041 T_L=100012 T_Y=82 T_F=205 T_X2=41
 Program T
 Device = 18F27Q10
 Clock = 64
@@ -8,9 +8,13 @@ Extern Function bump() As Byte
 Extern Function add(a As Byte, b As Word) As Word
 Extern Function mix(a As Integer, b As LongInt, c As Byte) As LongInt
 Extern Function fill(n As Byte) As Word
+Extern Function neg(v As ShortInt) As ShortInt
+Extern Function lw(a As LongWord, flag As Boolean) As LongWord
 Extern Sub setit(v As Byte)
 Dim x As Byte
 Dim y As Byte
+Dim n As ShortInt
+Dim lw1 As LongWord
 Dim x2 As Byte
 Dim f As Word
 Dim w As Word
@@ -24,3 +28,5 @@ l = mix(-5, 100000, 7)
 big(29) = 9
 f = fill(10)
 x2 = x
+n = neg(6)
+lw1 = lw(4000000000, True)
