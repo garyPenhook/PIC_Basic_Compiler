@@ -25,6 +25,15 @@ pub(crate) fn fsr_addr(addr: u32) -> u32 {
     }
 }
 
+/// The index of a place as a byte, when the whole index is one: an 8-bit expression, or one widened from 8 bits.
+fn byte_index(e: &Ex) -> Option<&Ex> {
+    match &e.k {
+        ExK::Conv(x) if !x.signed && x.w == 8 => Some(x),
+        _ if e.w == 8 => Some(e),
+        _ => None,
+    }
+}
+
 impl<'p> G<'p> {
     // ---- places ---------------------------------------------------------------------------
 
@@ -43,11 +52,18 @@ impl<'p> G<'p> {
         }
     }
 
+    /// A variable reached through an FSR by its numeric address never appears by name again: the comment keeps the
+    /// peephole from treating its stores as dead.
+    fn note_address_taken(&mut self, sym: &str) {
+        self.items.push(Item::Comment(format!("address of {sym}")));
+    }
+
     /// Constant data address (as an FSR sees it) of a place with no run-time part.
     fn const_fsr_addr(&mut self, p: &Place) -> Option<u32> {
         match (&p.base, &p.idx) {
             (Base::Var(v), None) => {
                 let m = self.var_mem(*v, p.off);
+                self.note_address_taken(&m.sym);
                 Some(m.addr().map_or(0, fsr_addr))
             }
             (Base::Abs { addr, .. }, None) => Some(phys_off(*addr, p.off)),
@@ -110,6 +126,48 @@ impl<'p> G<'p> {
                 self.ins(format!("movwf {h}"));
                 self.add_fsr(n, p.off);
             }
+            (Some(idx), fl, ptr) if byte_index(idx).is_some() => {
+                // A byte index is added to the base address in WREG, with the carry into the high byte.
+                self.ev(byte_index(idx).expect("checked"));
+                if let Some(s) = fl {
+                    let at = sym_off(&s, p.off);
+                    self.ins(format!("addlw low {at}"));
+                    self.ins(format!("movwf {l}"));
+                    self.ins(format!("movlw (high ({at})) | 0x80"));
+                    self.ins("btfsc STATUS, 0");
+                    self.ins(format!("movlw ((high ({at})) + 1) | 0x80"));
+                } else if let Some(v) = ptr {
+                    let m = self.var_mem(v, 0);
+                    self.fop("addwf", &m, "w");
+                    self.ins(format!("movwf {l}"));
+                    self.fop("movf", &m.at(1), "w");
+                    self.ins("btfsc STATUS, 0");
+                    self.fop("incf", &m.at(1), "w");
+                } else {
+                    let k = match &p.base {
+                        Base::Var(v) => {
+                            let m = self.var_mem(*v, p.off);
+                            self.note_address_taken(&m.sym);
+                            m.addr().map_or(0, fsr_addr)
+                        }
+                        Base::Abs { addr, .. } => phys_off(*addr, p.off),
+                        _ => 0,
+                    };
+                    if k & 0xFF != 0 {
+                        self.ins(format!("addlw 0x{:02X}", k & 0xFF));
+                    }
+                    self.ins(format!("movwf {l}"));
+                    self.ins(format!("movlw 0x{:02X}", (k >> 8) & 0xFF));
+                    if k & 0xFF != 0 {
+                        self.ins("btfsc STATUS, 0");
+                        self.ins(format!("movlw 0x{:02X}", ((k >> 8) + 1) & 0xFF));
+                    }
+                }
+                self.ins(format!("movwf {h}"));
+                if ptr.is_some() {
+                    self.add_fsr(n, p.off);
+                }
+            }
             (Some(idx), fl, ptr) => {
                 self.ev_a16(idx);
                 let (a0, a1) = (self.a(0), self.a(1));
@@ -133,6 +191,7 @@ impl<'p> G<'p> {
                     let k = match &p.base {
                         Base::Var(v) => {
                             let m = self.var_mem(*v, p.off);
+                            self.note_address_taken(&m.sym);
                             m.addr().map_or(0, fsr_addr)
                         }
                         Base::Abs { addr, .. } => phys_off(*addr, p.off),
@@ -196,6 +255,21 @@ impl<'p> G<'p> {
                 self.spill(&t, n, e.w == 8);
                 Opd::M(t)
             }
+        }
+    }
+
+    /// Like [`operand`](Self::operand), for the byte-wise operations that read an operand through `opd_byte`: an
+    /// unsigned value widened from fewer bytes is kept at its own width, the rest being zero.
+    pub fn operand_nz(&mut self, e: &Ex) -> Opd {
+        match &e.k {
+            ExK::Conv(x) if !x.signed && x.w < e.w && !self.simple(x) => {
+                let n = (x.w / 8) as u32;
+                self.ev(x);
+                let t = self.temp(n);
+                self.spill(&t, n, x.w == 8);
+                Opd::Z(t, n)
+            }
+            _ => self.operand(e),
         }
     }
 
@@ -494,7 +568,7 @@ impl<'p> G<'p> {
     fn alu(&mut self, k: BinKind, a: &Ex, b: &Ex, e: &Ex) {
         let n = (e.w / 8) as u32;
         let (a, b) = (fit(a, e.w), fit(b, e.w));
-        let bo = self.operand(&b);
+        let bo = self.operand_nz(&b);
         if n == 1 {
             // a - b with a plain: load b, then subtract it from a in place.
             if k == BinKind::Sub {
@@ -829,6 +903,7 @@ impl<'p> G<'p> {
         let (a, b) = (fit(a, w), fit(b, w));
         match kind {
             CmpKind::Eq | CmpKind::Ne => self.eq_jump(&a, &b, target, kind == CmpKind::Eq),
+            _ if w == 8 && !signed => self.cmp8(kind, a, b, target),
             CmpKind::Lt | CmpKind::Ge => {
                 self.order(&a, &b, signed);
                 self.br(if kind == CmpKind::Lt { Cc::Nc } else { Cc::C }, target);
@@ -839,6 +914,35 @@ impl<'p> G<'p> {
                 self.br(if kind == CmpKind::Gt { Cc::Nc } else { Cc::C }, target);
             }
         }
+    }
+
+    /// An unsigned byte compare in WREG: `sublw`/`subwf` leave C set when the operand in memory (or the literal) is at
+    /// least the one in WREG, so the operand that must be in WREG is the right side of `>=` and `<`, the left side of
+    /// `<=` and `>`. The sides swap when that puts a computed value in memory and a plain one in WREG.
+    fn cmp8(&mut self, kind: CmpKind, a: Ex, b: Ex, target: &str) {
+        let (mut kind, mut a, mut b) = (kind, a, b);
+        let plain = |me: &Self, e: &Ex| matches!(e.k, ExK::Const(_)) || me.simple(e);
+        let w_is_b = matches!(kind, CmpKind::Ge | CmpKind::Lt);
+        let (u, v) = if w_is_b { (&b, &a) } else { (&a, &b) };
+        if !plain(self, v) && plain(self, u) {
+            std::mem::swap(&mut a, &mut b);
+            kind = match kind {
+                CmpKind::Ge => CmpKind::Le,
+                CmpKind::Le => CmpKind::Ge,
+                CmpKind::Lt => CmpKind::Gt,
+                _ => CmpKind::Lt,
+            };
+        }
+        let w_is_b = matches!(kind, CmpKind::Ge | CmpKind::Lt);
+        let (u, v) = if w_is_b { (&b, &a) } else { (&a, &b) };
+        let vo = self.operand(v);
+        self.ev(u);
+        match &vo {
+            Opd::K(k) => self.ins(format!("sublw 0x{:02X}", k & 0xFF)),
+            Opd::M(m) => self.fop("subwf", m, "w"),
+            Opd::Z(..) => unreachable!("a byte operand"),
+        }
+        self.br(if matches!(kind, CmpKind::Ge | CmpKind::Le) { Cc::C } else { Cc::Nc }, target);
     }
 
     /// Leaves C set when `x >= y` (unsigned, or signed after flipping both sign bits).

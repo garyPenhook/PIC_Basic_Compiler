@@ -178,9 +178,26 @@ fn parse(t: &str) -> Option<(String, Vec<&str>)> {
     Some((mn.to_ascii_lowercase(), ops))
 }
 
+thread_local! {
+    /// Set while [`optimise16`] runs: the instruction set is the enhanced mid-range one.
+    static CORE16: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn core16() -> bool {
+    CORE16.with(|c| c.get())
+}
+
+/// The flags an instruction that sets Z from its result sets (N too on the PIC18).
+fn zflags() -> u8 {
+    if core16() { Z } else { Z | N }
+}
+
 /// The effect of an instruction, or `None` when it is control flow or unknown: the caller then
 /// forgets everything it knew.
 fn effect(t: &str) -> Option<Eff> {
+    if core16() {
+        return effect16(t);
+    }
     let (mn, ops) = parse(t)?;
     // An operand that looks like a scratch register but does not parse is not understood.
     if ops.iter().any(|o| looks_scratch(o) && scratch(o).is_none()) {
@@ -315,6 +332,117 @@ fn effect(t: &str) -> Option<Eff> {
         if o.eq_ignore_ascii_case("STATUS") {
             return None;
         }
+    }
+    Some(e)
+}
+
+/// [`effect`] for the enhanced mid-range core: no access bit, no N or OV, and the flags each instruction really
+/// sets (a flag claimed written that is not would let a pass delete the instruction that does set it).
+fn effect16(t: &str) -> Option<Eff> {
+    let (mn, ops) = parse(t)?;
+    if ops.iter().any(|o| looks_scratch(o) && scratch(o).is_none()) {
+        return None;
+    }
+    let mut e = Eff::default();
+    let read = |e: &mut Eff, op: &str| match loc(op) {
+        Some(l) => e.reads.push(l),
+        None => e.rmem.push(op.to_string()),
+    };
+    let write = |e: &mut Eff, op: &str| match loc(op) {
+        Some(l) => e.writes.push(l),
+        None => e.wmem.push(mem_of(op)),
+    };
+    match mn.as_str() {
+        "movlw" if ops.len() == 1 => {
+            e.writes.push(Loc::W);
+            e.w_imm = parse_lit(ops[0]);
+        }
+        "addlw" | "sublw" if ops.len() == 1 => {
+            e.reads.push(Loc::W);
+            e.writes.push(Loc::W);
+            e.flags_w = Z | C;
+        }
+        "andlw" | "iorlw" | "xorlw" if ops.len() == 1 => {
+            e.reads.push(Loc::W);
+            e.writes.push(Loc::W);
+            e.flags_w = Z;
+        }
+        "clrw" if ops.is_empty() => {
+            e.writes.push(Loc::W);
+            e.flags_w = Z;
+        }
+        "movwf" if ops.len() == 1 => {
+            e.reads.push(Loc::W);
+            write(&mut e, ops[0]);
+            if loc(ops[0]).is_none() && !is_indirect(ops[0]) {
+                e.w_mem = Some(ops[0].to_string());
+            }
+        }
+        "clrf" if ops.len() == 1 => {
+            write(&mut e, ops[0]);
+            e.flags_w = Z;
+        }
+        "movf" if ops.len() == 2 => {
+            let d = dest(ops[1])?;
+            read(&mut e, ops[0]);
+            e.flags_w = Z;
+            match d {
+                Dest::W => {
+                    e.writes.push(Loc::W);
+                    if loc(ops[0]).is_none() && !is_indirect(ops[0]) {
+                        e.w_mem = Some(ops[0].to_string());
+                    }
+                }
+                Dest::F => write(&mut e, ops[0]),
+            }
+        }
+        "addwf" | "addwfc" | "subwf" | "subwfb" | "andwf" | "iorwf" | "xorwf" | "incf" | "decf" | "comf" | "swapf" | "rlf" | "rrf" | "lslf" | "lsrf" | "asrf" if ops.len() == 2 => {
+            let d = dest(ops[1])?;
+            let two = matches!(mn.as_str(), "addwf" | "addwfc" | "subwf" | "subwfb" | "andwf" | "iorwf" | "xorwf");
+            if two {
+                e.reads.push(Loc::W);
+            }
+            read(&mut e, ops[0]);
+            e.flags_w = match mn.as_str() {
+                "addwf" | "addwfc" | "subwf" | "subwfb" | "lslf" | "lsrf" | "asrf" => Z | C,
+                "andwf" | "iorwf" | "xorwf" | "incf" | "decf" | "comf" => Z,
+                "rlf" | "rrf" => C,
+                _ => 0,
+            };
+            if matches!(mn.as_str(), "addwfc" | "subwfb" | "rlf" | "rrf") {
+                e.flags_r = C;
+            }
+            match d {
+                Dest::W => e.writes.push(Loc::W),
+                Dest::F => write(&mut e, ops[0]),
+            }
+        }
+        // Reads through an FSR with a fixed offset; the `++` and `--` forms change the FSR and are left alone.
+        "moviw" if ops.len() == 1 && ops[0].contains('[') => {
+            e.writes.push(Loc::W);
+            e.rmem.push("INDF".into());
+            e.flags_w = Z;
+        }
+        "movwi" if ops.len() == 1 && ops[0].contains('[') => {
+            e.reads.push(Loc::W);
+            e.wmem.push(Mem::Unknown);
+        }
+        "bsf" | "bcf" if ops.len() == 2 => {
+            if ops[0].eq_ignore_ascii_case("STATUS") {
+                return None;
+            }
+            e.rmem.push(ops[0].to_string());
+            e.wmem.push(mem_of(ops[0]));
+            if let Some(l) = loc(ops[0]) {
+                e.reads.push(l);
+                e.writes.push(l);
+            }
+        }
+        "nop" | "movlb" | "movlp" => {}
+        _ => return None,
+    }
+    if ops.iter().any(|o| o.eq_ignore_ascii_case("STATUS")) {
+        return None;
     }
     Some(e)
 }
@@ -569,6 +697,11 @@ fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
             Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => {
                 used.extend(idents(t));
             }
+            // The skip instruction reads or counts a variable.
+            Item::SkipBr(ins, t) => {
+                used.extend(idents(ins));
+                used.extend(idents(t));
+            }
             _ => {}
         }
     }
@@ -607,7 +740,7 @@ fn pass_xorlw_zero(items: &mut Vec<Item>) -> bool {
             while j > 0 && matches!(items[j], Item::Comment(_)) {
                 j -= 1;
             }
-            let ok = matches!(&items[j], Item::Ins(t) if matches!(effect(t), Some(e) if e.writes == [Loc::W] && e.flags_w & (Z | N) == (Z | N)));
+            let ok = matches!(&items[j], Item::Ins(t) if matches!(effect(t), Some(e) if e.writes == [Loc::W] && e.flags_w & zflags() == zflags()));
             // `movf m, w` also qualifies (checked through its effect); `movlw` does not set flags.
             if ok {
                 items.remove(i);
@@ -876,7 +1009,7 @@ fn pass_unused_labels(items: &mut Vec<Item>) -> bool {
     let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for it in items.iter() {
         match it {
-            Item::Br(_, t) | Item::Call(t) => {
+            Item::Br(_, t) | Item::SkipBr(_, t) | Item::Call(t) => {
                 used.insert(t.as_str());
             }
             Item::Ins(t) | Item::Raw(t) => {
@@ -1255,6 +1388,40 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     items
 }
 
+/// [`optimise`] for the enhanced mid-range core: the passes that do not depend on PIC18 instructions. The bank
+/// clean-up has its own pass (`codegen16::opt`), and there is no `movff` to forward or argument in WREG.
+pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
+    // Cleared on the way out even if a pass panics.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CORE16.with(|c| c.set(false));
+        }
+    }
+    CORE16.with(|c| c.set(true));
+    let _reset = Reset;
+    for _ in 0..8 {
+        let mut changed = false;
+        changed |= pass_unused_labels(&mut items);
+        changed |= pass_tail_call(&mut items);
+        changed |= pass_unreachable(&mut items);
+        changed |= pass_halt_loop(&mut items);
+        changed |= pass_branch_to_next(&mut items);
+        changed |= pass_branch_over_branch(&mut items);
+        changed |= pass_xorlw_zero(&mut items);
+        changed |= pass_repeat_test(&mut items, env);
+        changed |= pass_wreg(&mut items, env);
+        changed |= pass_dead_stores(&mut items, env);
+        if !env.keep_writes {
+            changed |= pass_write_only(&mut items, env);
+        }
+        if !changed {
+            break;
+        }
+    }
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1545,5 +1712,41 @@ mod tests {
         };
         assert!(!ends(vec![Item::Label("_L1".into()), ins("btg LATB, 0, c"), Item::Br(Cc::Always, "_L1".into())]));
         assert!(ends(vec![ins("btg LATB, 0, c")]));
+    }
+
+    fn run16(src: &[Item]) -> Vec<String> {
+        optimise16(src.to_vec(), &env())
+            .iter()
+            .map(|i| match i {
+                Item::Ins(t) => t.clone(),
+                Item::Label(l) => format!("{l}:"),
+                Item::Br(cc, l) => format!("br{cc:?} {l}"),
+                Item::SkipBr(t, l) => format!("{t} -> {l}"),
+                Item::Fence => "--".into(),
+                _ => "?".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn p16_label_used_only_by_a_skip_branch_stays() {
+        let r = run16(&[Item::Label("_L1".into()), ins("movwi 0[FSR0]"), Item::SkipBr("decfsz __D0, f".into(), "_L1".into())]);
+        assert!(r.contains(&"_L1:".to_string()), "{r:?}");
+    }
+
+    #[test]
+    fn p16_store_to_a_counted_variable_stays() {
+        let mut e = env();
+        e.plain.insert("CNT".into(), (0x14, 1));
+        let src = [ins("movlw 5"), ins("movwf CNT"), Item::Label("_L1".into()), Item::SkipBr("decfsz CNT, f".into(), "_L1".into())];
+        let r = optimise16(src.to_vec(), &e);
+        assert!(r.iter().any(|i| matches!(i, Item::Ins(t) if t == "movwf CNT")));
+    }
+
+    #[test]
+    fn p16_rotate_does_not_set_z() {
+        // `rlf` leaves Z alone, so the `movf` before it is not made dead by it.
+        let r = run16(&[ins("movf X, w"), ins("rlf Y, f"), Item::Br(Cc::Z, "L".into())]);
+        assert!(r.contains(&"movf X, w".to_string()), "{r:?}");
     }
 }

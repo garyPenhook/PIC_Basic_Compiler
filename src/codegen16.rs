@@ -403,7 +403,19 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
         return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() };
     };
-    let items = if tgt.opt { opt::drop_redundant_movlb(items) } else { items };
+    let items = if tgt.opt {
+        let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
+        for (i, o) in objs.iter().enumerate() {
+            if let Some(a) = layout.addr[i] && !(i < nvars && p.vars[i].volatile) {
+                let name = if i >= nvars && i < nvars + 4 { format!("__{}0", SCRATCH[i - nvars]) } else { o.name.clone() };
+                plain.insert(name, (a, o.bytes));
+            }
+        }
+        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars });
+        opt::drop_redundant_movlb(items)
+    } else {
+        items
+    };
     let mut asmd: Assembled = assemble16(&items, 0, false);
     let multipage = asmd.words > 2048;
     if multipage {

@@ -910,342 +910,982 @@ Public Function FToLong(ByVal a As LongWord) As LongInt
 End Function
 #else
 ' The enhanced mid-range core (PIC16F171xx) has no hardware multiplier, no MOVFF and no compare-and-skip
-' instructions, so the routines are written in Basic on LongWord arithmetic, which the code generator
-' turns into the same byte-wise 32-bit operations. They give the same results bit for bit as the assembly
-' above (round to nearest even, canonical NaN, denormals flushed) but are larger and slower.
+' instructions: these are the routines above rewritten for it. The multiply is a 24-step shift-and-add loop,
+' rounding and the range compares use SUBWF and the carry, and a conditional branch is a flag test that skips a BRA.
+' The results are bit for bit those of the PIC18 routines. Banked operands are reached with MOVLB.
 
-Const ExpMask As LongWord = $7F800000
-Const FracMask As LongWord = $007FFFFF
-
-' Builds the result: `sgn` is SignBit or 0, `e` the biased exponent of the leading one (signed), `m` the
-' mantissa with the leading one at bit 31 (24 bits, then the guard bit and below it, sticky merged into
-' bit 0). Rounds to nearest even; a result below the smallest normal number is a signed zero and one
-' above the largest is an infinity.
-Private Function Pack(ByVal sgn As LongWord, ByVal e As Integer, ByVal m As LongWord) As LongWord
-    Dim f As LongWord
-    Dim lo As Byte
-    Result = sgn
-    If e < 0 Then
-        Exit
-    End If
-    f = m >> 8
-    lo = Byte(m)
-    If lo > 128 Or (lo = 128 And (f And 1) = 1) Then
-        f = f + 1
-        If f > $FFFFFF Then
-            f = $800000
-            e = e + 1
-        End If
-    End If
-    If e >= 255 Then
-        Result = sgn Or ExpMask
-    ElseIf e > 0 Then
-        Result = sgn Or (LongWord(e) << 23) Or (f And FracMask)
-    End If
-End Function
+' Builds the result: sign in __D0 (bit 7 only), biased exponent of the leading one in __C1:__C0
+' (signed), mantissa in __A3..__A0 with the leading one at bit 31 (a 24-bit mantissa in __A3..__A1
+' and the bits below it in __A0). Rounds to nearest even on __A0 and leaves the float in __A3..__A0.
+Private Sub Pack()
+    Asm
+        btfsc __C1, 7
+        bra FLP_UNDER
+        rrf __A1, w
+        movlw 0x7F
+        addwfc __A0, w
+        btfss STATUS, 0
+        bra FLP_RD
+        incfsz __A1, f
+        bra FLP_RD
+        incfsz __A2, f
+        bra FLP_RD
+        incfsz __A3, f
+        bra FLP_RD
+        movlw 0x80
+        movwf __A3
+        incf __C0, f
+        btfsc STATUS, 2
+        incf __C1, f
+    FLP_RD:
+        movf __C1, f
+        btfss STATUS, 2
+        bra FLP_OVER
+        incf __C0, w
+        btfsc STATUS, 2
+        bra FLP_OVER
+        movf __C0, f
+        btfsc STATUS, 2
+        bra FLP_UNDER
+        lslf __A3, f
+        lsrf __C0, f
+        rrf __A3, f
+        movf __A1, w
+        movwf __A0
+        movf __A2, w
+        movwf __A1
+        movf __A3, w
+        movwf __A2
+        movf __C0, w
+        iorwf __D0, w
+        movwf __A3
+        return
+    FLP_OVER:
+        movlw 0x80
+        movwf __A2
+        movlw 0x7F
+        bra FLP_END
+    FLP_UNDER:
+        clrf __A2
+        movlw 0
+    FLP_END:
+        clrf __A0
+        clrf __A1
+        iorwf __D0, w
+        movwf __A3
+    End Asm
+End Sub
 
 Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
-    Dim t As LongWord
-    Dim ma As LongWord
-    Dim mb As LongWord
-    Dim ea As Byte
-    Dim eb As Byte
-    Dim d As Byte
-    Dim e As Integer
-    If (b And $7FFFFFFF) > (a And $7FFFFFFF) Then
-        t = a
-        a = b
-        b = t
-    End If
-    ea = Byte(a >> 23)
-    eb = Byte(b >> 23)
-    Result = NaNBits
-    If ea = 255 Then
-        If (a And FracMask) <> 0 Then
-            Exit
-        End If
-        If eb = 255 And ((a Xor b) And SignBit) <> 0 Then
-            Exit
-        End If
-        Result = a
-        Exit
-    End If
-    If eb = 0 Then
-        If ea <> 0 Then
-            Result = a
-        Else
-            Result = a And b And SignBit
-        End If
-        Exit
-    End If
-    ma = ((a And FracMask) Or $800000) << 8
-    mb = ((b And FracMask) Or $800000) << 8
-    d = ea - eb
-    If d >= 32 Then
-        mb = 1
-    ElseIf d > 0 Then
-        t = mb
-        mb = mb >> d
-        If (t And ((LongWord(1) << d) - 1)) <> 0 Then
-            mb = mb Or 1
-        End If
-    End If
-    e = ea
-    If ((a Xor b) And SignBit) = 0 Then
-        ma = ma + mb
-        If ma < mb Then
-            t = ma And 1
-            ma = (ma >> 1) Or SignBit
-            If t <> 0 Then
-                ma = ma Or 1
-            End If
-            e = e + 1
-        End If
-    Else
-        ma = ma - mb
-        If ma = 0 Then
-            Result = 0
-            Exit
-        End If
-        While (ma And SignBit) = 0
-            If (ma And $FF000000) = 0 Then
-                ma = ma << 8
-                e = e - 8
-            Else
-                ma = ma << 1
-                e = e - 1
-            End If
-        Wend
-    End If
-    Result = Pack(a And SignBit, e, ma)
+    Asm
+        movlb FLOATLIB_FADD__A >> 7
+        movf FLOATLIB_FADD__A, w
+        movwf __A0
+        movf FLOATLIB_FADD__A+1, w
+        movwf __A1
+        movf FLOATLIB_FADD__A+2, w
+        movwf __A2
+        movf FLOATLIB_FADD__A+3, w
+        movwf __A3
+        movlb FLOATLIB_FADD__B >> 7
+        movf FLOATLIB_FADD__B, w
+        movwf __B0
+        movf FLOATLIB_FADD__B+1, w
+        movwf __B1
+        movf FLOATLIB_FADD__B+2, w
+        movwf __B2
+        movf FLOATLIB_FADD__B+3, w
+        movwf __B3
+        movf __A3, w
+        andlw 0x7F
+        movwf __C0
+        movf __B3, w
+        andlw 0x7F
+        movwf __C1
+        movf __A0, w
+        subwf __B0, w
+        movf __A1, w
+        subwfb __B1, w
+        movf __A2, w
+        subwfb __B2, w
+        movf __C0, w
+        subwfb __C1, w
+        btfss STATUS, 0
+        bra FLA_OK
+        movf __A0, w
+        xorwf __B0, w
+        xorwf __A0, f
+        xorwf __B0, f
+        movf __A1, w
+        xorwf __B1, w
+        xorwf __A1, f
+        xorwf __B1, f
+        movf __A2, w
+        xorwf __B2, w
+        xorwf __A2, f
+        xorwf __B2, f
+        movf __A3, w
+        xorwf __B3, w
+        xorwf __A3, f
+        xorwf __B3, f
+    FLA_OK:
+        movf __A3, w
+        andlw 0x80
+        movwf __D0
+        movf __B3, w
+        andlw 0x80
+        movwf __D1
+        rlf __A2, w
+        rlf __A3, w
+        movwf __C0
+        rlf __B2, w
+        rlf __B3, w
+        movwf __D2
+        clrf __C1
+        incf __C0, w
+        btfss STATUS, 2
+        bra FLA_FIN
+        movf __A2, w
+        andlw 0x7F
+        iorwf __A1, w
+        iorwf __A0, w
+        btfss STATUS, 2
+        bra FLA_NAN
+        incf __D2, w
+        btfss STATUS, 2
+        bra FLA_RET
+        movf __D0, w
+        xorwf __D1, w
+        btfsc STATUS, 2
+        bra FLA_RET
+    FLA_NAN:
+        clrf __A0
+        clrf __A1
+        movlw 0xC0
+        movwf __A2
+        movlw 0x7F
+        movwf __A3
+        bra FLA_RET
+    FLA_FIN:
+        movf __D2, f
+        btfss STATUS, 2
+        bra FLA_NORM
+        movf __C0, f
+        btfss STATUS, 2
+        bra FLA_RET
+        movf __D1, w
+        andwf __D0, w
+        clrf __A0
+        clrf __A1
+        clrf __A2
+        movwf __A3
+        bra FLA_RET
+    FLA_NORM:
+        bsf __A2, 7
+        movf __A2, w
+        movwf __A3
+        movf __A1, w
+        movwf __A2
+        movf __A0, w
+        movwf __A1
+        clrf __A0
+        bsf __B2, 7
+        movf __B2, w
+        movwf __B3
+        movf __B1, w
+        movwf __B2
+        movf __B0, w
+        movwf __B1
+        clrf __B0
+        movf __D2, w
+        subwf __C0, w
+        btfsc STATUS, 2
+        bra FLA_AL
+        movwf __D3
+movlw 32
+subwf __D3, w
+btfsc STATUS, 0
+bra FLA_FAR
+    FLA_SH:
+        btfsc __B0, 0
+        bsf __D1, 0
+        lsrf __B3, f
+        rrf __B2, f
+        rrf __B1, f
+        rrf __B0, f
+        decfsz __D3, f
+        bra FLA_SH
+        btfsc __D1, 0
+        bsf __B0, 0
+        bra FLA_AL
+    FLA_FAR:
+        clrf __B3
+        clrf __B2
+        clrf __B1
+        movlw 1
+        movwf __B0
+    FLA_AL:
+        movf __D0, w
+        xorwf __D1, w
+        andlw 0x80
+        btfss STATUS, 2
+        bra FLA_SUB
+        movf __B0, w
+        addwf __A0, f
+        movf __B1, w
+        addwfc __A1, f
+        movf __B2, w
+        addwfc __A2, f
+        movf __B3, w
+        addwfc __A3, f
+        btfss STATUS, 0
+        bra FLA_PK
+        rrf __A3, f
+        rrf __A2, f
+        rrf __A1, f
+        rrf __A0, f
+        btfsc STATUS, 0
+        bsf __A0, 0
+        incf __C0, f
+        bra FLA_PK
+    FLA_SUB:
+        movf __B0, w
+        subwf __A0, f
+        movf __B1, w
+        subwfb __A1, f
+        movf __B2, w
+        subwfb __A2, f
+        movf __B3, w
+        subwfb __A3, f
+        movf __A0, w
+        iorwf __A1, w
+        iorwf __A2, w
+        iorwf __A3, w
+        btfsc STATUS, 2
+        bra FLA_RET
+    FLA_NL:
+        btfsc __A3, 7
+        bra FLA_PK
+        movf __A3, f
+        btfss STATUS, 2
+        bra FLA_BIT
+        movf __A2, w
+        movwf __A3
+        movf __A1, w
+        movwf __A2
+        movf __A0, w
+        movwf __A1
+        clrf __A0
+        movlw 8
+        subwf __C0, f
+        movlw 0
+        subwfb __C1, f
+        bra FLA_NL
+    FLA_BIT:
+        lslf __A0, f
+        rlf __A1, f
+        rlf __A2, f
+        rlf __A3, f
+        movlw 1
+        subwf __C0, f
+        movlw 0
+        subwfb __C1, f
+        bra FLA_NL
+    FLA_PK:
+    End Asm
+        Pack()
+    Asm
+    FLA_RET:
+        movf __A0, w
+        movlb FLOATLIB_FADD__RESULT >> 7
+        movwf FLOATLIB_FADD__RESULT
+        movf __A1, w
+        movwf FLOATLIB_FADD__RESULT+1
+        movf __A2, w
+        movwf FLOATLIB_FADD__RESULT+2
+        movf __A3, w
+        movwf FLOATLIB_FADD__RESULT+3
+    End Asm
 End Function
 
 Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
-    Dim sgn As LongWord
-    Dim ea As Byte
-    Dim eb As Byte
-    Dim a0 As Word
-    Dim a1 As Word
-    Dim b0 As Word
-    Dim b1 As Word
-    Dim mid As LongWord
-    Dim hi As LongWord
-    Dim lo As LongWord
-    Dim top As LongWord
-    Dim rem As Word
-    Dim e As Integer
-    sgn = (a Xor b) And SignBit
-    ea = Byte(a >> 23)
-    eb = Byte(b >> 23)
-    Result = NaNBits
-    If ea = 255 And (a And FracMask) <> 0 Then
-        Exit
-    End If
-    If eb = 255 And (b And FracMask) <> 0 Then
-        Exit
-    End If
-    If ea = 255 Then
-        If eb <> 0 Then
-            Result = sgn Or ExpMask
-        End If
-        Exit
-    End If
-    If eb = 255 Then
-        If ea <> 0 Then
-            Result = sgn Or ExpMask
-        End If
-        Exit
-    End If
-    If ea = 0 Or eb = 0 Then
-        Result = sgn
-        Exit
-    End If
-    ' 24 x 24 bit product from 12 bit halves: hi holds bits 47..24 of it, lo bits 23..0.
-    top = (a And FracMask) Or $800000
-    a1 = Word(top >> 12)
-    a0 = Word(top And $FFF)
-    top = (b And FracMask) Or $800000
-    b1 = Word(top >> 12)
-    b0 = Word(top And $FFF)
-    hi = a1 * b1
-    mid = a0 * b1
-    mid = mid + a1 * b0
-    lo = a0 * b0
-    lo = lo + ((mid And $FFF) << 12)
-    hi = hi + (mid >> 12) + (lo >> 24)
-    lo = lo And $FFFFFF
-    top = (hi << 8) Or (lo >> 16)
-    rem = Word(lo And $FFFF)
-    e = ea
-    e = e + eb - 127
-    If (top And SignBit) <> 0 Then
-        e = e + 1
-        If rem <> 0 Then
-            top = top Or 1
-        End If
-    Else
-        top = (top << 1) Or LongWord(rem >> 15)
-        If (rem And $7FFF) <> 0 Then
-            top = top Or 1
-        End If
-    End If
-    Result = Pack(sgn, e, top)
+    Asm
+        movlb FLOATLIB_FMUL__A >> 7
+        movf FLOATLIB_FMUL__A, w
+        movwf __B0
+        movf FLOATLIB_FMUL__A+1, w
+        movwf __B1
+        movf FLOATLIB_FMUL__A+2, w
+        movwf __B2
+        movf FLOATLIB_FMUL__A+3, w
+        movwf __A3
+        movlb FLOATLIB_FMUL__B >> 7
+        movf FLOATLIB_FMUL__B, w
+        movwf __D1
+        movf FLOATLIB_FMUL__B+1, w
+        movwf __D3
+        movf FLOATLIB_FMUL__B+2, w
+        movwf __A0
+        movf FLOATLIB_FMUL__B+3, w
+        movwf __D2
+        movf __A3, w
+        xorwf __D2, w
+        andlw 0x80
+        movwf __D0
+        rlf __B2, w
+        rlf __A3, w
+        movwf __C0
+        rlf __A0, w
+        rlf __D2, w
+        movwf __D2
+        incf __C0, w
+        btfss STATUS, 2
+        bra FLM_1
+        movf __B2, w
+        andlw 0x7F
+        iorwf __B1, w
+        iorwf __B0, w
+        btfss STATUS, 2
+        bra FLM_NAN
+    FLM_1:
+        incf __D2, w
+        btfss STATUS, 2
+        bra FLM_2
+        movf __A0, w
+        andlw 0x7F
+        iorwf __D3, w
+        iorwf __D1, w
+        btfss STATUS, 2
+        bra FLM_NAN
+    FLM_2:
+        incf __C0, w
+        btfsc STATUS, 2
+        bra FLM_AI
+        incf __D2, w
+        btfss STATUS, 2
+        bra FLM_FIN
+        movf __C0, f
+        btfsc STATUS, 2
+        bra FLM_NAN
+        bra FLM_INF
+    FLM_AI:
+        movf __D2, f
+        btfsc STATUS, 2
+        bra FLM_NAN
+    FLM_INF:
+        clrf __A0
+        clrf __A1
+        movlw 0x80
+        movwf __A2
+        movlw 0x7F
+        bra FLM_SG
+    FLM_NAN:
+        clrf __A0
+        clrf __A1
+        movlw 0xC0
+        movwf __A2
+        movlw 0x7F
+        bra FLM_OUT
+    FLM_ZERO:
+        clrf __A0
+        clrf __A1
+        clrf __A2
+        movlw 0
+    FLM_SG:
+        iorwf __D0, w
+    FLM_OUT:
+        movwf __A3
+        bra FLM_RET
+    FLM_FIN:
+        movf __C0, f
+        btfsc STATUS, 2
+        bra FLM_ZERO
+        movf __D2, f
+        btfsc STATUS, 2
+        bra FLM_ZERO
+        movf __D2, w
+        addwf __C0, f
+        clrf __C1
+        movlw 0
+        addwfc __C1, f
+        movlw 127
+        subwf __C0, f
+        movlw 0
+        subwfb __C1, f
+        bsf __B2, 7
+        bsf __A0, 7
+        clrf __A1
+        clrf __A2
+        clrf __A3
+        movlw 24
+        movwf __D2
+    FLM_ML:
+        bcf STATUS, 0
+        btfss __D1, 0
+        bra FLM_SH
+        movf __B0, w
+        addwf __A1, f
+        movf __B1, w
+        addwfc __A2, f
+        movf __B2, w
+        addwfc __A3, f
+    FLM_SH:
+        rrf __A3, f
+        rrf __A2, f
+        rrf __A1, f
+        rrf __A0, f
+        rrf __D3, f
+        rrf __D1, f
+        decfsz __D2, f
+        bra FLM_ML
+        movf __D3, w
+        iorwf __D1, w
+        btfss STATUS, 2
+        bsf __A0, 0
+        btfsc __A3, 7
+        bra FLM_TOP
+        lslf __D3, f
+        rlf __A0, f
+        rlf __A1, f
+        rlf __A2, f
+        rlf __A3, f
+        bra FLM_PK
+    FLM_TOP:
+        incf __C0, f
+        btfsc STATUS, 2
+        incf __C1, f
+    FLM_PK:
+    End Asm
+        Pack()
+    Asm
+    FLM_RET:
+        movf __A0, w
+        movlb FLOATLIB_FMUL__RESULT >> 7
+        movwf FLOATLIB_FMUL__RESULT
+        movf __A1, w
+        movwf FLOATLIB_FMUL__RESULT+1
+        movf __A2, w
+        movwf FLOATLIB_FMUL__RESULT+2
+        movf __A3, w
+        movwf FLOATLIB_FMUL__RESULT+3
+    End Asm
 End Function
 
 Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
-    Dim sgn As LongWord
-    Dim ea As Byte
-    Dim eb As Byte
-    Dim ma As LongWord
-    Dim mb As LongWord
-    Dim q As LongWord
-    Dim e As Integer
-    Dim i As Byte
-    sgn = (a Xor b) And SignBit
-    ea = Byte(a >> 23)
-    eb = Byte(b >> 23)
-    Result = NaNBits
-    If ea = 255 And (a And FracMask) <> 0 Then
-        Exit
-    End If
-    If eb = 255 And (b And FracMask) <> 0 Then
-        Exit
-    End If
-    If ea = 255 Then
-        If eb <> 255 Then
-            Result = sgn Or ExpMask
-        End If
-        Exit
-    End If
-    If eb = 255 Then
-        Result = sgn
-        Exit
-    End If
-    If eb = 0 Then
-        If ea <> 0 Then
-            Result = sgn Or ExpMask
-        End If
-        Exit
-    End If
-    If ea = 0 Then
-        Result = sgn
-        Exit
-    End If
-    ma = (a And FracMask) Or $800000
-    mb = (b And FracMask) Or $800000
-    e = ea
-    e = e - eb + 127
-    If ma < mb Then
-        ma = ma << 1
-        e = e - 1
-    End If
-    q = 0
-    For i = 1 To 32
-        q = q << 1
-        If ma >= mb Then
-            ma = ma - mb
-            q = q Or 1
-        End If
-        ma = ma << 1
-    Next
-    If ma <> 0 Then
-        q = q Or 1
-    End If
-    Result = Pack(sgn, e, q)
+    Asm
+        movlb FLOATLIB_FDIV__A >> 7
+        movf FLOATLIB_FDIV__A, w
+        movwf __B0
+        movf FLOATLIB_FDIV__A+1, w
+        movwf __B1
+        movf FLOATLIB_FDIV__A+2, w
+        movwf __B2
+        movf FLOATLIB_FDIV__A+3, w
+        movwf __A3
+        movlb FLOATLIB_FDIV__B >> 7
+        movf FLOATLIB_FDIV__B, w
+        movwf __C2
+        movf FLOATLIB_FDIV__B+1, w
+        movwf __C3
+        movf FLOATLIB_FDIV__B+2, w
+        movwf __D1
+        movf FLOATLIB_FDIV__B+3, w
+        movwf __D2
+        movf __A3, w
+        xorwf __D2, w
+        andlw 0x80
+        movwf __D0
+        rlf __B2, w
+        rlf __A3, w
+        movwf __C0
+        rlf __D1, w
+        rlf __D2, w
+        movwf __D2
+        incf __C0, w
+        btfss STATUS, 2
+        bra FLD_1
+        movf __B2, w
+        andlw 0x7F
+        iorwf __B1, w
+        iorwf __B0, w
+        btfss STATUS, 2
+        bra FLD_NAN
+    FLD_1:
+        incf __D2, w
+        btfss STATUS, 2
+        bra FLD_2
+        movf __D1, w
+        andlw 0x7F
+        iorwf __C3, w
+        iorwf __C2, w
+        btfss STATUS, 2
+        bra FLD_NAN
+    FLD_2:
+        incf __C0, w
+        btfss STATUS, 2
+        bra FLD_3
+        incf __D2, w
+        btfsc STATUS, 2
+        bra FLD_NAN
+        bra FLD_INF
+    FLD_3:
+        incf __D2, w
+        btfsc STATUS, 2
+        bra FLD_ZERO
+        movf __D2, f
+        btfss STATUS, 2
+        bra FLD_5
+        movf __C0, f
+        btfsc STATUS, 2
+        bra FLD_NAN
+    FLD_INF:
+        clrf __A0
+        clrf __A1
+        movlw 0x80
+        movwf __A2
+        movlw 0x7F
+        bra FLD_SG
+    FLD_NAN:
+        clrf __A0
+        clrf __A1
+        movlw 0xC0
+        movwf __A2
+        movlw 0x7F
+        bra FLD_OUT
+    FLD_5:
+        movf __C0, f
+        btfss STATUS, 2
+        bra FLD_GO
+    FLD_ZERO:
+        clrf __A0
+        clrf __A1
+        clrf __A2
+        movlw 0
+    FLD_SG:
+        iorwf __D0, w
+    FLD_OUT:
+        movwf __A3
+        bra FLD_RET
+    FLD_GO:
+        clrf __C1
+        movf __D2, w
+        subwf __C0, f
+        movlw 0
+        subwfb __C1, f
+        movlw 127
+        addwf __C0, f
+        movlw 0
+        addwfc __C1, f
+        bsf __B2, 7
+        bsf __D1, 7
+        movf __C2, w
+        subwf __B0, w
+        movf __C3, w
+        subwfb __B1, w
+        movf __D1, w
+        subwfb __B2, w
+        btfsc STATUS, 0
+        bra FLD_LP0
+        lslf __B0, f
+        rlf __B1, f
+        rlf __B2, f
+        bsf __D0, 0
+        movlw 1
+        subwf __C0, f
+        movlw 0
+        subwfb __C1, f
+    FLD_LP0:
+        movlw 32
+        movwf __D3
+    FLD_LP:
+        movf __C2, w
+        subwf __B0, f
+        movf __C3, w
+        subwfb __B1, f
+        movf __D1, w
+        subwfb __B2, f
+        btfsc STATUS, 0
+        bra FLD_TAKE
+        btfsc __D0, 0
+        bra FLD_TAKE
+        movf __C2, w
+        addwf __B0, f
+        movf __C3, w
+        addwfc __B1, f
+        movf __D1, w
+        addwfc __B2, f
+        bcf STATUS, 0
+        bra FLD_Q
+    FLD_TAKE:
+        bsf STATUS, 0
+    FLD_Q:
+        rlf __A0, f
+        rlf __A1, f
+        rlf __A2, f
+        rlf __A3, f
+        bcf __D0, 0
+        lslf __B0, f
+        rlf __B1, f
+        rlf __B2, f
+        btfsc STATUS, 0
+        bsf __D0, 0
+        decfsz __D3, f
+        bra FLD_LP
+        movf __B0, w
+        iorwf __B1, w
+        iorwf __B2, w
+        btfsc __D0, 0
+        iorlw 1
+        btfsc STATUS, 2
+        bra FLD_ST
+        bsf __A0, 0
+    FLD_ST:
+        bcf __D0, 0
+    End Asm
+        Pack()
+    Asm
+    FLD_RET:
+        movf __A0, w
+        movlb FLOATLIB_FDIV__RESULT >> 7
+        movwf FLOATLIB_FDIV__RESULT
+        movf __A1, w
+        movwf FLOATLIB_FDIV__RESULT+1
+        movf __A2, w
+        movwf FLOATLIB_FDIV__RESULT+2
+        movf __A3, w
+        movwf FLOATLIB_FDIV__RESULT+3
+    End Asm
 End Function
 
 ' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0); 2 when either is NaN.
 Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
-    Dim ma As LongWord
-    Dim mb As LongWord
-    Result = 2
-    ma = a And $7FFFFFFF
-    mb = b And $7FFFFFFF
-    If ma > ExpMask Or mb > ExpMask Then
-        Exit
-    End If
-    If ma = 0 And mb = 0 Then
-        Result = 0
-    ElseIf ((a Xor b) And SignBit) <> 0 Then
-        If (a And SignBit) <> 0 Then
-            Result = -1
-        Else
-            Result = 1
-        End If
-    ElseIf ma = mb Then
-        Result = 0
-    ElseIf (ma > mb) = ((a And SignBit) = 0) Then
-        Result = 1
-    Else
-        Result = -1
-    End If
+    Asm
+        movlb FLOATLIB_CMP__A >> 7
+        movf FLOATLIB_CMP__A, w
+        movwf __A0
+        movf FLOATLIB_CMP__A+1, w
+        movwf __A1
+        movf FLOATLIB_CMP__A+2, w
+        movwf __A2
+        movf FLOATLIB_CMP__A+3, w
+        movwf __A3
+        movlb FLOATLIB_CMP__B >> 7
+        movf FLOATLIB_CMP__B, w
+        movwf __B0
+        movf FLOATLIB_CMP__B+1, w
+        movwf __B1
+        movf FLOATLIB_CMP__B+2, w
+        movwf __B2
+        movf FLOATLIB_CMP__B+3, w
+        movwf __B3
+        movf __A3, w
+        andlw 0x7F
+        xorlw 0x7F
+        btfss STATUS, 2
+        bra FLC_B
+        btfss __A2, 7
+        bra FLC_B
+        movf __A2, w
+        andlw 0x7F
+        iorwf __A1, w
+        iorwf __A0, w
+        btfss STATUS, 2
+        bra FLC_NAN
+    FLC_B:
+        movf __B3, w
+        andlw 0x7F
+        xorlw 0x7F
+        btfss STATUS, 2
+        bra FLC_Z
+        btfss __B2, 7
+        bra FLC_Z
+        movf __B2, w
+        andlw 0x7F
+        iorwf __B1, w
+        iorwf __B0, w
+        btfss STATUS, 2
+        bra FLC_NAN
+    FLC_Z:
+        movf __A3, w
+        andlw 0x7F
+        iorwf __A2, w
+        iorwf __A1, w
+        iorwf __A0, w
+        movwf __C0
+        movf __B3, w
+        andlw 0x7F
+        iorwf __B2, w
+        iorwf __B1, w
+        iorwf __B0, w
+        iorwf __C0, w
+        btfsc STATUS, 2
+        bra FLC_EQ
+        movf __A3, w
+xorwf __B3, w
+andlw 0x80
+btfss STATUS, 2
+bra FLC_DIFF
+        movf __A3, w
+        movwf __D0
+        movf __B0, w
+        subwf __A0, f
+        movf __B1, w
+        subwfb __A1, f
+        movf __B2, w
+        subwfb __A2, f
+        movf __B3, w
+        subwfb __A3, f
+        movf __A0, w
+        iorwf __A1, w
+        iorwf __A2, w
+        iorwf __A3, w
+        btfsc STATUS, 2
+        bra FLC_EQ
+        movlw 1
+        btfss STATUS, 0
+        movlw 0xFF
+        btfsc __D0, 7
+        sublw 0
+        bra FLC_ST
+    FLC_DIFF:
+        movlw 0xFF
+        btfss __A3, 7
+        movlw 1
+        bra FLC_ST
+    FLC_EQ:
+        movlw 0
+        bra FLC_ST
+    FLC_NAN:
+        movlw 2
+    FLC_ST:
+movlb FLOATLIB_CMP__RESULT >> 7
+        movwf FLOATLIB_CMP__RESULT
+    End Asm
 End Function
 
-' The Float for the magnitude v and the sign `sgn` (SignBit or 0).
-Private Function FromMag(ByVal sgn As LongWord, ByVal v As LongWord) As LongWord
-    Dim e As Integer
-    Result = 0
-    If v = 0 Then
-        Exit
-    End If
-    e = 158
-    While (v And SignBit) = 0
-        If (v And $FF000000) = 0 Then
-            v = v << 8
-            e = e - 8
-        Else
-            v = v << 1
-            e = e - 1
-        End If
-    Wend
-    Result = Pack(sgn, e, v)
-End Function
+
+' The Float for the unsigned magnitude in __A3..__A0 and the sign bit in __D0 (bit 7); leaves it in __A3..__A0.
+Private Sub FromMag()
+    Asm
+        movf __A3, w
+        iorwf __A2, w
+        iorwf __A1, w
+        iorwf __A0, w
+        btfss STATUS, 2
+        bra FLF_GO
+        return
+    FLF_GO:
+        clrf __C1
+        movlw 158
+        movwf __C0
+    FLF_N:
+        btfsc __A3, 7
+        bra FLF_P
+        movf __A3, f
+        btfss STATUS, 2
+        bra FLF_B
+        movf __A2, w
+        movwf __A3
+        movf __A1, w
+        movwf __A2
+        movf __A0, w
+        movwf __A1
+        clrf __A0
+        movlw 8
+        subwf __C0, f
+        bra FLF_N
+    FLF_B:
+        lslf __A0, f
+        rlf __A1, f
+        rlf __A2, f
+        rlf __A3, f
+        decf __C0, f
+        bra FLF_N
+    FLF_P:
+    End Asm
+        Pack()
+End Sub
 
 Public Function FFromLong(ByVal v As LongInt) As LongWord
-    Dim m As LongWord
-    m = LongWord(v)
-    If v < 0 Then
-        Result = FromMag(SignBit, (m Xor $FFFFFFFF) + 1)
-    Else
-        Result = FromMag(0, m)
-    End If
+    Asm
+        movlb FLOATLIB_FFROMLONG__V >> 7
+        movf FLOATLIB_FFROMLONG__V, w
+        movwf __A0
+        movf FLOATLIB_FFROMLONG__V+1, w
+        movwf __A1
+        movf FLOATLIB_FFROMLONG__V+2, w
+        movwf __A2
+        movf FLOATLIB_FFROMLONG__V+3, w
+        movwf __A3
+        movf __A3, w
+        andlw 0x80
+        movwf __D0
+        btfsc STATUS, 2
+        bra FLL_P
+        comf __A0, f
+        comf __A1, f
+        comf __A2, f
+        comf __A3, f
+        movlw 1
+        addwf __A0, f
+        movlw 0
+        addwfc __A1, f
+        addwfc __A2, f
+        addwfc __A3, f
+    FLL_P:
+    End Asm
+        FromMag ()
+    Asm
+        movf __A0, w
+        movlb FLOATLIB_FFROMLONG__RESULT >> 7
+        movwf FLOATLIB_FFROMLONG__RESULT
+        movf __A1, w
+        movwf FLOATLIB_FFROMLONG__RESULT+1
+        movf __A2, w
+        movwf FLOATLIB_FFROMLONG__RESULT+2
+        movf __A3, w
+        movwf FLOATLIB_FFROMLONG__RESULT+3
+    End Asm
 End Function
 
 Public Function FFromULong(ByVal v As LongWord) As LongWord
-    Result = FromMag(0, v)
+    Asm
+        movlb FLOATLIB_FFROMULONG__V >> 7
+        movf FLOATLIB_FFROMULONG__V, w
+        movwf __A0
+        movf FLOATLIB_FFROMULONG__V+1, w
+        movwf __A1
+        movf FLOATLIB_FFROMULONG__V+2, w
+        movwf __A2
+        movf FLOATLIB_FFROMULONG__V+3, w
+        movwf __A3
+        clrf __D0
+    End Asm
+        FromMag ()
+    Asm
+        movf __A0, w
+        movlb FLOATLIB_FFROMULONG__RESULT >> 7
+        movwf FLOATLIB_FFROMULONG__RESULT
+        movf __A1, w
+        movwf FLOATLIB_FFROMULONG__RESULT+1
+        movf __A2, w
+        movwf FLOATLIB_FFROMULONG__RESULT+2
+        movf __A3, w
+        movwf FLOATLIB_FFROMULONG__RESULT+3
+    End Asm
 End Function
 
 ' Truncates toward zero; out of range saturates to the LongInt limits, NaN gives 0.
 Public Function FToLong(ByVal a As LongWord) As LongInt
-    Dim e As Byte
-    Dim m As LongWord
-    Result = 0
-    e = Byte(a >> 23)
-    If e < 127 Then
-        Exit
-    End If
-    If e >= 158 Then
-        If e = 255 And (a And FracMask) <> 0 Then
-            Exit
-        End If
-        If (a And SignBit) <> 0 Then
-            m = SignBit
-        Else
-            m = $7FFFFFFF
-        End If
-        Result = LongInt(m)
-        Exit
-    End If
-    m = (a And FracMask) Or $800000
-    If e >= 150 Then
-        m = m << (e - 150)
-    Else
-        m = m >> (150 - e)
-    End If
-    If (a And SignBit) <> 0 Then
-        m = (m Xor $FFFFFFFF) + 1
-    End If
-    Result = LongInt(m)
+    Asm
+        movlb FLOATLIB_FTOLONG__A >> 7
+        movf FLOATLIB_FTOLONG__A, w
+        movwf __A0
+        movf FLOATLIB_FTOLONG__A+1, w
+        movwf __A1
+        movf FLOATLIB_FTOLONG__A+2, w
+        movwf __A2
+        movf FLOATLIB_FTOLONG__A+3, w
+        movwf __A3
+        movf __A3, w
+        andlw 0x80
+        movwf __D0
+        rlf __A2, w
+        rlf __A3, w
+        movwf __C0
+movlw 127
+subwf __C0, w
+btfsc STATUS, 0
+bra FLT_GE
+    FLT_Z:
+        clrf __A0
+        clrf __A1
+        clrf __A2
+        clrf __A3
+        bra FLT_OUT
+    FLT_GE:
+movlw 158
+subwf __C0, w
+btfsc STATUS, 0
+bra FLT_BIG
+        bsf __A2, 7
+        clrf __A3
+movlw 150
+subwf __C0, w
+btfsc STATUS, 0
+bra FLT_L
+        movf __C0, w
+        sublw 150
+        movwf __D3
+    FLT_R:
+        lsrf __A2, f
+        rrf __A1, f
+        rrf __A0, f
+        decfsz __D3, f
+        bra FLT_R
+        bra FLT_NEG
+    FLT_L:
+        movlw 150
+        subwf __C0, w
+        btfsc STATUS, 2
+        bra FLT_NEG
+        movwf __D3
+    FLT_LL:
+        lslf __A0, f
+        rlf __A1, f
+        rlf __A2, f
+        rlf __A3, f
+        decfsz __D3, f
+        bra FLT_LL
+    FLT_NEG:
+        btfss __D0, 7
+        bra FLT_OUT
+        comf __A0, f
+        comf __A1, f
+        comf __A2, f
+        comf __A3, f
+        movlw 1
+        addwf __A0, f
+        movlw 0
+        addwfc __A1, f
+        addwfc __A2, f
+        addwfc __A3, f
+        bra FLT_OUT
+    FLT_BIG:
+        incf __C0, w
+        btfss STATUS, 2
+        bra FLT_SAT
+        movf __A2, w
+        andlw 0x7F
+        iorwf __A1, w
+        iorwf __A0, w
+        btfss STATUS, 2
+        bra FLT_Z
+    FLT_SAT:
+movlw 0xFF
+movwf __A0
+movwf __A1
+movwf __A2
+        movlw 0x7F
+        movwf __A3
+        btfss __D0, 7
+        bra FLT_OUT
+        clrf __A0
+        clrf __A1
+        clrf __A2
+        movlw 0x80
+        movwf __A3
+    FLT_OUT:
+        movf __A0, w
+        movlb FLOATLIB_FTOLONG__RESULT >> 7
+        movwf FLOATLIB_FTOLONG__RESULT
+        movf __A1, w
+        movwf FLOATLIB_FTOLONG__RESULT+1
+        movf __A2, w
+        movwf FLOATLIB_FTOLONG__RESULT+2
+        movf __A3, w
+        movwf FLOATLIB_FTOLONG__RESULT+3
+    End Asm
 End Function
 #endif
 

@@ -715,7 +715,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `mulwf`, `cpfseq`). The results are bit for bit those of the assembly: the six float tests of `tests/exec` pass on both cores, and
   `tests/exec_p16/float_random.bas` (64 operand pairs of specials, near exponents, cancellation and overflow/underflow edges, from
   `scripts/gen_float_vectors.py` with an exact `Fraction` reference) passes on the PIC18 assembly and on the PIC16 Basic. The Basic code is about six times
-  larger (`+` 1.2K words) and slower; hand-written assembly is the way to shrink it.
+  larger (`+` 1.2K words) and slower; replaced by assembly in 0.1.52 (docs/PROGRESS.md).
 - **`AddressOf` of a `Const` array** on the PIC16 gives the FSR address (word address | 8000h); a routine's address is still the plain word address
   (`tests/exec_p16/addressof_table.bas` reads the table through FSR1 with the value).
 - **Strings over 255 characters** were listed as not done; that is the language limit on both cores (`String(n)` is 1..255, `E-CONST-RANGE`), not a gap.
@@ -725,3 +725,19 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `P16_PORTABLE` gained `lib_oled`, `lib_aht30` and the six float programs. The simulator has no ADC for the part, no bus traffic and no ADC conversion.
 - Not done: the PIC18 peephole passes and inlining of single-call routines (only the `movlb` clean-up exists, so the code is larger than the PIC18's),
   calling C, interrupt priorities, `-g`, hardware runs, and an assembly `Float`.
+
+## Enhanced mid-range core: assembly `Float` and size passes (done 2026-10-29, 0.1.52)
+- **Assembly `Float`.** The `#else` branch of `lib/floatlib.bas` is now assembly, the PIC18 routines rewritten for the core: the 24 x 24 multiply is a
+  shift-and-add loop (no `MULWF`), the round-to-even test is one `RRF`/`ADDWFC` carry (`A0 + 7Fh + lsb`), range compares use `SUBWF` and C, a
+  conditional branch is a flag test over a `BRA`, and banked operands are reached with `MOVLB sym >> 7`. Bit for bit the same results: the six float tests
+  and `float_random.bas` pass on PIC16F17126 and PIC16F17146. A program using `+ * /` and `Byte(f)`: 3190 -> 883 words (the PIC18 build is 794).
+  `Asm` blocks on this core now register the scratch registers `__A`..`__D` they name (before, only the Basic code did, so the `equ` was missing).
+- **Peephole.** `peephole::optimise16` runs the PIC18 passes that do not depend on PIC18 instructions (unused labels, tail call, unreachable code, halt loop,
+  branch to next / over branch, `xorlw 0`, repeated test, redundant WREG load, dead stores, write-only variables) with an enhanced mid-range `effect16` table.
+  The flags each instruction sets were checked against DS40002343F Table 41-3 (p.592-594): `RLF`/`RRF` set C only, `LSLF`/`LSRF`/`ASRF` C and Z, `MOVWF`/`SWAPF` none.
+  `SkipBr` (the `DECFSZ`/`BTFSC` + branch item of this core) counts as a use of its label and of the variable it names.
+- **Code.** A byte index into an array or table is added to the base in WREG with the carry into FSRnH (7 words, was 14); an unsigned byte compare is `sublw`/`subwf`
+  with the operand that must sit in WREG chosen by the relation (`cmp8`); a widened unsigned operand of a Word/Long operation is kept at its own width.
+- Size over the portable simulator programs for the 16F17146: 61460 -> 56473 words (-8.1%).
+- Not done: inlining of single-call routines, the PIC18 `movlb`-hoist and `movff`-forward passes (no equivalents here yet), `Float` operands passed in `__A`/`__B`
+  instead of through the parameter frames (EFFICIENCY.md P9), calling C, interrupt priorities, `-g`, hardware runs.

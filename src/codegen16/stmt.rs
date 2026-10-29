@@ -132,6 +132,8 @@ impl<'p> G<'p> {
                         if let Some(f) = self.p.funcs.iter().position(|f| f.asm == tok) {
                             self.called.insert(f);
                             self.calls[self.cur].insert(f);
+                        } else if let Some(r) = SCRATCH.iter().position(|s| tok.strip_prefix("__").and_then(|t| t.strip_prefix(*s)).is_some_and(|d| d.len() == 1 && (b'0'..=b'3').contains(&d.as_bytes()[0]))) {
+                            self.scr(r, u32::from(tok.as_bytes()[3] - b'0'));
                         }
                     }
                     self.items.push(Item::Raw(l.clone()));
