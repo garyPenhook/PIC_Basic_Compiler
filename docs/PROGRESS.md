@@ -696,3 +696,32 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   table gives the program word address (not an FSR address), strings over 255 characters, hardware runs, the PIC18 peephole
   passes (only the `movlb` clean-up exists), inlining of single-call routines. The `isr_single` handler multiplies in software and can outlast the
   timer period, so it switches the timer interrupt off with the timer after the last hit.
+
+## Enhanced mid-range core: library modules and `Float` (done 2026-10-29, 0.1.51)
+- **Library.** Every module except `dma` (the part has no DMA) now builds for PIC16F17126/46 and has a simulator test in `tests/exec_p16/`. The
+  `#error` gates on `Not _has(PRODL)` are gone from `spi`, `i2c`, `eeprom`, `flashwrite`, `pwm`, `serial2` and `floatlib`. Facts and page cites:
+  `docs/FACTS-16F1714x.md` ("Peripherals and memory the library modules use"); per-module notes in `docs/LIBRARY.md`.
+  - `spi`, `i2c`: the MSSP1 branch is shared with the Q10; the pin helpers (`SetPps`, `PinOk`, `PinSetup`) of the Q41 SPI branch (pins 0..23) serve
+    the 16F, with `RxyPPS` 27 = SCK1/SCL1 and 28 = SDO1/SDA1 (the Q10 uses 15/16) and `SSP1IF`/`BCL1IF` in `PIR5.2`/`PIR5.3`. A `#if` on `_has(PRODL)` keeps
+    the Q10 code byte for byte as it was.
+  - `eeprom`: `NVMREGS` = 1, `NVMADRH` = 70h, 256 bytes. `flashwrite`: a sector is the 32-word row, 14-bit words, erased = 3FFFh, write through the
+    write latches; `FlashUpdateWord` keeps the row in a 64-byte RAM image because the part has no sector buffer. There is no wait on `WR`: the CPU stalls
+    until the operation ends. The simulator models both memories, so the tests check the stored values.
+  - `pwm`: the Q41 branch with `Channels` = 4 (PWM1, PWM2) and `RxyPPS` = 10 + channel. `serial2`: EUSART2 on RC2 (TX) and RC1 (RX), flags in `PIR5`.
+  - `adc`: **bug found by the new test.** The `#if _has(ADREF.ADPREF) and not _has(ADCPCON)` that means "Q10" was also true on the 16F (the pack lists
+    ADPREF there too), so the 16F got the 10-bit `AdcMax`, the 8 us reference clock and the Q10 channel numbers. It is now `_has(PRODL) and ...`. Errata
+    1.6.1 (charge pump off after Reset) is worked around in `AdcInit`.
+- **`Float`.** `lib/floatlib.bas` has a Basic branch (`#else` of `#if _has(PRODL)`) on `LongWord` arithmetic: the PIC18 routines are assembly (`movff`,
+  `mulwf`, `cpfseq`). The results are bit for bit those of the assembly: the six float tests of `tests/exec` pass on both cores, and
+  `tests/exec_p16/float_random.bas` (64 operand pairs of specials, near exponents, cancellation and overflow/underflow edges, from
+  `scripts/gen_float_vectors.py` with an exact `Fraction` reference) passes on the PIC18 assembly and on the PIC16 Basic. The Basic code is about six times
+  larger (`+` 1.2K words) and slower; hand-written assembly is the way to shrink it.
+- **`AddressOf` of a `Const` array** on the PIC16 gives the FSR address (word address | 8000h); a routine's address is still the plain word address
+  (`tests/exec_p16/addressof_table.bas` reads the table through FSR1 with the value).
+- **Strings over 255 characters** were listed as not done; that is the language limit on both cores (`String(n)` is 1..255, `E-CONST-RANGE`), not a gap.
+- **Errata.** DS80001009E was read in full (list in FACTS). Applied: 1.6.1. Not touching the library: 1.2.1 (B0), 1.1.x, 1.4.1, 1.5.1. Timer1 1.7.1 (the gate-source write can
+  set `TMR1GIF`) is worked around in `Timer1StartGated` and `Timer1StartPulse` (the flag is cleared right after the write).
+- Tests: `tests/exec_p16/` gained `lib_spi`, `lib_i2c`, `lib_eeprom`, `lib_flashwrite`, `lib_pwm`, `lib_serial2`, `lib_adc`, `float_random`, `addressof_table`;
+  `P16_PORTABLE` gained `lib_oled`, `lib_aht30` and the six float programs. The simulator has no ADC for the part, no bus traffic and no ADC conversion.
+- Not done: the PIC18 peephole passes and inlining of single-call routines (only the `movlb` clean-up exists, so the code is larger than the PIC18's),
+  calling C, interrupt priorities, `-g`, hardware runs, and an assembly `Float`.

@@ -2,11 +2,12 @@ Module Adc
 ' ADC with computation (ADCC), basic mode, right-justified results (PIC18F27/47Q10: DS40002043F,
 ' chapter 33, 10 bits; PIC16F17126/46: DS40002343F, chapter 33, 12 bits; PIC18F0x/1xQ41: DS40002214G,
 ' chapter 40, 12 bits). ADCON0, ADCLK, ADREF, ADPCH, ADACQ and FVRCON are used with the same bit layout on
-' all of them. What differs is chosen with `#if _has(ADREF.ADPREF) and not _has(ADCPCON)` (the Q10; the Q41 pack
+' all of them. What differs is chosen with `#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)` (the Q10; the Q41 pack
 ' lists ADPREF as a legacy name of ADREF.PREF, so `_has(ADREF.ADPREF)` alone is true there too) and
 ' `#if _has(ADCPCON)` (true for the Q41, which has the ADC charge pump register): the resolution
 ' (`AdcMax`), the channel numbers of the internal sources, the pins that exist, and the errata
-' workarounds. The PIC16F171xx has no errata for the channel change or the FVR reference (DS80001009E), and
+' workarounds. The PIC16F171xx has no errata for the channel change or the FVR reference (DS80001009E; its erratum
+' 1.6.1, the charge pump off after a Reset, is worked around in AdcInit), and
 ' the Q41 none either (DS80000901H lists only the double-sample erratum 1.1.2, which this module does not
 ' use), so they carry neither workaround. Its erratum 1.1.2 (ADACQ/ADPRE only delay the next conversion and do not lengthen the sample
 ' time of the current one) applies to the 5 us acquisition below: for a high-impedance source slow the
@@ -41,7 +42,7 @@ Public Const AdcChTemp = 60
 Public Const AdcChDac = 61
 Public Const AdcChFvr = 62
 Public Const AdcChFvr2 = 63
-#elseif _has(ADREF.ADPREF)
+#elseif _has(PRODL) and _has(ADREF.ADPREF)
 Public Const AdcChVss = 60
 Public Const AdcChTemp = 61
 Public Const AdcChDac = 62
@@ -59,7 +60,7 @@ Public Const AdcChFvr = 62
 
 ' Largest result: 10 bits on the Q10 [DS40002043F AD01], 12 bits on the PIC16F171xx [DS40002343F AD01] and
 ' the Q41 [DS40002214G AD01].
-#if _has(ADREF.ADPREF) and not _has(ADCPCON)
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
 Public Const AdcMax = 1023
 #else
 Public Const AdcMax = 4095
@@ -112,6 +113,10 @@ Public Sub AdcInit()
 #if _has(ADCPCON)
     ' The charge pump runs when the ADC asks for it [40.4, ADCP]; it keeps the converter accurate at low VDD.
     ADCPCON = 128
+#elseif _has(CPCON)
+    ' Errata 1.6.1 (DS80001009E, all silicon revisions): CPON resets to 00 (off) instead of 01; write 01, charge pump on
+    ' when the ADC is enabled and VDD < 4.6 V [40.7.1].
+    CPCON = 64
 #endif
     SetClock(1000)
     lastCh = 255
@@ -159,7 +164,7 @@ Public Sub AdcRefFvr(ByVal gain As Byte)
     While FvrReady = 0
     Wend
     ADREF = 3
-#if _has(ADREF.ADPREF) and not _has(ADCPCON)
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
     SetClock(8000)
 #else
     SetClock(1000)
@@ -178,13 +183,13 @@ End Function
 
 ' Converts channel `ch` (0..63, see the AdcCh constants) and returns 0..AdcMax.
 Public Function AdcRead(ByVal ch As Byte) As Word
-#if _has(ADREF.ADPREF) and not _has(ADCPCON)
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
     Dim dummy As Word
 #endif
     ch = ch And 63
     If ch <> lastCh Then
         ADPCH = ch
-#if _has(ADREF.ADPREF) and not _has(ADCPCON)
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
         dummy = Convert()
 #endif
         lastCh = ch

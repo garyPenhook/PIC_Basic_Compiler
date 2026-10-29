@@ -25,12 +25,11 @@ Module Spi
 ' TSCK 95 ns [Table 48-21]). A byte is exchanged in BMODE = 1 with TWIDTH = 0 (8 bits) and TXR = RXR = 1: writing
 ' SPI1TXB starts the transfer [35.3.1], and SPI1RXIF (PIR3 bit 0, read only) is set while the receive FIFO holds
 ' data [35.6.1]. CKP = idle level of SCK, CKE = 1 for modes 0 and 2, SMP = 0 (sampled mid-bit) [35.7.2].
-#if Not _has(PRODL)
-#error "spi: not ported to the enhanced mid-range core (PIC16F171xx) yet"
-#endif
-
-#if _has(SPI1CON0)
-Dim RxIf As PIR3.0
+'
+' PIC16F17126/46 (DS40002343F chapters 18 and 31; chosen with `Not _has(PRODL)`): the same MSSP1 host as the Q10 below, with the pins of the
+' Q41 branch: numbered 0..23, RA0..RA5 except RA3 (input only: allowed for SDI, refused for SCK and SDO), RB4..RB7 (20-pin part), RC0..RC7,
+' through PPS with SCK1 = RxyPPS 27 and SDO1 = 28 [Table 18-2]; SSP1CLKPPS and SSP1DATPPS take the pin number [Table 18-1].
+#if _has(SPI1CON0) Or Not _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
 
@@ -121,6 +120,10 @@ Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
         End If
     End If
 End Sub
+#endif
+
+#if _has(SPI1CON0)
+Dim RxIf As PIR3.0
 
 ' Sets up SPI1 as a host at about `hz` (1..10000000) in mode 0..3 with SCK on `sck`, data out on `sdo`
 ' (255 = none) and data in on `sdi`. Returns 1, or 0 for a bad pin, a pin used twice, a mode above 3, or a
@@ -136,7 +139,7 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
         Exit
     End If
     If sdo <> 255 Then
-        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Then
+        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Or sdo = 3 Then
             Exit
         End If
     End If
@@ -225,6 +228,7 @@ Public Function SpiRead() As Byte
 End Function
 #else
 Dim BitWcol As SSP1CON1.7
+#if _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
 
@@ -284,6 +288,7 @@ Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
         End If
     End If
 End Sub
+#endif
 
 ' Sets up MSSP1 as an SPI host at about `hz` (1..16000000) in mode 0..3 with SCK on `sck`, data out
 ' on `sdo` (255 = none) and data in on `sdi`. Returns 1, or 0 for a bad pin, a pin used twice, a
@@ -296,6 +301,7 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
     If mode > 3 Or hz = 0 Or hz > 16000000 Then
         Exit
     End If
+#if _has(PRODL)
     If sck < 8 Or sck > 23 Or sdi < 8 Or sdi > 23 Or sck = sdi Then
         Exit
     End If
@@ -304,6 +310,16 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
             Exit
         End If
     End If
+#else
+    If Not PinOk(sck) Or Not PinOk(sdi) Or sck = sdi Or sck = 3 Then
+        Exit
+    End If
+    If sdo <> 255 Then
+        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Or sdo = 3 Then
+            Exit
+        End If
+    End If
+#endif
     fosc = LongWord(_Clock * 1000000)
     ' SSPxADD = ceil(FOSC / (4 * hz)) - 1; 0 means FOSC / 4.
     d = (fosc + LongWord(4) * hz - 1) / (LongWord(4) * hz) - 1
@@ -315,10 +331,18 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
     PinSetup(sdi, True)
     SSP1CLKPPS = sck
     SSP1DATPPS = sdi
+#if _has(PRODL)
     SetPps(sck, 15)
+#else
+    SetPps(sck, 27)
+#endif
     If sdo <> 255 Then
         PinSetup(sdo, False)
+#if _has(PRODL)
         SetPps(sdo, 16)
+#else
+        SetPps(sdo, 28)
+#endif
     End If
     If d = 0 Then
         con = 0
@@ -344,12 +368,21 @@ End Function
 ' Disables the MSSP and gives the pins back to their LATxy bits (pins as given to SpiInit).
 Public Sub SpiOff(ByVal sck As Byte, ByVal sdo As Byte)
     SSP1CON1 = 0
+#if _has(PRODL)
     If sck >= 8 And sck <= 23 Then
         SetPps(sck, 0)
     End If
     If sdo >= 8 And sdo <= 23 Then
         SetPps(sdo, 0)
     End If
+#else
+    If PinOk(sck) Then
+        SetPps(sck, 0)
+    End If
+    If PinOk(sdo) Then
+        SetPps(sdo, 0)
+    End If
+#endif
     ready = False
 End Sub
 

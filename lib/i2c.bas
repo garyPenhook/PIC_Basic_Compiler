@@ -31,10 +31,10 @@ Module I2c
 ' is waited for (bounded, status 1). `hz` is 2000..400000; each half period is DelayUS(ceil(500000 / hz)) plus
 ' the time of the routines, so the real clock is lower, much lower on a slow `Clock`. Arbitration: SDA is read
 ' back after each bit sent; a difference is status 2.
-#if Not _has(PRODL)
-#error "i2c: not ported to the enhanced mid-range core (PIC16F171xx) yet"
-#endif
-
+' PIC16F17126/46 (DS40002343F chapters 18 and 31; chosen with `Not _has(PRODL)`): the MSSP1 host of the Q10 below, with pins numbered 0..23 as
+' on the Q41 (RA0..RA5 except RA3, RB4..RB7 on the 20-pin part, RC0..RC7), `RxyPPS` 27 = SCL1 and 28 = SDA1 [Table 18-2], SSP1IF and BCL1IF in
+' PIR5 bits 2 and 3. Erratum 1.2.1 (spurious start and stop flags when I2C is enabled, silicon B0) does not matter here: SSP1IF is cleared
+' before each step and the start and stop interrupts are not used.
 #if _has(I2C1CON0)
 Dim sclPort As Byte
 Dim sclMask As Byte
@@ -325,8 +325,13 @@ Public Function I2cReceive(ByVal ack As Boolean) As Byte
 End Function
 
 #else
+#if _has(PRODL)
 Dim FlagSsp As PIR3.0
 Dim FlagBcl As PIR3.1
+#else
+Dim FlagSsp As PIR5.2
+Dim FlagBcl As PIR5.3
+#endif
 Dim BitRcen As SSP1CON2.3
 Dim BitAckdt As SSP1CON2.5
 Dim BitAckstat As SSP1CON2.6
@@ -334,6 +339,83 @@ Dim BitWcol As SSP1CON1.7
 Dim ready As Boolean
 Dim lastStatus As Byte
 
+#if Not _has(PRODL)
+' RxyPPS = code for pin 0..23 (a pin the part has).
+Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+    If pin = 0 Then
+        RA0PPS = code
+    ElseIf pin = 1 Then
+        RA1PPS = code
+    ElseIf pin = 2 Then
+        RA2PPS = code
+    ElseIf pin = 4 Then
+        RA4PPS = code
+    ElseIf pin = 5 Then
+        RA5PPS = code
+#if _has(RB4PPS)
+    ElseIf pin = 12 Then
+        RB4PPS = code
+    ElseIf pin = 13 Then
+        RB5PPS = code
+    ElseIf pin = 14 Then
+        RB6PPS = code
+    ElseIf pin = 15 Then
+        RB7PPS = code
+#endif
+    ElseIf pin = 16 Then
+        RC0PPS = code
+    ElseIf pin = 17 Then
+        RC1PPS = code
+    ElseIf pin = 18 Then
+        RC2PPS = code
+    ElseIf pin = 19 Then
+        RC3PPS = code
+    ElseIf pin = 20 Then
+        RC4PPS = code
+    ElseIf pin = 21 Then
+        RC5PPS = code
+#if _has(RC6PPS)
+    ElseIf pin = 22 Then
+        RC6PPS = code
+    ElseIf pin = 23 Then
+        RC7PPS = code
+#endif
+    End If
+End Sub
+
+' True for a pin the part has (RA3 is input only and refused).
+Function PinOk(ByVal pin As Byte) As Boolean
+    Result = (pin <= 5 And pin <> 3) Or (pin >= 16 And pin <= 21)
+#if _has(RC6PPS)
+    If pin = 22 Or pin = 23 Then
+        Result = True
+    End If
+#endif
+#if _has(RB4PPS)
+    If pin >= 12 And pin <= 15 Then
+        Result = True
+    End If
+#endif
+End Function
+
+' Both bus pins are inputs (the MSSP pulls them low as needed [31.6]) and digital.
+Sub PinSetup(ByVal pin As Byte)
+    Dim m As Byte
+    m = 1 << (pin And 7)
+    If pin < 8 Then
+        TRISA = TRISA Or m
+        ANSELA = ANSELA And (m Xor 255)
+#if _has(TRISB)
+    ElseIf pin < 16 Then
+        TRISB = TRISB Or m
+        ANSELB = ANSELB And (m Xor 255)
+#endif
+    Else
+        TRISC = TRISC Or m
+        ANSELC = ANSELC And (m Xor 255)
+    End If
+End Sub
+#else
 ' RxyPPS = code for pin 8..23.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     If pin = 8 Then
@@ -383,6 +465,7 @@ Sub PinSetup(ByVal pin As Byte)
         ANSELC = ANSELC And (m Xor 255)
     End If
 End Sub
+#endif
 
 ' Waits for SSP1IF; returns 0 when it is set (and clears it), 1 on timeout, 2 on a bus collision.
 Function WaitIf() As Byte
@@ -434,13 +517,17 @@ Function Condition(ByVal msk As Byte) As Byte
 End Function
 
 ' Sets up MSSP1 as an I2C host at about `hz` (1..1000000, rounded down to the nearest clock the
-' divider gives) with SCL on `scl` and SDA on `sda` (pins 8..23, different). Returns 1 when set up,
+' divider gives) with SCL on `scl` and SDA on `sda` (pins 8..23, different; 0..23 as the part has them on the PIC16F171xx). Returns 1 when set up,
 ' 0 when a pin is not allowed or no divider of 3..255 reaches `hz`.
 Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As Byte) As Byte
     Dim fosc As LongWord
     Dim d As LongWord
     Result = 0
+#if _has(PRODL)
     If scl < 8 Or scl > 23 Or sda < 8 Or sda > 23 Or scl = sda Or hz = 0 Or hz > 1000000 Then
+#else
+    If Not PinOk(scl) Or Not PinOk(sda) Or scl = sda Or hz = 0 Or hz > 1000000 Then
+#endif
         Exit
     End If
     fosc = LongWord(_Clock * 1000000)
@@ -454,8 +541,13 @@ Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As By
     PinSetup(sda)
     SSP1CLKPPS = scl
     SSP1DATPPS = sda
+#if _has(PRODL)
     SetPps(scl, 15)
     SetPps(sda, 16)
+#else
+    SetPps(scl, 27)
+    SetPps(sda, 28)
+#endif
     SSP1ADD = Byte(d)
     SSP1CON2 = 0
     SSP1CON3 = 0
@@ -476,12 +568,21 @@ End Function
 ' I2cInit).
 Public Sub I2cOff(ByVal scl As Byte, ByVal sda As Byte)
     SSP1CON1 = 0
+#if _has(PRODL)
     If scl >= 8 And scl <= 23 Then
         SetPps(scl, 0)
     End If
     If sda >= 8 And sda <= 23 Then
         SetPps(sda, 0)
     End If
+#else
+    If PinOk(scl) Then
+        SetPps(scl, 0)
+    End If
+    If PinOk(sda) Then
+        SetPps(sda, 0)
+    End If
+#endif
     ready = False
 End Sub
 

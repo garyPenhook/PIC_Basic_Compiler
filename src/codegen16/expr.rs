@@ -329,11 +329,11 @@ impl<'p> G<'p> {
                 self.called.insert(*f);
                 self.calls[self.cur].insert(*f);
                 let label = self.p.funcs[*f].asm.clone();
-                self.word_address(&label, n);
+                self.word_address(&label, n, false);
             }
             ExK::FlashAddr(i, off) => {
                 let label = if *off == 0 { self.p.flash[*i].asm.clone() } else { format!("{}+{off}", self.p.flash[*i].asm) };
-                self.word_address(&label, n);
+                self.word_address(&label, n, true);
             }
             ExK::StrEq(a, b) => {
                 let StrSrc::Ram(pa) = a else {
@@ -363,12 +363,14 @@ impl<'p> G<'p> {
         }
     }
 
-    /// The program-memory word address of a label, as a value of `n` bytes in A.
-    fn word_address(&mut self, label: &str, n: u32) {
+    /// The program-memory word address of a label, as a value of `n` bytes in A. With `fsr` it is the address an FSR
+    /// reads the byte at (bit 7 of the high byte set, Example 9-2 of DS40002343F): what `AddressOf` of a table gives.
+    fn word_address(&mut self, label: &str, n: u32, fsr: bool) {
         let (a0, a1) = (self.a(0), self.a(1));
         self.ins(format!("movlw low ({label})"));
         self.fo("movwf", &a0);
-        self.ins(format!("movlw (({label}) >> 8) & 0x7F"));
+        let flag = if fsr { " | 0x80" } else { "" };
+        self.ins(format!("movlw ((({label}) >> 8) & 0x7F){flag}"));
         self.fo("movwf", &a1);
         for k in 2..n {
             let m = self.a(k);

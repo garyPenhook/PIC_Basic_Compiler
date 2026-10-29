@@ -19,10 +19,12 @@ A module adapts with `#if _has(REG)` / `#if _has(REG.FIELD)` (MANUAL §Preproces
 device description whether a register or bit field exists, so most of a new part in a known layout
 needs no module change. **A new device or family needs this table reviewed**, because a module that
 is not listed as ported either does not compile on the new part or, worse, compiles and writes the
-wrong register. The PIC16F171xx column is checked against the data sheet; since 0.1.50 the code generator for the part exists, so
-`delay`, `gpio`, `timer`, `serial`, `lcd` build and run in the simulator (`tests/exec_p16`, `P16_PORTABLE` in `tests/backend.rs`);
-`intosc`, `system` and `adc` build, with their register values read from the data sheet but not yet run (the simulator has no ADC
-for the part); a module that is not ported stops with `#error`. Nothing was run on a real part.
+wrong register. The PIC16F171xx column is checked against the data sheet; since 0.1.50 the code generator for the part exists, and since 0.1.51 every
+module except `dma` (the part has no DMA) builds for it: `delay`, `gpio`, `timer`, `serial`, `serial2`, `lcd`, `oled`, `aht30`, `spi`, `i2c`,
+`pwm`, `eeprom`, `flashwrite`, `adc` and `floatlib` run in the simulator (`tests/exec_p16`, `P16_PORTABLE` in `tests/backend.rs`);
+`intosc` and `system` build, with their register values read from the data sheet but not yet run on the part; a module that is not
+ported stops with `#error`. The simulator has no ADC for the part, and shows no bus traffic (`spi`, `i2c`), so those tests check set-up
+only. Nothing was run on a real part.
 
 | Module | PIC18F27/47Q10 | PIC16F17126/46 (DS40002343F) | PIC18F0x/1xQ41 (DS40002214G, DS40002242F) | Still to do |
 |---|---|---|---|---|
@@ -32,18 +34,18 @@ for the part); a module that is not ported stops with `#error`. Nothing was run 
 | `system` | done | done | done (`PCON0` at `04F0h`, same bits) | none |
 | `timer` | done | done (flags in PIR1/PIR2, own source constants) | done (flags in `PIR3`; own `T1Clk*`, `T1Gate*`, `T2Rst*` constants) | `T1Gate*` / `T2Rst*` lists hold only the sources checked so far |
 | `serial` | done (TX RC6, RX RC7) | done (TX RC4, RX RC5) | done (UART1, TX RC4, RX RC5) | an override for other pins |
-| `serial2` | done (TX RB6, RX RB7) | **not ported** (`#error`) | done (UART2, TX RC2, RX RC1) | pins (`RB6PPS` missing on the 14-pin 16F part, no port B), `RX2PPS` encoding, flags in another PIR |
-| `adc` | done (10 bits) | done (channels 58..62; erratum 1.1.2 noted; 12 bits) | done (12 bits, `AdcMax` = 4095, channels 58..63, charge pump on, 8 us acquisition) | none |
-| `eeprom` | done (1024 bytes) | **not ported** (`#error`) | done (512 bytes, `NVMLOCK` unlock) | the 16F: different NVM registers (no `NVMCON0`, `NVMADRU`), different unlock and access sequence |
-| `flashwrite` | done | **not ported** (`#error`) | done (`FlashLastSector` from the flash size; page read, erase, write through the NVM buffer bank) | the 16F: same NVM differences as `eeprom`; the 16F errata 1.9.1 equivalent has not been read |
-| `spi` | done | **not ported** (`#error`) | done (SPI1, any of RA/RB4..7/RC pins through PPS, at most 10 MHz) | default pins for MSSP1, `RxyPPS` codes and `SSP1xPPS` for the 16F, `RB*PPS` missing on the 14-pin part |
+| `serial2` | done (TX RB6, RX RB7) | done (EUSART2, TX RC2, RX RC1, `TX2IF`/`RC2IF` are `PIR5` bits 0 and 1) | done (UART2, TX RC2, RX RC1) | an override for other pins |
+| `adc` | done (10 bits) | done (channels 58..62; 12 bits; erratum 1.1.2 noted; erratum 1.6.1 worked around: `AdcInit` writes `CPCON` = 01) | done (12 bits, `AdcMax` = 4095, channels 58..63, charge pump on, 8 us acquisition) | the 16F ADC does not run in the simulator, so only its set-up is tested |
+| `eeprom` | done (1024 bytes) | done (256 bytes through `NVMREGS = 1`, address `70h:addr`, 55h/AAh unlock in `NVMCON2`) | done (512 bytes, `NVMLOCK` unlock) | none |
+| `flashwrite` | done | done (a sector is the 32-word row; word write through the write latches; `FlashUpdateWord` keeps the row in a 64-byte RAM image; 14-bit words, erased = 3FFFh) | done (`FlashLastSector` from the flash size; page read, erase, write through the NVM buffer bank) | none |
+| `spi` | done | done (MSSP1, pins 0..23 as the Q41, `RxyPPS` 27 = SCK1 and 28 = SDO1, `SSP1CLKPPS`/`SSP1DATPPS` = the pin number) | done (SPI1, any of RA/RB4..7/RC pins through PPS, at most 10 MHz) | none |
 | `lcd` | done | done (20-pin part; port B pins refused on the 14-pin one) | done (port B pins refused on the 14-pin parts) | the 16F: port B does not exist on the 14-pin part; choose the pins |
-| `i2c` | done | **not ported** (`#error`) | done, **in software** on two pins (see below) | the 16F; a driver around the I2C1 peripheral would need the byte count first (FACTS-18F-Q41.md section 6, errata 1.3.x) |
-| `pwm` | done | **not ported** (`#error`) | done with different channels: 1..6 = PWM1S1P1 … PWM3S1P2, one shared period (CCP1 not offered) | the 16F has CCP1/CCP2 and PWM1/PWM2 of a different kind, no PWM3/PWM4, no `CCPTMRS`; pin routing |
-| `oled` | done | **not ported** (`#error`) | done (over the software `i2c`, or `spi`) | uses `TBLPTR` / `TABLAT` (PIC18 table reads); needs an alternative for the enhanced mid-range core |
-| `aht30` | done | **not ported** (`#error`, needs `i2c`) | done (over the software `i2c`) | |
+| `i2c` | done | done (MSSP1 hardware host, pins 0..23, `RxyPPS` 27 = SCL1 and 28 = SDA1; `SSP1IF`/`BCL1IF` are `PIR5` bits 2 and 3) | done, **in software** on two pins (see below) | a driver around the I2C1 peripheral would need the byte count first (FACTS-18F-Q41.md section 6, errata 1.3.x) |
+| `pwm` | done | done (the 16-bit PWM1 and PWM2: channels 1..4 = PWM1S1P1 … PWM2S1P2, `RxyPPS` = 10 + channel; CCP1 and CCP2 are not offered) | done with different channels: 1..6 = PWM1S1P1 … PWM3S1P2, one shared period (CCP1 not offered) | none |
+| `oled` | done | done (builds and the set-up test passes in the simulator; not run against a display) | done (over the software `i2c`, or `spi`) | |
+| `aht30` | done | done (over the hardware `i2c`; set-up test passes in the simulator) | done (over the software `i2c`) | |
 | `dma` | not applicable (no DMA) | not checked (the 16F17126/46 data sheet has not been read for DMA) | written for software-started RAM/SFR copies (`DmaCopy`) trigger-started feeds (`DmaOnTrigger`) with abort triggers (`DmaAbortOn`) and flash- and EEPROM-source copies (`DmaCopyFlash`, `DmaCopyEeprom`; the EEPROM address form comes from Microchip's TB3164, not the Q41 data sheet); builds, register set-up tested, bytes moved checked only against a DMA model of the data sheet (`scripts/dma_sim.py`); a part without `DMAnCON0` gets `#error` | interrupts, priorities; data movement not seen on a real part (MDB has no DMA; the tests use the model) |
-| `floatlib` | done | **not ported** (`#error`: the routines are PIC18 assembly) | builds (no device registers); not run on the Q41 | a Float library for the enhanced mid-range core; run the float tests on the Q41 simulator |
+| `floatlib` | done | done, **written in Basic** on `LongWord` arithmetic (the PIC18 routines are assembly): the same results bit for bit (`tests/exec_p16/float_random.bas`), about 1.2K words for `+` against 200 on the PIC18 | builds (no device registers); not run on the Q41 | hand-written assembly for the enhanced mid-range core would be several times smaller; run the float tests on the Q41 simulator |
 
 On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check
@@ -148,10 +150,10 @@ used and the missing-code workaround is not met, so use the VDD reference there.
 The temperature indicator needs `FVRCON.TSEN` (not set here). Source impedance above 10 kohm needs a
 larger `ADACQ`.
 
-## eeprom (data EEPROM, 1024 bytes; 512 bytes on the PIC18-Q41)
+## eeprom (data EEPROM, 1024 bytes; 512 bytes on the PIC18-Q41, 256 on the PIC16F17126/46)
 | Routine | Effect |
 |---|---|
-| `EepromRead(addr)` | byte at 0..1023 (0..511 on the Q41); 255 for a larger address |
+| `EepromRead(addr)` | byte at 0..1023 (0..511 on the Q41, 0..255 on the PIC16F17126/46); 255 for a larger address |
 | `EepromWrite(addr, value)` | skips the write when the byte already holds `value`; otherwise unlock sequence, waits for the write to finish. Returns 1 when the byte reads back as `value`, 0 for an invalid address or a failed write |
 | `EepromReadWord(addr)` / `EepromWriteWord(addr, value)` | 16-bit value, low byte first, at addr and addr + 1 (the write returns 1 only if both bytes were stored) |
 | `EepromSize` | constant 1024 (512 on the Q41; the device's `_EepromBytes`) |
@@ -163,7 +165,21 @@ until one write succeeds, so it is not used as the error flag: success is the re
 by the hardware, but the next write cannot start). Not reentrant: do not call it from a handler and from the
 main program.
 
+PIC16F17126/46 (DS40002343F section 15.2): the data flash is read and written through `NVMREGS = 1`, `NVMADRH:NVMADRL = 70h:addr`,
+`NVMDATL`; a read is `RD`, a write is `WREN`, the 55h/AAh unlock in `NVMCON2` and `WR`, with interrupts off for the unlock (the previous `GIE`
+is restored). The CPU stalls until the write is done. `NVMCON1` is cleared afterwards (it clears `WRERR`, which is how a failed write is
+cleared; success is the read-back as on the other parts). The data sheet and its errata (DS80001009E) show no erratum for the NVM.
+
 ## flashwrite (program flash self-write)
+PIC16F17126/46 (DS40002343F section 15.1): addresses are word addresses 0..16383 and a **sector is the 32-word row** (`FlashSectorWords` = 32,
+`FlashLastSector` = 511); a word is 14 bits, so values are masked to 14 bits and an erased word reads 3FFFh. `FlashEraseSector` is a row erase
+(`FREE`), `FlashWriteWord` loads the write latch of the word (`LWLO`) and then writes the latches to the row (the other latches hold 3FFFh, so
+the other words of the row are left alone; the word must still be erased; after a write that fails with `WRERR` a latch may stay loaded and would be
+written into another row by the next write, so reset before writing again), `FlashUpdateWord` reads the row into a 64-byte RAM image, erases it,
+loads the 32 latches and writes (Example 15-4). Each operation is the 55h/AAh unlock and `WR` with interrupts off; the CPU stalls until it ends
+(about 2 ms), so there is no wait on `WR`. `FlashReadWord` uses `RD`. The part has no flash erratum (DS80001009E). Write protection set in the
+configuration words makes a write fail with `WRERR` (section 15.1.2.8), which the routines report. The rest of this section describes the PIC18 parts.
+
 Addresses are PFM **word** addresses, 0..65535 (byte address / 2); a sector is 128 words (256 bytes), sectors 0..511.
 On the PIC18-Q41 the flash is 8, 16 or 32 K words, so `FlashLastSector` is 63, 127 or 255 (the device's `_FlashBytes` / 256 - 1).
 | Routine | Effect |
@@ -191,7 +207,11 @@ the buffer RAM, page erase, `TBLWT` of the two bytes, page write). The buffer RA
 words the compiler writes keep every bit that the pack's `implemented` mask omits at 1 (it used to clear them, which on the
 Q41 turned on `DEBUG` and the write protection of the application block: self-writes to flash failed).
 
-## pwm (CCP1, CCP2, PWM3, PWM4 on Timer2; PIC18-Q41: six outputs of PWM1..PWM3)
+## pwm (CCP1, CCP2, PWM3, PWM4 on Timer2; PIC18-Q41: six outputs of PWM1..PWM3; PIC16F17126/46: four outputs of PWM1 and PWM2)
+PIC16F17126/46: the same module as on the Q41 with two PWM modules (DS40002343F chapter 29): channels 1..4 are PWM1S1P1, PWM1S1P2, PWM2S1P1,
+PWM2S1P2 on RA0..RA5 (not RA3), RB4..RB7 (20-pin part), RC0..RC7, `RxyPPS` = 10 + channel (PWM1S1P1_OUT = 0Bh, Table 18-2); channels 5 and 6 are
+refused. Everything else is as described for the Q41 next.
+
 PIC18-Q41: channels 1..6 are PWM1S1P1, PWM1S1P2, PWM2S1P1, PWM2S1P2, PWM3S1P1, PWM3S1P2 on any of RA0..RA5 (not RA3),
 RB4..RB7, RC0..RC7 (`RxyPPS` = 9 + channel); the period is shared (`PwmInit(hz)` sets `PWMxCLK` = FOSC, `PWMxCPRE`, `PWMxPR`;
 `PwmSteps` is `PR + 1`, up to 65535, and a duty of `PwmSteps` is 100 %); `PwmInvert` restarts the module, because the slice
@@ -212,6 +232,11 @@ registers are double buffered and copied at the period match; if that falls betw
 update, one period can use a mixed value. Not reentrant: do not call it from a handler and from the main program.
 
 ## i2c (MSSP1 host; PIC18-Q41: software host)
+PIC16F17126/46: the MSSP1 host as on the Q10 (DS40002343F chapter 31) with the pins of the Q41 numbering: 0..23, RA0..RA5 except RA3, RB4..RB7 and
+RC0..RC7 as the part has them; `RxyPPS` 27 = SCL1 and 28 = SDA1 (Table 18-2), `SSP1CLKPPS`/`SSP1DATPPS` = the pin number; `SSP1IF` is `PIR5` bit 2 and
+`BCL1IF` bit 3. Erratum 1.2.1 (start and stop flags may be set when I2C is enabled, silicon B0 only) does not touch this module, which clears
+`SSP1IF` before each step and does not use the start or stop interrupts.
+
 PIC18-Q41: the same routines, in software on two ordinary pins (any of RA0..RA5 except RA3, RB4..RB7, RC0..RC7, numbered 0..23
 as the `Adc` channels), open drain by TRIS, `hz` 2000..400000 (the real clock is lower, much lower on a slow `Clock`), clock
 stretching waited for, arbitration checked by reading SDA back. Why not the I2C1 peripheral: it counts the bytes of a transfer
@@ -234,6 +259,9 @@ interrupt disabled. `SMP` (slew rate) is cleared for clocks between 100 kHz and 
 needed. Single host only; not reentrant.
 
 ## spi (MSSP1 host)
+PIC16F17126/46: pins numbered 0..23 as on the Q41 (RA0..RA5 except RA3, RB4..RB7 and RC0..RC7 as the part has them; SCK on RA3 is refused);
+`RxyPPS` 27 = SCK1, 28 = SDO1 (Table 18-2), `SSP1CLKPPS`/`SSP1DATPPS` = the pin number. The rest is as for the Q10 below.
+
 | Routine | Effect |
 |---|---|
 | `SpiInit(hz, mode, sck, sdo, sdi)` | MSSP1 as SPI host, mode 0..3 (CKP = CPOL; CKE = 1 for modes 0 and 2). Pins 8..23 (ports B and C, as the `Adc` channels); `sdo` = 255 for receive only. Clock `FOSC / 4` for `hz` of `FOSC / 4` or more, else `FOSC / (4 * (SSPxADD + 1))` with `SSPxADD` 1..255, rounded to at or below `hz` (lowest `FOSC / 1024`). Input sampled mid-bit (`SMP` = 0). Returns 1, or 0 for a bad pin or mode, a pin used twice, or a clock out of range |
@@ -334,8 +362,10 @@ Status: 0 ok, 1..4 as `I2cStatus` (timeout, collision, no acknowledge, I2c not i
 Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
 `+ - * /`, the six comparisons and the conversions into calls to `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong FToLong`
 (on `LongWord` patterns); negation and `Abs` flip and clear the sign bit inline. Only the routines a program uses are linked. Round to nearest
-even; infinities and NaN propagate; denormals are flushed to zero. Float work directly in an `Interrupt` handler is `E-ISR-CALL`: put it in a
-routine and call that inside `Save(…) … Restore`. Cost: about 200 words for `+`, 195 for `*`, 150 for `/`, 86 for the comparisons, plus 53 shared (hand-written assembly). See D51, D55.
+even; infinities and NaN propagate; denormals are flushed to zero. On the PIC16F17126/46 the routines are Basic source (the PIC18 ones are assembly);
+the results are the same bit for bit (`tests/exec_p16/float_random.bas`, made by `scripts/gen_float_vectors.py`, runs the same vectors on both cores),
+the code is larger (about 1.2K words for `+`, 1.4K for `*`, 0.9K for `/`, 0.3K for the comparisons, 0.7K and 0.4K for the conversions). Float work directly in an `Interrupt` handler is `E-ISR-CALL`: put it in a
+routine and call that inside `Save(…) … Restore`. Cost on the PIC18: about 200 words for `+`, 195 for `*`, 150 for `/`, 86 for the comparisons, plus 53 shared (hand-written assembly). See D51, D55.
 
 ## Tests
 `tests/exec/lib_serial.bas`, `lib_serial2.bas` (set-up only), `lib_adc.bas`, `lib_eeprom.bas`, `lib_flashwrite.bas`, `lib_pwm.bas`, `lib_i2c.bas`, `lib_spi.bas`, `lib_lcd.bas` and `lib_oled.bas` and `lib_aht30.bas` (set-up only; no pin model in the simulator), `lib_system.bas`, `lib_intosc.bas`, `lib_intosc_div.bas`, `lib_timer.bas` and `lib_timer12.bas` and `lib_timer_hw.bas` run in the simulator (register values, TXIF handshake,

@@ -162,6 +162,7 @@ Dim Tmr2Ie As PIE3.3
 Dim Tmr0If As PIR0.5
 Dim Tmr0Ie As PIE0.5
 Dim Tmr1If As PIR1.6
+Dim Tmr1GIf As PIR1.7
 Dim Tmr1Ie As PIE1.6
 Dim Tmr2If As PIR2.2
 Dim Tmr2Ie As PIE2.2
@@ -275,7 +276,8 @@ End Sub
 
 ' Counts only while the gate source (one of T1Gate*) is at the given level: high with
 ' activeHigh, low without [Table 20-3]. The gate is set up before
-' the timer is switched on, so no count is taken ungated. Timer1GateState reads the live gate.
+' the timer is switched on, so no count is taken ungated. Timer1GateState reads the live gate. On the PIC16F17126/46 TMR1GIF is
+' cleared after the gate writes (erratum 1.7.1, DS80001009E: writing the gate source can set it).
 Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean)
     T1CON = 0
     T1CLK = clk And 31
@@ -288,6 +290,9 @@ Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
+#if _has(PIR1.TMR1IF)
+    Tmr1GIf = 0
+#endif
     T1CON = (prescale And 3) * 16 + 3
 End Sub
 
@@ -311,6 +316,9 @@ Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
+#if _has(PIR1.TMR1IF)
+    Tmr1GIf = 0
+#endif
     T1CON = (prescale And 3) * 16 + 3
     T1GCON = T1GCON Or 8
 End Sub

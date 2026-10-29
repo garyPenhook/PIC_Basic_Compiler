@@ -182,7 +182,7 @@ are not all visible. Frames are static, so there is no recursion through C.
 
 Not supported: an `Extern` call from a handler, structure or array arguments by value, `Export` array parameters.
 
-## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50)
+## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50, library and `Float` in 0.1.51)
 
 The calling convention of section 3 is unchanged: static frames that overlay when two routines are never live together, arguments
 stored straight into the callee's parameters, the result in the callee's `Result` variable (read into `WREG` or `__A` by the
@@ -202,8 +202,9 @@ caller). What differs is the register file and the memory:
 | Interrupt entry | vectors at 08h/18h; hardware saves WREG/STATUS/BSR (fast) | one vector at 04h; hardware saves WREG, STATUS, BSR, FSR0/1 and PCLATH; software saves the scratch bytes the handler uses |
 | Multiply | `mullw`/`mulwf` | shift and add (`__mul1..4`) |
 
-`AddressOf` of a routine or table gives its program **word** address (15 bits). It is not an FSR address; to read a table through an
-FSR, set bit 7 of the high byte.
+`AddressOf` of a routine gives its program **word** address (15 bits). `AddressOf` of a `Const` array (0.1.51) gives the address an FSR
+reads it at: the word address with bit 7 of the high byte set (DS40002343F Example 9-2), so `FSR1` loaded with the value reads the table with
+`moviw 0[FSR1]`; the low 8 bits of each `retlw` word are the byte. RAM objects already give their FSR (linear data memory) address.
 
 ## 6. Open questions for M1/M4
 

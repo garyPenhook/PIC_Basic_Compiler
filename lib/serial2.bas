@@ -11,13 +11,14 @@ Module Serial2
 ' SPI1 data in and I2C1 data pins of the 14-pin parts: route them elsewhere if both modules are used. Set-up and
 ' flags as in module `Serial` (the buffer status bits of U2FIFO and TXMTIF of U2ERRIR).
 '
+' PIC16F17126/46 (DS40002343F, chapters 18 and 32): EUSART2 with TX on RC2 and RX on RC1, both on the 14-pin part too.
+' RC2PPS = 0x16 selects TX2/CK2 [Table 18-2]; RX2PPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 [18.8.1, the reset
+' selection of RX2PPS, Table 18-1]. TX2IF and RC2IF are PIR5 bits 0 and 1. The registers and the baud-rate formula are
+' those of EUSART1.
+'
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
-#if Not _has(PRODL)
-#error "serial2: not ported to the enhanced mid-range core (PIC16F171xx) yet"
-#endif
-
 #if _has(U2CON0)
 Dim TxFull As U2FIFO.4
 Dim TxBufEmpty As U2FIFO.5
@@ -28,7 +29,7 @@ Dim TxPin As TRISC.2
 Dim RxPin As TRISC.1
 Dim TxAnalog As ANSELC.2
 Dim RxAnalog As ANSELC.1
-#else
+#elseif _has(PRODL)
 Dim TxIf As PIR3.6
 Dim RxIf As PIR3.7
 Dim OverrunErr As RC2STA.1
@@ -36,6 +37,14 @@ Dim RxEnable As RC2STA.4
 Dim TxPin As TRISB.6
 Dim RxPin As TRISB.7
 Dim RxAnalog As ANSELB.7
+#else
+Dim TxIf As PIR5.0
+Dim RxIf As PIR5.1
+Dim OverrunErr As RC2STA.1
+Dim RxEnable As RC2STA.4
+Dim TxPin As TRISC.2
+Dim RxPin As TRISC.1
+Dim RxAnalog As ANSELC.1
 #endif
 Public Const FoscHz = LongWord(_Clock * 1000000)
 
@@ -54,9 +63,17 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     U2CON0 = 176
     U2CON2 = 128
     U2CON1 = 128
-#else
+#elseif _has(PRODL)
     RB6PPS = 11
     RX2PPS = 15
+    SP2BRGL = Byte(n)
+    SP2BRGH = Byte(n >> 8)
+    BAUD2CON = 8
+    TX2STA = 36
+    RC2STA = 144
+#else
+    RC2PPS = 22
+    RX2PPS = 17
     SP2BRGL = Byte(n)
     SP2BRGH = Byte(n >> 8)
     BAUD2CON = 8

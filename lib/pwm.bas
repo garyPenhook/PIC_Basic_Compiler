@@ -30,18 +30,24 @@ Module Pwm
 ' PR is full), so PwmSteps steps give 100 %. Outputs go to any pin of RA0..RA5 (not RA3), RB4..RB7, RC0..RC7 through
 ' RxyPPS = 9 + channel [Table 21-2]. Timer2 is not used. The buffered registers are copied when the module is
 ' enabled and by a reload (LD) at the end of the period; a new duty is written and LD is set [30.5].
-#if Not _has(PRODL)
-#error "pwm: not ported to the enhanced mid-range core (PIC16F171xx) yet"
-#endif
-
+' PIC16F17126/46 (DS40002343F chapter 29): the same 16-bit PWM modules as the Q41 but two of them, so channels 1..4 (PWM1S1P1, PWM1S1P2, PWM2S1P1,
+' PWM2S1P2) with RxyPPS = 10 + channel [Table 18-2: PWM1S1P1_OUT = 0Bh]; channels 5 and 6 are refused. Pins as on the Q41.
 #if _has(PWMEN)
+' Output channels: three modules of two on the PIC18-Q41, two modules of two on the PIC16F171xx.
+#if _has(PWM3CON)
+Const Channels = 6
+Const PpsBase = 9
+#else
+Const Channels = 4
+Const PpsBase = 10
+#endif
 Dim steps As Word
 Dim cpre As Byte
 Dim prv As Word
 Dim active As Byte
 Dim freq As LongWord
-Dim pins(6) As Byte
-Dim polv(6) As Byte
+Dim pins(Channels) As Byte
+Dim polv(Channels) As Byte
 Dim ready As Boolean
 
 ' Chooses the PWM clock prescale (CPRE, 1..256) and period (PR) for `hz` and returns 1, or 0 when no setting
@@ -198,20 +204,30 @@ End Function
 Sub SetCon(ByVal m As Byte, ByVal v As Byte)
     If m = 1 Then
         PWM1CON = v
+#if _has(PWM3CON)
     ElseIf m = 2 Then
         PWM2CON = v
     Else
         PWM3CON = v
+#else
+    Else
+        PWM2CON = v
+#endif
     End If
 End Sub
 
 Function GetCon(ByVal m As Byte) As Byte
     If m = 1 Then
         Result = PWM1CON
+#if _has(PWM3CON)
     ElseIf m = 2 Then
         Result = PWM2CON
     Else
         Result = PWM3CON
+#else
+    Else
+        Result = PWM2CON
+#endif
     End If
 End Function
 
@@ -235,6 +251,7 @@ Sub Setup(ByVal m As Byte)
         PWM1CPRE = cpre
         PWM1PR = prv
         PWM1S1CFG = cfg
+#if _has(PWM3CON)
     ElseIf m = 2 Then
         PWM2CLK = 2
         PWM2CPRE = cpre
@@ -245,6 +262,13 @@ Sub Setup(ByVal m As Byte)
         PWM3CPRE = cpre
         PWM3PR = prv
         PWM3S1CFG = cfg
+#else
+    Else
+        PWM2CLK = 2
+        PWM2CPRE = cpre
+        PWM2PR = prv
+        PWM2S1CFG = cfg
+#endif
     End If
 End Sub
 
@@ -256,12 +280,17 @@ Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
         PWM1S1P2 = d
     ElseIf ch = 3 Then
         PWM2S1P1 = d
+#if _has(PWM3CON)
     ElseIf ch = 4 Then
         PWM2S1P2 = d
     ElseIf ch = 5 Then
         PWM3S1P1 = d
     Else
         PWM3S1P2 = d
+#else
+    Else
+        PWM2S1P2 = d
+#endif
     End If
 End Sub
 
@@ -287,7 +316,7 @@ End Function
 Public Sub PwmStop(ByVal ch As Byte)
     Dim msk As Byte
     Dim m As Byte
-    If ch >= 1 And ch <= 6 Then
+    If ch >= 1 And ch <= Channels Then
         msk = 1 << (ch - 1)
         If (active And msk) <> 0 Then
             m = Inst(ch)
@@ -314,12 +343,12 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     Dim m As Byte
     Dim c As Byte
     Result = 0
-    If Not ready Or ch < 1 Or ch > 6 Or Not PinOk(pin) Then
+    If Not ready Or ch < 1 Or ch > Channels Or Not PinOk(pin) Then
         Exit
     End If
     msk = 1 << (ch - 1)
     c = 1
-    While c <= 6
+    While c <= Channels
         If c <> ch And (active And (1 << (c - 1))) <> 0 And pins(c - 1) = pin Then
             Exit
         End If
@@ -345,7 +374,7 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
         SetDuty(ch, duty)
         SetCon(m, 128)
     End If
-    SetPps(pin, ch + 9)
+    SetPps(pin, ch + PpsBase)
     PinInput(pin, False)
     active = active Or msk
     Result = 1
@@ -353,7 +382,7 @@ End Function
 
 ' Duty cycle in steps (0..PwmSteps); no effect on a stopped channel. It takes effect at the next period.
 Public Sub PwmDuty(ByVal ch As Byte, ByVal duty As Word)
-    If ch >= 1 And ch <= 6 Then
+    If ch >= 1 And ch <= Channels Then
         If (active And (1 << (ch - 1))) <> 0 Then
             LoadDuty(ch, duty)
         End If
@@ -376,7 +405,7 @@ End Sub
 Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
     Dim m As Byte
     Result = 1
-    If ch < 1 Or ch > 6 Then
+    If ch < 1 Or ch > Channels Then
         Result = 0
         Exit
     End If

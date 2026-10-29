@@ -18,14 +18,20 @@ Module Eeprom
 ' until one write succeeds, so NVMERR is not a reliable error flag. EepromWrite therefore reports
 ' success by reading the byte back and clears NVMERR itself. 1.6.2 concerns program flash only.
 ' The module is not reentrant: do not call it from a handler and from the main program.
-#if Not _has(PRODL)
-#error "eeprom: not ported to the enhanced mid-range core (PIC16F171xx) yet"
-#endif
-
+'
+' PIC16F17126/46 (DS40002343F, section 15.2; chosen with `Not _has(PRODL)`): 256 bytes at addresses 0..255 through the NVM registers with NVMREGS = 1
+' and NVMADRH:NVMADRL = 70h:address. A read is RD; a write is NVMCON1 = WREN | NVMREGS, interrupts off, 55h and AAh to NVMCON2, WR [15.2.2.2,
+' 15.2.2.4]; the CPU stalls until it is done and the byte is erased first. NVMCON1 is cleared afterwards (that also clears WRERR) and success is
+' the read-back. The data sheet's errata (DS80001009E) show nothing for the NVM.
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim IntEn As INTCON0.7
 Dim NvmDone As PIR0.4
+#elseif Not _has(PRODL)
+Dim NvmWr As NVMCON1.1
+Dim NvmRd As NVMCON1.0
+Dim IntEn As INTCON.7
+Dim NvmDone As PIR1.0
 #else
 Dim NvmWr As NVMCON1.4
 Dim NvmRd As NVMCON1.0
@@ -41,10 +47,14 @@ Public Const EepromSize = _EepromBytes
 Sub SetAddr(ByVal addr As Word)
 #if _has(NVMLOCK)
     NVMADRU = 56
+#elseif Not _has(PRODL)
+    NVMADRH = 112
 #else
     NVMADRU = 49
 #endif
+#if _has(PRODL)
     NVMADRH = Byte(addr >> 8)
+#endif
     NVMADRL = Byte(addr)
 End Sub
 
@@ -58,6 +68,12 @@ Public Function EepromRead(ByVal addr As Word) As Byte
         NvmGo = 1
         While NvmGo = 1
         Wend
+#elseif Not _has(PRODL)
+        NVMCON1 = 64
+        NvmRd = 1
+        While NvmRd = 1
+        Wend
+        NVMCON1 = 0
 #else
         NvmRd = 1
         While NvmRd = 1
@@ -89,6 +105,19 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
             Wend
             NVMCON1 = 0
             NvmDone = 0
+#elseif Not _has(PRODL)
+            NVMCON1 = 68
+            IntEn = 0
+            NVMCON2 = 85
+            NVMCON2 = 170
+            NvmWr = 1
+            If ie = 1 Then
+                IntEn = 1
+            End If
+            While NvmWr = 1
+            Wend
+            NVMCON1 = 0
+            NvmDone = 0
 #else
             IntEn = 0
             NvmEn = 1
@@ -107,7 +136,7 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
         If EepromRead(addr) = value Then
             Result = 1
         End If
-#if not _has(NVMLOCK)
+#if _has(PRODL) And Not _has(NVMLOCK)
         NvmErr = 0
 #endif
     End If

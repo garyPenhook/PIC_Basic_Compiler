@@ -39,6 +39,16 @@ Module Flashwrite
 ' low byte of TBLPTR as the offset [10.3.10.5]), page erase, change the two bytes, page write. The data sheet gives
 ' no pause after the GO instruction and the silicon errata (DS80000901H, DS80000911H) none for the NVM, so none is added.
 ' NVMCMD is put back to 000 at the end [10.3.5 step 9]. Interrupts are off from before NVMADR is loaded.
+'
+' PIC16F17126/46 (DS40002343F, section 15.1; chosen with `Not _has(PRODL)`): word addresses 0..16383 of 14-bit words (values are masked to 14 bits, an
+' erased word is 3FFFh) and a "sector" is the 32-word row [15.1.2.3, 15.1.2.4]. NVMADR holds the word address. A row erase is FREE, WREN and the unlock
+' (55h, AAh to NVMCON2, then WR); a write loads the write latches one word at a time (LWLO = 1) and then writes all of them to the row (LWLO = 0).
+' The latches are reset to 3FFFh at the end of every write (an erase leaves them alone) [15.1.2.4, 15.1.2.3], and a latch not loaded is left blank, so
+' a single-word write leaves the other words of the row as they are. The latch array is shared by all rows (NVMADRL[4:0] picks the latch), so a
+' latch left loaded by a write that failed (WRERR, a write-protected row) could be written into another row by the next write: after a failed
+' write do not write again before a Reset. A written word must be erased. The CPU stalls until each operation ends (about 2 ms for a row write), so there is no wait on WR.
+' FlashUpdateWord keeps the row in a 64-byte RAM image (Example 15-4) because there is no sector buffer. The errata (DS80001009E) show nothing for
+' the NVM. Interrupts are off from before the address is loaded to the end of the operation.
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim NvmErr As NVMCON1.7
@@ -48,10 +58,16 @@ Dim NvmRd As NVMCON1.0
 Dim NvmEn As NVMCON0.7
 Dim NvmErr As NVMCON0.4
 Dim IntEn As INTCON.7
+#elseif Not _has(PRODL)
+Dim NvmWr As NVMCON1.1
+Dim NvmRd As NVMCON1.0
+Dim NvmErr As NVMCON1.3
+Dim IntEn As INTCON.7
 #else
-#error "flashwrite: only the NVM registers of the PIC18F27/47Q10 (NVMADRU, NVMCON0.NVMERR) and the PIC18-Q41 (NVMLOCK, NVMCON1.WRERR) are supported"
+#error "flashwrite: only the NVM registers of the PIC18F27/47Q10 (NVMADRU, NVMCON0.NVMERR), the PIC18-Q41 (NVMLOCK, NVMCON1.WRERR) and the PIC16F171xx (NVMCON1.WRERR) are supported"
 #endif
 
+#if _has(PRODL)
 ' Words in a sector, and the number of the last sector (the program flash in bytes / 256, less one).
 Public Const FlashSectorWords = 128
 Public Const FlashLastSector As Word = _FlashBytes / 256 - 1
@@ -66,6 +82,32 @@ Sub SetAddr(ByVal addr As Word)
     NVMADRH = Byte(addr >> 7)
     NVMADRL = Byte(addr << 1)
 End Sub
+#else
+' Words in a sector (a row of the program flash), and the number of the last sector (the flash in words / 32,
+' less one: the device description gives the size of this core in words).
+Public Const FlashSectorWords = 32
+Public Const FlashLastSector As Word = _FlashBytes / 32 - 1
+
+' The PFM word address of the first word of sector s.
+Public Function FlashSectorAddr(ByVal sector As Word) As Word
+    Result = sector << 5
+End Function
+
+' NVMADR holds the word address itself on this core.
+Sub SetAddr(ByVal addr As Word)
+    NVMADRH = Byte(addr >> 8)
+    NVMADRL = Byte(addr)
+End Sub
+
+' One operation that needs the unlock sequence (NVMCON1 is set up by the caller): 55h, AAh, WR [15.1.2.2]. The
+' three steps follow each other with no bank change in between. The CPU stalls until the operation is done and
+' resumes with the next instruction, so there is no wait for WR to clear.
+Sub Unlock()
+    NVMCON2 = 85
+    NVMCON2 = 170
+    NvmWr = 1
+End Sub
+#endif
 
 ' The word at PFM word address addr (65535 = FFFFh when erased).
 Public Function FlashReadWord(ByVal addr As Word) As Word
@@ -74,6 +116,11 @@ Public Function FlashReadWord(ByVal addr As Word) As Word
     NVMCON1 = 0
     NvmGo = 1
     While NvmGo = 1
+    Wend
+#elseif Not _has(PRODL)
+    NVMCON1 = 0
+    NvmRd = 1
+    While NvmRd = 1
     Wend
 #else
     NvmRd = 1
@@ -91,7 +138,11 @@ Public Function FlashEraseSector(ByVal sector As Word) As Byte
     If sector <= FlashLastSector Then
         ie = IntEn
         IntEn = 0
+#if _has(PRODL)
         SetAddr(sector << 7)
+#else
+        SetAddr(sector << 5)
+#endif
 #if _has(NVMLOCK)
         NVMCON1 = 6
         NVMLOCK = 85
@@ -99,6 +150,16 @@ Public Function FlashEraseSector(ByVal sector As Word) As Byte
         NvmGo = 1
         While NvmGo = 1
         Wend
+        If NvmErr = 0 Then
+            Result = 1
+        End If
+        NVMCON1 = 0
+        If ie = 1 Then
+            IntEn = 1
+        End If
+#elseif Not _has(PRODL)
+        NVMCON1 = 20
+        Unlock()
         If NvmErr = 0 Then
             Result = 1
         End If
@@ -134,6 +195,12 @@ End Function
 ' value, 0 when it does not (the word was not erased, or write protection, or NVMERR).
 Public Function FlashWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
     Dim ie As Byte
+#if Not _has(PRODL)
+    Result = 0
+    If addr >= _FlashBytes Then
+        Exit
+    End If
+#endif
     ie = IntEn
     IntEn = 0
     SetAddr(addr)
@@ -149,6 +216,24 @@ Public Function FlashWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
     If NvmErr = 0 Then
         NVMCON1 = 0
         If FlashReadWord(addr) = value Then
+            Result = 1
+        End If
+    End If
+    NVMCON1 = 0
+    If ie = 1 Then
+        IntEn = 1
+    End If
+#elseif Not _has(PRODL)
+    ' Load this word's write latch (LWLO = 1), then write the latches to the row (LWLO = 0): the other
+    ' latches hold 3FFFh, which leaves the other words of the row as they are.
+    NVMCON1 = 36
+    Unlock()
+    NVMCON1 = 4
+    Unlock()
+    Result = 0
+    If NvmErr = 0 Then
+        NVMCON1 = 0
+        If FlashReadWord(addr) = (value And 16383) Then
             Result = 1
         End If
     End If
@@ -191,19 +276,74 @@ End Function
 Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
     Dim cur As Word
     Dim ie As Byte
-#if _has(NVMLOCK)
+#if _has(NVMLOCK) Or Not _has(PRODL)
     Dim failed As Byte
 #endif
+#if Not _has(PRODL)
+    Dim img(32) As Word
+    Dim base As Word
+    Dim i As Byte
+    Result = 0
+    If addr >= _FlashBytes Then
+        Exit
+    End If
+    value = value And 16383
+    cur = FlashReadWord(addr)
+    If cur = value Then
+        Result = 1
+    ElseIf cur = 16383 Then
+#else
     cur = FlashReadWord(addr)
     If cur = value Then
         Result = 1
     ElseIf cur = 65535 Then
+#endif
         Result = FlashWriteWord(addr, value)
     Else
         Result = 0
         ie = IntEn
         IntEn = 0
-#if _has(NVMLOCK)
+#if Not _has(PRODL)
+        ' Example 15-4 (DS40002343F p.164): row read into a RAM image, row erase, 32 write latches loaded
+        ' (LWLO = 1, the last one with LWLO = 0 so it starts the write). The row is the 32 words that
+        ' share the upper bits of the address.
+        base = addr And 65504
+        NVMCON1 = 0
+        For i = 0 To 31
+            SetAddr(base + i)
+            NvmRd = 1
+            While NvmRd = 1
+            Wend
+            img(i) = NVMDAT
+        Next
+        img(Byte(addr And 31)) = value
+        SetAddr(base)
+        NVMCON1 = 20
+        Unlock()
+        If NvmErr = 0 Then
+            ' All 32 latches are loaded with LWLO = 1; the write is then a separate operation with LWLO = 0 (the data sheet is
+            ' not consistent about whether NVMDAT is read by that last operation, Example 15-4 against Table 15-3; this form
+            ' works either way, the latch of word 31 being loaded already).
+            NVMCON1 = 36
+            For i = 0 To 31
+                SetAddr(base + i)
+                NVMDAT = img(i)
+                Unlock()
+            Next
+            NVMCON1 = 4
+            Unlock()
+        End If
+        failed = NvmErr
+        NVMCON1 = 0
+        If ie = 1 Then
+            IntEn = 1
+        End If
+        If failed = 0 Then
+            If FlashReadWord(addr) = value Then
+                Result = 1
+            End If
+        End If
+#elseif _has(NVMLOCK)
         SetAddr(addr)
         NVMCON1 = 2
         NvmGo = 1

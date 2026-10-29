@@ -15,13 +15,10 @@ Module FloatLib
 ' bit 31, 23 fraction bits below it, then eight more bits (guard first, sticky merged into bit 0).
 ' Pack rounds that form and assembles the result.
 
-#if Not _has(PRODL)
-#error "floatlib is written in PIC18 assembly (PRODL, movff); Float is not available on the enhanced mid-range core yet"
-#endif
-
 Const NaNBits As LongWord = $7FC00000
 Const SignBit As LongWord = $80000000
 
+#if _has(PRODL)
 ' Builds the result: sign in __D0 (bit 7 only), biased exponent of the leading one in __C1:__C0
 ' (signed), mantissa in __A3..__A0 with the leading one at bit 31 (a 24-bit mantissa in __A3..__A1
 ' and the bits below it in __A0). Rounds to nearest even on __A0 and leaves the float in __A3..__A0.
@@ -276,10 +273,6 @@ Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movff __A2, FLOATLIB_FADD__RESULT+2
         movff __A3, FLOATLIB_FADD__RESULT+3
     End Asm
-End Function
-
-Public Function FSub(ByVal a As LongWord, ByVal b As LongWord) As LongWord
-    Result = FAdd(a, b Xor SignBit)
 End Function
 
 Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
@@ -732,34 +725,6 @@ Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
 End Function
 
 
-Public Function FEq(ByVal a As LongWord, ByVal b As LongWord) As Boolean
-    Result = Cmp(a, b) = 0
-End Function
-
-Public Function FNe(ByVal a As LongWord, ByVal b As LongWord) As Boolean
-    Result = Cmp(a, b) <> 0
-End Function
-
-Public Function FLt(ByVal a As LongWord, ByVal b As LongWord) As Boolean
-    Result = Cmp(a, b) = -1
-End Function
-
-Public Function FLe(ByVal a As LongWord, ByVal b As LongWord) As Boolean
-    Dim c As ShortInt
-    c = Cmp(a, b)
-    Result = c = -1 Or c = 0
-End Function
-
-Public Function FGt(ByVal a As LongWord, ByVal b As LongWord) As Boolean
-    Result = Cmp(a, b) = 1
-End Function
-
-Public Function FGe(ByVal a As LongWord, ByVal b As LongWord) As Boolean
-    Dim c As ShortInt
-    c = Cmp(a, b)
-    Result = c = 1 Or c = 0
-End Function
-
 ' The Float for the unsigned magnitude in __A3..__A0 and the sign bit in __D0 (bit 7); leaves it in __A3..__A0.
 Private Sub FromMag()
     Asm
@@ -943,3 +908,376 @@ Public Function FToLong(ByVal a As LongWord) As LongInt
         movff __A3, FLOATLIB_FTOLONG__RESULT+3
     End Asm
 End Function
+#else
+' The enhanced mid-range core (PIC16F171xx) has no hardware multiplier, no MOVFF and no compare-and-skip
+' instructions, so the routines are written in Basic on LongWord arithmetic, which the code generator
+' turns into the same byte-wise 32-bit operations. They give the same results bit for bit as the assembly
+' above (round to nearest even, canonical NaN, denormals flushed) but are larger and slower.
+
+Const ExpMask As LongWord = $7F800000
+Const FracMask As LongWord = $007FFFFF
+
+' Builds the result: `sgn` is SignBit or 0, `e` the biased exponent of the leading one (signed), `m` the
+' mantissa with the leading one at bit 31 (24 bits, then the guard bit and below it, sticky merged into
+' bit 0). Rounds to nearest even; a result below the smallest normal number is a signed zero and one
+' above the largest is an infinity.
+Private Function Pack(ByVal sgn As LongWord, ByVal e As Integer, ByVal m As LongWord) As LongWord
+    Dim f As LongWord
+    Dim lo As Byte
+    Result = sgn
+    If e < 0 Then
+        Exit
+    End If
+    f = m >> 8
+    lo = Byte(m)
+    If lo > 128 Or (lo = 128 And (f And 1) = 1) Then
+        f = f + 1
+        If f > $FFFFFF Then
+            f = $800000
+            e = e + 1
+        End If
+    End If
+    If e >= 255 Then
+        Result = sgn Or ExpMask
+    ElseIf e > 0 Then
+        Result = sgn Or (LongWord(e) << 23) Or (f And FracMask)
+    End If
+End Function
+
+Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    Dim t As LongWord
+    Dim ma As LongWord
+    Dim mb As LongWord
+    Dim ea As Byte
+    Dim eb As Byte
+    Dim d As Byte
+    Dim e As Integer
+    If (b And $7FFFFFFF) > (a And $7FFFFFFF) Then
+        t = a
+        a = b
+        b = t
+    End If
+    ea = Byte(a >> 23)
+    eb = Byte(b >> 23)
+    Result = NaNBits
+    If ea = 255 Then
+        If (a And FracMask) <> 0 Then
+            Exit
+        End If
+        If eb = 255 And ((a Xor b) And SignBit) <> 0 Then
+            Exit
+        End If
+        Result = a
+        Exit
+    End If
+    If eb = 0 Then
+        If ea <> 0 Then
+            Result = a
+        Else
+            Result = a And b And SignBit
+        End If
+        Exit
+    End If
+    ma = ((a And FracMask) Or $800000) << 8
+    mb = ((b And FracMask) Or $800000) << 8
+    d = ea - eb
+    If d >= 32 Then
+        mb = 1
+    ElseIf d > 0 Then
+        t = mb
+        mb = mb >> d
+        If (t And ((LongWord(1) << d) - 1)) <> 0 Then
+            mb = mb Or 1
+        End If
+    End If
+    e = ea
+    If ((a Xor b) And SignBit) = 0 Then
+        ma = ma + mb
+        If ma < mb Then
+            t = ma And 1
+            ma = (ma >> 1) Or SignBit
+            If t <> 0 Then
+                ma = ma Or 1
+            End If
+            e = e + 1
+        End If
+    Else
+        ma = ma - mb
+        If ma = 0 Then
+            Result = 0
+            Exit
+        End If
+        While (ma And SignBit) = 0
+            If (ma And $FF000000) = 0 Then
+                ma = ma << 8
+                e = e - 8
+            Else
+                ma = ma << 1
+                e = e - 1
+            End If
+        Wend
+    End If
+    Result = Pack(a And SignBit, e, ma)
+End Function
+
+Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    Dim sgn As LongWord
+    Dim ea As Byte
+    Dim eb As Byte
+    Dim a0 As Word
+    Dim a1 As Word
+    Dim b0 As Word
+    Dim b1 As Word
+    Dim mid As LongWord
+    Dim hi As LongWord
+    Dim lo As LongWord
+    Dim top As LongWord
+    Dim rem As Word
+    Dim e As Integer
+    sgn = (a Xor b) And SignBit
+    ea = Byte(a >> 23)
+    eb = Byte(b >> 23)
+    Result = NaNBits
+    If ea = 255 And (a And FracMask) <> 0 Then
+        Exit
+    End If
+    If eb = 255 And (b And FracMask) <> 0 Then
+        Exit
+    End If
+    If ea = 255 Then
+        If eb <> 0 Then
+            Result = sgn Or ExpMask
+        End If
+        Exit
+    End If
+    If eb = 255 Then
+        If ea <> 0 Then
+            Result = sgn Or ExpMask
+        End If
+        Exit
+    End If
+    If ea = 0 Or eb = 0 Then
+        Result = sgn
+        Exit
+    End If
+    ' 24 x 24 bit product from 12 bit halves: hi holds bits 47..24 of it, lo bits 23..0.
+    top = (a And FracMask) Or $800000
+    a1 = Word(top >> 12)
+    a0 = Word(top And $FFF)
+    top = (b And FracMask) Or $800000
+    b1 = Word(top >> 12)
+    b0 = Word(top And $FFF)
+    hi = a1 * b1
+    mid = a0 * b1
+    mid = mid + a1 * b0
+    lo = a0 * b0
+    lo = lo + ((mid And $FFF) << 12)
+    hi = hi + (mid >> 12) + (lo >> 24)
+    lo = lo And $FFFFFF
+    top = (hi << 8) Or (lo >> 16)
+    rem = Word(lo And $FFFF)
+    e = ea
+    e = e + eb - 127
+    If (top And SignBit) <> 0 Then
+        e = e + 1
+        If rem <> 0 Then
+            top = top Or 1
+        End If
+    Else
+        top = (top << 1) Or LongWord(rem >> 15)
+        If (rem And $7FFF) <> 0 Then
+            top = top Or 1
+        End If
+    End If
+    Result = Pack(sgn, e, top)
+End Function
+
+Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    Dim sgn As LongWord
+    Dim ea As Byte
+    Dim eb As Byte
+    Dim ma As LongWord
+    Dim mb As LongWord
+    Dim q As LongWord
+    Dim e As Integer
+    Dim i As Byte
+    sgn = (a Xor b) And SignBit
+    ea = Byte(a >> 23)
+    eb = Byte(b >> 23)
+    Result = NaNBits
+    If ea = 255 And (a And FracMask) <> 0 Then
+        Exit
+    End If
+    If eb = 255 And (b And FracMask) <> 0 Then
+        Exit
+    End If
+    If ea = 255 Then
+        If eb <> 255 Then
+            Result = sgn Or ExpMask
+        End If
+        Exit
+    End If
+    If eb = 255 Then
+        Result = sgn
+        Exit
+    End If
+    If eb = 0 Then
+        If ea <> 0 Then
+            Result = sgn Or ExpMask
+        End If
+        Exit
+    End If
+    If ea = 0 Then
+        Result = sgn
+        Exit
+    End If
+    ma = (a And FracMask) Or $800000
+    mb = (b And FracMask) Or $800000
+    e = ea
+    e = e - eb + 127
+    If ma < mb Then
+        ma = ma << 1
+        e = e - 1
+    End If
+    q = 0
+    For i = 1 To 32
+        q = q << 1
+        If ma >= mb Then
+            ma = ma - mb
+            q = q Or 1
+        End If
+        ma = ma << 1
+    Next
+    If ma <> 0 Then
+        q = q Or 1
+    End If
+    Result = Pack(sgn, e, q)
+End Function
+
+' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0); 2 when either is NaN.
+Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
+    Dim ma As LongWord
+    Dim mb As LongWord
+    Result = 2
+    ma = a And $7FFFFFFF
+    mb = b And $7FFFFFFF
+    If ma > ExpMask Or mb > ExpMask Then
+        Exit
+    End If
+    If ma = 0 And mb = 0 Then
+        Result = 0
+    ElseIf ((a Xor b) And SignBit) <> 0 Then
+        If (a And SignBit) <> 0 Then
+            Result = -1
+        Else
+            Result = 1
+        End If
+    ElseIf ma = mb Then
+        Result = 0
+    ElseIf (ma > mb) = ((a And SignBit) = 0) Then
+        Result = 1
+    Else
+        Result = -1
+    End If
+End Function
+
+' The Float for the magnitude v and the sign `sgn` (SignBit or 0).
+Private Function FromMag(ByVal sgn As LongWord, ByVal v As LongWord) As LongWord
+    Dim e As Integer
+    Result = 0
+    If v = 0 Then
+        Exit
+    End If
+    e = 158
+    While (v And SignBit) = 0
+        If (v And $FF000000) = 0 Then
+            v = v << 8
+            e = e - 8
+        Else
+            v = v << 1
+            e = e - 1
+        End If
+    Wend
+    Result = Pack(sgn, e, v)
+End Function
+
+Public Function FFromLong(ByVal v As LongInt) As LongWord
+    Dim m As LongWord
+    m = LongWord(v)
+    If v < 0 Then
+        Result = FromMag(SignBit, (m Xor $FFFFFFFF) + 1)
+    Else
+        Result = FromMag(0, m)
+    End If
+End Function
+
+Public Function FFromULong(ByVal v As LongWord) As LongWord
+    Result = FromMag(0, v)
+End Function
+
+' Truncates toward zero; out of range saturates to the LongInt limits, NaN gives 0.
+Public Function FToLong(ByVal a As LongWord) As LongInt
+    Dim e As Byte
+    Dim m As LongWord
+    Result = 0
+    e = Byte(a >> 23)
+    If e < 127 Then
+        Exit
+    End If
+    If e >= 158 Then
+        If e = 255 And (a And FracMask) <> 0 Then
+            Exit
+        End If
+        If (a And SignBit) <> 0 Then
+            m = SignBit
+        Else
+            m = $7FFFFFFF
+        End If
+        Result = LongInt(m)
+        Exit
+    End If
+    m = (a And FracMask) Or $800000
+    If e >= 150 Then
+        m = m << (e - 150)
+    Else
+        m = m >> (150 - e)
+    End If
+    If (a And SignBit) <> 0 Then
+        m = (m Xor $FFFFFFFF) + 1
+    End If
+    Result = LongInt(m)
+End Function
+#endif
+
+Public Function FSub(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    Result = FAdd(a, b Xor SignBit)
+End Function
+
+Public Function FEq(ByVal a As LongWord, ByVal b As LongWord) As Boolean
+    Result = Cmp(a, b) = 0
+End Function
+
+Public Function FNe(ByVal a As LongWord, ByVal b As LongWord) As Boolean
+    Result = Cmp(a, b) <> 0
+End Function
+
+Public Function FLt(ByVal a As LongWord, ByVal b As LongWord) As Boolean
+    Result = Cmp(a, b) = -1
+End Function
+
+Public Function FLe(ByVal a As LongWord, ByVal b As LongWord) As Boolean
+    Dim c As ShortInt
+    c = Cmp(a, b)
+    Result = c = -1 Or c = 0
+End Function
+
+Public Function FGt(ByVal a As LongWord, ByVal b As LongWord) As Boolean
+    Result = Cmp(a, b) = 1
+End Function
+
+Public Function FGe(ByVal a As LongWord, ByVal b As LongWord) As Boolean
+    Dim c As ShortInt
+    c = Cmp(a, b)
+    Result = c = 1 Or c = 0
+End Function
+
