@@ -1916,8 +1916,73 @@ impl<'p> Gen<'p> {
         self.ins(format!("movff {sfr}, {}", dst.sym));
     }
 
+    /// A multiplier `m` and shift `s` with `n * m >> s == n / k` for every byte `n`, `m` a byte and `s` from 8 to 15.
+    /// The smallest shift wins, because each bit past 8 costs a `rrncf`.
+    fn recip_byte(k: u32) -> Option<(u32, u32)> {
+        if !(3..=255).contains(&k) {
+            return None;
+        }
+        (8..=15).find_map(|s| {
+            let m = (1u32 << s).div_ceil(k);
+            (m <= 255 && (0..=255u32).all(|n| (n * m) >> s == n / k)).then_some((m, s))
+        })
+    }
+
+    /// Unsigned Byte `l / k` and `l Mod k` with a constant `k`: `mullw m` and a shift of `PRODH` instead of the helper.
+    fn div_byte_const(&mut self, op: BinKind, l: &Ex, k: u32) -> bool {
+        let Some((m, s)) = Self::recip_byte(k) else { return false };
+        let src = match self.simple(l) {
+            // A volatile variable is read once: `Mod` would otherwise see two different values.
+            Some(Src::Mem(mem, _)) if !mem.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile) => Some(mem),
+            _ => None,
+        };
+        let (n, spilled) = match src {
+            Some(mem) => {
+                self.fop("movf", &mem, "w");
+                (mem, false)
+            }
+            None => {
+                let t = self.spill(l);
+                self.fop("movf", &t, "w");
+                (t, true)
+            }
+        };
+        self.ins(format!("mullw {m}"));
+        match s - 8 {
+            0 => self.ins("movf PRODH, w, c"),
+            4 => {
+                self.ins("swapf PRODH, w, c");
+                self.ins("andlw 0x0F");
+            }
+            j => {
+                self.ins("rrncf PRODH, w, c");
+                for _ in 1..j {
+                    self.ins("rrncf WREG, w, c");
+                }
+                self.ins(format!("andlw 0x{:02X}", 0xFFu32 >> j));
+            }
+        }
+        if op == BinKind::Mod {
+            self.ins(format!("mullw {k}"));
+            self.ins("movf PRODL, w, c");
+            self.fop("subwf", &n, "w");
+        }
+        if spilled {
+            self.free(1);
+        }
+        true
+    }
+
     fn gen_div(&mut self, op: BinKind, l: &Ex, r: &Ex, e: &Ex) {
         let n = Self::nb(e);
+        if n == 1
+            && !e.signed
+            && self.tgt.opt
+            && let Some(k) = r.as_const()
+            && self.div_byte_const(op, l, k as u32)
+        {
+            return;
+        }
         self.prep_ab(l, r, n);
         let s = if e.signed { "s" } else { "" };
         self.call_helper(format!("{s}div{n}"));
