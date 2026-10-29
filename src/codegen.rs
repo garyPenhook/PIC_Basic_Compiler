@@ -2437,6 +2437,13 @@ impl<'p> Gen<'p> {
                 }
             }
         }
+        if n > 1 && self.tgt.opt && let ExK::Bin(op, l, r) = &e.k
+            && matches!(op, BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor)
+            && let (Some(ls), Some(rs)) = (self.simple(l), self.simple(r))
+            && self.bin_direct(*op, &dst, &ls, &rs, n)
+        {
+            return;
+        }
         self.gen_val(e);
         if n == 1 {
             self.fo("movwf", &dst);
@@ -2446,6 +2453,124 @@ impl<'p> Gen<'p> {
                 self.put_byte(&dst.at(i), &Bs::Mem(a));
             }
         }
+    }
+
+    /// `dst = l op r` for two simple operands, each byte routed through W (`movf l,w / addwf r,w / movwf dst`)
+    /// instead of through `__A`, which costs a `movff` pair per byte. Returns false, emitting nothing, when
+    /// the operands do not fit that shape.
+    fn bin_direct(&mut self, op: BinKind, dst: &Mem, ls: &Src, rs: &Src, n: u32) -> bool {
+        let carry = matches!(op, BinKind::Add | BinKind::Sub);
+        let bytes: Vec<(Bs, Bs)> = (0..n).map(|i| (ls.byte(i), rs.byte(i))).collect();
+        for (i, (lb, rb)) in bytes.iter().enumerate() {
+            let both_imm = matches!((lb, rb), (Bs::Imm(_), Bs::Imm(_)));
+            if carry && (both_imm || (i == 0 && matches!((lb, rb), (Bs::Imm(0), _) | (_, Bs::Imm(0)))) || (op == BinKind::Sub && i > 0 && matches!(lb, Bs::Imm(_)))) {
+                return false;
+            }
+        }
+        // A byte of `dst` written before a later source byte is read would corrupt it (overlapping aliases).
+        let key = |m: &Mem| -> Option<(String, u32)> {
+            let mut parts = m.sym.split('+');
+            let base = parts.next()?.to_string();
+            let mut off = 0;
+            for t in parts {
+                off += t.parse::<u32>().ok()?;
+            }
+            Some((base, off))
+        };
+        let same = |a: &Mem, b: &Mem| match (a.addr, b.addr) {
+            (Some(x), Some(y)) => x == y,
+            _ => key(a).zip(key(b)).is_none_or(|(x, y)| x == y),
+        };
+        let mut mems: Vec<Mem> = (0..n).map(|i| dst.at(i)).collect();
+        for (j, (lb, rb)) in bytes.iter().enumerate() {
+            for b in [lb, rb] {
+                if let Bs::Mem(m) = b {
+                    if (0..j).any(|i| same(m, &dst.at(i as u32))) {
+                        return false;
+                    }
+                    mems.push(m.clone());
+                }
+            }
+        }
+        // Only worth it when no bank switches creep in: everything in the Access Bank, or all in one bank.
+        let acc = mems.iter().all(|m| is_access(self.tgt, m.addr));
+        let one_bank = mems.iter().all(|m| !is_access(self.tgt, m.addr)) && mems.iter().all(|m| m.addr.map(|a| a >> 8) == mems[0].addr.map(|a| a >> 8));
+        if !acc && !one_bank {
+            return false;
+        }
+        for (i, (lb, rb)) in bytes.into_iter().enumerate() {
+            let d = dst.at(i as u32);
+            match op {
+                BinKind::Add | BinKind::Sub => {
+                    let (name, plain) = match (op, i) {
+                        (BinKind::Add, 0) => ("addwf", true),
+                        (BinKind::Add, _) => ("addwfc", false),
+                        (_, 0) => ("subwf", true),
+                        _ => ("subwfb", false),
+                    };
+                    if op == BinKind::Add {
+                        // W takes the immediate (or the left operand), the file register the other memory operand.
+                        let (w, f) = match (&lb, &rb) {
+                            (Bs::Mem(_), Bs::Mem(_)) => (&lb, &rb),
+                            (Bs::Imm(_), _) => (&lb, &rb),
+                            _ => (&rb, &lb),
+                        };
+                        match (plain, w, f) {
+                            (true, Bs::Mem(_), Bs::Imm(k)) | (true, Bs::Imm(k), Bs::Mem(_)) => {
+                                let m = if let Bs::Mem(m) = w { m } else if let Bs::Mem(m) = f { m } else { unreachable!() };
+                                self.fop("movf", m, "w");
+                                self.w_op(BinKind::Add, &Bs::Imm(*k));
+                            }
+                            (_, _, Bs::Mem(fm)) => {
+                                self.src_to_w(w);
+                                self.fop(name, fm, "w");
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        match (&lb, &rb) {
+                            // k - r: sublw takes the literal as the minuend (byte 0 only, see above).
+                            (Bs::Imm(k), Bs::Mem(m)) => {
+                                self.fop("movf", m, "w");
+                                self.ins(format!("sublw 0x{k:02X}"));
+                            }
+                            (Bs::Mem(lm), _) => {
+                                self.src_to_w(&rb);
+                                self.fop(name, lm, "w");
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    self.fo("movwf", &d);
+                }
+                _ => {
+                    // Logic: keep a memory operand on the left.
+                    let (lb, rb) = if matches!(lb, Bs::Imm(_)) && matches!(rb, Bs::Mem(_)) { (rb, lb) } else { (lb, rb) };
+                    match (&lb, &rb) {
+                        (Bs::Mem(_), Bs::Imm(k)) => match (op, *k) {
+                            (BinKind::And, 0) => self.fo("clrf", &d),
+                            (BinKind::Or, 0xFF) => self.fo("setf", &d),
+                            (BinKind::And, 0xFF) | (BinKind::Or, 0) | (BinKind::Xor, 0) => {
+                                if let Bs::Mem(m) = &lb && m.sym != d.sym {
+                                    self.put_byte(&d, &lb);
+                                }
+                            }
+                            _ => {
+                                self.src_to_w(&lb);
+                                self.w_op(op, &rb);
+                                self.fo("movwf", &d);
+                            }
+                        },
+                        _ => {
+                            self.src_to_w(&lb);
+                            self.w_op(op, &rb);
+                            self.fo("movwf", &d);
+                        }
+                    }
+                }
+            }
+        }
+        true
     }
 
     fn store_bit(&mut self, p: &Place, b: u8, e: &Ex) {
