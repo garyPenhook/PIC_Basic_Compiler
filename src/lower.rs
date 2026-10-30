@@ -62,6 +62,17 @@ fn sign_extend(v: u32, w: u8) -> i64 {
     }
 }
 
+/// |x| = x + ((-2x) & mask), mask = all ones when x < 0. `x` is signed.
+pub fn abs_expand(x: Ex) -> Ex {
+    let (w, s) = (x.w, x.signed);
+    let neg = Ex::boolean(ExK::Cmp(CmpKind::Lt, Box::new(x.clone()), Box::new(Ex::konst(0, w, s))));
+    let mask = Ex::new(ExK::Neg(Box::new(conv(neg, w, s))), w, s);
+    let twice = Ex::new(ExK::Bin(BinKind::Add, Box::new(x.clone()), Box::new(x.clone())), w, s);
+    let minus_twice = Ex::new(ExK::Neg(Box::new(twice)), w, s);
+    let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(minus_twice), Box::new(mask)), w, s);
+    Ex::new(ExK::Bin(BinKind::Add, Box::new(x), Box::new(pick)), w, s)
+}
+
 /// Min = b + ((a - b) & mask) with mask all ones when a < b; Max the same with a > b. `a` and `b` have the result's width.
 pub fn minmax_expand(max: bool, a: Ex, b: Ex) -> Ex {
     let (w, s) = (a.w, a.signed);
@@ -1932,12 +1943,10 @@ impl<'a> Lowerer<'a> {
                     self.unsupported(e.span, "a call inside the argument of Abs");
                     return None;
                 }
-                let neg = Ex::boolean(ExK::Cmp(CmpKind::Lt, Box::new(x.clone()), Box::new(Ex::konst(0, w, s))));
-                let mask = Ex::new(ExK::Neg(Box::new(conv(neg, w, s))), w, s);
-                let twice = Ex::new(ExK::Bin(BinKind::Add, Box::new(x.clone()), Box::new(x.clone())), w, s);
-                let minus_twice = Ex::new(ExK::Neg(Box::new(twice)), w, s);
-                let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(minus_twice), Box::new(mask)), w, s);
-                Some(Ex::new(ExK::Bin(BinKind::Add, Box::new(x), Box::new(pick)), w, s))
+                if w == 8 {
+                    return Some(Ex::new(ExK::Abs(Box::new(x)), 8, true));
+                }
+                Some(abs_expand(x))
             }
             // An unsigned Byte is selected with skip instructions; the other widths use the mask form.
             "min" | "max" => {
@@ -2617,7 +2626,7 @@ fn strip_ex(e: &mut Ex, is_len: LenTest) {
     match &mut e.k {
         ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
         ExK::Load(p) | ExK::Addr(p) => strip_place(p, is_len),
-        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => strip_ex(x, is_len),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => strip_ex(x, is_len),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
             strip_ex(a, is_len);
             strip_ex(b, is_len);

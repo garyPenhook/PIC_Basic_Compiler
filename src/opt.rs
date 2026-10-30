@@ -55,7 +55,7 @@ fn w_ex<V: Visit>(v: &mut V, e: &Ex) {
     match &e.k {
         ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
         ExK::Load(p) | ExK::Addr(p) => w_idx(v, p),
-        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => w_ex(v, x),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => w_ex(v, x),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
             w_ex(v, a);
             w_ex(v, b);
@@ -158,7 +158,7 @@ fn m_ex(e: &mut Ex, f: &mut dyn FnMut(&mut Ex)) {
     match &mut e.k {
         ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
         ExK::Load(p) | ExK::Addr(p) => m_idx(p, f),
-        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => m_ex(x, f),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => m_ex(x, f),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
             m_ex(a, f);
             m_ex(b, f);
@@ -270,6 +270,7 @@ fn fold(e: &mut Ex) {
     let new = match &e.k {
         ExK::Conv(x) => x.as_const().map(|v| as_i64(v, x.w, x.signed) as u32),
         ExK::Neg(x) if x.w == w => x.as_const().map(|v| 0u32.wrapping_sub(v)),
+        ExK::Abs(x) if x.w == w => x.as_const().map(|v| (as_i64(v, x.w, true).unsigned_abs() as u32) & 0xFF),
         ExK::Com(x) if x.w == w => x.as_const().map(|v| !v),
         ExK::NotB(x) => x.as_const().map(|v| (v == 0) as u32),
         ExK::Cmp(k, a, b) if a.w == b.w => match (a.as_const(), b.as_const()) {
@@ -725,7 +726,7 @@ fn pure(e: &Ex) -> bool {
     match &e.k {
         ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => true,
         ExK::Load(p) => matches!(p.base, Base::Var(_)) && p.idx.is_none() && p.dbit.is_none(),
-        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => pure(x),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => pure(x),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => pure(a) && pure(b),
         ExK::Addr(p) => p.idx.is_none() && p.dbit.is_none(),
         ExK::Call(..) | ExK::StrEq(..) => false,

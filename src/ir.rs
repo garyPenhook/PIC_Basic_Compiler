@@ -171,6 +171,8 @@ pub enum ExK {
     Const(u32),
     Load(Place),
     Neg(Box<Ex>),
+    /// Magnitude of a signed Byte (other widths are expanded by `lower::abs_expand`).
+    Abs(Box<Ex>),
     /// Bitwise complement.
     Com(Box<Ex>),
     Bin(BinKind, Box<Ex>, Box<Ex>),
@@ -230,7 +232,7 @@ impl Ex {
             ExK::Call(..) => true,
             ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => false,
             ExK::Load(p) | ExK::Addr(p) => p.idx.as_ref().is_some_and(|i| i.has_call()),
-            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.has_call(),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => x.has_call(),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.has_call() || b.has_call(),
             ExK::StrEq(a, b) => a.has_call() || b.has_call(),
         }
@@ -241,7 +243,7 @@ impl Ex {
         match &self.k {
             ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) | ExK::Call(..) => false,
             ExK::Load(p) | ExK::Addr(p) => p.indirect() || p.idx.as_ref().is_some_and(|i| i.uses_fsr()),
-            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.uses_fsr(),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => x.uses_fsr(),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.uses_fsr() || b.uses_fsr(),
             ExK::StrEq(..) => true,
         }
@@ -475,7 +477,7 @@ impl Ex {
             ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => false,
             ExK::Load(p) => (reads && p.is_var(v)) || p.idx.as_ref().is_some_and(|i| i.touches(v, reads)),
             ExK::Addr(p) => p.touches(v, reads),
-            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => x.touches(v, reads),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => x.touches(v, reads),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => a.touches(v, reads) || b.touches(v, reads),
             ExK::Call(_, args) => args.iter().any(|(p, e)| p.touches(v, reads) || e.touches(v, reads)),
             ExK::StrEq(a, b) => a.touches(v, reads) || b.touches(v, reads),

@@ -309,6 +309,7 @@ impl<'p> G<'p> {
                 }
             }
             ExK::Load(p) => self.load_place(p, e),
+            ExK::Abs(x) => self.ev(&crate::lower::abs_expand((**x).clone())),
             ExK::Neg(x) => {
                 let x = fit(x, e.w);
                 self.ev(&x);

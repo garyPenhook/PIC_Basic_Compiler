@@ -1166,7 +1166,7 @@ pub(crate) fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
                 }
             }
             ExK::Load(p) | ExK::Addr(p) => place(p, out),
-            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => ex(x, out),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => ex(x, out),
             ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
                 ex(a, out);
                 ex(b, out);

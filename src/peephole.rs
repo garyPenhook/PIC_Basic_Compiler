@@ -335,6 +335,10 @@ fn effect(t: &str) -> Option<Eff> {
             return None;
         }
     }
+    // `PLUSWn` adds WREG to the pointer, so any access through it reads W.
+    if ops.iter().any(|o| o.to_ascii_uppercase().starts_with("PLUSW")) && !e.reads.contains(&Loc::W) {
+        e.reads.push(Loc::W);
+    }
     Some(e)
 }
 
@@ -1656,6 +1660,14 @@ mod tests {
     fn indirect_write_forgets_memory_copy() {
         let r = run(&[ins("movwf X, c"), ins("movwf POSTINC0, c"), ins("movf X, w, c"), ins("addwf Y, f, c")]);
         assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn plusw_access_reads_w() {
+        let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movf PLUSW0, w, c"), ins("movwf Y, c")]);
+        assert_eq!(r.len(), 4);
+        let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movff Y, PLUSW0")]);
+        assert_eq!(r.len(), 3);
     }
 
     #[test]

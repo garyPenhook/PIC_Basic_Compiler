@@ -369,7 +369,7 @@ fn ex_calls(e: &Ex, out: &mut BTreeSet<FuncId>) {
     match &e.k {
         ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
         ExK::Load(p) | ExK::Addr(p) => place_calls(p, out),
-        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) => ex_calls(x, out),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => ex_calls(x, out),
         ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
             ex_calls(a, out);
             ex_calls(b, out);
@@ -1021,6 +1021,15 @@ impl<'p> Gen<'p> {
                 }
             }
             ExK::Conv(inner) => self.gen_conv(inner, e.w, e.signed),
+            ExK::Abs(x) => {
+                if !self.tgt.opt {
+                    self.gen_val(&crate::lower::abs_expand((**x).clone()));
+                    return;
+                }
+                self.gen_val(x);
+                self.ins("btfsc WREG, 7, c");
+                self.ins("negf WREG, c");
+            }
             ExK::Neg(x) => {
                 self.gen_val(x);
                 if n == 1 {
@@ -1089,6 +1098,28 @@ impl<'p> Gen<'p> {
 
     fn sfr_mem(&self, name: &str) -> Mem {
         Mem { sym: name.to_string(), addr: self.tgt.sfr.get(name).copied(), obj: None, reg: false }
+    }
+
+    /// A one-byte element of a small array picked by an unsigned Byte variable: FSR0 takes the array
+    /// and W the index, so `PLUSW0` (FSR0 + signed W, hence the 128-byte limit) reaches the element.
+    /// Returns `PLUSW0`; W must hold the index at the access.
+    fn plusw_point(&mut self, p: &Place) -> Option<Mem> {
+        let (Base::Var(v), Some(ix)) = (&p.base, &p.idx) else { return None };
+        let ExK::Conv(x) = &ix.k else { return None };
+        if !self.tgt.opt || p.bit.is_some() || p.dbit.is_some() || p.bytes() != 1 || x.w != 8 || x.signed || self.p.vars[*v].by_ref || self.p.vars[*v].bytes > 128 {
+            return None;
+        }
+        self.tgt.sfr.get("PLUSW0")?;
+        // The index goes to W first (computing it may use FSR0); `lfsr` leaves W alone.
+        match self.simple(x) {
+            Some(s) => self.src_to_w(&s.byte(0)),
+            None => self.gen_val(x),
+        }
+        self.uses[*v] += 1;
+        let sym = &self.p.vars[*v].asm;
+        let at = if p.off == 0 { sym.clone() } else { format!("{sym}+{}", p.off) };
+        self.ins(format!("lfsr 0, {at}"));
+        Some(self.sfr_mem("PLUSW0"))
     }
 
     /// Points FSR0 at the byte an indirect place names: `base + off (+ idx)`, where the base is
@@ -1398,6 +1429,12 @@ impl<'p> Gen<'p> {
             return;
         }
         if p.indirect() {
+            if n == 1
+                && let Some(pw) = self.plusw_point(p)
+            {
+                self.fop("movf", &pw, "w");
+                return;
+            }
             self.point_fsr0(p);
             if n == 1 {
                 let m = self.sfr_mem("INDF0");
@@ -2468,6 +2505,32 @@ impl<'p> Gen<'p> {
     }
 
     fn ord_jump(&mut self, kind: CmpKind, l: &Ex, r: &Ex, n: u32, signed: bool, target: &str) {
+        // A signed value against zero is a test of its sign bit: `x < 0` and `x >= 0` (`0 > x`, `0 <= x`).
+        if signed && self.tgt.opt {
+            let zero = |g: &Self, e: &Ex| matches!(g.simple(e), Some(Src::Imm(0)));
+            let sign = match kind {
+                CmpKind::Lt | CmpKind::Ge if zero(self, r) => Some(l),
+                CmpKind::Gt | CmpKind::Le if zero(self, l) => Some(r),
+                _ => None,
+            };
+            if let Some(x) = sign {
+                let neg = matches!(kind, CmpKind::Lt | CmpKind::Gt);
+                if let Some(Src::Mem(m, real)) = self.simple(x)
+                    && real == n
+                {
+                    self.fbit(if neg { "btfsc" } else { "btfss" }, &m.at(n - 1), 7);
+                    self.br(Cc::Always, target);
+                    return;
+                }
+                if !x.has_call() && n == 1 {
+                    // The flags of `iorlw 0` carry the sign of W.
+                    self.gen_val(x);
+                    self.ins("iorlw 0");
+                    self.br(if neg { Cc::N } else { Cc::Nn }, target);
+                    return;
+                }
+            }
+        }
         // Reduce to `X < Y` or `X >= Y`, swapping the operands for > and <=.
         let swapped = matches!(kind, CmpKind::Gt | CmpKind::Le);
         let lt = matches!(kind, CmpKind::Lt | CmpKind::Gt);
@@ -2524,15 +2587,24 @@ impl<'p> Gen<'p> {
                 self.fop("movf", &xm.at(n - 1), "w");
                 self.ins("xorlw 0x80");
                 self.fo("movwf", &d2);
-                let yb = ys.byte(n - 1);
-                self.src_to_w(&yb);
-                self.ins("xorlw 0x80");
-                self.fo("movwf", &d3);
+                // A constant's biased byte needs no register: it is loaded just before the last subtract.
+                if let Bs::Mem(_) = ys.byte(n - 1) {
+                    let yb = ys.byte(n - 1);
+                    self.src_to_w(&yb);
+                    self.ins("xorlw 0x80");
+                    self.fo("movwf", &d3);
+                }
             }
             for i in 0..n {
                 if signed && i + 1 == n {
-                    let (d2, d3) = (self.d(2), self.d(3));
-                    self.fop("movf", &d3, "w");
+                    let d2 = self.d(2);
+                    match ys.byte(n - 1) {
+                        Bs::Imm(k) => self.ins(format!("movlw 0x{:02X}", k ^ 0x80)),
+                        Bs::Mem(_) => {
+                            let d3 = self.d(3);
+                            self.fop("movf", &d3, "w");
+                        }
+                    }
                     self.fop("subwfb", &d2, "w");
                 } else {
                     let yb = ys.byte(i);
@@ -2555,12 +2627,27 @@ impl<'p> Gen<'p> {
             let n = p.bytes();
             let post = self.sfr_mem("POSTINC0");
             if let Some(s) = self.simple(e) {
+                // A constant goes through W, which holds the index at the access: it keeps the long form.
+                if n == 1
+                    && let Bs::Mem(src) = s.byte(0)
+                    && let Some(pw) = self.plusw_point(p)
+                {
+                    self.movff(&pw, &src);
+                    return;
+                }
                 self.point_fsr0(p);
                 for i in 0..n {
                     self.put_byte(&post, &s.byte(i));
                 }
             } else {
                 let t = self.spill(e);
+                if n == 1
+                    && let Some(pw) = self.plusw_point(p)
+                {
+                    self.movff(&pw, &t);
+                    self.free(n);
+                    return;
+                }
                 self.point_fsr0(p);
                 for i in 0..n {
                     self.movff(&post, &t.at(i));
