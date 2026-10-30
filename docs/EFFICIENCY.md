@@ -76,7 +76,7 @@ constants.
 |---|---|---|---|
 | **W1** (**done, 0.1.56**) three-address `w = x + y` copies both operands into `__A`, operates, and copies back | 12 words | `movf x,w; addwf y,w; movwf w; movf x+1,w; addwfc y+1,w; movwf w+1` (Sub: `subwf`/`subwfb` with the operand order fixed as in B1; And/Or/Xor the same, no carry) | 12→6 cycles; 1000+234=1234 |
 | **W2** (**done, 0.1.57**) `x = x << 1`, `x >> 1`, `x * 2`, `x / 2` go through `__A` | 11 words | `bcf STATUS,0; rlcf x; rlcf x+1` (`rrcf` high-to-low for right) | 11→3 cycles; 1001→2002, 500 |
-| **W3** `x << 4` / `x >> 4` use the generic loop | 15 words, 33 cycles | nibble swap: `swapf hi,f; movlw 0xF0; andwf hi,f; swapf lo,f; movlw 0x0F; andwf lo,w; iorwf hi,f; movlw 0xF0; andwf lo,f` | 33→9; 1001<<4=16016 |
+| **W3** (**done for a different destination, 0.1.66**) `x << 4` / `x >> 4` use the generic loop | 15 words, 33 cycles | nibble swap: `swapf hi,f; movlw 0xF0; andwf hi,f; swapf lo,f; movlw 0x0F; andwf lo,w; iorwf hi,f; movlw 0xF0; andwf lo,f` | 33→9; 1001<<4=16016 |
 | **W4** `x >> 8`, `x << 8`, `x And 255`, `x / 256`, `x Mod 256` stage through `__A1` | 5 words | `movff x+1,x; clrf x+1` and the like | 5→3 cycles; 1001>>8=3 |
 | **W5** (**done, 0.1.65**) `x = x + 1` / `x = x - 1` | 4 words | `infsnz x,f; incf x+1,f` and `decf x,f; btfss STATUS,0; decf x+1,f` | +1: 4→2 (255→256, 65535→0); −1: 4→3 (256→255, 0→65535, 5→4) |
 | **W6** `x * K` (K constant) ends with `movff __C0,__A0; movff __C1,__A1` before the store | 18 words | store `PRODL`-derived bytes straight to the destination | 18→13 cycles (`x*10`, 123→1230) |

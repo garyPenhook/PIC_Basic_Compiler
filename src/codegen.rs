@@ -3081,6 +3081,35 @@ impl<'p> Gen<'p> {
                     }
                 }
             }
+        } else if !in_place && n == 2 && r == 4 && !signed && {
+            let mems: Vec<Mem> = (0..n).flat_map(|i| [d(i), s(i)]).collect();
+            mems.iter().all(|x| is_access(self.tgt, x.addr))
+                || (mems.iter().all(|x| !is_access(self.tgt, x.addr)) && mems.iter().all(|x| x.addr.map(|a| a >> 8) == mems[0].addr.map(|a| a >> 8)))
+        } {
+            // A 16-bit shift by 4 into another variable: swap the nibbles (9 words, the bit loop is 12).
+            let (hi_mask, lo_mask) = ("0xF0", "0x0F");
+            if left {
+                self.fop("swapf", &s(1), "w");
+                self.ins(format!("andlw {hi_mask}"));
+                self.fo("movwf", &d(1));
+                self.fop("swapf", &s(0), "w");
+                self.ins(format!("andlw {lo_mask}"));
+                self.fop("iorwf", &d(1), "f");
+                self.fop("swapf", &s(0), "w");
+                self.ins(format!("andlw {hi_mask}"));
+                self.fo("movwf", &d(0));
+            } else {
+                self.fop("swapf", &s(0), "w");
+                self.ins(format!("andlw {lo_mask}"));
+                self.fo("movwf", &d(0));
+                self.fop("swapf", &s(1), "w");
+                self.ins(format!("andlw {hi_mask}"));
+                self.fop("iorwf", &d(0), "f");
+                self.fop("swapf", &s(1), "w");
+                self.ins(format!("andlw {lo_mask}"));
+                self.fo("movwf", &d(1));
+            }
+            passes = 0;
         } else if !in_place {
             let mems: Vec<Mem> = (0..n).flat_map(|i| [d(i), s(i)]).collect();
             let acc = mems.iter().all(|x| is_access(self.tgt, x.addr));

@@ -880,3 +880,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   new in this change, the in-place statements `x = x + 1`, `x = x - 1`, `x = 1 + x` and `x = x + 65535` on a Word or Integer (`Optimize` on), which now match `Inc`/`Dec`: `infsnz lo,f / incf hi,f` for +1 (2 words, was 4).
   Both forms need the two bytes in one bank (`same_bank`), as the skip must not jump over a `movlb`; otherwise the old chain is used. 32-bit `+ 1` / `- 1` are unchanged.
 - Test: `tests/exec/incdec16.bas` and `incdec16_banked.bas` (`scripts/gen-incdec-tests.py`: Word and Integer at every byte boundary, six forms each); pass on 18F27Q10 and 18F16Q41. 1986 -> 1905 cycles.
+
+## Word `<< 4` / `>> 4` into another variable (done 2026-10-30, 0.1.66; EFFICIENCY.md W3)
+- `codegen::shift_direct`: an unsigned 16-bit shift by 4 whose destination is a different variable swaps nibbles (`swapf`/`andlw`/`movwf`/`iorwf`, 9 words, was 12). The in-place `x = x << 4` keeps the counted loop (7 words).
+- Test: `tests/exec/shift16_nibble.bas` (14 edge values, `<<` and `>>` to another variable, in-place `<<`); passes on 18F27Q10 and 18F16Q41.
