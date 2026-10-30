@@ -80,11 +80,11 @@ constants.
 | **W4** `x >> 8`, `x << 8`, `x And 255`, `x / 256`, `x Mod 256` stage through `__A1` | 5 words | `movff x+1,x; clrf x+1` and the like | 5→3 cycles; 1001>>8=3 |
 | **W5** (**done, 0.1.65**) `x = x + 1` / `x = x - 1` | 4 words | `infsnz x,f; incf x+1,f` and `decf x,f; btfss STATUS,0; decf x+1,f` | +1: 4→2 (255→256, 65535→0); −1: 4→3 (256→255, 0→65535, 5→4) |
 | **W6** `x * K` (K constant) ends with `movff __C0,__A0; movff __C1,__A1` before the store | 18 words | store `PRODL`-derived bytes straight to the destination | 18→13 cycles (`x*10`, 123→1230) |
-| **W7** `x > K`, `x >= K` stage K into `__B0:__B0+1` first | 9 words | `movf x,w; sublw lo; movlw hi; subfwb x+1,w; bc/bnc` | 11→7 cycles; 1500>1000 |
+| **W7** (**done, 0.1.68**) `x > K`, `x >= K` stage K into `__B0:__B0+1` first | 9 words | `movf x,w; sublw lo; movlw hi; subfwb x+1,w; bc/bnc` | 11→7 cycles; 1500>1000 |
 | **W8** (**done, 0.1.67**) `x >= 256`, `x > 255`, `x < 256` (byte-boundary compares) | 7-9 words | `movf x+1,f; bnz/bz` (2 words) | counted |
 | **W9** (**done, 0.1.67**) `x = 0` / `x <> 0` tests byte by byte | 4 words (Word), 8 (Long) | `movf x,w; iorwf x+1,w; bnz` (3 / 5 words) | counted; a few cycles slower on the early-exit path, so size-only: apply under `Optimize = Size` |
 | **W10** `i / 2^k` (**done for `/`, k = 1..8, 0.1.63; `Mod` 0.1.64**), `i Mod 2^k` for signed types call `__sdiv2` | 344-348 cycles | `i/2`: `rlcf i+1,w; movlw 0; addwfc i; addwfc i+1; rlcf i+1,w; rrcf i+1; rrcf i` (7 words); general k: add `(i>>15) And (2^k-1)` then arithmetic shift | 348→7; −1234→−617, −1→0, −32768→−16384, 32767→16383, 1235→617 |
-| **W11** `x = a * 256 + b`, `(a << 8) Or b`: the "pack two bytes" idiom | 11 words | `movff a,x+1; movff b,x` | counted |
+| **W11** (**done, 0.1.68**) `x = a * 256 + b`, `(a << 8) Or b`: the "pack two bytes" idiom | 11 words | `movff a,x+1; movff b,x` | counted |
 | **W12** (**done, 0.1.64**) `Abs(i)`, `Min(i,j)`, `Max(i,j)` use the mask trick with 16-bit negations and `__main__TMP` | `Abs` 44 words, `Min`/`Max` ≈55 | `Abs`: `btfss i+1,7; bra end; comf i+1,f; negf i; movlw 0; addwfc i+1,f` (6 words); Min/Max: signed compare (P11) and a conditional 2-byte move (≈14 words) | Abs 44→6 cycles (−1234→1234); Min unmeasured *(counted)* |
 
 W1's conditions: the destination may equal either source (byte *i* is written only after byte *i* of both sources

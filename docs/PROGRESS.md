@@ -889,3 +889,8 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `codegen::ord_jump`: an unsigned 16-bit compare of a variable with a multiple of 256 (`x >= 256`, `x > 255`, `x < 512`, `x <= 511`, constant on either side) tests only the high byte: `movf hi,f / bz|bnz` for 256, otherwise `movlw m / subwf hi,w / bc|bnc` (2 or 3 words, was 5 to 9).
 - `codegen::eq_jump`: `x = 0` / `x <> 0` on a Word or wider variable is `movf b0,w / iorwf b1,w ...` and one branch (`n + 1` words, was `2n`; LongWord 5, was 8). The early exit on a non-zero low byte is gone, so it is a size choice (`Optimize` on).
 - Test: `tests/exec/hibyte_cmp.bas` (`scripts/gen-hibyte-tests.py`: 870 checks); passes on 18F27Q10 and 18F16Q41.
+
+## Constant on the right of unsigned wide compares; packing two Bytes (done 2026-10-30, 0.1.68; EFFICIENCY.md W7, W11)
+- `codegen::ord_jump`: for an unsigned compare of 16 bits or more where the reduced form has a constant `K` as `X` and a variable as `Y` (`x > K`, `x <= K`, `K < x`, `K >= x`), the test becomes `x >= K + 1` or `x < K + 1` (skipped when `K + 1` does not fit), so the constant folds into `movlw / subwf / movlw / subwfb` instead of being staged in `__B` (Word `x > 1000`: 9 words, was 11).
+- `codegen::assign` (Word target): `hi * 256 + lo`, `(hi << 8) Or lo` and the Xor/Add/commuted forms with Byte `hi` and a Byte variable or constant `lo` store the two bytes directly (`movff hi,dst+1 / movff lo,dst`; 4 words, was 11).
+- Test: `tests/exec/cmp_const_pack.bas` (`scripts/gen-cmpk-tests.py`: Word and LongWord compares of both orientations with edge constants incl. the type maximum, and 7 pack forms).

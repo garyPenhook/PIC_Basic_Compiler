@@ -2771,7 +2771,16 @@ impl<'p> Gen<'p> {
             held += n;
             xs = Some(Src::Mem(t, n));
         }
-        self.ord_core(lt, signed, n, xs.unwrap(), ys, Some(ye), target);
+        let (mut lt, mut xs, mut ys) = (lt, xs.unwrap(), ys);
+        // `K < y` is `y >= K + 1` and `K >= y` is `y < K + 1`: the constant then sits on the right, where it
+        // folds into the compare instead of being staged in memory.
+        if !signed && n >= 2 && self.tgt.opt && let (Src::Imm(k), Some(Src::Mem(..))) = (&xs, &ys) && u64::from(*k) + 1 < 1u64 << (8 * n) {
+            let k = *k + 1;
+            xs = ys.take().unwrap();
+            ys = Some(Src::Imm(k));
+            lt = !lt;
+        }
+        self.ord_core(lt, signed, n, xs, ys, Some(ye), target);
         if held > 0 {
             self.free(held);
         }
@@ -2936,6 +2945,40 @@ impl<'p> Gen<'p> {
                         self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &Src::Mem(a, n), n);
                     }
                     return;
+                }
+            }
+        }
+        // `w = hi * 256 + lo`, `(hi << 8) Or lo` with Byte `hi` and `lo`: one move per byte.
+        if n == 2 && self.tgt.opt && let ExK::Bin(op, l, r) = &e.k
+            && matches!(op, BinKind::Add | BinKind::Or | BinKind::Xor)
+        {
+            for (h, o) in [(l, r), (r, l)] {
+                let v = match &h.k {
+                    ExK::Bin(BinKind::Shl, v, k) if k.as_const() == Some(8) => Some(v),
+                    ExK::Bin(BinKind::Mul, v, k) if k.as_const() == Some(256) => Some(v),
+                    ExK::Bin(BinKind::Mul, k, v) if k.as_const() == Some(256) => Some(v),
+                    _ => None,
+                };
+                if let Some(v) = v
+                    && let Some(Src::Mem(hm, 1)) = self.simple(v)
+                    && let Some(lo) = self.simple(o)
+                {
+                    let lo_ok = match &lo {
+                        Src::Imm(k) => *k < 256,
+                        Src::Mem(m, 1) => !same_mem(&dst.at(1), m),
+                        _ => false,
+                    };
+                    if lo_ok && !same_mem(&dst.at(0), &hm) {
+                        self.movff(&dst.at(1), &hm);
+                        match lo {
+                            Src::Imm(k) => {
+                                self.ins(format!("movlw 0x{k:02X}"));
+                                self.fo("movwf", &dst.at(0));
+                            }
+                            Src::Mem(m, _) => self.movff(&dst.at(0), &m),
+                        }
+                        return;
+                    }
                 }
             }
         }
