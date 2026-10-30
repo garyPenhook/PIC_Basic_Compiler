@@ -884,3 +884,8 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## Word `<< 4` / `>> 4` into another variable (done 2026-10-30, 0.1.66; EFFICIENCY.md W3)
 - `codegen::shift_direct`: an unsigned 16-bit shift by 4 whose destination is a different variable swaps nibbles (`swapf`/`andlw`/`movwf`/`iorwf`, 9 words, was 12). The in-place `x = x << 4` keeps the counted loop (7 words).
 - Test: `tests/exec/shift16_nibble.bas` (14 edge values, `<<` and `>>` to another variable, in-place `<<`); passes on 18F27Q10 and 18F16Q41.
+
+## High-byte compares and wide `= 0` tests (done 2026-10-30, 0.1.67; EFFICIENCY.md W8, W9)
+- `codegen::ord_jump`: an unsigned 16-bit compare of a variable with a multiple of 256 (`x >= 256`, `x > 255`, `x < 512`, `x <= 511`, constant on either side) tests only the high byte: `movf hi,f / bz|bnz` for 256, otherwise `movlw m / subwf hi,w / bc|bnc` (2 or 3 words, was 5 to 9).
+- `codegen::eq_jump`: `x = 0` / `x <> 0` on a Word or wider variable is `movf b0,w / iorwf b1,w ...` and one branch (`n + 1` words, was `2n`; LongWord 5, was 8). The early exit on a non-zero low byte is gone, so it is a size choice (`Optimize` on).
+- Test: `tests/exec/hibyte_cmp.bas` (`scripts/gen-hibyte-tests.py`: 870 checks); passes on 18F27Q10 and 18F16Q41.

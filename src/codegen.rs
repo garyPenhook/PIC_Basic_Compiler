@@ -2604,6 +2604,22 @@ impl<'p> Gen<'p> {
             }
             return;
         }
+        // Wide `x = 0` / `x <> 0`: OR the bytes together in W (n + 1 words, the byte-by-byte test is 2n).
+        if self.tgt.opt {
+            for (a, b) in [(&ls, &rs), (&rs, &ls)] {
+                if let (Some(Src::Mem(m, real)), Some(Src::Imm(0))) = (a, b)
+                    && *real == n
+                {
+                    let m = m.clone();
+                    self.fop("movf", &m, "w");
+                    for i in 1..n {
+                        self.fop("iorwf", &m.at(i), "w");
+                    }
+                    self.br(if eq { Cc::Z } else { Cc::Nz }, target);
+                    return;
+                }
+            }
+        }
         // Wide: both operands as byte sources.
         if ls.is_none() && rs.is_none() {
             let t = self.spill(l);
@@ -2695,6 +2711,40 @@ impl<'p> Gen<'p> {
                     self.gen_val(x);
                     self.ins("iorlw 0");
                     self.br(if neg { Cc::N } else { Cc::Nn }, target);
+                    return;
+                }
+            }
+        }
+        // An unsigned 16-bit compare against a multiple of 256 (`x >= 256`, `x > 255`, `x < 512`, `x <= 511`) only
+        // looks at the high byte.
+        if !signed && n == 2 && self.tgt.opt {
+            let (var, c, k) = match (self.simple(l), self.simple(r)) {
+                (Some(Src::Mem(m, 2)), Some(Src::Imm(c))) => (Some(m), c, kind),
+                (Some(Src::Imm(c)), Some(Src::Mem(m, 2))) => {
+                    let flipped = match kind {
+                        CmpKind::Lt => CmpKind::Gt,
+                        CmpKind::Gt => CmpKind::Lt,
+                        CmpKind::Le => CmpKind::Ge,
+                        _ => CmpKind::Le,
+                    };
+                    (Some(m), c, flipped)
+                }
+                _ => (None, 0, kind),
+            };
+            if let Some(m) = var {
+                // `x >= b` for b = c, or c + 1 when the operator is > or <=.
+                let b = if matches!(k, CmpKind::Gt | CmpKind::Le) { c + 1 } else { c };
+                if b % 256 == 0 && (256..=255 * 256).contains(&b) {
+                    let hi = m.at(1);
+                    let lt = matches!(k, CmpKind::Lt | CmpKind::Le);
+                    if b == 256 {
+                        self.fop("movf", &hi, "f");
+                        self.br(if lt { Cc::Z } else { Cc::Nz }, target);
+                    } else {
+                        self.ins(format!("movlw {}", b >> 8));
+                        self.fop("subwf", &hi, "w");
+                        self.br(if lt { Cc::Nc } else { Cc::C }, target);
+                    }
                     return;
                 }
             }
