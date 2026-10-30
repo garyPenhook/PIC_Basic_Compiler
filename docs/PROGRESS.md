@@ -874,3 +874,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `codegen::mod_signed_pow2`: signed `x Mod 2^k` (k = 1..8) is `movf lo,w / andlw 2^k-1`, then for a negative `x` with a non-zero low part `iorlw` of the high bits and `setf` of the upper bytes
   (12 words for an Integer); `__sdiv2` is no longer linked for it. k > 8 still uses the helper.
 - Tests: `tests/exec/minmax_wide.bas` (`scripts/gen-minmax-wide-tests.py`: edge-value pairs, ten Min/Max forms and four Abs forms per type) and `tests/exec/smod_pow2.bas` (`scripts/gen-smod-tests.py`).
+
+## Word `x = x + 1` / `x = x - 1` (done 2026-10-30, 0.1.65; EFFICIENCY.md W5; W1 and W2 were 0.1.56 and 0.1.57)
+- `codegen::add_const_mem` (split out of `add_const`) adds a 16-bit decrement: `decf lo,f / btfss STATUS,0 / decf hi,f` (3 words, was 4; `decf` clears C only when the low byte was 0). It is used for `Dec(x)` and,
+  new in this change, the in-place statements `x = x + 1`, `x = x - 1`, `x = 1 + x` and `x = x + 65535` on a Word or Integer (`Optimize` on), which now match `Inc`/`Dec`: `infsnz lo,f / incf hi,f` for +1 (2 words, was 4).
+  Both forms need the two bytes in one bank (`same_bank`), as the skip must not jump over a `movlb`; otherwise the old chain is used. 32-bit `+ 1` / `- 1` are unchanged.
+- Test: `tests/exec/incdec16.bas` and `incdec16_banked.bas` (`scripts/gen-incdec-tests.py`: Word and Integer at every byte boundary, six forms each); pass on 18F27Q10 and 18F16Q41. 1986 -> 1905 cycles.

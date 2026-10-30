@@ -2857,6 +2857,15 @@ impl<'p> Gen<'p> {
             if let Some(x) = operand {
                 let d2 = dst.clone();
                 if let Some(xs) = self.simple(x) {
+                    // `x = x + 1` and `x = x - 1` on 16 bits are the same code as `Inc(x)` and `Dec(x)`.
+                    if n == 2 && self.tgt.opt && let Src::Imm(c) = xs && matches!(op, BinKind::Add | BinKind::Sub) {
+                        let c = c & 0xFFFF;
+                        let delta = if *op == BinKind::Add { c } else { c.wrapping_neg() };
+                        if delta & 0xFFFF == 1 || delta & 0xFFFF == 0xFFFF {
+                            self.add_const_mem(&d2, n, delta);
+                            return;
+                        }
+                    }
                     self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &xs, n);
                     return;
                 } else if self.tgt.opt && !x.has_call() && Self::nb(x) == n {
@@ -3175,8 +3184,12 @@ impl<'p> Gen<'p> {
     }
 
     fn add_const(&mut self, p: &Place, delta: u32) {
-        let n = p.bytes();
         let dst = self.place_mem(p, true);
+        self.add_const_mem(&dst, p.bytes(), delta);
+    }
+
+    fn add_const_mem(&mut self, dst: &Mem, n: u32, delta: u32) {
+        let dst = dst.clone();
         let k = delta & mask((n * 8) as u8);
         if n == 1 && k == 1 {
             self.fop("incf", &dst, "f");
@@ -3186,6 +3199,11 @@ impl<'p> Gen<'p> {
             // The skip must jump over the second increment, so no bank switch may sit between them.
             self.fop("infsnz", &dst, "f");
             self.fop("incf", &dst.at(1), "f");
+        } else if n == 2 && k == 0xFFFF && self.same_bank(&dst, &dst.at(1)) {
+            // `decf` clears C when the low byte was 0 (a borrow), and only then does the high byte drop.
+            self.fop("decf", &dst, "f");
+            self.ins("btfss STATUS, 0, c");
+            self.fop("decf", &dst.at(1), "f");
         } else {
             let d2 = dst.clone();
             self.chain(BinKind::Add, &move |_g: &mut Self, i| d2.at(i), &Src::Imm(k), n);
