@@ -2349,10 +2349,14 @@ impl<'a> Lowerer<'a> {
                 return;
             }
         };
-        if !matches!(src.ty, Ty::Str(_)) || src.is_bit() || dst.is_bit() || src.idx.as_ref().is_some_and(|i| i.has_call()) || dst.idx.as_ref().is_some_and(|i| i.has_call()) {
+        if !matches!(src.ty, Ty::Str(_)) || src.is_bit() || dst.is_bit() {
             self.unsupported(span, "this string");
             return;
         }
+        // An element of an array of strings picked by an index that reads an array or calls a routine.
+        let (mut dst, mut src) = (dst, src);
+        self.hoist_idx(&mut dst, span, out);
+        self.hoist_idx(&mut src, span, out);
         let Some(counts) = args[2..].iter().map(|a| self.expr(a)).collect::<Option<Vec<_>>>() else { return };
         let mut counts = counts.into_iter();
         let byte = |p: &Place| Ex::new(ExK::Load(p.clone()), 8, false);

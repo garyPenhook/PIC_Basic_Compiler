@@ -945,3 +945,4 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `ByRefConst` takes a structure (sema `E-PARAM` relaxed); `ByRef` of an array of Strings and `ByRefConst` of an array of structures or Strings pass the address as the scalar forms do.
 - Not done: `ByVal` structures and strings (the copy into the callee's frame would have to wait until the other arguments' calls are done), a result passed straight on as an argument or compared.
 - Tests: `tests/exec/agg_result.bas`, `agg_params.bas` on the PIC18F27Q10, 18F16Q41, 16F17126, 16F13145 and at `-O0`.
+- Follow-up: `Left`/`Mid`/`Right` also work on an element of an array of strings picked by an index that reads an array or calls a routine (`hoist_idx`); `tests/exec/str_slice_ref.bas` (ByRef/ByRefConst String parameters, array-read indices). `string_fields_and_elements_picked_at_run_time_build` now expects `n(k(i)) = s` to build and only the comparison form to be `E-BACKEND`.
