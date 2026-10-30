@@ -178,10 +178,86 @@ pub struct Lowerer<'a> {
     in_isr: bool,
     /// The FloatLib routines called so far: their calls change nothing but the scratch registers.
     flt_funcs: HashSet<FuncId>,
+    plan: FloatPlan,
+    sites: FloatSites,
     failed: bool,
 }
 
+/// Which of the small FloatLib special cases the program uses. Each one adds a library routine, so it only
+/// pays when its call sites save more than the routine costs (see `FloatPlan::for_sites`).
+#[derive(Clone, Copy)]
+struct FloatPlan {
+    /// `x * 2^k`, `x / 2^k` by `FScale`.
+    scale: bool,
+    /// A compare with zero by `FSign`.
+    sign: bool,
+    /// A Byte / Word source by `FFromByte` / `FFromWord`.
+    small: bool,
+}
+
+/// How many places in the program could use each special case, and how many need the general routine.
+#[derive(Default)]
+struct FloatSites {
+    mul_scale: u32,
+    div_scale: u32,
+    mul_other: u32,
+    div_other: u32,
+    zero_cmp: u32,
+    other_cmp: u32,
+    from_byte: u32,
+    from_word: u32,
+    from_long: u32,
+}
+
+// Library sizes in words on the PIC18 core, and the words each use of a special case saves at its call site.
+const W_FMUL: u32 = 158;
+const W_FDIV: u32 = 141;
+const W_CMP: u32 = 67;
+const W_FSCALE: u32 = 53;
+const W_FSIGN: u32 = 23;
+const W_FFROMBYTE: u32 = 14;
+const W_FFROMWORD: u32 = 16;
+const W_FFROMLONG: u32 = 26;
+
+impl FloatPlan {
+    fn all() -> FloatPlan {
+        FloatPlan { scale: true, sign: true, small: true }
+    }
+
+    /// The special cases whose library routine costs less than the code they save or the routines they let drop out.
+    fn for_sites(n: &FloatSites) -> FloatPlan {
+        let lib = |used: bool, w: u32| if used { w } else { 0 };
+        // Scaling: FMul / FDiv leave the image when only scaling sites use them.
+        let scale_sites = n.mul_scale + n.div_scale;
+        let without = lib(n.mul_scale + n.mul_other > 0, W_FMUL) + lib(n.div_scale + n.div_other > 0, W_FDIV);
+        let with = lib(scale_sites > 0, W_FSCALE) + lib(n.mul_other > 0, W_FMUL) + lib(n.div_other > 0, W_FDIV);
+        let scale = with < without + 3 * scale_sites;
+        // Zero compares: four `clrf` per site, and `Cmp` leaves the image when nothing else compares.
+        let with = lib(n.zero_cmp > 0, W_FSIGN) + lib(n.other_cmp > 0, W_CMP);
+        let without = lib(n.zero_cmp + n.other_cmp > 0, W_CMP) + 4 * n.zero_cmp;
+        let sign = with < without;
+        // Byte / Word sources: three or two `clrf` per site against the entry routines; `FFromLong` is the general one.
+        let (b, w) = (n.from_byte, n.from_word);
+        let with = lib(b > 0, W_FFROMBYTE) + lib(w > 0, W_FFROMWORD) + lib(n.from_long > 0, W_FFROMLONG);
+        let without = lib(b + w + n.from_long > 0, W_FFROMLONG) + 3 * b + 2 * w;
+        let small = with < without;
+        FloatPlan { scale, sign, small }
+    }
+}
+
+/// Lowers the program. A program that uses Float is lowered once to count the places where the Float special
+/// cases apply, then again with the cases that save space.
 pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Program> {
+    let uses_float = proj.units.iter().any(|u| u.path.file_stem().is_some_and(|f| f == "floatlib"));
+    if !uses_float {
+        return lower_with(proj, a, diags, FloatPlan::all(), &mut FloatSites::default());
+    }
+    let mut sites = FloatSites::default();
+    lower_with(proj, a, &mut Diagnostics { items: Vec::new() }, FloatPlan::all(), &mut sites);
+    lower_with(proj, a, diags, FloatPlan::for_sites(&sites), &mut FloatSites::default())
+}
+
+fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: FloatPlan, sites: &mut FloatSites) -> Option<Program> {
     let device = a.device.as_ref()?;
     let mut lw = Lowerer {
         proj,
@@ -224,6 +300,8 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         in_save: 0,
         in_isr: false,
         flt_funcs: HashSet::new(),
+        plan,
+        sites: FloatSites::default(),
         failed: false,
     };
     for (id, s) in a.symbols.iter().enumerate() {
@@ -274,6 +352,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
     for &sym in &a.exports {
         lw.export_thunk(sym);
     }
+    *sites = std::mem::take(&mut lw.sites);
     if lw.failed {
         return None;
     }
@@ -1476,12 +1555,21 @@ impl<'a> Lowerer<'a> {
             let val = if ex.signed { sign_extend(v, ex.w) } else { v as i64 };
             return Some(Ex::konst((val as f32).to_bits(), 32, false));
         }
+        if !ex.signed && ex.w == 16 {
+            self.sites.from_word += 1;
+            if self.plan.small {
+                return self.flt_call("FFromWord", vec![ex], span);
+            }
+        } else if !ex.signed && ex.w == 8 {
+            self.sites.from_byte += 1;
+            if self.plan.small {
+                return self.flt_call("FFromByte", vec![ex], span);
+            }
+        } else {
+            self.sites.from_long += 1;
+        }
         if !ex.signed && ex.w == 32 {
             self.flt_call("FFromULong", vec![ex], span)
-        } else if !ex.signed && ex.w == 16 {
-            self.flt_call("FFromWord", vec![ex], span)
-        } else if !ex.signed && ex.w == 8 {
-            self.flt_call("FFromByte", vec![ex], span)
         } else {
             self.flt_call("FFromLong", vec![conv(ex, 32, true)], span)
         }
@@ -1520,9 +1608,15 @@ impl<'a> Lowerer<'a> {
         let mut rv = self.value_for(r, &Ty::Float)?;
         if op.is_relational() {
             // A zero (of either sign) on one side: `FSign` answers the same -1, 0, 1 or 2 from one operand.
-            let is_zero = |x: &Ex| matches!(x.k, ExK::Const(v) if v & 0x7FFF_FFFF == 0);
+            let is_zero = |x: &Ex| matches!(x.k, ExK::Const(_)) && x.as_const().is_some_and(|v| v & 0x7FFF_FFFF == 0);
             let mut op = op;
-            if is_zero(&lv) && !matches!(rv.k, ExK::Const(_)) {
+            let zero_cmp = (is_zero(&lv) && !matches!(rv.k, ExK::Const(_))) || (is_zero(&rv) && !matches!(lv.k, ExK::Const(_)));
+            if zero_cmp {
+                self.sites.zero_cmp += 1;
+            } else {
+                self.sites.other_cmp += 1;
+            }
+            if self.plan.sign && is_zero(&lv) && !matches!(rv.k, ExK::Const(_)) {
                 std::mem::swap(&mut lv, &mut rv);
                 op = match op {
                     BinOp::Lt => BinOp::Gt,
@@ -1534,7 +1628,7 @@ impl<'a> Lowerer<'a> {
             }
             // `Cmp` answers -1, 0, 1 (a < b, a = b, a > b) or 2 (not ordered); testing its answer
             // here saves the copy of both operands that the FEq..FGe wrappers would make.
-            let c = if is_zero(&rv) && !matches!(lv.k, ExK::Const(_)) { self.flt_call("FSign", vec![lv], e.span)? } else { self.flt_call("Cmp", vec![lv, rv], e.span)? };
+            let c = if self.plan.sign && is_zero(&rv) && !matches!(lv.k, ExK::Const(_)) { self.flt_call("FSign", vec![lv], e.span)? } else { self.flt_call("Cmp", vec![lv, rv], e.span)? };
             let k = |v: u32| Box::new(Ex::konst(v, 8, true));
             let ex = match op {
                 BinOp::Eq => ExK::Cmp(CmpKind::Eq, Box::new(c), k(0)),
@@ -1559,7 +1653,14 @@ impl<'a> Lowerer<'a> {
             BinOp::Div if nonconst(&lv) => scale(&rv).map(|k| (-k, false)),
             _ => None,
         };
-        if let Some((k, left_const)) = by {
+        match (op, by.is_some()) {
+            (BinOp::Mul, true) => self.sites.mul_scale += 1,
+            (BinOp::Div, true) => self.sites.div_scale += 1,
+            (BinOp::Mul, false) => self.sites.mul_other += 1,
+            (BinOp::Div, false) => self.sites.div_other += 1,
+            _ => {}
+        }
+        if let Some((k, left_const)) = by.filter(|_| self.plan.scale) {
             let x = if left_const { rv } else { lv };
             return self.flt_call("FScale", vec![x, Ex::konst(k as u8 as u32, 8, true)], e.span);
         }

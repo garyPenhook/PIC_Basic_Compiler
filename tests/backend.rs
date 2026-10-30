@@ -95,8 +95,37 @@ fn float_programs_build_with_the_float_module() {
     let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let asm = std::fs::read_to_string(out.join("f.S")).unwrap();
-    assert!(asm.contains("FLOATLIB_FMUL") && asm.contains("FLOATLIB_FTOLONG"));
-    assert!(!asm.contains("FLOATLIB_FDIV"), "unused Float routines must not be linked");
+    assert!(asm.contains("FLOATLIB_FSCALE") && asm.contains("FLOATLIB_FTOLONG"));
+    assert!(!asm.contains("FLOATLIB_FMUL") && !asm.contains("FLOATLIB_FDIV"), "unused Float routines must not be linked");
+}
+
+/// The Float special cases (`FScale`, `FSign`, `FFromByte`) add a routine each, so a program only gets one when its
+/// call sites save more than the routine costs, or when it lets the general routine drop out.
+#[test]
+fn float_special_cases_are_used_only_when_they_save_space() {
+    let out = scratch("floatplan");
+    let src = out.join("p.bas");
+    let head = "Program T\nDevice = 18F27Q10\nDim f As Float\nDim g As Float\nDim h As Float\nDim b As Byte\nDim n As Byte\nf = 1.5\ng = 2.5\nb = 7\n";
+    let build = |body: &str| {
+        std::fs::write(&src, format!("{head}{body}")).unwrap();
+        let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        std::fs::read_to_string(out.join("p.S")).unwrap()
+    };
+    // One doubling next to a general multiply: FScale would only add 53 words.
+    let asm = build("h = f * g\nh = f * 2.0\n");
+    assert!(asm.contains("FLOATLIB_FMUL") && !asm.contains("FLOATLIB_FSCALE"));
+    // Doublings only: FMul drops out.
+    let asm = build("h = f * 2.0\nh = f / 4.0\n");
+    assert!(asm.contains("FLOATLIB_FSCALE") && !asm.contains("FLOATLIB_FMUL") && !asm.contains("FLOATLIB_FDIV"));
+    // A compare with zero next to a general compare, and alone.
+    let asm = build("If f > g Then\n n = 1\nEnd If\nIf f > 0.0 Then\n n = 2\nEnd If\n");
+    assert!(asm.contains("FLOATLIB_CMP") && !asm.contains("FLOATLIB_FSIGN"));
+    let asm = build("If f > 0.0 Then\n n = 2\nEnd If\n");
+    assert!(asm.contains("FLOATLIB_FSIGN") && !asm.contains("FLOATLIB_CMP"));
+    // One Byte source next to a LongInt one keeps the general conversion.
+    let asm = build("h = b\nh = Float(LongInt(n) - 1000)\n");
+    assert!(asm.contains("FLOATLIB_FFROMLONG") && !asm.contains("FLOATLIB_FFROMBYTE"));
 }
 
 #[test]
