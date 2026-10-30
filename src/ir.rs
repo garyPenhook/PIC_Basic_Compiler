@@ -118,7 +118,7 @@ pub enum BinKind {
     Xor,
     Shl,
     Shr,
-    /// Unsigned Byte `Min` / `Max` (other widths are expanded by `lower::minmax_expand`).
+    /// `Min` / `Max` of any width and signedness (`-O0` and the PIC16 back end expand them by `lower::minmax_expand`).
     Min,
     Max,
 }
@@ -171,7 +171,7 @@ pub enum ExK {
     Const(u32),
     Load(Place),
     Neg(Box<Ex>),
-    /// Magnitude of a signed Byte (other widths are expanded by `lower::abs_expand`).
+    /// Magnitude of a signed value (`-O0` and the PIC16 back end expand it by `lower::abs_expand`).
     Abs(Box<Ex>),
     /// Bitwise complement.
     Com(Box<Ex>),

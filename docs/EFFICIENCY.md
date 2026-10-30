@@ -34,7 +34,7 @@ the plan applies: one word saved is worth saving.
 | P4 | Division and `Mod` by a constant | reciprocal multiply, verified exhaustively at compile time (**Byte done, 0.1.59**; **Word done under `Optimize = Speed`, 0.1.60**; Long not yet) | Byte `/10`: 7 words, no helper | 120→7 (Byte), 314→41 (Word) | 0 | medium |
 | P5 | `/` and `Mod` of the same operands | one helper call serves both | −1 call | 634→315 | 0 | low |
 | P6 | `lib` decimal printing (`LcdWriteWord`, `Serial2WriteWord`, …) | table-driven repeated subtraction | −68 B (5-digit test) | 5109→439 | 0 | low |
-| P7 | `Min`, `Max`, `Abs` | skip-instruction forms (`CPFSGT`/`CPFSLT`, sign test) (**Byte `Min`/`Max` done, 0.1.61**; **ShortInt `Abs` done, 0.1.62**; wider types not yet) | Byte Min/Max 14→4 words; Integer `Abs` 44→6 | 14→4; 44→6 | −1..2 B temp | low |
+| P7 | `Min`, `Max`, `Abs` | skip-instruction forms (`CPFSGT`/`CPFSLT`, sign test) (**Byte `Min`/`Max` done, 0.1.61**; **ShortInt `Abs` done, 0.1.62**; **signed Byte and 16/32-bit `Abs`, `Min`, `Max` done, 0.1.64**) | Byte Min/Max 14→4 words; Integer `Abs` 44→6 | 14→4; 44→6 | −1..2 B temp | low |
 | P8 | Byte-indexed array access | `lfsr` + `PLUSW0` (arrays ≤ 128 elements) (**done for one-byte elements, 0.1.62**) | 12→4 words | 13→5 | 0 | low |
 | P9 | Float helpers | pass operands and result in `__A`/`__B` like `__mul4` (**done, 0.1.54**; `FMul`/`FDiv` bodies 0.1.55) | PIC18 `float_basic` 1281→1111 words; 16F17146 1598→1178 | −24 per op; `FMul` −27/−8, `FDiv` −8/−8 once (PIC18/mid-range) | −61 B | medium |
 | P10 | `Float * 2^k`, `/ 2^k` | exponent add, no `FMul`/`FDiv` | −345 words when they were the only users | 218→≈20 | −12 B | medium |
@@ -83,9 +83,9 @@ constants.
 | **W7** `x > K`, `x >= K` stage K into `__B0:__B0+1` first | 9 words | `movf x,w; sublw lo; movlw hi; subfwb x+1,w; bc/bnc` | 11→7 cycles; 1500>1000 |
 | **W8** `x >= 256`, `x > 255`, `x < 256` (byte-boundary compares) | 7-9 words | `movf x+1,f; bnz/bz` (2 words) | counted |
 | **W9** `x = 0` / `x <> 0` tests byte by byte | 4 words (Word), 8 (Long) | `movf x,w; iorwf x+1,w; bnz` (3 / 5 words) | counted; a few cycles slower on the early-exit path, so size-only: apply under `Optimize = Size` |
-| **W10** `i / 2^k` (**done for `/`, k = 1..8, 0.1.63**; `Mod` not yet), `i Mod 2^k` for signed types call `__sdiv2` | 344-348 cycles | `i/2`: `rlcf i+1,w; movlw 0; addwfc i; addwfc i+1; rlcf i+1,w; rrcf i+1; rrcf i` (7 words); general k: add `(i>>15) And (2^k-1)` then arithmetic shift | 348→7; −1234→−617, −1→0, −32768→−16384, 32767→16383, 1235→617 |
+| **W10** `i / 2^k` (**done for `/`, k = 1..8, 0.1.63; `Mod` 0.1.64**), `i Mod 2^k` for signed types call `__sdiv2` | 344-348 cycles | `i/2`: `rlcf i+1,w; movlw 0; addwfc i; addwfc i+1; rlcf i+1,w; rrcf i+1; rrcf i` (7 words); general k: add `(i>>15) And (2^k-1)` then arithmetic shift | 348→7; −1234→−617, −1→0, −32768→−16384, 32767→16383, 1235→617 |
 | **W11** `x = a * 256 + b`, `(a << 8) Or b`: the "pack two bytes" idiom | 11 words | `movff a,x+1; movff b,x` | counted |
-| **W12** `Abs(i)`, `Min(i,j)`, `Max(i,j)` use the mask trick with 16-bit negations and `__main__TMP` | `Abs` 44 words, `Min`/`Max` ≈55 | `Abs`: `btfss i+1,7; bra end; comf i+1,f; negf i; movlw 0; addwfc i+1,f` (6 words); Min/Max: signed compare (P11) and a conditional 2-byte move (≈14 words) | Abs 44→6 cycles (−1234→1234); Min unmeasured *(counted)* |
+| **W12** (**done, 0.1.64**) `Abs(i)`, `Min(i,j)`, `Max(i,j)` use the mask trick with 16-bit negations and `__main__TMP` | `Abs` 44 words, `Min`/`Max` ≈55 | `Abs`: `btfss i+1,7; bra end; comf i+1,f; negf i; movlw 0; addwfc i+1,f` (6 words); Min/Max: signed compare (P11) and a conditional 2-byte move (≈14 words) | Abs 44→6 cycles (−1234→1234); Min unmeasured *(counted)* |
 
 W1's conditions: the destination may equal either source (byte *i* is written only after byte *i* of both sources
 is read, and carries only move upward), but a destination that *partially* overlaps a source through an alias view

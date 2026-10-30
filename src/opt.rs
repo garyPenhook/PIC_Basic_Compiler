@@ -270,7 +270,7 @@ fn fold(e: &mut Ex) {
     let new = match &e.k {
         ExK::Conv(x) => x.as_const().map(|v| as_i64(v, x.w, x.signed) as u32),
         ExK::Neg(x) if x.w == w => x.as_const().map(|v| 0u32.wrapping_sub(v)),
-        ExK::Abs(x) if x.w == w => x.as_const().map(|v| (as_i64(v, x.w, true).unsigned_abs() as u32) & 0xFF),
+        ExK::Abs(x) if x.w == w => x.as_const().map(|v| (as_i64(v, x.w, true).unsigned_abs() as u32) & mask(w)),
         ExK::Com(x) if x.w == w => x.as_const().map(|v| !v),
         ExK::NotB(x) => x.as_const().map(|v| (v == 0) as u32),
         ExK::Cmp(k, a, b) if a.w == b.w => match (a.as_const(), b.as_const()) {
@@ -307,6 +307,10 @@ fn fold(e: &mut Ex) {
                         BinKind::And => Some(x & y),
                         BinKind::Or => Some(x | y),
                         BinKind::Xor => Some(x ^ y),
+                        BinKind::Min | BinKind::Max if signed => {
+                            let (sx, sy) = (as_i64(x, w, true), as_i64(y, w, true));
+                            Some((if *k == BinKind::Min { sx.min(sy) } else { sx.max(sy) }) as u32 & mask(w))
+                        }
                         BinKind::Min => Some(x.min(y)),
                         BinKind::Max => Some(x.max(y)),
                         BinKind::Div if !signed && y != 0 => Some(x / y),

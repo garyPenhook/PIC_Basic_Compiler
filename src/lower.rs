@@ -1943,12 +1943,9 @@ impl<'a> Lowerer<'a> {
                     self.unsupported(e.span, "a call inside the argument of Abs");
                     return None;
                 }
-                if w == 8 {
-                    return Some(Ex::new(ExK::Abs(Box::new(x)), 8, true));
-                }
-                Some(abs_expand(x))
+                Some(Ex::new(ExK::Abs(Box::new(x)), w, true))
             }
-            // An unsigned Byte is selected with skip instructions; the other widths use the mask form.
+            // Codegen picks with skip instructions (unsigned Byte) or a compare and a conditional copy; `-O0` expands to the mask form.
             "min" | "max" => {
                 let (w, s) = nat(&ty)?;
                 let a = conv(self.expr(&args[0])?, w, s);
@@ -1958,10 +1955,7 @@ impl<'a> Lowerer<'a> {
                     return None;
                 }
                 let max = name == "max";
-                if w == 8 && !s {
-                    return Some(Ex::new(ExK::Bin(if max { BinKind::Max } else { BinKind::Min }, Box::new(a), Box::new(b)), 8, false));
-                }
-                Some(minmax_expand(max, a, b))
+                Some(Ex::new(ExK::Bin(if max { BinKind::Max } else { BinKind::Min }, Box::new(a), Box::new(b)), w, s))
             }
             n => {
                 self.unsupported(e.span, &format!("the intrinsic `{n}`"));

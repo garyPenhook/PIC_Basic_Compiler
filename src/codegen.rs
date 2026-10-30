@@ -1027,8 +1027,28 @@ impl<'p> Gen<'p> {
                     return;
                 }
                 self.gen_val(x);
-                self.ins("btfsc WREG, 7, c");
-                self.ins("negf WREG, c");
+                if n == 1 {
+                    self.ins("btfsc WREG, 7, c");
+                    self.ins("negf WREG, c");
+                } else {
+                    // Negate in place when the sign bit is set.
+                    let end = self.fresh();
+                    let top = self.a(n - 1);
+                    self.fbit("btfss", &top, 7);
+                    self.br(Cc::Always, &end);
+                    for i in (1..n).rev() {
+                        let m = self.a(i);
+                        self.fop("comf", &m, "f");
+                    }
+                    let m = self.a(0);
+                    self.fo("negf", &m);
+                    self.ins("movlw 0");
+                    for i in 1..n {
+                        let m = self.a(i);
+                        self.fop("addwfc", &m, "f");
+                    }
+                    self.label(&end);
+                }
             }
             ExK::Neg(x) => {
                 self.gen_val(x);
@@ -1578,6 +1598,10 @@ impl<'p> Gen<'p> {
             self.gen_val(&crate::lower::minmax_expand(max, a.clone(), b.clone()));
             return;
         }
+        if a.w != 8 || a.signed {
+            self.minmax_wide(max, a, b);
+            return;
+        }
         let volatile = |m: &Mem| m.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile);
         // The compare reads `a` from memory, and the load reads it again: a volatile variable is read once, by a spill.
         let a_mem = |s: &Self, e: &Ex| match s.simple(e) {
@@ -1600,6 +1624,64 @@ impl<'p> Gen<'p> {
         self.fop("movf", &m, "w");
         if spilled {
             self.free(1);
+        }
+    }
+
+    /// Signed Byte and wider `Min` / `Max`: compare the two operands, then copy the winner. `b` is left in `__A`
+    /// (or W for a Byte) first when it is evaluated, so only the loser needs a copy.
+    fn minmax_wide(&mut self, max: bool, a: &Ex, b: &Ex) {
+        let n = Self::nb(a);
+        let signed = a.signed;
+        let volatile = |g: &Self, m: &Mem| m.obj.is_some_and(|o| o < g.p.vars.len() && g.p.vars[o].volatile);
+        let plain = |g: &Self, e: &Ex| match g.simple(e) {
+            Some(Src::Mem(m, _)) if volatile(g, &m) => None,
+            s => s,
+        };
+        let (a, b) = if plain(self, a).is_none() && plain(self, b).is_some() { (b, a) } else { (a, b) };
+        let mut held = 0;
+        let sa = match plain(self, a) {
+            Some(s) => s,
+            None if plain(self, b).is_some() => unreachable!(),
+            None => {
+                held += n;
+                Src::Mem(self.spill(a), n)
+            }
+        };
+        // `b` is in `__A` when it needed code and the Byte case keeps it in a temporary instead.
+        let (sb, in_acc) = match plain(self, b) {
+            Some(s) => (s, false),
+            None if n == 1 => {
+                held += 1;
+                (Src::Mem(self.spill(b), 1), false)
+            }
+            None => {
+                self.gen_val(b);
+                (Src::Mem(self.a(0), n), true)
+            }
+        };
+        let end = self.fresh();
+        // The winner of `b` against `a` is `b` when `b < a` (Min) or `a < b` (Max).
+        let (x, y) = if max { (&sa, &sb) } else { (&sb, &sa) };
+        if n == 1 {
+            let take_b = self.fresh();
+            // Branch to take_b when b wins.
+            self.ord_core(true, signed, 1, x.clone(), Some(y.clone()), None, &take_b);
+            let ab = sa.byte(0);
+            self.src_to_w(&ab);
+            self.br(Cc::Always, &end);
+            self.label(&take_b);
+            let bb = sb.byte(0);
+            self.src_to_w(&bb);
+        } else {
+            if !in_acc {
+                self.src_to_acc(&sb, n);
+            }
+            self.ord_core(true, signed, n, x.clone(), Some(y.clone()), None, &end);
+            self.src_to_acc(&sa, n);
+        }
+        self.label(&end);
+        if held > 0 {
+            self.free(held);
         }
     }
 
@@ -2129,6 +2211,16 @@ impl<'p> Gen<'p> {
             self.div_signed_pow2(l, k.trailing_zeros(), n);
             return;
         }
+        if op == BinKind::Mod
+            && e.signed
+            && self.tgt.opt
+            && let Some(k) = r.as_const()
+            && k.is_power_of_two()
+            && (2..=256).contains(&k)
+        {
+            self.mod_signed_pow2(l, k.trailing_zeros(), n);
+            return;
+        }
         self.prep_ab(l, r, n);
         let s = if e.signed { "s" } else { "" };
         self.call_helper(format!("{s}div{n}"));
@@ -2173,6 +2265,40 @@ impl<'p> Gen<'p> {
         if n == 1 {
             let m = self.a(0);
             self.fop("movf", &m, "w");
+        }
+    }
+
+    /// Signed `x Mod 2^k` (1 <= k <= 8), the remainder taking the sign of `x`: the low `k` bits, or for a negative `x`
+    /// with a non-zero low part those bits with every higher bit set.
+    fn mod_signed_pow2(&mut self, l: &Ex, k: u32, n: u32) {
+        self.gen_to_acc(l);
+        let m = (1u32 << k) - 1;
+        let (store, end) = (self.fresh(), self.fresh());
+        let a0 = self.a(0);
+        let top = self.a(n - 1);
+        self.fop("movf", &a0, "w");
+        self.ins(format!("andlw 0x{m:02X}"));
+        self.fbit("btfss", &top, 7);
+        self.br(Cc::Always, &store);
+        self.br(Cc::Z, &store);
+        if m != 0xFF {
+            self.ins(format!("iorlw 0x{:02X}", !m & 0xFF));
+        }
+        self.fo("movwf", &a0);
+        for i in 1..n {
+            let b = self.a(i);
+            self.fo("setf", &b);
+        }
+        self.br(Cc::Always, &end);
+        self.label(&store);
+        self.fo("movwf", &a0);
+        for i in 1..n {
+            let b = self.a(i);
+            self.fo("clrf", &b);
+        }
+        self.label(&end);
+        if n == 1 {
+            self.fop("movf", &a0, "w");
         }
     }
 
@@ -2588,21 +2714,30 @@ impl<'p> Gen<'p> {
             held += n;
             ls = Some(Src::Mem(t, n));
         }
-        let (xe, ye, mut xs, mut ys) = if swapped { (r, l, rs.take(), ls.take()) } else { (l, r, ls.take(), rs.take()) };
+        let (xe, ye, mut xs, ys) = if swapped { (r, l, rs.take(), ls.take()) } else { (l, r, ls.take(), rs.take()) };
         // X must be constant or memory.
         if xs.is_none() {
             let t = self.spill(xe);
             held += n;
             xs = Some(Src::Mem(t, n));
         }
-        let xs = xs.unwrap();
+        self.ord_core(lt, signed, n, xs.unwrap(), ys, Some(ye), target);
+        if held > 0 {
+            self.free(held);
+        }
+    }
+
+    /// `X < Y` (`lt`) or `X >= Y` branches to `target`. `X` is a constant or memory; `Y` is too, or is `ye`
+    /// (evaluated here, after which `X` must not live in `__A`/`__B`).
+    #[allow(clippy::too_many_arguments)]
+    fn ord_core(&mut self, lt: bool, signed: bool, n: u32, xs: Src, mut ys: Option<Src>, ye: Option<&Ex>, target: &str) {
         if n == 1 {
             match ys.take() {
                 Some(s) => {
                     let b = s.byte(0);
                     self.src_to_w(&b);
                 }
-                None => self.gen_val(ye),
+                None => self.gen_val(ye.expect("a right side that needs code")),
             }
             match xs.byte(0) {
                 Bs::Imm(k) => self.ins(format!("sublw 0x{k:02X}")),
@@ -2611,7 +2746,7 @@ impl<'p> Gen<'p> {
         } else {
             // Y first when it needs code (it may use __B), then X as memory.
             if ys.is_none() {
-                self.gen_val(ye);
+                self.gen_val(ye.expect("a right side that needs code"));
                 ys = Some(Src::Mem(self.a(0), n));
             }
             let ys = ys.unwrap();
@@ -2656,9 +2791,6 @@ impl<'p> Gen<'p> {
             }
         }
         self.flag_branch(lt, signed && n == 1, target);
-        if held > 0 {
-            self.free(held);
-        }
     }
 
     // ---- statements -----------------------------------------------------------------------

@@ -865,3 +865,12 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `movlw 0 / btfsc top,7 / movlw 2^k-1 / addwf / addwfc`) and then shifts arithmetically right, in `__A`. `Integer / 2` is 5 words plus the shift instead of the `rcall __sdiv2`,
   and a program with no other signed divide no longer carries `__sdiv2`/`__div2` (probe program 117 -> 58 words). Signed `Mod 2^k` and k > 8 still use the helper.
 - Test: `tests/exec/sdiv_pow2.bas` (ShortInt, Integer, LongInt; truncation toward zero, -32768, 32767, -1 / 256); passes on 18F27Q10.
+
+## `Abs`, `Min`, `Max` on every width; signed `Mod 2^k` (done 2026-10-30, 0.1.64; EFFICIENCY.md P7, W10, W12)
+- `ExK::Abs` and `BinKind::Min` / `Max` now carry any width and signedness (`-O0` and the PIC16 back end still expand them with `lower::abs_expand` / `minmax_expand`). Wide `Abs` is `btfss top,7 / bra end /
+  comf / negf / movlw 0 / addwfc` on `__A` (Integer: 7 words, was 44).
+- `codegen::minmax_wide` (signed Byte, 16 and 32 bits, unsigned Word / LongWord): `b` goes to `__A` (or a temporary for a Byte), `ord_core` (the compare tail split out of `ord_jump`) branches over the
+  copy of `a` when `b` wins. A Volatile operand is spilled once; a constant or variable operand is read in place. Const folding of signed `Min`/`Max` compares signed.
+- `codegen::mod_signed_pow2`: signed `x Mod 2^k` (k = 1..8) is `movf lo,w / andlw 2^k-1`, then for a negative `x` with a non-zero low part `iorlw` of the high bits and `setf` of the upper bytes
+  (12 words for an Integer); `__sdiv2` is no longer linked for it. k > 8 still uses the helper.
+- Tests: `tests/exec/minmax_wide.bas` (`scripts/gen-minmax-wide-tests.py`: edge-value pairs, ten Min/Max forms and four Abs forms per type) and `tests/exec/smod_pow2.bas` (`scripts/gen-smod-tests.py`).
