@@ -3552,6 +3552,8 @@ impl<'p> Gen<'p> {
             // A register-call routine: the operands go in `__A` and `__B`.
             match args {
                 [(_, a)] => self.gen_to_acc(a),
+                // `FScale` takes its exponent step in `__B0` alone.
+                [(_, a), (_, b)] if self.p.funcs[f].name.eq_ignore_ascii_case("fscale") => self.prep_ab(a, b, 1),
                 [(_, a), (_, b)] => match b.sign_flipped() {
                     Some(x) => {
                         self.prep_ab(a, x, 4);

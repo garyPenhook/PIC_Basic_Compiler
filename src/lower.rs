@@ -176,6 +176,8 @@ pub struct Lowerer<'a> {
     in_save: u32,
     /// Lowering the body of an interrupt handler.
     in_isr: bool,
+    /// The FloatLib routines called so far: their calls change nothing but the scratch registers.
+    flt_funcs: HashSet<FuncId>,
     failed: bool,
 }
 
@@ -221,6 +223,7 @@ pub fn lower(proj: &Project, a: &Analysis, diags: &mut Diagnostics) -> Option<Pr
         n_saves: 0,
         in_save: 0,
         in_isr: false,
+        flt_funcs: HashSet::new(),
         failed: false,
     };
     for (id, s) in a.symbols.iter().enumerate() {
@@ -1436,7 +1439,7 @@ impl<'a> Lowerer<'a> {
     /// Whether the routine `name` of unit `ui` is one of the FloatLib routines that take their operands in
     /// `__A`/`__B` (`Func::reg`): one or two 32-bit parameters by value, and a result of at most four bytes.
     fn reg_routine(&self, ui: usize, name: &str, nparams: usize, result: Option<VarId>) -> bool {
-        const REG: [&str; 7] = ["fadd", "fmul", "fdiv", "cmp", "ffromlong", "ffromulong", "ftolong"];
+        const REG: [&str; 11] = ["fadd", "fmul", "fdiv", "cmp", "fsign", "fscale", "ffromlong", "ffromulong", "ffrombyte", "ffromword", "ftolong"];
         self.proj.units[ui].path.file_stem().is_some_and(|f| f == "floatlib") && REG.contains(&name.to_ascii_lowercase().as_str()) && (1..=2).contains(&nparams) && result.is_some()
     }
 
@@ -1455,6 +1458,7 @@ impl<'a> Lowerer<'a> {
             return None;
         };
         let id = self.func_of(sym, span)?;
+        self.flt_funcs.insert(id);
         let params = self.sym_func[&sym].params.clone();
         let result = self.sym_func[&sym].result;
         let (w, s) = result.and_then(|r| nat(&self.vars[r].ty)).unwrap_or((8, false));
@@ -1474,6 +1478,10 @@ impl<'a> Lowerer<'a> {
         }
         if !ex.signed && ex.w == 32 {
             self.flt_call("FFromULong", vec![ex], span)
+        } else if !ex.signed && ex.w == 16 {
+            self.flt_call("FFromWord", vec![ex], span)
+        } else if !ex.signed && ex.w == 8 {
+            self.flt_call("FFromByte", vec![ex], span)
         } else {
             self.flt_call("FFromLong", vec![conv(ex, 32, true)], span)
         }
@@ -1508,12 +1516,25 @@ impl<'a> Lowerer<'a> {
                 return None;
             }
         };
-        let lv = self.value_for(l, &Ty::Float)?;
-        let rv = self.value_for(r, &Ty::Float)?;
+        let mut lv = self.value_for(l, &Ty::Float)?;
+        let mut rv = self.value_for(r, &Ty::Float)?;
         if op.is_relational() {
+            // A zero (of either sign) on one side: `FSign` answers the same -1, 0, 1 or 2 from one operand.
+            let is_zero = |x: &Ex| matches!(x.k, ExK::Const(v) if v & 0x7FFF_FFFF == 0);
+            let mut op = op;
+            if is_zero(&lv) && !matches!(rv.k, ExK::Const(_)) {
+                std::mem::swap(&mut lv, &mut rv);
+                op = match op {
+                    BinOp::Lt => BinOp::Gt,
+                    BinOp::Gt => BinOp::Lt,
+                    BinOp::Le => BinOp::Ge,
+                    BinOp::Ge => BinOp::Le,
+                    o => o,
+                };
+            }
             // `Cmp` answers -1, 0, 1 (a < b, a = b, a > b) or 2 (not ordered); testing its answer
             // here saves the copy of both operands that the FEq..FGe wrappers would make.
-            let c = self.flt_call("Cmp", vec![lv, rv], e.span)?;
+            let c = if is_zero(&rv) && !matches!(lv.k, ExK::Const(_)) { self.flt_call("FSign", vec![lv], e.span)? } else { self.flt_call("Cmp", vec![lv, rv], e.span)? };
             let k = |v: u32| Box::new(Ex::konst(v, 8, true));
             let ex = match op {
                 BinOp::Eq => ExK::Cmp(CmpKind::Eq, Box::new(c), k(0)),
@@ -1525,6 +1546,34 @@ impl<'a> Lowerer<'a> {
                 _ => ExK::Cmp(CmpKind::Lt, Box::new(Ex::new(ExK::Conv(Box::new(c)), 8, false)), Box::new(Ex::konst(2, 8, false))),
             };
             return Some(Ex::boolean(ex));
+        }
+        // Multiplying or dividing by a constant power of two only moves the exponent (`FScale`).
+        let nonconst = |x: &Ex| !matches!(x.k, ExK::Const(_));
+        let scale = |x: &Ex| match x.k {
+            ExK::Const(v) if v >> 31 == 0 && v & 0x7F_FFFF == 0 && (1..=254).contains(&(v >> 23)) => Some(((v >> 23) as i32) - 127),
+            _ => None,
+        };
+        let by = match op {
+            BinOp::Mul if nonconst(&lv) => scale(&rv).map(|k| (k, false)),
+            BinOp::Mul if nonconst(&rv) => scale(&lv).map(|k| (k, true)),
+            BinOp::Div if nonconst(&lv) => scale(&rv).map(|k| (-k, false)),
+            _ => None,
+        };
+        if let Some((k, left_const)) = by {
+            let x = if left_const { rv } else { lv };
+            return self.flt_call("FScale", vec![x, Ex::konst(k as u8 as u32, 8, true)], e.span);
+        }
+        // A commutative operation whose second operand is a conversion call: run the call first, so the
+        // first operand does not have to wait in a temporary (and the call's result moves to `__B` once).
+        let plain = |x: &Ex| matches!(&x.k, ExK::Const(_)) || matches!(&x.k, ExK::Load(p) if p.idx.is_none() && !p.indirect());
+        let flt_call = |x: &Ex| matches!(&x.k, ExK::Call(f, args) if self.flt_funcs.contains(f) && args.iter().all(|a| !a.1.has_call()));
+        if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) && plain(&lv) && flt_call(&rv) {
+            if op == BinOp::Sub {
+                // `a - b` is `(b Xor $80000000) + a`.
+                let flipped = Ex::new(ExK::Bin(BinKind::Xor, Box::new(rv), Box::new(Ex::konst(0x8000_0000, 32, false))), 32, false);
+                return self.flt_call("FAdd", vec![flipped, lv], e.span);
+            }
+            std::mem::swap(&mut lv, &mut rv);
         }
         if op == BinOp::Sub {
             // `a - b` is `FAdd(a, b Xor $80000000)`; the call flips the sign of `b` in the register.

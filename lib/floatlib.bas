@@ -665,6 +665,103 @@ Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
 End Function
 
 
+' The sign of a, as Cmp(a, 0) gives it: -1, 0 (either zero) or 1; 2 for NaN. The operand is in __A only.
+Private Function FSign(ByVal a As LongWord) As ShortInt
+    Asm
+        movf __A3, w, c
+        andlw 0x7F
+        iorwf __A2, w, c
+        iorwf __A1, w, c
+        iorwf __A0, w, c
+        bz FLS_ST
+        movf __A3, w, c
+        andlw 0x7F
+        xorlw 0x7F
+        bnz FLS_V
+        btfss __A2, 7, c
+        bra FLS_V
+        movf __A2, w, c
+        andlw 0x7F
+        iorwf __A1, w, c
+        iorwf __A0, w, c
+        bz FLS_V
+        movlw 2
+        bra FLS_ST
+    FLS_V:
+        movlw 1
+        btfsc __A3, 7, c
+        movlw 0xFF
+    FLS_ST:
+    End Asm
+End Function
+
+' a times two to the power k (k in __B0, signed; the operand is in __A), the same bits as FMul / FDiv by that
+' power of two: a NaN gives the NaN, infinity stays, a zero (or a denormal) gives a signed zero, an exponent
+' that reaches 255 gives infinity and one that reaches 0 or below a signed zero.
+Public Function FScale(ByVal a As LongWord, ByVal k As ShortInt) As LongWord
+    Asm
+        rlcf __A2, w, c
+        rlcf __A3, w, c
+        bz FLK_Z
+        movwf __C0, c
+        incf __C0, w, c
+        bz FLK_S
+        movf __B0, w, c
+        addwf __C0, f, c
+        btfsc __B0, 7, c
+        bra FLK_NEG
+        bc FLK_INF
+        incf __C0, w, c
+        bz FLK_INF
+        bra FLK_PUT
+    FLK_NEG:
+        bnc FLK_Z
+        movf __C0, f, c
+        bz FLK_Z
+    FLK_PUT:
+        bcf STATUS, 0, c
+        rrcf __C0, f, c
+        bcf __A2, 7, c
+        btfsc STATUS, 0, c
+        bsf __A2, 7, c
+        movf __A3, w, c
+        andlw 0x80
+        iorwf __C0, w, c
+        movwf __A3, c
+        return
+    FLK_S:
+        movf __A2, w, c
+        andlw 0x7F
+        iorwf __A1, w, c
+        iorwf __A0, w, c
+        bz FLK_R
+        clrf __A0, c
+        clrf __A1, c
+        movlw 0xC0
+        movwf __A2, c
+        movlw 0x7F
+        movwf __A3, c
+    FLK_R:
+        return
+    FLK_INF:
+        clrf __A0, c
+        clrf __A1, c
+        movlw 0x80
+        movwf __A2, c
+        movlw 0x7F
+        bra FLK_SG
+    FLK_Z:
+        clrf __A0, c
+        clrf __A1, c
+        clrf __A2, c
+        movlw 0
+    FLK_SG:
+        btfsc __A3, 7, c
+        iorlw 0x80
+        movwf __A3, c
+    End Asm
+End Function
+
 ' The Float for the unsigned magnitude in __A3..__A0 and the sign bit in __D0 (bit 7); leaves it in __A3..__A0.
 Private Sub FromMag()
     Asm
@@ -675,9 +772,6 @@ Private Sub FromMag()
         bnz FLF_GO
         return
     FLF_GO:
-        clrf __C1, c
-        movlw 158
-        movwf __C0, c
     FLF_N:
         btfsc __A3, 7, c
         bra FLF_P
@@ -720,6 +814,9 @@ Public Function FFromLong(ByVal v As LongInt) As LongWord
         addwfc __A2, f, c
         addwfc __A3, f, c
     FLL_P:
+        clrf __C1, c
+        movlw 158
+        movwf __C0, c
     End Asm
     FromMag()
     Asm
@@ -729,6 +826,43 @@ End Function
 Public Function FFromULong(ByVal v As LongWord) As LongWord
     Asm
         clrf __D0, c
+        clrf __C1, c
+        movlw 158
+        movwf __C0, c
+    End Asm
+    FromMag()
+    Asm
+    End Asm
+End Function
+
+' A Byte or a Word (only __A0, or __A1:__A0, is read): the same value as FFromULong, entered with the
+' magnitude already moved up so that FromMag does not shift whole bytes.
+Public Function FFromByte(ByVal v As Byte) As LongWord
+    Asm
+        clrf __D0, c
+        clrf __C1, c
+        movlw 134
+        movwf __C0, c
+        movff __A0, __A3
+        clrf __A0, c
+        clrf __A1, c
+        clrf __A2, c
+    End Asm
+    FromMag()
+    Asm
+    End Asm
+End Function
+
+Public Function FFromWord(ByVal v As Word) As LongWord
+    Asm
+        clrf __D0, c
+        clrf __C1, c
+        movlw 142
+        movwf __C0, c
+        movff __A1, __A3
+        movff __A0, __A2
+        clrf __A0, c
+        clrf __A1, c
     End Asm
     FromMag()
     Asm
@@ -1491,6 +1625,112 @@ bra FLC_DIFF
 End Function
 
 
+' The sign of a, as Cmp(a, 0) gives it: -1, 0 (either zero) or 1; 2 for NaN. The operand is in __A only.
+Private Function FSign(ByVal a As LongWord) As ShortInt
+    Asm
+        movf __A3, w
+        andlw 0x7F
+        iorwf __A2, w
+        iorwf __A1, w
+        iorwf __A0, w
+        btfsc STATUS, 2
+        bra FLS_ST
+        movf __A3, w
+        andlw 0x7F
+        xorlw 0x7F
+        btfss STATUS, 2
+        bra FLS_V
+        btfss __A2, 7
+        bra FLS_V
+        movf __A2, w
+        andlw 0x7F
+        iorwf __A1, w
+        iorwf __A0, w
+        btfsc STATUS, 2
+        bra FLS_V
+        movlw 2
+        bra FLS_ST
+    FLS_V:
+        movlw 1
+        btfsc __A3, 7
+        movlw 0xFF
+    FLS_ST:
+    End Asm
+End Function
+
+' a times two to the power k (k in __B0, signed; the operand is in __A), the same bits as FMul / FDiv by that
+' power of two: a NaN gives the NaN, infinity stays, a zero (or a denormal) gives a signed zero, an exponent
+' that reaches 255 gives infinity and one that reaches 0 or below a signed zero.
+Public Function FScale(ByVal a As LongWord, ByVal k As ShortInt) As LongWord
+    Asm
+        rlf __A2, w
+        rlf __A3, w
+        movwf __C0
+        movf __C0, f
+        btfsc STATUS, 2
+        bra FLK_Z
+        incf __C0, w
+        btfsc STATUS, 2
+        bra FLK_S
+        movf __B0, w
+        addwf __C0, f
+        btfsc __B0, 7
+        bra FLK_NEG
+        btfsc STATUS, 0
+        bra FLK_INF
+        incf __C0, w
+        btfsc STATUS, 2
+        bra FLK_INF
+        bra FLK_PUT
+    FLK_NEG:
+        btfss STATUS, 0
+        bra FLK_Z
+        movf __C0, f
+        btfsc STATUS, 2
+        bra FLK_Z
+    FLK_PUT:
+        lsrf __C0, f
+        bcf __A2, 7
+        btfsc STATUS, 0
+        bsf __A2, 7
+        movf __A3, w
+        andlw 0x80
+        iorwf __C0, w
+        movwf __A3
+        return
+    FLK_S:
+        movf __A2, w
+        andlw 0x7F
+        iorwf __A1, w
+        iorwf __A0, w
+        btfsc STATUS, 2
+        return
+        clrf __A0
+        clrf __A1
+        movlw 0xC0
+        movwf __A2
+        movlw 0x7F
+        movwf __A3
+        return
+    FLK_INF:
+        clrf __A0
+        clrf __A1
+        movlw 0x80
+        movwf __A2
+        movlw 0x7F
+        bra FLK_SG
+    FLK_Z:
+        clrf __A0
+        clrf __A1
+        clrf __A2
+        movlw 0
+    FLK_SG:
+        btfsc __A3, 7
+        iorlw 0x80
+        movwf __A3
+    End Asm
+End Function
+
 ' The Float for the unsigned magnitude in __A3..__A0 and the sign bit in __D0 (bit 7); leaves it in __A3..__A0.
 Private Sub FromMag()
     Asm
@@ -1502,9 +1742,6 @@ Private Sub FromMag()
         bra FLF_GO
         return
     FLF_GO:
-        clrf __C1
-        movlw 158
-        movwf __C0
     FLF_N:
         btfsc __A3, 7
         bra FLF_P
@@ -1551,6 +1788,9 @@ Public Function FFromLong(ByVal v As LongInt) As LongWord
         addwfc __A2, f
         addwfc __A3, f
     FLL_P:
+        clrf __C1
+        movlw 158
+        movwf __C0
     End Asm
         FromMag ()
     Asm
@@ -1560,6 +1800,46 @@ End Function
 Public Function FFromULong(ByVal v As LongWord) As LongWord
     Asm
         clrf __D0
+        clrf __C1
+        movlw 158
+        movwf __C0
+    End Asm
+        FromMag ()
+    Asm
+    End Asm
+End Function
+
+' A Byte or a Word (only __A0, or __A1:__A0, is read): the same value as FFromULong, entered with the
+' magnitude already moved up so that FromMag does not shift whole bytes.
+Public Function FFromByte(ByVal v As Byte) As LongWord
+    Asm
+        clrf __D0
+        clrf __C1
+        movlw 134
+        movwf __C0
+        movf __A0, w
+        movwf __A3
+        clrf __A0
+        clrf __A1
+        clrf __A2
+    End Asm
+        FromMag ()
+    Asm
+    End Asm
+End Function
+
+Public Function FFromWord(ByVal v As Word) As LongWord
+    Asm
+        clrf __D0
+        clrf __C1
+        movlw 142
+        movwf __C0
+        movf __A1, w
+        movwf __A3
+        movf __A0, w
+        movwf __A2
+        clrf __A0
+        clrf __A1
     End Asm
         FromMag ()
     Asm
