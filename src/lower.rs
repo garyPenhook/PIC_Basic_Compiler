@@ -212,9 +212,9 @@ struct FloatSites {
 // Library sizes in words on the PIC18 core, and the words each use of a special case saves at its call site.
 const W_FMUL: u32 = 158;
 const W_FDIV: u32 = 141;
-const W_CMP: u32 = 67;
+const W_CMP: u32 = 61;
 const W_FSCALE: u32 = 53;
-const W_FSIGN: u32 = 23;
+const W_FSIGN: u32 = 20;
 const W_FFROMBYTE: u32 = 14;
 const W_FFROMWORD: u32 = 16;
 const W_FFROMLONG: u32 = 26;

@@ -116,6 +116,7 @@ def cmp(a, b):
     if is_nan(a) or is_nan(b):
         return 2
     ma, mb = a & 0x7FFFFFFF, b & 0x7FFFFFFF
+    ma, mb = ma if ma >> 23 else 0, mb if mb >> 23 else 0  # a denormal is a zero
     if ma == 0 and mb == 0:
         return 0
     if (a ^ b) & SIGN:

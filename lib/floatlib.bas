@@ -596,7 +596,7 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     End Asm
 End Function
 
-' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0); 2 when either is NaN.
+' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0, and a denormal is a zero); 2 when either is NaN.
 Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
     Asm
         movf __A3, w, c
@@ -623,17 +623,11 @@ Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
         iorwf __B0, w, c
         bnz FLC_NAN
     FLC_Z:
-        movf __A3, w, c
-        andlw 0x7F
-        iorwf __A2, w, c
-        iorwf __A1, w, c
-        iorwf __A0, w, c
+        rlcf __A2, w, c
+        rlcf __A3, w, c
         movwf __C0, c
-        movf __B3, w, c
-        andlw 0x7F
-        iorwf __B2, w, c
-        iorwf __B1, w, c
-        iorwf __B0, w, c
+        rlcf __B2, w, c
+        rlcf __B3, w, c
         iorwf __C0, w, c
         bz FLC_EQ
         movf __A3, w, c
@@ -674,14 +668,11 @@ Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
 End Function
 
 
-' The sign of a, as Cmp(a, 0) gives it: -1, 0 (either zero) or 1; 2 for NaN. The operand is in __A only.
+' The sign of a, as Cmp(a, 0) gives it: -1, 0 (a zero or a denormal) or 1; 2 for NaN. The operand is in __A only.
 Private Function FSign(ByVal a As LongWord) As ShortInt
     Asm
-        movf __A3, w, c
-        andlw 0x7F
-        iorwf __A2, w, c
-        iorwf __A1, w, c
-        iorwf __A0, w, c
+        rlcf __A2, w, c
+        rlcf __A3, w, c
         bz FLS_ST
         movf __A3, w, c
         andlw 0x7F
@@ -1556,7 +1547,7 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
     End Asm
 End Function
 
-' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0); 2 when either is NaN.
+' -1, 0 or 1 for a < b, a = b, a > b (+0 equals -0, and a denormal is a zero); 2 when either is NaN.
 Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
     Asm
         movf __A3, w
@@ -1587,17 +1578,11 @@ Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
         btfss STATUS, 2
         bra FLC_NAN
     FLC_Z:
-        movf __A3, w
-        andlw 0x7F
-        iorwf __A2, w
-        iorwf __A1, w
-        iorwf __A0, w
+        rlf __A2, w
+        rlf __A3, w
         movwf __C0
-        movf __B3, w
-        andlw 0x7F
-        iorwf __B2, w
-        iorwf __B1, w
-        iorwf __B0, w
+        rlf __B2, w
+        rlf __B3, w
         iorwf __C0, w
         btfsc STATUS, 2
         bra FLC_EQ
@@ -1643,14 +1628,12 @@ bra FLC_DIFF
 End Function
 
 
-' The sign of a, as Cmp(a, 0) gives it: -1, 0 (either zero) or 1; 2 for NaN. The operand is in __A only.
+' The sign of a, as Cmp(a, 0) gives it: -1, 0 (a zero or a denormal) or 1; 2 for NaN. The operand is in __A only.
 Private Function FSign(ByVal a As LongWord) As ShortInt
     Asm
-        movf __A3, w
-        andlw 0x7F
-        iorwf __A2, w
-        iorwf __A1, w
-        iorwf __A0, w
+        rlf __A2, w
+        rlf __A3, w
+        iorlw 0
         btfsc STATUS, 2
         bra FLS_ST
         movf __A3, w

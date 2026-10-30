@@ -3552,8 +3552,8 @@ impl<'p> Gen<'p> {
             // A register-call routine: the operands go in `__A` and `__B`.
             match args {
                 [(_, a)] => self.gen_to_acc(a),
-                // `FScale` takes its exponent step in `__B0` alone.
-                [(_, a), (_, b)] if self.p.funcs[f].name.eq_ignore_ascii_case("fscale") => self.prep_ab(a, b, 1),
+                // A second parameter narrower than four bytes (`FScale`'s exponent step) goes in the low bytes of `__B`.
+                [(_, a), (_, b)] if self.p.vars[self.p.funcs[f].params[1]].bytes < 4 => self.prep_ab(a, b, self.p.vars[self.p.funcs[f].params[1]].bytes),
                 [(_, a), (_, b)] => match b.sign_flipped() {
                     Some(x) => {
                         self.prep_ab(a, x, 4);
