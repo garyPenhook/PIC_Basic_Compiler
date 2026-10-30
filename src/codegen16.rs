@@ -194,10 +194,20 @@ impl<'p> G<'p> {
 /// Runs one generation pass over the whole program.
 fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, isr_scratch: [u32; 4], prev_calls: Vec<BTreeSet<FuncId>>) -> (G<'p>, Vec<Item>) {
     let mut g = G::new(p, tgt, layout, isr_scratch, prev_calls);
+    // PIC16F13145 family, erratum 1.3.1 (DS80001115F p.3): above 16 MHz the first instruction fetched after a Reset, a wake-up or
+    // an interrupt can fail on silicon A2 and A3. The work around is a NOP where that fetch happens: at 0000h (the code starts at
+    // 0001h) and, as the same fetch happens on entering the handler, at 0004h. `#option FetchNop = false` removes them (silicon A4).
+    let fetch_nop = p.fetch_nop && p.clock_mhz > 16.0 && p.device.starts_with("PIC16F131");
     // Vectors: reset at 0, the single interrupt vector at 4 (hardware saves WREG, STATUS, BSR, FSRs and PCLATH).
+    if fetch_nop {
+        g.ins("nop");
+    }
     if !p.isrs.is_empty() {
         g.items.push(Item::Br(Cc::Always, "__reset".into()));
         g.items.push(Item::Org(4));
+        if fetch_nop {
+            g.ins("nop");
+        }
         g.gen_isr(0);
     }
     g.cur = p.funcs.len();

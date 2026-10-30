@@ -24,13 +24,15 @@ pub struct Options {
     pub bounds_check: bool,
     pub optimize: Optimize,
     pub isr_shadow: bool,
+    /// `#option FetchNop`: the PIC16F13145 family puts a NOP where the first instruction is fetched (erratum 1.3.1).
+    pub fetch_nop: bool,
     /// Warning codes switched off with `#option Warn.<id> = false`.
     pub warn_off: HashSet<String>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { strict: false, bounds_check: false, optimize: Optimize::Balanced, isr_shadow: true, warn_off: HashSet::new() }
+        Options { strict: false, bounds_check: false, optimize: Optimize::Balanced, isr_shadow: true, fetch_nop: true, warn_off: HashSet::new() }
     }
 }
 
@@ -582,6 +584,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                 "strict" => bool_of(&d.value).map(|b| o.strict = b).is_some(),
                 "boundscheck" => bool_of(&d.value).map(|b| o.bounds_check = b).is_some(),
                 "isr_shadow" => bool_of(&d.value).map(|b| o.isr_shadow = b).is_some(),
+                "fetchnop" => bool_of(&d.value).map(|b| o.fetch_nop = b).is_some(),
                 "optimize" => {
                     let v = match d.value.as_str() {
                         "size" => Some(Optimize::Size),
@@ -604,7 +607,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                     None => false,
                 },
                 n => {
-                    self.diags.error("E-OPTION", d.span, format!("unknown option `{n}` (known: Strict, BoundsCheck, ISR_SHADOW, Optimize, Warn.<id>)"));
+                    self.diags.error("E-OPTION", d.span, format!("unknown option `{n}` (known: Strict, BoundsCheck, ISR_SHADOW, FetchNop, Optimize, Warn.<id>)"));
                     continue;
                 }
             };

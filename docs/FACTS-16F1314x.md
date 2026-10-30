@@ -36,5 +36,8 @@ what differs. The code generator is the same one (`pic16e`).
 - **1.1.1** (revision A2): the real minimum ADC clock period is 2 us. The `adc` module uses TAD >= 2 us on this family.
 - **1.2.1** (A2): IPD up to 5 uA above the data sheet. Nothing to do in software.
 - **1.3.1** (A2, A3): the first instruction fetch after power-up, a Reset, a wake-up from Sleep or entry to the interrupt handler can fail when FOSC > 16 MHz.
-  Work arounds: run at 16 MHz or below; or put a NOP at address 0 and start the code at address 1; and put two NOPs after every SLEEP. **The compiler does
-  not apply the NOP work around** (revision A4 is not affected); on a revision A2 or A3 part keep `Clock` at 16 or below. Revision A4 is the current silicon.
+  Work arounds (p.3-5): run at 16 MHz or below; or put a NOP at address 0 and start the code at address 1 (the XC8 fill and `-Wl,--codeoffset=1` recipe); and
+  put two NOPs after every SLEEP. **Applied by the compiler** (0.1.77) when `Clock` is above 16: a NOP at 0000h, the reset code from 0001h, and a NOP as the first
+  word of the handler at 0004h (the errata text names the entry to an ISR among the failing fetches but gives no recipe for it; the NOP there is the same idea,
+  not something the document prescribes). Cost: one word, two with a handler. `#option FetchNop = false` removes them for revision A4, which is not affected.
+  Basil has no Sleep statement; an `Asm` block with `sleep` must be followed by two `nop`s by the program.

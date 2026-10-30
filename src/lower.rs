@@ -403,6 +403,7 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         isrs: lw.isrs,
         n_saves: lw.n_saves,
         isr_shadow: a.options.isr_shadow,
+        fetch_nop: a.options.fetch_nop,
         speed: a.options.optimize == crate::sema::Optimize::Speed,
     })
 }

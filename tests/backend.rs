@@ -695,6 +695,39 @@ fn p13_parts_build() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Erratum 1.3.1 of the PIC16F13145 family (DS80001115F): above 16 MHz a NOP at 0000h and at the start of the handler; none at 16 MHz,
+/// with `#option FetchNop = false`, or on the PIC16F17146.
+#[test]
+fn p13_fetch_nop_work_around() {
+    let out = scratch("p13nop");
+    let src = std::fs::read_to_string(root().join("tests/exec_p16/isr_single.bas")).unwrap();
+    let asm = |dev: &str, clock: &str, extra: &str, name: &str| {
+        let mut text = String::new();
+        for line in src.lines() {
+            let t = line.trim_start().to_ascii_lowercase();
+            if t.starts_with("device") {
+                text += &format!("Device = {dev}\n{extra}");
+            } else if t.starts_with("clock") {
+                text += &format!("Clock = {clock}\n");
+            } else {
+                text += line;
+                text.push('\n');
+            }
+        }
+        let f = out.join(format!("{name}.bas"));
+        std::fs::write(&f, text).unwrap();
+        let r = Command::new(basil()).arg("-S").arg(&f).arg("-o").arg(out.join(format!("{name}.S"))).output().unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let s = std::fs::read_to_string(out.join(format!("{name}.S"))).unwrap();
+        let at = |org: &str| s.split(org).nth(1).unwrap().lines().nth(1).unwrap().trim().to_string();
+        (at("ORG 0x0000"), at("ORG 0x0004"))
+    };
+    assert_eq!(asm("16F13145", "32", "", "a"), ("nop".into(), "nop".into()));
+    assert_ne!(asm("16F13145", "16", "", "b").0, "nop");
+    assert_ne!(asm("16F13145", "32", "#option FetchNop = false\n", "c").0, "nop");
+    assert_ne!(asm("16F17146", "32", "", "d").0, "nop");
+}
+
 /// With `BASIL_MDB=1` the PIC16F13145 programs run on the simulator's `PIC16F13145`.
 #[test]
 fn p13_programs_in_simulator() {

@@ -455,6 +455,8 @@ pub struct Program {
     pub n_saves: usize,
     /// `#option ISR_SHADOW`: a handler may use the hardware shadow registers.
     pub isr_shadow: bool,
+    /// `#option FetchNop` (default on): see `codegen16`, erratum 1.3.1 of the PIC16F13145 family.
+    pub fetch_nop: bool,
     /// `Option Optimize = Speed`: code that is faster but larger than the size-balanced form is allowed.
     pub speed: bool,
 }
