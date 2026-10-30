@@ -479,8 +479,8 @@ Const Tbl(4) As Byte = (10, 20, 30, 40)  ' lives in program memory
   dimension is `E-BOUNDS`. An initialiser is one flat list in row order. The array can be copied
   and cleared as a whole, but a routine that receives it as `p() As Byte` sees one flat dimension.
 * An array of strings, `Dim names(3) As String(8)`, is indexed like any array: `names(i) = "abc"`,
-  `s = names(i)`, `names(i)(0)`. It cannot have an initialiser, and a run-time index must not
-  itself read an array element or call a routine (`E-BACKEND`).
+  `s = names(i)`, `names(i)(0)`. It can have an initialiser, `Dim names(3) As String(6) = ("one", "two", "")`, one string for each element. In a string assignment the index may read
+  an array element or call a routine; in a comparison (`names(ix(j)) = s`) it must not (`E-BACKEND`).
 * A constant index outside the array is a compile error (`E-BOUNDS`). A run-time index is not
   checked.
 * `Const` arrays are read-only (reading by index works; assigning a `Const` array to a same-sized RAM
@@ -499,19 +499,31 @@ Dim s As String(20)                    ' 21 bytes
 Dim t As String(10) = "hi"
 s = "abc"                              ' from a literal, another string, a Char
 s = s + "def"                          ' in-place append
-s = "x" + t + "y"                      ' + chain (the target may only be the first operand)
+s = "x" + t + "y"                      ' + chain
+s = "x" + s                            ' the target anywhere: built in a hidden copy first (more code than an append)
 If s = "abc" Then ...                  ' = and <> only
+If s + t = "abcd" Then ...             ' either side can be a + chain (built in a hidden String of its full size)
 c = s(1)                               ' element, zero-based, a Char
 Clear(s)
+Left(t, s, 3)                          ' first 3 characters of s into t
+Right(t, s, 3)                         ' last 3 characters
+Mid(t, s, 2, 3)                        ' 3 characters from position 2 (zero-based, like s(2)); Mid(t, s, 2) takes the rest
 ```
+
+`Left`, `Mid` and `Right` are statements, not functions: the destination comes first and must be a `String`
+variable (an element of an array of strings is fine); the source is a `String` or a literal. The text is cut off at
+the destination's size and always ends in `Null`. A count past the end of the source, or a position past
+it, gives what is there (possibly the empty string); counts and positions can be any whole number, a negative one
+counts as too large. Destination and source can be the same string. They are ordinary names that a program's own
+declaration of `Left`, `Mid` or `Right` replaces. They are written out as loops, so a call costs 30 to 55 words on
+the PIC18; put repeated uses in a routine.
 
 Assignments are cut off at the declared size and always terminated with `Null`. There is no run-time
 bounds check on `s(i)`. String literals live in program memory and are read with `TBLRD`.
 A `String` parameter is `ByRef` (size must match the callee's `String(n)` exactly) or `ByRefConst`
 (any size, also accepts a literal).
 
-Not supported: `Len`, `Left`, `Mid`, `Right`, `Str`, `Val`, `Print`, comparison of a concatenation,
-string-returning functions. Output of text is done by the library routines
+`Len(s)` is in the `strings` module (`Include "strings"`; see its section). `Left`, `Mid` and `Right` are built in (below). Not supported: `Str`, `Val`, `Print`. Output of text is done by the library routines
 (`SerialWrite`, `LcdWrite`, `OledWrite`).
 
 ### Structures and unions
@@ -536,8 +548,20 @@ Clear(p)
 ```
 
 Fields are reached with `.`. `Clear(x)` zeroes a structure. A structure can be given initial
-values in field order, `Dim p As TPoint = (3, 4)`: one constant for each numeric, `Boolean`, `Char`
-or `String` field (a structure with an array, bit or nested-structure field cannot be initialised).
+values in field order, `Dim p As TPoint = (3, 4)`. The list is **flat**, as for a multi-dimensional array: one
+constant for each number, `Boolean`, `Bit`, `Char`, `Float` or `String` in the structure, so an array field takes one
+value per element and a nested structure one per field, in order. Union members (alias fields) take none.
+
+```basic
+Structure TBox
+    id   As Byte
+    tab(3) As Byte
+    at   As TPoint
+    name As String(4)
+End Structure
+Dim b As TBox = (1,  10, 20, 30,  7, 300,  "hi")     ' id, tab(0..2), at.X, at.Y, name
+Dim pts(2) As TPoint = (1, 2, 3, 4)                 ' an array of structures: pts(0) = (1, 2), pts(1) = (3, 4)
+```
 
 ## Float
 
@@ -625,7 +649,11 @@ EndProc
   (or `ByRefConst`). A `ByRef` argument must be a variable, not an expression. A `ByRef` parameter
   can be a Byte/Word/etc. scalar, an array, a String or a structure.
 * A default value is allowed only on a trailing `ByVal` parameter, and must be a constant.
-* A function returns a scalar or a structure (not an array, not a String). Calling a function as a
+* A function returns a scalar, a structure or a `String` (not an array, and a `Reentrant` function only a scalar).
+  A structure or String result is left in the function's frame and copied out at once, so it can be used as the whole
+  right side of an assignment (`p = MakePoint(3)`, `s = Name(1)`) or as a `+` operand in a String assignment
+  (`s = "<" + Name(1) + ">"`); it cannot be passed on as an argument or compared directly. A `ByRefConst` parameter can be a
+  structure, and a `ByRef` or `ByRefConst` array can hold structures or strings. Calling a function as a
   statement discards its result.
 * **No recursion** (`E-RECURSION`). Because the call graph is acyclic, the compiler gives every
   routine static storage and **overlays** the storage of routines never live at the same time, so
@@ -4207,6 +4235,20 @@ b = FontByte(0)
 
 ---
 
+## strings  (`Include "strings"`)
+
+`Len(s)` returns a `Byte`: the number of characters before the `Null` (0 for `Null` or an empty string, at most 255).
+`s` can be a `String` of any size or a literal.
+
+```basic
+Include "strings"
+Dim name As String(20) = "basil"
+n = Len(name)        ' 5
+n = Len("abc")       ' 3
+```
+
+---
+
 ## aht30  (`Include "aht30"`, AHT30 temperature and humidity sensor, I2C)
 
 Set up the bus first: `I2cInit` at no more than 400 kHz, with pull-ups of 2.0 to 4.7 kOhm. The sensor is at
@@ -4266,7 +4308,7 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 
 `E-BACKEND` ("not supported by the back end yet") means the front end accepted a rare form that the
 code generator does not handle: a `Reentrant` routine, a bit passed `ByRef`, a call inside the index
-of a bit, an array of strings, a function returning an array or String, and similar. The compiler
+of a bit, a function result of a String or structure used anywhere but as an assignment, and similar. The compiler
 reports these rather than miscompiling them.
 
 ---

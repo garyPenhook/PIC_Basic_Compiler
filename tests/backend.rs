@@ -484,7 +484,7 @@ fn q41_parts_build_the_standard_programs() {
         return;
     }
     let out = scratch("q41parts");
-    let programs = ["arith_byte", "arith_word", "arith_longword", "arrays", "flow", "funcs", "isr_save", "isr_dual", "isr_single", "events_isr", "bit_packed_isr", "reentrant", "strings", "structs"];
+    let programs = ["arith_byte", "arith_word", "arith_longword", "arrays", "flow", "funcs", "isr_save", "isr_dual", "isr_single", "events_isr", "bit_packed_isr", "reentrant", "str_basic", "structs"];
     let mut failures = Vec::new();
     for dev in Q41_PARTS {
         for p in programs {
@@ -580,8 +580,8 @@ const P16_PARTS: [&str; 2] = ["16F17126", "16F17146"];
 /// `Clock` lines changed (the others use PIC18 registers, PIC18 assembly or cycle counts of a 64 MHz part).
 const P16_PORTABLE: &[&str] = &[
     "absminmax", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
-    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "strings", "structinit", "structs", "structstr", "tablewalk", "overload",
-    "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_oled", "lib_aht30",
+    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "structinit", "structs", "structstr", "tablewalk", "overload",
+    "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_oled", "lib_aht30", "lib_strings",
     "float_basic", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge",
 ];
 

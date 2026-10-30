@@ -499,6 +499,17 @@ impl<'p> G<'p> {
         self.call(&format!("__{name}"));
     }
 
+    /// A string operand as a RAM string: a concatenation is built into its hidden String first.
+    pub(super) fn cat_built(&mut self, s: &StrSrc) -> StrSrc {
+        let StrSrc::Cat { tmp, parts } = s else { return s.clone() };
+        let crate::types::Ty::Str(cap) = tmp.ty else {
+            self.err("internal: a concatenation without a String to hold it");
+            return s.clone();
+        };
+        self.str_set(tmp, cap, parts, false);
+        StrSrc::Ram(tmp.clone())
+    }
+
     /// `dst = parts[0] + parts[1] + ...` through the string helpers: FSR0 is the write pointer, `D2` the room
     /// left, and each part is appended and the text Null-terminated.
     fn str_set(&mut self, dst: &Place, cap: u32, parts: &[StrSrc], keep: bool) {
@@ -551,6 +562,7 @@ impl<'p> G<'p> {
                     self.call_helper("strs1");
                     wrote = true;
                 }
+                StrSrc::Cat { .. } => self.err("internal: a concatenation inside a concatenation"),
                 StrSrc::Char(e) => {
                     match t {
                         Some(m) => self.fop("movf", m, "w"),

@@ -47,6 +47,13 @@ fn w_src<V: Visit>(v: &mut V, s: &StrSrc) {
         StrSrc::Ram(p) => w_place(v, p, Acc::Read),
         StrSrc::Lit(_) => {}
         StrSrc::Char(e) => w_ex(v, e),
+        StrSrc::Cat { tmp, parts } => {
+            w_place(v, tmp, Acc::Write);
+            for p in parts {
+                w_src(v, p);
+            }
+            w_place(v, tmp, Acc::Read);
+        }
     }
 }
 
@@ -151,6 +158,12 @@ fn m_src(s: &mut StrSrc, f: &mut dyn FnMut(&mut Ex)) {
         StrSrc::Ram(p) => m_idx(p, f),
         StrSrc::Lit(_) => {}
         StrSrc::Char(e) => m_ex(e, f),
+        StrSrc::Cat { tmp, parts } => {
+            m_idx(tmp, f);
+            for p in parts {
+                m_src(p, f);
+            }
+        }
     }
 }
 

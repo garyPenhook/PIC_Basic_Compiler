@@ -97,14 +97,16 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
 | `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), bitmaps, pixel/line/rectangle drawing in a frame buffer, fill, contrast, invert, flip |
+| `strings` | `Len` of a `String` (any size, or a literal); `Left`, `Mid` and `Right` are built into the language |
 | `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
 | `dma` | PIC18-Q41 DMA: software-started copy (RAM/SFR, flash or EEPROM source), trigger-started feed with abort triggers, on four channels, done flag, stop |
 
 ## Still to do
 
-* **Language:** a few string and structure forms are still missing (the compiler reports these
-  clearly rather than miscompiling them). `Reentrant` recursion is limited by the 31-level hardware
+* **Language:** a few rare string and structure forms are still missing (the compiler reports these
+  clearly rather than miscompiling them): a String or structure function result as an argument, in a comparison or
+  from a `Reentrant` function, `ByVal` structures and strings, `Str`/`Val`. `Reentrant` recursion is limited by the 31-level hardware
   stack, and there is no forward declaration, so mutual recursion cannot be written.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
   Serial output, PWM waveforms, I2C and SPI traffic, external timer inputs and the second EUSART

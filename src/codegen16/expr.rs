@@ -415,6 +415,7 @@ impl<'p> G<'p> {
                 self.word_address(&label, n, true);
             }
             ExK::StrEq(a, b) => {
+                let (a, b) = (&self.cat_built(a), &self.cat_built(b));
                 let StrSrc::Ram(pa) = a else {
                     self.err("internal: a string comparison needs a variable on the left");
                     return;
@@ -432,7 +433,7 @@ impl<'p> G<'p> {
                         self.set_fsr(0, pa);
                         self.point_flash(l);
                     }
-                    StrSrc::Char(_) => {
+                    StrSrc::Char(_) | StrSrc::Cat { .. } => {
                         self.err("internal: a Char in a string comparison");
                         return;
                     }

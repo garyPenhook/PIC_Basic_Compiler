@@ -203,6 +203,9 @@ pub enum StrSrc {
     Lit(Vec<u8>),
     /// A single Char value, appended to the text.
     Char(Box<Ex>),
+    /// A concatenation, built into the hidden String `tmp` (its size is the room) when the value
+    /// is needed. Only a string comparison takes one.
+    Cat { tmp: Place, parts: Vec<StrSrc> },
 }
 
 impl Ex {
@@ -262,6 +265,7 @@ impl StrSrc {
             StrSrc::Ram(p) => p.idx.as_ref().is_some_and(|i| i.has_call()),
             StrSrc::Lit(_) => false,
             StrSrc::Char(e) => e.has_call(),
+            StrSrc::Cat { tmp, parts } => tmp.idx.as_ref().is_some_and(|i| i.has_call()) || parts.iter().any(|p| p.has_call()),
         }
     }
 }
@@ -493,6 +497,7 @@ impl StrSrc {
             StrSrc::Ram(p) => (reads && p.is_var(v)) || p.idx.as_ref().is_some_and(|i| i.touches(v, reads)),
             StrSrc::Lit(_) => false,
             StrSrc::Char(e) => e.touches(v, reads),
+            StrSrc::Cat { tmp, parts } => tmp.is_var(v) || parts.iter().any(|p| p.touches(v, reads)),
         }
     }
 }

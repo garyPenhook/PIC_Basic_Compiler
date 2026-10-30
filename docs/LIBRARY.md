@@ -358,6 +358,13 @@ Source: the Aosong AHT30 data sheet (Sep 2023): address 0x38 (5.1), measurement 
 
 Status: 0 ok, 1..4 as `I2cStatus` (timeout, collision, no acknowledge, I2c not initialised), 5 busy (fetched too early), 6 CRC mismatch. The calibration and CRC_flag bits of the status byte are not checked.
 
+## strings (String helpers)
+| Routine | Effect |
+|---|---|
+| `Len(s)` | `Byte`: the characters before the `Null` (0 for an empty string). `s` is `ByRefConst`: a `String` of any size, or a literal |
+
+Portable (no device registers); `tests/exec/lib_strings.bas` runs on the PIC18 and PIC16 parts.
+
 ## floatlib (Float arithmetic; included automatically)
 Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
 `+ - * /`, the six comparisons and the conversions into calls to `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong FToLong`

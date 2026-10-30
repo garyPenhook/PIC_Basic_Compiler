@@ -251,7 +251,7 @@ impl Ctx {
 }
 
 const CONVERSIONS: &[&str] = &["byte", "word", "integer", "longword", "longint", "shortint", "float", "boolean", "bit", "char"];
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -978,10 +978,13 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             let init = it.init.as_ref().or(dim.trailing_init.as_ref());
             let list = it.list.as_ref().or(dim.trailing_list.as_ref());
-            if let (Ty::Struct(sid), Some(items)) = (&vty, list) {
-                self.struct_init(&it.name, *sid, items);
-            } else if let (Ty::Struct(sid), Some(e)) = (&vty, init) {
-                self.struct_init(&it.name, *sid, std::slice::from_ref(e));
+            let nested = matches!(&vty, Ty::Array(e, _) if matches!(**e, Ty::Struct(_) | Ty::Str(_) | Ty::Array(..)));
+            if matches!(vty, Ty::Struct(_)) || nested {
+                if let Some(items) = list {
+                    self.aggregate_init(&it.name, &vty, items);
+                } else if let Some(e) = init {
+                    self.aggregate_init(&it.name, &vty, std::slice::from_ref(e));
+                }
             } else if let Some(items) = list {
                 match &vty {
                     Ty::Array(elem, n) => self.array_init(&it.name, elem, *n, items),
@@ -1030,25 +1033,42 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
     }
 
-    /// Checks the values of a structure initialiser `(a, b, …)`: one constant per field, in the
-    /// order the fields are declared. Only numeric, Boolean, Char and String fields take one.
-    fn struct_init(&mut self, name: &Ident, sid: SymId, items: &'p [Expr]) {
-        let SymKind::Struct { fields, .. } = self.a.symbols[sid].kind.clone() else { return };
-        let fields: Vec<FieldInfo> = fields.into_iter().filter(|f| !f.alias).collect();
-        if let Some(f) = fields.iter().find(|f| !matches!(f.ty, Ty::Int(..) | Ty::Char | Ty::Bool | Ty::Str(_))) {
-            self.diags.error("E-DIM", name.span, format!("a structure with the {} field `{}` cannot have initial values", f.ty, f.name));
+    /// The types of the values an initialiser gives a structure or an array of strings or structures, in
+    /// order: one flat list, a structure field by field (union members share storage and take none), an
+    /// array element by element. False for a type that cannot be given a value.
+    fn init_leaves(&self, ty: &Ty, out: &mut Vec<(Ty, String)>, what: &str) -> bool {
+        match ty {
+            Ty::Int(..) | Ty::Char | Ty::Bool | Ty::Bit | Ty::Str(_) | Ty::Float => {
+                out.push((ty.clone(), what.to_string()));
+                true
+            }
+            Ty::Struct(sid) => {
+                let SymKind::Struct { fields, .. } = &self.a.symbols[*sid].kind else { return false };
+                fields.iter().filter(|f| !f.alias).all(|f| self.init_leaves(&f.ty, out, &format!("field `{}`", f.name)))
+            }
+            Ty::Array(elem, n) => (0..*n).all(|_| self.init_leaves(elem, out, what)),
+            _ => false,
+        }
+    }
+
+    /// Checks the values of an initialiser `(a, b, …)` for a structure, or an array of strings or structures:
+    /// one constant per value in the flat order of `init_leaves`.
+    fn aggregate_init(&mut self, name: &Ident, ty: &Ty, items: &'p [Expr]) {
+        let mut leaves = Vec::new();
+        if !self.init_leaves(ty, &mut leaves, "initial value") {
+            self.diags.error("E-DIM", name.span, format!("a {ty} with a field that cannot take a value (an event, say) cannot have initial values"));
             return;
         }
-        if items.len() != fields.len() {
-            self.diags.error("E-DIM-ARRAY", name.span, format!("`{}` has {} fields but the list has {} values", name.name, fields.len(), items.len()));
+        if items.len() != leaves.len() {
+            self.diags.error("E-DIM-ARRAY", name.span, format!("`{}` takes {} values but the list has {}", name.name, leaves.len(), items.len()));
             return;
         }
-        for (e, f) in items.iter().zip(&fields) {
+        for (e, (lty, what)) in items.iter().zip(&leaves) {
             let Some(ei) = self.check_expr(e) else { continue };
             if ei.val.is_none() {
                 self.diags.error("E-CONST-EXPR", e.span, "an initial value must be known at compile time");
-            } else if self.assign_ok(&f.ty, &ei, e.span, &format!("field `{}`", f.name)) {
-                self.annotate_assignment(&f.ty, &ei, e);
+            } else if self.assign_ok(lty, &ei, e.span, what) {
+                self.annotate_assignment(lty, &ei, e);
             }
         }
     }
@@ -1217,8 +1237,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                 self.diags.error("E-PARAM", p.name.span, format!("`{}`: arrays, strings and structures are passed ByRef or ByRefConst", p.name.name));
                 ok = false;
             }
-            if mode == ParamMode::ByRefConst && !(p.is_array || matches!(base, Ty::Str(_))) {
-                self.diags.error("E-PARAM", p.name.span, format!("`{}`: ByRefConst is for constant arrays and strings", p.name.name));
+            if mode == ParamMode::ByRefConst && !(p.is_array || aggregate) {
+                self.diags.error("E-PARAM", p.name.span, format!("`{}`: ByRefConst is for arrays, strings and structures", p.name.name));
                 ok = false;
             }
             if let Some(def) = &p.default {
@@ -2701,6 +2721,30 @@ impl<'p, 'd> Sema<'p, 'd> {
                     && *c < 0
                 {
                     return self.err("E-CONST-RANGE", args[0].span, "a delay cannot be negative");
+                }
+                call(Ty::Void)
+            }
+            "left" | "mid" | "right" => {
+                // `Left(dst, src, n)`, `Right(dst, src, n)`, `Mid(dst, src, start)` and `Mid(dst, src, start, n)`.
+                let (lo, hi) = if name == "mid" { (3, 4) } else { (3, 3) };
+                if args.len() < lo || args.len() > hi {
+                    let n = if lo == hi { lo.to_string() } else { format!("{lo} or {hi}") };
+                    self.diags.error("E-ARGS", span, format!("`{}` takes {n} arguments, {} given", d.head.name, args.len()));
+                    return None;
+                }
+                let dst = self.lvalue_arg(&args[0], d.head.name.as_str())?;
+                if !matches!(dst.ty, Ty::Str(_)) {
+                    return self.err("E-TYPE", args[0].span, format!("the first argument of `{}` must be a String variable, found {}", d.head.name, dst.ty));
+                }
+                let src = self.check_expr(&args[1])?;
+                if !matches!(src.ty, Ty::Str(_)) {
+                    return self.err("E-TYPE", args[1].span, format!("the second argument of `{}` must be a String, found {}", d.head.name, src.ty));
+                }
+                for a in &args[2..] {
+                    let v = self.check_expr(a)?;
+                    if !v.ty.is_numeric_int() {
+                        return self.err("E-TYPE", a.span, format!("`{}` needs a whole number for a position or count, found {}", d.head.name, v.ty));
+                    }
                 }
                 call(Ty::Void)
             }

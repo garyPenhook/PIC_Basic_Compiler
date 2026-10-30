@@ -18,6 +18,7 @@ Include "system"
 Include "lcd"
 Include "oled"
 Include "aht30"
+Include "strings"
 Dim x As Word
 Dim r As Byte
 Dim ti As Integer

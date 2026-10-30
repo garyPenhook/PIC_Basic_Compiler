@@ -125,7 +125,7 @@ frame overlay, zero-init elimination, peephole pass; gates in `docs/BENCHMARKS.m
   two `ByRef` parameters that alias at run time are not detected; writing `s(n)` (the Null slot) is the program's responsibility, as there is no run-time bounds check; a literal passed ByRefConst is limited to 255 characters. Not yet: `Len`/`Left`/`Mid`
   (not in the front end either), string-returning functions, arrays of strings, comparing a
   concatenation. Interrupts (M6) must save FSR1, TBLPTR/TABLAT and `__D0` as well as FSR0.
-  Test: `tests/exec/strings.bas`.
+  Test: `tests/exec/str_basic.bas`.
 - Multiply (done): 16/24/32-bit products use the 8×8 hardware multiplier (`MULWF`/`MULLW`, unsigned;
   the low n bytes of the product are the same for signed operands). `__mulN` sums the partial
   products `A[i]*B[j]` with `i+j < n` into `__C`, then copies to `__A` (n=2: 3 multiplies, no loop).
@@ -920,3 +920,28 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## PIC16F13145 family: erratum 1.3.1 work around (done 2026-10-30, 0.1.77)
 - `codegen16::run_pass`: for `PIC16F131xx` parts with `Clock` above 16, a NOP at 0000h (the reset code or the jump to it starts at 0001h) and a NOP as the first word of the handler at 0004h. `#option FetchNop = false` (sema, ir, lower) switches it off for silicon A4. One word without a handler, two with.
 - Test: `p13_fetch_nop_work_around` in `tests/backend.rs`; the PIC16F13145 simulator programs run at 32 MHz with the NOPs in place.
+
+## strings module: Len (done 2026-10-30, 0.1.78)
+- `lib/strings.bas` (module `Strings`): `Len(s)` walks the `ByRefConst` string to its `Null`, so any size and a literal are accepted. Portable Basic, no back-end change.
+- Test: `tests/exec/lib_strings.bas` (PIC18F27Q10, PIC18F16Q41, PIC16F17126, PIC16F13145 in the simulator; in `P16_PORTABLE`); the module is in `tests/programs/library_all.bas`.
+- `Left`, `Mid` and `Right` are not library routines: a `ByRef` String must match the callee's size exactly, so one routine cannot fill the caller's string.
+
+## String slices: Left, Mid, Right (done 2026-10-30, 0.1.79)
+- Statements `Left(dst, src, n)`, `Right(dst, src, n)`, `Mid(dst, src, start[, n])` (zero-based). Predefined intrinsics like `Abs` (`PREDEFINED_INTRINSICS` in sema), so a program's own `Mid` wins. `lower::str_slice` writes them as hidden-Byte loops over string element places, so neither back end changed; counts are clamped by `clamp_byte`, the copy stops at the destination size, aliasing of `dst` and `src` is safe (forward copy).
+- A ByRef String must match the callee's size, which is why these are not library routines.
+- Tests: `tests/exec/str_slice.bas` (PIC18F27Q10, 18F16Q41, 16F17126, 16F13145; in `P16_PORTABLE`), `tests/negative/str_slice_type.bas`. `tests/exec/strings.bas` became `str_basic.bas` because `Include "strings"` finds a file of that name in the program's folder first.
+
+## String concatenation: comparisons and the target on the right (done 2026-10-30, 0.1.80)
+- `StrSrc::Cat { tmp, parts }` (ir.rs): a `+` chain on either side of `=`/`<>`; the back ends (`cat_built` in codegen.rs and codegen16/stmt.rs) build it into the hidden String `tmp` with `str_set` just before the compare helper runs. Sized from the sema type of the chain (at most 255).
+- `lower::str_assign`: a target that is also read after the first operand, or that may alias another element, is built in a hidden String of the target's size and copied over it. An index that reads an array or calls a routine (target or source) is worked out into a hidden Word first (`hoist_idx`). Still `E-BACKEND`: such an index in a comparison.
+- Tests: `tests/exec/str_cat_cmp.bas`, `str_cat_assign.bas` on the PIC18F27Q10, 18F16Q41, 16F17126 and 16F13145.
+
+## Initialisers for structures with arrays, bits and nested structures; arrays of strings and structures (done 2026-10-30, 0.1.81)
+- One flat list of constants in storage order (`sema::init_leaves`, `lower::init_leaves`): a structure field by field (alias fields take none), an array element by element, a nested structure inside. Checked by `sema::aggregate_init` (replaces `struct_init`), stored by `lower::aggregate_init`: a non-zero value is an assignment at start-up (entry, for a local), a `String` goes through `str_assign`.
+- Tests: `tests/exec/structinit_nested.bas` (PIC18F27Q10, 18F16Q41, 16F17126, 16F13145), `tests/negative/aggregate_init_count.bas`.
+
+## Structure and String function results, ByRefConst structures, by-reference arrays of strings and structures (done 2026-10-30, 0.1.82)
+- A `Function` returning a structure or `String` (not `Reentrant`) keeps `Result` in its frame (`lower::func_of`); `lower::agg_call` emits the call and returns that place. `copy_assign` copies a structure out of it, `str_assign` copies a String out directly, and `str_parts` copies it into a hidden String at once (the next call may overlay the frame), so `s = A() + B()` works.
+- `ByRefConst` takes a structure (sema `E-PARAM` relaxed); `ByRef` of an array of Strings and `ByRefConst` of an array of structures or Strings pass the address as the scalar forms do.
+- Not done: `ByVal` structures and strings (the copy into the callee's frame would have to wait until the other arguments' calls are done), a result passed straight on as an argument or compared.
+- Tests: `tests/exec/agg_result.bas`, `agg_params.bas` on the PIC18F27Q10, 18F16Q41, 16F17126, 16F13145 and at `-O0`.

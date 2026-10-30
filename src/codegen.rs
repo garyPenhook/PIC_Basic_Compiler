@@ -362,6 +362,10 @@ fn src_calls(s: &StrSrc, out: &mut BTreeSet<FuncId>) {
         StrSrc::Ram(p) => place_calls(p, out),
         StrSrc::Lit(_) => {}
         StrSrc::Char(e) => ex_calls(e, out),
+        StrSrc::Cat { tmp, parts } => {
+            place_calls(tmp, out);
+            parts.iter().for_each(|p| src_calls(p, out));
+        }
     }
 }
 
@@ -1027,6 +1031,7 @@ impl<'p> Gen<'p> {
                 }
             }
             ExK::StrEq(a, b) => {
+                let (a, b) = (&self.cat_built(a), &self.cat_built(b));
                 let StrSrc::Ram(pa) = a else {
                     self.err("internal: a string comparison needs a variable on the left");
                     return;
@@ -1041,7 +1046,7 @@ impl<'p> Gen<'p> {
                         self.point_flash(l);
                         self.call_helper("strqf1".into());
                     }
-                    StrSrc::Char(_) => self.err("internal: a Char in a string comparison"),
+                    StrSrc::Char(_) | StrSrc::Cat { .. } => self.err("internal: a Char in a string comparison"),
                 }
             }
             ExK::Conv(inner) => self.gen_conv(inner, e.w, e.signed),
@@ -1416,6 +1421,17 @@ impl<'p> Gen<'p> {
         }
     }
 
+    /// A string operand as a RAM string: a concatenation is built into its hidden String first.
+    fn cat_built(&mut self, s: &StrSrc) -> StrSrc {
+        let StrSrc::Cat { tmp, parts } = s else { return s.clone() };
+        let crate::types::Ty::Str(cap) = tmp.ty else {
+            self.err("internal: a concatenation without a String to hold it");
+            return s.clone();
+        };
+        self.str_set(tmp, cap, parts, false);
+        StrSrc::Ram(tmp.clone())
+    }
+
     /// `dst = parts[0] + parts[1] + …` through the string helpers: FSR0 is the write pointer,
     /// `__D0` the room left, and each part is appended and the text Null-terminated.
     fn str_set(&mut self, dst: &Place, cap: u32, parts: &[StrSrc], keep: bool) {
@@ -1458,6 +1474,7 @@ impl<'p> Gen<'p> {
                     self.call_helper("strf1".into());
                     wrote = true;
                 }
+                StrSrc::Cat { .. } => self.err("internal: a concatenation inside a concatenation"),
                 StrSrc::Char(e) => {
                     match t {
                         Some(m) => self.fop("movf", m, "w"),
