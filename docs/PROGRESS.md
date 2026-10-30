@@ -899,3 +899,13 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `codegen::store`: a one-byte array element picked by a Byte variable (`plusw_point`) takes `clrf PLUSW0` for `= 0`, `setf PLUSW0` for `= 255` and `incf` / `decf PLUSW0,f` for `arr(i) = arr(i) + 1`, `- 1`, `1 + arr(i)`, `+ 255`, `- 255`. None of them takes an operand from W, which holds the index. `arr(i) = arr(i) + 1` is 3 words (was 9). Other constants and operands keep the earlier form, since the `movlw` would overwrite the index.
 - W6 (`x * K` store) and A3 (Word array reads through `POSTINC0`) were found already done: the generated code already has the shape the table asks for.
 - Test: `tests/exec/array_plusw_rmw.bas` (`scripts/gen-plusw-rmw-tests.py`: 196 cases, four positions incl. the 128-byte limit, neighbour element checked).
+
+## Byte subtract, shift and negate; Word array elements through PLUSW0 and FSR0 (done 2026-10-30, 0.1.70; EFFICIENCY.md B1, B4-B7, A4)
+- B4 (`a / K`, `a Mod K` by reciprocal) and B5 (`a Mod b` result read from `__C0`) were found already done.
+- `codegen::bin_byte`: `x - mem` with a simple `x` loads the right operand and subtracts it from the left (`movf b,w / subwf a,w`; `sublw K` for a constant `x`), 3 words (was 4, with a trailing `sublw 0`).
+- `codegen::shift_byte`: unsigned `x >> 1` of a variable is `bcf STATUS,0 / rrcf x,w` (was `rrncf` plus `andlw 0x7F`).
+- `codegen::narrow_expr` (from `gen_conv`): a narrowing conversion of a negate, complement, add, subtract or bitwise result is computed in the narrow width, so `Byte = -a` is `movf a,w / sublw 0` (was a 16-bit negate).
+- `codegen::plusw_point` / `plusw_shape`: PLUSW0 also reaches 2- and 4-byte elements (index doubled once or twice in W, `incf WREG,w` between bytes) while the array is at most 128 bytes. Constants other than 0 and 255 are staged in a temporary first. `x = wa(i)` is 7 words (was 16).
+- `codegen::point_fsr`: a Byte index into an array of up to 256 bytes (any size when the element is a byte) is added to FSR straight from `lfsr` (`movf i,w / addwf FSRnL,f / movlw 0 / addwfc FSRnH,f`), 6 words (was 10); `Addr` keeps the old form because it needs `__A`.
+- `codegen::store`: `arr(i) = arr(i) op operand` (Add, Sub, And, Or, Xor; operand a variable or constant) points FSR0 once and works in place: `movf y,w / addwf POSTINC0,f / movf y+1,w / addwfc INDF0,f`.
+- Tests: `tests/exec/byte_ops.bas` (`scripts/gen-byteops-tests.py`, 550 cases), `tests/exec/array_rmw.bas` (`scripts/gen-arrayrmw-tests.py`, Byte/Word/LongWord arrays on each of the three paths, neighbour checked).

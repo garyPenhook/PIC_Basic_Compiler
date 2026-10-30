@@ -53,13 +53,13 @@ Already tight and left alone: `a + b`, `a And/Or/Xor`, `a * b` and `a * K` (`MUL
 
 | Finding | Now | Proposed | Measured |
 |---|---|---|---|
-| **B1** `c = a - b` is computed reversed and negated: `movf a,w; subwf b,w; sublw 0` | 4 words | `movf b,w; subwf a,w` | 4→3 cycles |
+| **B1** (**done, 0.1.70**) `c = a - b` is computed reversed and negated: `movf a,w; subwf b,w; sublw 0` | 4 words | `movf b,w; subwf a,w` | 4→3 cycles |
 | **B2** `Min(a,b)`/`Max(a,b)` use a branch-free mask with a hidden temp (`__main__TMP`) and a `movlw 1/0` flag | 14 words | `movf b,w; cpfsgt a; movf a,w` (Min), `cpfslt` (Max): skip-instruction select | 14→4 and 13→4 cycles; Min(5,9)=5 and Max(5,9)=9 checked |
 | **B3** `Abs(sb)` | 17 words | `movf sb,w; btfsc sb,7; negf WREG` | 17→4 cycles; −5→5, 7→7, −128→128 |
-| **B4** `a / K`, `a Mod K` through `__div1` (8-iteration loop) | 118-122 cycles | `a/10 = (a·205)>>11`: `movf a,w; mullw 205; rrncf PRODH,w; rrncf WREG,w; rrncf WREG,w; andlw 0x1F` (7 words with the store); `Mod` adds `mullw K; movf PRODL,w; subwf a,w` | /10: 120→7; Mod 10: 122→10; a=200 checked |
-| **B5** `a Mod b` result path: `movff __C0,__A0; movf __A0,w` | 3 words | `movf __C0,w` | counted |
-| **B6** `a >> 1` is `movf a,w; rrncf WREG,w; andlw 0x7F` | 3 words | `bcf STATUS,0; rrcf a,w` | 4→3 cycles; 201→100 |
-| **B7** `c = -a` with a *Byte* target is evaluated in 16 bits | 9 words | `movf a,w; sublw 0` (the ShortInt case already does this) | counted |
+| **B4** (**done, 0.1.70**) `a / K`, `a Mod K` through `__div1` (8-iteration loop) | 118-122 cycles | `a/10 = (a·205)>>11`: `movf a,w; mullw 205; rrncf PRODH,w; rrncf WREG,w; rrncf WREG,w; andlw 0x1F` (7 words with the store); `Mod` adds `mullw K; movf PRODL,w; subwf a,w` | /10: 120→7; Mod 10: 122→10; a=200 checked |
+| **B5** (**done, 0.1.70**) `a Mod b` result path: `movff __C0,__A0; movf __A0,w` | 3 words | `movf __C0,w` | counted |
+| **B6** (**done, 0.1.70**) `a >> 1` is `movf a,w; rrncf WREG,w; andlw 0x7F` | 3 words | `bcf STATUS,0; rrcf a,w` | 4→3 cycles; 201→100 |
+| **B7** (**done, 0.1.70**) `c = -a` with a *Byte* target is evaluated in 16 bits | 9 words | `movf a,w; sublw 0` (the ShortInt case already does this) | counted |
 
 B4 detail. For unsigned `n < 2^W` and a divisor `k`, `n/k = (n·m)>>s` exactly when `m = ceil(2^s/k)` fits the
 multiplier width; a host search over every dividend found a single-byte multiplier for **199 of the 254** byte
@@ -145,7 +145,7 @@ pay off (skip leading zero bytes of the dividend: a dividend that fits 16 bits f
 | **A1** `c = arr(a)`, `arr(a) = b` for a Byte index build a 16-bit address in `__A`, add the base, copy it to `FSR0` | 12 words | `lfsr 0,arr; movf a,w; movf PLUSW0,w` (`PLUSW0` offsets by the *signed* W, so valid only when the array has ≤ 128 elements; elements beyond that keep the current path) | 13→5; 77 read back |
 | **A2** (**done for `+ 1` / `- 1`, 0.1.69**) read-modify-write `arr(a) = arr(a) + 1` computes the address twice and parks the value in `__main__TMP` | 27 words | `lfsr 0,arr; movf a,w; incf PLUSW0,f` | 27→4 cycles; −1 B temp |
 | **A3** (**already done**, found so in 0.1.69) Word arrays, `x = warr(a)`: `movff POSTINC0,__A0; movff POSTINC0,__A1; movff __A0,x; movff __A1,x+1` | 8 words | `movff POSTINC0,x; movff POSTINC0,x+1` (P3) | counted |
-| **A4** Word index doubling (`rlcf` through `__A`, 16-bit add) | ≈14 words | `movf a,w; addwf WREG,w` then `PLUSW0` while `a < 64`; keep `FSR0` loaded across several accesses to the same array | counted |
+| **A4** (**done, 0.1.70**) Word index doubling (`rlcf` through `__A`, 16-bit add) | ≈14 words | `movf a,w; addwf WREG,w` then `PLUSW0` while `a < 64`; keep `FSR0` loaded across several accesses to the same array | counted |
 | **L1** counted `For` loop with a Byte variable | `clrf v; movlw n; movwf H; … dcfsnz H; bra; incf v; bra` + 1 hidden byte | when the body never reads `v`, count with `v` itself (no hidden byte); otherwise unchanged | counted |
 
 `For x = 0 To 999` on a Word variable already uses `infsnz/incf` for the increment, so W5 only needs to reuse that

@@ -632,6 +632,30 @@ fn weight(depth: u32) -> u64 {
     8u64.pow(depth.min(4))
 }
 
+/// `e` recomputed in `w` bits (`w` below `e.w`), when its low `w` bits depend only on the low `w` bits of its operands.
+fn narrow_expr(e: &Ex, w: u8, signed: bool) -> Option<Ex> {
+    if e.w <= w {
+        return None;
+    }
+    let leaf = |x: &Ex| -> Ex {
+        match &x.k {
+            ExK::Const(v) => Ex::new(ExK::Const(*v & mask(w)), w, signed),
+            ExK::Conv(inner) if inner.w == w => (**inner).clone(),
+            _ => narrow_expr(x, w, signed).unwrap_or_else(|| Ex::new(ExK::Conv(Box::new(x.clone())), w, signed)),
+        }
+    };
+    let k = match &e.k {
+        ExK::Neg(x) => ExK::Neg(Box::new(leaf(x))),
+        ExK::Com(x) => ExK::Com(Box::new(leaf(x))),
+        ExK::Bin(op @ (BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor), l, r) => {
+            ExK::Bin(*op, Box::new(leaf(l)), Box::new(leaf(r)))
+        }
+        ExK::Conv(x) if x.w >= w => return Some(narrow_expr(x, w, signed).unwrap_or_else(|| Ex::new(ExK::Conv(x.clone()), w, signed))),
+        _ => return None,
+    };
+    Some(Ex::new(k, w, signed))
+}
+
 impl<'p> Gen<'p> {
     fn new(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, facts: Option<&'p Facts>) -> Gen<'p> {
         let nvars = p.vars.len();
@@ -984,7 +1008,7 @@ impl<'p> Gen<'p> {
             ExK::Addr(p) => {
                 if p.indirect() {
                     // Leaves the address in __A0:__A1 as well.
-                    self.point_fsr0(p);
+                    self.point_fsr_a(0, p);
                 } else {
                     let sym = match &p.base {
                         Base::Var(v) => {
@@ -1120,20 +1144,38 @@ impl<'p> Gen<'p> {
         Mem { sym: name.to_string(), addr: self.tgt.sfr.get(name).copied(), obj: None, reg: false }
     }
 
-    /// A one-byte element of a small array picked by an unsigned Byte variable: FSR0 takes the array
-    /// and W the index, so `PLUSW0` (FSR0 + signed W, hence the 128-byte limit) reaches the element.
-    /// Returns `PLUSW0`; W must hold the index at the access.
-    fn plusw_point(&mut self, p: &Place) -> Option<Mem> {
+    /// The Byte index expression and the doublings of it that `plusw_point` would use for `p`, if it applies.
+    fn plusw_shape(&self, p: &Place) -> Option<(Ex, u32)> {
         let (Base::Var(v), Some(ix)) = (&p.base, &p.idx) else { return None };
-        let ExK::Conv(x) = &ix.k else { return None };
-        if !self.tgt.opt || p.bit.is_some() || p.dbit.is_some() || p.bytes() != 1 || x.w != 8 || x.signed || self.p.vars[*v].by_ref || self.p.vars[*v].bytes > 128 {
+        let (x, shift) = match &ix.k {
+            ExK::Conv(x) => (x, 0),
+            ExK::Bin(BinKind::Shl, l, k) => match (&l.k, k.as_const()) {
+                (ExK::Conv(x), Some(k @ 1..=2)) => (x, k),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if !self.tgt.opt || p.bit.is_some() || p.dbit.is_some() || p.bytes() > 4 || x.w != 8 || x.signed || self.p.vars[*v].by_ref || self.p.vars[*v].bytes > 128 {
             return None;
         }
         self.tgt.sfr.get("PLUSW0")?;
+        Some(((**x).clone(), shift))
+    }
+
+    /// An element of a small array picked by an unsigned Byte variable: FSR0 takes the array and W the byte
+    /// offset (the index, doubled once or twice for two- and four-byte elements), so `PLUSW0` (FSR0 + signed W,
+    /// hence the 128-byte limit) reaches the element's first byte; a wider element continues with `incf WREG`.
+    /// Returns `PLUSW0`; W must hold the offset at the access.
+    fn plusw_point(&mut self, p: &Place) -> Option<Mem> {
+        let (x, shift) = self.plusw_shape(p)?;
+        let Base::Var(v) = &p.base else { return None };
         // The index goes to W first (computing it may use FSR0); `lfsr` leaves W alone.
-        match self.simple(x) {
+        match self.simple(&x) {
             Some(s) => self.src_to_w(&s.byte(0)),
-            None => self.gen_val(x),
+            None => self.gen_val(&x),
+        }
+        for _ in 0..shift {
+            self.ins("addwf WREG, w, c");
         }
         self.uses[*v] += 1;
         let sym = &self.p.vars[*v].asm;
@@ -1151,6 +1193,49 @@ impl<'p> Gen<'p> {
     /// Points FSR`n` at the first byte of any RAM place (direct, indexed or through a `ByRef`
     /// parameter). Clobbers `__A` and, when the index needs code, may use FSR0.
     fn point_fsr(&mut self, n: u8, p: &Place) {
+        // A Byte index into an array of up to 256 bytes (or one that is not scaled): add it straight to the pointer,
+        // `lfsr` / `movf` / `addwf` / `movlw 0` / `addwfc`, without building the address in `__A`.
+        if let Base::Var(v) = &p.base
+            && p.idx.is_some()
+            && self.tgt.opt
+            && !self.p.vars[*v].by_ref
+        {
+            let (ix, shift) = match &p.idx.as_ref().unwrap().k {
+                ExK::Conv(x) => (Some(x), 0),
+                ExK::Bin(BinKind::Shl, l, k) => match (&l.k, k.as_const()) {
+                    (ExK::Conv(x), Some(k @ 1..=2)) => (Some(x), k),
+                    _ => (None, 0),
+                },
+                _ => (None, 0),
+            };
+            if let Some(x) = ix
+                && x.w == 8
+                && !x.signed
+                && (shift == 0 || self.p.vars[*v].bytes <= 256)
+            {
+                match self.simple(x) {
+                    Some(s) => self.src_to_w(&s.byte(0)),
+                    None => self.gen_val(x),
+                }
+                for _ in 0..shift {
+                    self.ins("addwf WREG, w, c");
+                }
+                self.uses[*v] += 1;
+                let sym = &self.p.vars[*v].asm;
+                let at = if p.off == 0 { sym.clone() } else { format!("{sym}+{}", p.off) };
+                self.ins(format!("lfsr {n}, {at}"));
+                let (fl, fh) = (self.sfr_mem(&format!("FSR{n}L")), self.sfr_mem(&format!("FSR{n}H")));
+                self.fop("addwf", &fl, "f");
+                self.ins("movlw 0");
+                self.fop("addwfc", &fh, "f");
+                return;
+            }
+        }
+        self.point_fsr_a(n, p);
+    }
+
+    /// `point_fsr` that also leaves the address in `__A0:__A1`.
+    fn point_fsr_a(&mut self, n: u8, p: &Place) {
         if !p.indirect() {
             match &p.base {
                 Base::Var(v) => {
@@ -1449,10 +1534,20 @@ impl<'p> Gen<'p> {
             return;
         }
         if p.indirect() {
-            if n == 1
+            if (n == 1 || p.bytes() == n)
                 && let Some(pw) = self.plusw_point(p)
             {
-                self.fop("movf", &pw, "w");
+                if n == 1 {
+                    self.fop("movf", &pw, "w");
+                } else {
+                    for i in 0..n {
+                        if i > 0 {
+                            self.ins("incf WREG, w, c");
+                        }
+                        let d = self.a(i);
+                        self.movff(&d, &pw);
+                    }
+                }
                 return;
             }
             self.point_fsr0(p);
@@ -1498,6 +1593,12 @@ impl<'p> Gen<'p> {
             && p.bit.is_none()
         {
             self.load_place(p, n);
+            return;
+        }
+        // Only the low bytes of a negate, complement, add, subtract or bitwise result depend on the low bytes of the
+        // operands, so `Byte = -a` (evaluated as Integer) is computed in the narrow width.
+        if n < ni && let Some(e) = narrow_expr(inner, w, signed) {
+            self.gen_val(&e);
             return;
         }
         self.gen_val(inner);
@@ -1740,6 +1841,16 @@ impl<'p> Gen<'p> {
         if let Some(rs) = rs {
             let rb = rs.byte(0);
             match (&ls, &rb) {
+                // `x - mem` with a simple `x`: `subwf` subtracts W from memory, so load the right operand and
+                // subtract it from the left (no trailing negate).
+                (Some(s), Bs::Mem(_)) if op == BinKind::Sub => {
+                    self.src_to_w(&rb);
+                    match s.byte(0) {
+                        Bs::Imm(k) => self.ins(format!("sublw 0x{k:02X}")),
+                        Bs::Mem(m) => self.fop("subwf", &m, "w"),
+                    }
+                    return;
+                }
                 // `k op mem` with a commutative operator: start from the memory operand.
                 (Some(Src::Imm(k)), Bs::Mem(_)) if comm => {
                     self.src_to_w(&rb);
@@ -2357,6 +2468,15 @@ impl<'p> Gen<'p> {
     }
 
     fn shift_byte(&mut self, left: bool, signed: bool, k: u32, l: &Ex) {
+        // Unsigned `x >> 1` of a variable: clear carry and rotate it through, 2 words (the `rrncf` form needs a mask).
+        if !left && !signed && k == 1 && self.tgt.opt
+            && let Some(s) = self.simple(l)
+            && let Bs::Mem(m) = s.byte(0)
+        {
+            self.ins("bcf STATUS, 0, c");
+            self.fop("rrcf", &m, "w");
+            return;
+        }
         if let Some(s) = self.simple(l) {
             let b = s.byte(0);
             self.src_to_w(&b);
@@ -2884,17 +3004,63 @@ impl<'p> Gen<'p> {
                 return;
             }
         }
+        // `arr(i) = arr(i) op operand` with an operand that needs no code: point FSR0 once, then work on the element
+        // in place (the operand goes through W after the pointer is set, which uses W for the index).
+        if p.indirect() && self.tgt.opt && p.bit.is_none() && p.bytes() <= 4 && !p.idx.as_ref().is_some_and(|i| i.has_call())
+            && let ExK::Bin(op @ (BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor), l, r) = &e.k
+            && e.w as u32 == 8 * p.bytes()
+        {
+            let same = |x: &Ex| matches!(&x.k, ExK::Load(q) if q == p) && x.w == e.w;
+            let operand = if same(l) {
+                Some(&**r)
+            } else if *op != BinKind::Sub && same(r) {
+                Some(&**l)
+            } else {
+                None
+            };
+            if let Some(src) = operand.and_then(|x| self.simple(x)) {
+                let n = p.bytes();
+                self.point_fsr0(p);
+                let (post, ind) = (self.sfr_mem("POSTINC0"), self.sfr_mem("INDF0"));
+                for i in 0..n {
+                    let b = src.byte(i);
+                    let name = match (op, i) {
+                        (BinKind::Add, 0) => "addwf",
+                        (BinKind::Add, _) => "addwfc",
+                        (BinKind::Sub, 0) => "subwf",
+                        (BinKind::Sub, _) => "subwfb",
+                        (BinKind::And, _) => "andwf",
+                        (BinKind::Or, _) => "iorwf",
+                        _ => "xorwf",
+                    };
+                    self.src_to_w(&b);
+                    self.fop(name, if i + 1 < n { &post } else { &ind }, "f");
+                }
+                return;
+            }
+        }
         if p.indirect() {
             // The value is settled before FSR0 is loaded, since computing either can use FSR0.
             let n = p.bytes();
             let post = self.sfr_mem("POSTINC0");
-            if let Some(s) = self.simple(e) {
+            let direct = |s: &Src| (0..n).all(|i| matches!(s.byte(i), Bs::Mem(_) | Bs::Imm(0 | 0xFF)));
+            // Another constant is staged in a temporary first: a `movlw` would overwrite the index in W.
+            if let Some(s) = self.simple(e).filter(|s| direct(s) || self.plusw_shape(p).is_none()) {
                 // A constant goes through W, which holds the index at the access: it keeps the long form.
-                if n == 1
-                    && let Bs::Mem(src) = s.byte(0)
+                // (or a 0 / 255 byte, which `clrf` / `setf` write without W)
+                if direct(&s)
                     && let Some(pw) = self.plusw_point(p)
                 {
-                    self.movff(&pw, &src);
+                    for i in 0..n {
+                        if i > 0 {
+                            self.ins("incf WREG, w, c");
+                        }
+                        match s.byte(i) {
+                            Bs::Mem(src) => self.movff(&pw, &src),
+                            Bs::Imm(0) => self.fo("clrf", &pw),
+                            _ => self.fo("setf", &pw),
+                        }
+                    }
                     return;
                 }
                 self.point_fsr0(p);
@@ -2903,10 +3069,13 @@ impl<'p> Gen<'p> {
                 }
             } else {
                 let t = self.spill(e);
-                if n == 1
-                    && let Some(pw) = self.plusw_point(p)
-                {
-                    self.movff(&pw, &t);
+                if let Some(pw) = self.plusw_point(p) {
+                    for i in 0..n {
+                        if i > 0 {
+                            self.ins("incf WREG, w, c");
+                        }
+                        self.movff(&pw, &t.at(i));
+                    }
                     self.free(n);
                     return;
                 }
