@@ -362,6 +362,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     ElseIf pin = 15 Then
         RB7PPS = code
 #endif
+#if _has(RC0PPS)
     ElseIf pin = 16 Then
         RC0PPS = code
     ElseIf pin = 17 Then
@@ -380,12 +381,17 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     ElseIf pin = 23 Then
         RC7PPS = code
 #endif
+#endif
     End If
 End Sub
 
 ' True for a pin the part has (RA3 is input only and refused).
 Function PinOk(ByVal pin As Byte) As Boolean
+#if _has(RC0PPS)
     Result = (pin <= 5 And pin <> 3) Or (pin >= 16 And pin <= 21)
+#else
+    Result = pin <= 5 And pin <> 3
+#endif
 #if _has(RC6PPS)
     If pin = 22 Or pin = 23 Then
         Result = True
@@ -410,9 +416,11 @@ Sub PinSetup(ByVal pin As Byte)
         TRISB = TRISB Or m
         ANSELB = ANSELB And (m Xor 255)
 #endif
+#if _has(TRISC)
     Else
         TRISC = TRISC Or m
         ANSELC = ANSELC And (m Xor 255)
+#endif
     End If
 End Sub
 #else

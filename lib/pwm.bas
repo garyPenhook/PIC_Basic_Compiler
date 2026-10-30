@@ -30,6 +30,10 @@ Module Pwm
 ' PR is full), so PwmSteps steps give 100 %. Outputs go to any pin of RA0..RA5 (not RA3), RB4..RB7, RC0..RC7 through
 ' RxyPPS = 9 + channel [Table 21-2]. Timer2 is not used. The buffered registers are copied when the module is
 ' enabled and by a reload (LD) at the end of the period; a new duty is written and LD is set [30.5].
+' PIC16F13145 family (DS40002519D chapters 24 to 27; chosen with `#if _has(PWM1DCL)` in the Timer2 branch below): the Q10 design with CCP1 and CCP2
+' (channels 1, 2) and the two 10-bit PWM modules PWM1 and PWM2 (channels 3, 4) on Timer2, one shared period. RxyPPS = 09h CCP1, 0Ah CCP2, 2Ch PWM1,
+' 2Dh PWM2 [Table 18-2 p.187-188]; any pin of the part. Timer2 flag is TMR2IF = PIR2 bit 2. CCPxCON = EN | FMT | MODE 11xx and PWMxCON are as on the Q10;
+' CCPTMRS0 and PWMTMRS0 reset to Timer2, so the module leaves them alone.
 ' PIC16F17126/46 (DS40002343F chapter 29): the same 16-bit PWM modules as the Q41 but two of them, so channels 1..4 (PWM1S1P1, PWM1S1P2, PWM2S1P1,
 ' PWM2S1P2) with RxyPPS = 10 + channel [Table 18-2: PWM1S1P1_OUT = 0Bh]; channels 5 and 6 are refused. Pins as on the Q41.
 #if _has(PWMEN)
@@ -422,7 +426,11 @@ Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
     End If
 End Function
 #else
+#if _has(PWM1DCL)
+Dim Tmr2If As PIR2.2
+#else
 Dim Tmr2If As PIR4.1
+#endif
 Dim steps As Word
 Dim period As Byte
 Dim ckps As Byte
@@ -483,8 +491,30 @@ Public Function PwmSteps() As Word
 End Function
 
 ' Valid outputs: channels 1, 2 on ports B and C (pins 8..23); channels 3, 4 on ports A and C.
+' PIC16F13145 family: any pin of the part (PPS has no port restriction [Table 18-2]): RA0..RA2, RA4, RA5, RB4..RB7 (20-pin parts), RC0..RC7
+' (RC6, RC7 on the 20-pin parts; port C is missing on the 8-pin part).
 Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
     Result = False
+#if _has(PWM1DCL)
+    If ch >= 1 And ch <= 4 Then
+        Result = pin <= 5 And pin <> 3
+#if _has(RB4PPS)
+        If pin >= 12 And pin <= 15 Then
+            Result = True
+        End If
+#endif
+#if _has(RC0PPS)
+        If pin >= 16 And pin <= 21 Then
+            Result = True
+        End If
+#endif
+#if _has(RC6PPS)
+        If pin = 22 Or pin = 23 Then
+            Result = True
+        End If
+#endif
+    End If
+#else
     If ch = 1 Or ch = 2 Then
         If pin >= 8 And pin < 24 Then
             Result = True
@@ -494,6 +524,7 @@ Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
             Result = True
         End If
     End If
+#endif
 End Function
 
 ' Makes the pin an input (the output driver off) or an output.
@@ -506,18 +537,22 @@ Sub PinInput(ByVal pin As Byte, ByVal asInput As Boolean)
         Else
             TRISA = TRISA And (m Xor 255)
         End If
+#if _has(TRISB)
     ElseIf pin < 16 Then
         If asInput Then
             TRISB = TRISB Or m
         Else
             TRISB = TRISB And (m Xor 255)
         End If
+#endif
+#if _has(TRISC)
     Else
         If asInput Then
             TRISC = TRISC Or m
         Else
             TRISC = TRISC And (m Xor 255)
         End If
+#endif
     End If
 End Sub
 
@@ -526,14 +561,63 @@ Sub PinDigital(ByVal pin As Byte)
     m = (1 << (pin And 7)) Xor 255
     If pin < 8 Then
         ANSELA = ANSELA And m
+#if _has(ANSELB)
     ElseIf pin < 16 Then
         ANSELB = ANSELB And m
+#endif
+#if _has(ANSELC)
     Else
         ANSELC = ANSELC And m
+#endif
     End If
 End Sub
 
 ' RxyPPS = code for pin 0..23 (code 0 gives the pin back to its LATxy bit).
+#if _has(PWM1DCL)
+Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+    If pin = 0 Then
+        RA0PPS = code
+    ElseIf pin = 1 Then
+        RA1PPS = code
+    ElseIf pin = 2 Then
+        RA2PPS = code
+    ElseIf pin = 4 Then
+        RA4PPS = code
+    ElseIf pin = 5 Then
+        RA5PPS = code
+#if _has(RB4PPS)
+    ElseIf pin = 12 Then
+        RB4PPS = code
+    ElseIf pin = 13 Then
+        RB5PPS = code
+    ElseIf pin = 14 Then
+        RB6PPS = code
+    ElseIf pin = 15 Then
+        RB7PPS = code
+#endif
+#if _has(RC0PPS)
+    ElseIf pin = 16 Then
+        RC0PPS = code
+    ElseIf pin = 17 Then
+        RC1PPS = code
+    ElseIf pin = 18 Then
+        RC2PPS = code
+    ElseIf pin = 19 Then
+        RC3PPS = code
+    ElseIf pin = 20 Then
+        RC4PPS = code
+    ElseIf pin = 21 Then
+        RC5PPS = code
+#endif
+#if _has(RC6PPS)
+    ElseIf pin = 22 Then
+        RC6PPS = code
+    ElseIf pin = 23 Then
+        RC7PPS = code
+#endif
+    End If
+End Sub
+#else
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     If pin = 0 Then
         RA0PPS = code
@@ -585,6 +669,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
         RC7PPS = code
     End If
 End Sub
+#endif
 
 ' Writes the module control register: CCPxCON for channels 1, 2, PWMxCON for 3, 4.
 Sub SetCon(ByVal ch As Byte, ByVal v As Byte)
@@ -592,10 +677,17 @@ Sub SetCon(ByVal ch As Byte, ByVal v As Byte)
         CCP1CON = v
     ElseIf ch = 2 Then
         CCP2CON = v
+#if _has(PWM1DCL)
+    ElseIf ch = 3 Then
+        PWM1CON = v
+    Else
+        PWM2CON = v
+#else
     ElseIf ch = 3 Then
         PWM3CON = v
     Else
         PWM4CON = v
+#endif
     End If
 End Sub
 
@@ -615,12 +707,21 @@ Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
     ElseIf ch = 2 Then
         CCPR2L = lo
         CCPR2H = hi
+#if _has(PWM1DCL)
+    ElseIf ch = 3 Then
+        PWM1DCL = lo
+        PWM1DCH = hi
+    Else
+        PWM2DCL = lo
+        PWM2DCH = hi
+#else
     ElseIf ch = 3 Then
         PWM3DCL = lo
         PWM3DCH = hi
     Else
         PWM4DCL = lo
         PWM4DCH = hi
+#endif
     End If
 End Sub
 
@@ -670,10 +771,20 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     pins(ch - 1) = pin
     PinInput(pin, True)
     PinDigital(pin)
+#if _has(PWM1DCL)
+    ' RxyPPS: CCP1 09h, CCP2 0Ah, PWM1 2Ch, PWM2 2Dh [Table 18-2]. Timer2 is the only PWM timer and the reset selection of CCPTMRS0 and PWMTMRS0
+    ' [25.1.1, 27.1.1], so they are not written.
+    If ch <= 2 Then
+        SetPps(pin, ch + 8)
+    Else
+        SetPps(pin, ch + 41)
+    End If
+#else
     SetPps(pin, ch + 4)
     ' CCPTMRS: CnTSEL / PnTSEL = 01 selects Timer2 for PWM [22.6.4, 23.12.2].
     sh = (ch - 1) * 2
     CCPTMRS = (CCPTMRS And ((3 << sh) Xor 255)) Or (1 << sh)
+#endif
     If ch <= 2 Then
         ' EN = 1, FMT = 1, MODE = 11xx (PWM) [22.6.1]
         SetCon(ch, 156)

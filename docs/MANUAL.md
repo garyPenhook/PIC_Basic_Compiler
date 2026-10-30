@@ -66,8 +66,9 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 | PIC18F14Q41, PIC18F15Q41, PIC18F16Q41 (20-pin) | as above | 16 / 32 / 64 KB | 1,024 / 2,048 / 4,096 usable GPR bytes; 512 bytes data EEPROM | **Supported**, as the 14-pin parts, with port B (RB4..RB7) |
 | PIC16F17126 (14/16-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | **Supported (0.1.50; library and `Float` complete in 0.1.51; assembly `Float` and peephole passes in 0.1.52).** Device file `devices/16F17126.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002343F). Integer, Boolean, Char, array, structure, string, `Float`, `Interrupt`, `Reentrant`, `DelayMs/DelayUs` and every library module except `dma` (the part has no DMA) compile and run in the simulator; `AddressOf` of a `Const` array is an FSR address. **Not yet on this core:** calling C, interrupt priorities and `-g` debug information. Single-call routines are inlined (0.1.53). `Float` is assembly on this core and its routines take their operands in `__A`/`__B` (0.1.54; `FMul`/`FDiv` rewritten on them in 0.1.55: a program using `+ * /` is about 605 words, the PIC18's about 615). Nothing has run on a real part |
 | PIC16F17146 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | As the PIC16F17126 (`devices/16F17146.toml`) |
+| PIC16F13113 / 13114 / 13115 (8-pin), PIC16F13123 / 13124 / 13125 (14-pin), PIC16F13143 / 13144 / 13145 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 4K / 8K words | 256 / 512 / 1,024 bytes; no data EEPROM | **Supported (0.1.76).** Device files `devices/16F13113.toml` … `16F13145.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002519D, errata DS80001115F, facts in `docs/FACTS-16F1314x.md`). The code generator is the PIC16F171xx one. The portable programs that fit the RAM and flash, `tests/exec_p16` and `tests/exec_p13` pass in the simulator on the PIC16F13145; every part builds `tests/exec_p13_parts/small.bas`. Modules: `serial2` and `eeprom` stop with `#error` (one EUSART, no data EEPROM), `dma` stops with `#error`; `pwm` offers CCP1, CCP2, PWM1 and PWM2 (channels 1..4); the 8-pin part has port A only. Nothing has run on a real part. Erratum 1.3.1 (revisions A2, A3) is not worked around: keep `Clock` at 16 or below on those |
 
-`Device = 18F27Q10` (or `PIC18F27Q10`), the PIC18-Q41 parts (`Device = 18F16Q41`, `18F04Q41` …) and the PIC16F17126/17146 are the values that compile today. A device is added only
+`Device = 18F27Q10` (or `PIC18F27Q10`), the PIC18-Q41 parts (`Device = 18F16Q41`, `18F04Q41` …) the PIC16F17126/17146 and the PIC16F13113 … 13145 are the values that compile today. A device is added only
 after it has its own description file and passes its own tests, and **adding one means more than the
 description file**:
 
@@ -927,8 +928,8 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 ### Choosing Config values with pic-config
 
 `tools/pic-config/` is a small Qt 6 program that builds the `Config` line from drop-downs, so the setting
-and value names do not have to be looked up. It knows PIC18F27Q10, PIC18F04/05/06/14/15/16Q41 and
-PIC16F17126/17146.
+and value names do not have to be looked up. It knows PIC18F27Q10, PIC18F04/05/06/14/15/16Q41, PIC16F17126/17146 and
+the nine PIC16F13113 … 13145 parts.
 
 ![pic-config showing a PIC18F05Q41](images/pic-config.png)
 
@@ -1149,12 +1150,12 @@ also be called from Basic as usual.
 |---|---|
 | `#define NAME [value]`, `#undefine NAME` | scoped to the file that defines them (only `-D` names are shared) |
 | `#ifdef`, `#ifndef`, `#else`, `#endif` | |
-| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
+| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; `_ram` and `_eeprom` are the part's usable data RAM and data EEPROM in bytes (`_eeprom` is 0 on the PIC16F13145 family); the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
 | `#error "text"`, `#warning "text"` | |
 | `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `Warn.<id> = true\|false` | |
 
-Not supported: `#constant`, `#variable` (`E-PP-UNSUPPORTED`). Of the predefined names, only `_clock`
-and `_device` exist in `#if`. Directives inside `(* *)` or `{ }` comments are ignored.
+Not supported: `#constant`, `#variable` (`E-PP-UNSUPPORTED`). Of the predefined names, only `_clock`,
+`_device`, `_ram` and `_eeprom` exist in `#if`. Directives inside `(* *)` or `{ }` comments are ignored.
 
 ---
 
@@ -2331,7 +2332,7 @@ synchronised to the system clock (`SYNC = 0`), so pulses must be longer than a s
 asynchronous operation is not offered.
 
 **Parameters** `clk` is one of `T1ClkPin` (T1CKI pin, rising edges, default RC0), `T1ClkFosc4`,
-`T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkMfIntOsc`, `T1ClkSosc`, `T1ClkTmr0`.
+`T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkMfIntOsc`, `T1ClkSosc`, `T1ClkTmr0` (the PIC16F13145 family has no secondary oscillator, so no `T1ClkSosc`; it has `T1ClkMfIntOsc32` and `T1ClkExtOsc`).
 `prescale` 0..3.
 
 **Example**

@@ -31,6 +31,9 @@ pub struct Predef {
     /// Lower-case names of the registers (and their aliases) the device description defines;
     /// `None` when no description could be loaded. `_has(NAME)` tests this set. Bit fields are listed as `reg.field`.
     pub registers: Option<std::collections::HashSet<String>>,
+    /// Usable data RAM and data EEPROM of the device in bytes (`_ram`, `_eeprom`); `None` without a description.
+    pub ram: Option<u32>,
+    pub eeprom: Option<u32>,
 }
 
 /// Reads `Clock = n` (or `Declare Xtal = n`) and `Device = name` from the program text. The header
@@ -206,6 +209,8 @@ impl Eval<'_> {
             "true" => Ok(Val::Bool(true)),
             "false" => Ok(Val::Bool(false)),
             "_clock" => self.predef.clock.map(Val::Num).ok_or_else(|| "_clock is used but the program has no `Clock = n` line".into()),
+            "_ram" => self.predef.ram.map(|n| Val::Num(f64::from(n))).ok_or_else(|| "_ram is used but the device description could not be loaded (is there a `Device = name` line?)".into()),
+            "_eeprom" => self.predef.eeprom.map(|n| Val::Num(f64::from(n))).ok_or_else(|| "_eeprom is used but the device description could not be loaded (is there a `Device = name` line?)".into()),
             "_has" => {
                 if !self.eat("(") {
                     return Err("`_has` needs a register name in parentheses: `_has(ANSELB)`".into());
@@ -236,7 +241,7 @@ impl Eval<'_> {
                 } else if t.starts_with("pic18") {
                     Ok(Val::Str(t[3..].to_string()))
                 } else {
-                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device, _has)"))
+                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device, _ram, _eeprom, _has)"))
                 }
             }
         }

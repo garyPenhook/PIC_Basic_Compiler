@@ -649,6 +649,67 @@ fn p16_programs_in_simulator() {
     }
 }
 
+const P13_PARTS: [&str; 9] = ["16F13113", "16F13114", "16F13115", "16F13123", "16F13124", "16F13125", "16F13143", "16F13144", "16F13145"];
+
+/// Programs of the PIC16F171xx sets that cannot run on the PIC16F13145: too big for its 1 KB of RAM or 8K words of flash, or about a
+/// peripheral it lacks (second EUSART, data EEPROM, the 16-bit PWM); `tests/exec_p13` has the 13145 versions of the last few.
+const P13_SKIP: &[&str] = &["arith_integer", "arith_word", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_eeprom", "lib_serial2", "lib_pwm", "lib_adc", "lib_flashwrite"];
+
+/// The programs for the PIC16F13145: the portable ones and `tests/exec_p16` that fit and apply, then `tests/exec_p13`.
+fn p13_programs() -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = P16_PORTABLE.iter().filter(|p| !P13_SKIP.contains(p)).map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
+    files.extend(bas_files(&root().join("tests/exec_p16")).into_iter().filter(|f| !P13_SKIP.contains(&f.file_stem().unwrap().to_str().unwrap())));
+    files.extend(bas_files(&root().join("tests/exec_p13")));
+    files
+}
+
+/// Every member of the PIC16F13145 family builds the small program (port A only on the 8-pin part, 256 bytes of RAM, 2K words of
+/// flash); the PIC16F13145 builds all of its programs.
+#[test]
+fn p13_parts_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("p13parts");
+    let mut failures = Vec::new();
+    let small = std::fs::read_to_string(root().join("tests/exec_p13_parts/small.bas")).unwrap();
+    let mut programs: Vec<(String, PathBuf)> = Vec::new();
+    for dev in P13_PARTS {
+        let f = out.join(format!("small_{dev}.bas"));
+        std::fs::write(&f, small.replace("16F13113", dev)).unwrap();
+        programs.push((dev.to_string(), f));
+    }
+    for src in p13_programs() {
+        let name = src.file_stem().unwrap().to_string_lossy().into_owned();
+        // `tests/exec_p13` programs already name the part and its clock; the others are changed as for the PIC16F171xx.
+        let f = if src.starts_with(root().join("tests/exec_p13")) { src.clone() } else { for_p16(&src, "16F13145", &out.join(format!("{name}_16F13145.bas"))) };
+        programs.push(("16F13145".into(), f));
+    }
+    for (dev, src) in programs {
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        if !r.status.success() || text.contains("pic-as:") {
+            failures.push(format!("{} for {dev}:\n{text}", src.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// With `BASIL_MDB=1` the PIC16F13145 programs run on the simulator's `PIC16F13145`.
+#[test]
+fn p13_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files = p13_programs();
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F13145").args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
 /// A program that calls C routines is linked by xc8-cc (`CFile` / `Extern`); the simulator run of the same
 /// program is `tests/exec_c`.
 #[test]

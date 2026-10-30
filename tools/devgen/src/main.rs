@@ -93,7 +93,7 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
         "16Exxx" => Ok(FamilyFacts {
             family: "pic16e",
             vectors: (0x00, 0x04, 0x04),
-            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37 (Reset vector 0000h, interrupt vector 0004h)",
+            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37; PIC16F13145 family data sheet DS40002519D p.34 (Reset vector 0000h, interrupt vector 0004h)",
         }),
         other => Err(format!("architecture '{other}' has no family table in devgen yet; add and verify one before generating")),
     }
@@ -196,7 +196,11 @@ fn region(root: roxmltree::Node, tag: &'static str, what: &str) -> Res<Region> {
 
 fn memory(root: roxmltree::Node, family: &str) -> Res<Memory> {
     let program = region(root, "CodeSector", "program memory")?;
-    let eeprom = region(root, "EEDataSector", "data EEPROM")?;
+    // The PIC16F13145 family has no data EEPROM (DS40002519D Table 1, p.1): the region is empty.
+    let eeprom = match region(root, "EEDataSector", "data EEPROM") {
+        Err(_) if family == "pic16e" && descendants(root, "EEDataSector").next().is_none() => Region { start: 0, size: 0 },
+        r => r?,
+    };
     let user_id = region(root, "UserIDSector", "user IDs")?;
     let config = region(root, "ConfigFuseSector", "configuration words")?;
     let did = descendants(root, "DeviceIDSector").next().ok_or("pack has no device ID")?;

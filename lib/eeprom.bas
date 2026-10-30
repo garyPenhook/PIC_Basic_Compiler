@@ -23,6 +23,9 @@ Module Eeprom
 ' and NVMADRH:NVMADRL = 70h:address. A read is RD; a write is NVMCON1 = WREN | NVMREGS, interrupts off, 55h and AAh to NVMCON2, WR [15.2.2.2,
 ' 15.2.2.4]; the CPU stalls until it is done and the byte is erased first. NVMCON1 is cleared afterwards (that also clears WRERR) and success is
 ' the read-back. The data sheet's errata (DS80001009E) show nothing for the NVM.
+#if _eeprom = 0
+#error "eeprom needs a part with data EEPROM: the PIC16F13145 family has none (DS40002519D Table 1 p.1); use module Flashwrite"
+#endif
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim IntEn As INTCON0.7

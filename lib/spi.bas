@@ -26,6 +26,9 @@ Module Spi
 ' SPI1TXB starts the transfer [35.3.1], and SPI1RXIF (PIR3 bit 0, read only) is set while the receive FIFO holds
 ' data [35.6.1]. CKP = idle level of SCK, CKE = 1 for modes 0 and 2, SMP = 0 (sampled mid-bit) [35.7.2].
 '
+' PIC16F13145 family (DS40002519D chapters 18 and 30): the same MSSP1 host and PPS codes (SCK1 = 0x1B, SDO1 = 0x1C [Table 18-2 p.188]); the
+' 8-pin PIC16F13113 has port A only and the 14-pin parts no port B, so those pins are refused.
+'
 ' PIC16F17126/46 (DS40002343F chapters 18 and 31; chosen with `Not _has(PRODL)`): the same MSSP1 host as the Q10 below, with the pins of the
 ' Q41 branch: numbered 0..23, RA0..RA5 except RA3 (input only: allowed for SDI, refused for SCK and SDO), RB4..RB7 (20-pin part), RC0..RC7,
 ' through PPS with SCK1 = RxyPPS 27 and SDO1 = 28 [Table 18-2]; SSP1CLKPPS and SSP1DATPPS take the pin number [Table 18-1].
@@ -55,6 +58,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     ElseIf pin = 15 Then
         RB7PPS = code
 #endif
+#if _has(RC0PPS)
     ElseIf pin = 16 Then
         RC0PPS = code
     ElseIf pin = 17 Then
@@ -73,12 +77,17 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     ElseIf pin = 23 Then
         RC7PPS = code
 #endif
+#endif
     End If
 End Sub
 
 ' True for a pin the part has: RA0..RA5, RB4..RB7 (20-pin parts), RC0..RC7 (RC6, RC7 on the 20-pin parts).
 Function PinOk(ByVal pin As Byte) As Boolean
+#if _has(RC0PPS)
     Result = pin <= 5 Or (pin >= 16 And pin <= 21)
+#else
+    Result = pin <= 5
+#endif
 #if _has(RC6PPS)
     If pin = 22 Or pin = 23 Then
         Result = True
@@ -111,6 +120,7 @@ Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
             TRISB = TRISB And (m Xor 255)
         End If
 #endif
+#if _has(TRISC)
     Else
         ANSELC = ANSELC And (m Xor 255)
         If asInput Then
@@ -118,6 +128,7 @@ Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
         Else
             TRISC = TRISC And (m Xor 255)
         End If
+#endif
     End If
 End Sub
 #endif

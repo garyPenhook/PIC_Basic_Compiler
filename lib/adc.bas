@@ -20,6 +20,12 @@ Module Adc
 ' counts ADC clocks [33.7.10] and is set to cover 5 us, the 10 kohm worked example of Equation
 ' 33-1 (4.62 us). A higher source impedance needs a longer time: write ADACQ after AdcInit.
 '
+' PIC16F13145 family (DS40002519D, chapter 32, 10 bits; chosen with `#if _has(CLBCON)`): the same registers; channels RA0..RA2, RA4, RA5 = 0..2, 4, 5,
+' RB4..RB7 = 12..15, RC0..RC7 = 16..23 (RB and RC6, RC7 on the 20-pin parts, RC on the 14- and 20-pin ones), VSS 58, temperature indicator 59,
+' DAC1 60, FVR buffer 1 62 and buffer 2 63 [Table 32-6 p.465]. Silicon erratum 1.1.1 (DS80001115F, revision A2): the real minimum TAD
+' is 2 us, not the 1 us of AD20, so the conversion clock is chosen for TAD >= 2 us on this family (the limit is 9 us, AD20 p.557).
+' CPON resets to 01 there (CPCON p.514), so no charge pump write is needed.
+'
 ' Errata (DS80000832G):
 '  1.4.4  after the input channel changes, the first conversion can have its top bit wrongly set
 '         (a fall of more than 3.2 V faster than 11 V/us). AdcRead converts once and drops the
@@ -54,13 +60,17 @@ Public Const AdcChFvr = 63
 Public Const AdcChVss = 58
 Public Const AdcChTemp = 59
 Public Const AdcChDac = 60
+#if _has(CLBCON)
+Public Const AdcChFvr2 = 63
+#else
 Public Const AdcChDac2 = 61
+#endif
 Public Const AdcChFvr = 62
 #endif
 
 ' Largest result: 10 bits on the Q10 [DS40002043F AD01], 12 bits on the PIC16F171xx [DS40002343F AD01] and
 ' the Q41 [DS40002214G AD01].
-#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
+#if _has(CLBCON) Or (_has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON))
 Public Const AdcMax = 1023
 #else
 Public Const AdcMax = 4095
@@ -72,6 +82,13 @@ Public Const AdcMax = 4095
 Const AcqUs = 8
 #else
 Const AcqUs = 5
+#endif
+
+' Smallest TAD in nanoseconds: 1 us [AD20], 2 us on the PIC16F13145 family (erratum 1.1.1).
+#if _has(CLBCON)
+Const MinTadNs = 2000
+#else
+Const MinTadNs = 1000
 #endif
 
 Dim AdcGo As ADCON0.0
@@ -113,12 +130,12 @@ Public Sub AdcInit()
 #if _has(ADCPCON)
     ' The charge pump runs when the ADC asks for it [40.4, ADCP]; it keeps the converter accurate at low VDD.
     ADCPCON = 128
-#elseif _has(CPCON)
+#elseif _has(CPCON) And Not _has(CLBCON)
     ' Errata 1.6.1 (DS80001009E, all silicon revisions): CPON resets to 00 (off) instead of 01; write 01, charge pump on
     ' when the ADC is enabled and VDD < 4.6 V [40.7.1].
     CPCON = 64
 #endif
-    SetClock(1000)
+    SetClock(MinTadNs)
     lastCh = 255
     ' ADON, ADFM = 1 (right-justified), ADCS = 0 (FOSC); ADGO is set later, not with ADON [33.2.1].
     ADCON0 = 132
@@ -137,9 +154,16 @@ Public Sub AdcPin(ByVal ch As Byte)
         TRISB = TRISB Or m
         ANSELB = ANSELB Or m
 #endif
+#if _has(TRISC)
+#if _has(TRISB)
     ElseIf ch < 24 Then
+#else
+    ' No port B (the 14-pin PIC16F131xx parts): channels 8..15 are not pins and must not reach port C.
+    ElseIf ch >= 16 And ch < 24 Then
+#endif
         TRISC = TRISC Or m
         ANSELC = ANSELC Or m
+#endif
     End If
 End Sub
 
@@ -147,7 +171,7 @@ End Sub
 Public Sub AdcRefVdd()
     ADREF = 0
     FVRCON = FVRCON And 252
-    SetClock(1000)
+    SetClock(MinTadNs)
 End Sub
 
 ' Positive reference = FVR at gain 1, 2 or 4 (1.024, 2.048, 4.096 V; the output cannot exceed VDD)
@@ -167,7 +191,7 @@ Public Sub AdcRefFvr(ByVal gain As Byte)
 #if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
     SetClock(8000)
 #else
-    SetClock(1000)
+    SetClock(MinTadNs)
 #endif
 End Sub
 

@@ -5,6 +5,8 @@ Module Serial
 ' PIC16F17126/46 (DS40002343F, chapters 18 and 32): TX on RC4 and RX on RC5, which exist on the 14-pin part too.
 ' RC4PPS = 0x13 selects TX1/CK1 [Table 18-2]; RX1PPS = PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [18.8.1].
 ' The EUSART1 registers and the baud-rate formula are the same on both families.
+' PIC16F13145 family (DS40002519D, chapters 18 and 31): the same EUSART1 and codes (TX1/CK1 = 0x13 [Table 18-2 p.188]); TX RC4 and
+' RX RC5 on the 14- and 20-pin parts, RA4 and RA5 on the 8-pin PIC16F13113 (port A only).
 ' PIC18F0x/1xQ41 (DS40002214G, chapters 21 and 34): UART1 (U1CON0/1/2, U1BRG, U1TXB, U1RXB, U1FIFO), TX on RC4
 ' and RX on RC5, which exist on the 14-pin parts too. RC4PPS = 0x10 selects UART1 TX [Table 21-2]; U1RXPPS =
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
@@ -29,11 +31,19 @@ Const SerRxCode = 21
 #elseif _has(PIR4.TX1IF)
 Dim TxIf As PIR4.6
 Dim RxIf As PIR4.7
+#if _has(TRISC)
 Dim TxPin As TRISC.4
 Dim RxPin As TRISC.5
 Dim RxAnalog As ANSELC.5
-Const SerTxCode = 19
 Const SerRxCode = 21
+#else
+' PIC16F13113 (8-pin, DS40002519D Table 1 p.1): port A only, so TX is RA4 and RX is RA5 (RX1PPS = 000 101).
+Dim TxPin As TRISA.4
+Dim RxPin As TRISA.5
+Dim RxAnalog As ANSELA.5
+Const SerRxCode = 5
+#endif
+Const SerTxCode = 19
 Dim OverrunErr As RC1STA.1
 Dim RxEnable As RC1STA.4
 #else
@@ -67,7 +77,11 @@ Public Sub SerialInit(ByVal baud As LongWord)
     U1CON2 = 128
     U1CON1 = 128
 #elseif _has(PIR4.TX1IF)
+#if _has(TRISC)
     RC4PPS = SerTxCode
+#else
+    RA4PPS = SerTxCode
+#endif
     RX1PPS = SerRxCode
     SP1BRGL = Byte(n)
     SP1BRGH = Byte(n >> 8)

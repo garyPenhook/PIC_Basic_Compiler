@@ -43,13 +43,17 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
         // `#if` in any file sees the main program's `Clock` and `Device`.
         predef: std::fs::read_to_string(main).map(|t| scan_header(&t)).unwrap_or_default(),
     };
-    ld.predef.registers = ld.predef.device.as_deref().and_then(|d| device_registers(d, &cfg.devices_dirs));
+    if let Some((registers, ram, eeprom)) = ld.predef.device.as_deref().and_then(|d| device_registers(d, &cfg.devices_dirs)) {
+        ld.predef.registers = Some(registers);
+        ld.predef.ram = Some(ram);
+        ld.predef.eeprom = Some(eeprom);
+    }
     ld.load_file(&mut proj, diags, main, Span::default());
     proj
 }
 
 /// Lower-case names of the registers (and aliases) of `device`, from the first matching description.
-fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<HashSet<String>> {
+fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<(HashSet<String>, u32, u32)> {
     let bare = device.strip_prefix("pic").unwrap_or(device);
     // The header scan lower-cases the name, the files are upper-case.
     let want = format!("{bare}.toml");
@@ -64,7 +68,7 @@ fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<HashSet<String>> {
         set.extend(s.fields.iter().chain(&s.legacy).map(|f| format!("{}.{}", s.name, f.name).to_ascii_lowercase()));
     }
     set.extend(d.joined.iter().map(|j| j.name.to_ascii_lowercase()));
-    Some(set)
+    Some((set, d.memory.data.usable_gpr, d.memory.eeprom.size))
 }
 
 /// Parses source text that is already in memory (tests and tools). No includes are followed.

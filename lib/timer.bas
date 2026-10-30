@@ -52,7 +52,14 @@ Public Const T1ClkHfIntOsc = 3
 Public Const T1ClkLfIntOsc = 4
 Public Const T1ClkSfIntOsc = 5
 Public Const T1ClkMfIntOsc = 6
+#if _has(OSCEN.SOSCEN)
 Public Const T1ClkSosc = 8
+#else
+' PIC16F13145 family (DS40002519D Table 22-4 p.245): no secondary oscillator; 7 is the 32 kHz MFINTOSC (6 is the 500 kHz one)
+' and 9 is EXTOSC.
+Public Const T1ClkMfIntOsc32 = 7
+Public Const T1ClkExtOsc = 9
+#endif
 Public Const T1ClkTmr0 = 11
 
 ' Timer1 gate sources, the GSS field of T1GATE [DS40002343F Table 23-5]. T1GatePin is the pin selected by T1GPPS.
@@ -129,9 +136,11 @@ Public Const T2RstCmp2 = 12
 Public Const T2RstZcd = 13
 #elseif _has(PIR1.TMR1IF)
 ' Timer2 external reset sources, the RSEL field of T2RST [DS40002343F Table 24-4]. T2RstPin is the pin
-' selected by T2INPPS.
+' selected by T2INPPS. The PIC16F13145 family (DS40002519D Table 23-4 p.268) has no Timer4, and the same CCP and comparator codes.
 Public Const T2RstPin = 0
+#if _has(T4CON)
 Public Const T2RstTmr4 = 2
+#endif
 Public Const T2RstCcp1 = 4
 Public Const T2RstCcp2 = 5
 Public Const T2RstCmp1 = 14
