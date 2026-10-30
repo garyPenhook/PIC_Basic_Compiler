@@ -894,3 +894,8 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `codegen::ord_jump`: for an unsigned compare of 16 bits or more where the reduced form has a constant `K` as `X` and a variable as `Y` (`x > K`, `x <= K`, `K < x`, `K >= x`), the test becomes `x >= K + 1` or `x < K + 1` (skipped when `K + 1` does not fit), so the constant folds into `movlw / subwf / movlw / subwfb` instead of being staged in `__B` (Word `x > 1000`: 9 words, was 11).
 - `codegen::assign` (Word target): `hi * 256 + lo`, `(hi << 8) Or lo` and the Xor/Add/commuted forms with Byte `hi` and a Byte variable or constant `lo` store the two bytes directly (`movff hi,dst+1 / movff lo,dst`; 4 words, was 11).
 - Test: `tests/exec/cmp_const_pack.bas` (`scripts/gen-cmpk-tests.py`: Word and LongWord compares of both orientations with edge constants incl. the type maximum, and 7 pack forms).
+
+## Constant and +-1 stores to a PLUSW0 array element (done 2026-10-30, 0.1.69; EFFICIENCY.md A2)
+- `codegen::store`: a one-byte array element picked by a Byte variable (`plusw_point`) takes `clrf PLUSW0` for `= 0`, `setf PLUSW0` for `= 255` and `incf` / `decf PLUSW0,f` for `arr(i) = arr(i) + 1`, `- 1`, `1 + arr(i)`, `+ 255`, `- 255`. None of them takes an operand from W, which holds the index. `arr(i) = arr(i) + 1` is 3 words (was 9). Other constants and operands keep the earlier form, since the `movlw` would overwrite the index.
+- W6 (`x * K` store) and A3 (Word array reads through `POSTINC0`) were found already done: the generated code already has the shape the table asks for.
+- Test: `tests/exec/array_plusw_rmw.bas` (`scripts/gen-plusw-rmw-tests.py`: 196 cases, four positions incl. the 128-byte limit, neighbour element checked).

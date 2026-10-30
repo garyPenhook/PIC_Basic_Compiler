@@ -2855,6 +2855,35 @@ impl<'p> Gen<'p> {
     // ---- statements -----------------------------------------------------------------------
 
     fn store(&mut self, p: &Place, e: &Ex) {
+        // `arr(i) = 0`, `= 255`, `arr(i) = arr(i) + 1` and `- 1` on a one-byte element reached through PLUSW0: the
+        // instruction takes no operand from W, which holds the index (a `movlw` would overwrite it).
+        if p.indirect() && p.bytes() == 1 && p.bit.is_none() && self.tgt.opt {
+            let op = match &e.k {
+                ExK::Const(0) => Some("clrf"),
+                ExK::Const(k) if *k & 0xFF == 0xFF && e.w == 8 => Some("setf"),
+                ExK::Bin(op @ (BinKind::Add | BinKind::Sub), l, r) if e.w == 8 => {
+                    let same = |x: &Ex| matches!(&x.k, ExK::Load(q) if q == p) && !x.has_call();
+                    match (op, r.as_const(), l.as_const()) {
+                        (BinKind::Add, Some(1), _) if same(l) => Some("incf"),
+                        (BinKind::Add, _, Some(1)) if same(r) => Some("incf"),
+                        (BinKind::Add, Some(255), _) if same(l) => Some("decf"),
+                        (BinKind::Sub, Some(1), _) if same(l) => Some("decf"),
+                        (BinKind::Sub, Some(255), _) if same(l) => Some("incf"),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(op) = op
+                && let Some(pw) = self.plusw_point(p)
+            {
+                match op {
+                    "incf" | "decf" => self.fop(op, &pw, "f"),
+                    _ => self.fo(op, &pw),
+                }
+                return;
+            }
+        }
         if p.indirect() {
             // The value is settled before FSR0 is loaded, since computing either can use FSR0.
             let n = p.bytes();

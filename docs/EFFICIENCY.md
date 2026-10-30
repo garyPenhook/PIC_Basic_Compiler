@@ -79,7 +79,7 @@ constants.
 | **W3** (**done for a different destination, 0.1.66**) `x << 4` / `x >> 4` use the generic loop | 15 words, 33 cycles | nibble swap: `swapf hi,f; movlw 0xF0; andwf hi,f; swapf lo,f; movlw 0x0F; andwf lo,w; iorwf hi,f; movlw 0xF0; andwf lo,f` | 33→9; 1001<<4=16016 |
 | **W4** `x >> 8`, `x << 8`, `x And 255`, `x / 256`, `x Mod 256` stage through `__A1` | 5 words | `movff x+1,x; clrf x+1` and the like | 5→3 cycles; 1001>>8=3 |
 | **W5** (**done, 0.1.65**) `x = x + 1` / `x = x - 1` | 4 words | `infsnz x,f; incf x+1,f` and `decf x,f; btfss STATUS,0; decf x+1,f` | +1: 4→2 (255→256, 65535→0); −1: 4→3 (256→255, 0→65535, 5→4) |
-| **W6** `x * K` (K constant) ends with `movff __C0,__A0; movff __C1,__A1` before the store | 18 words | store `PRODL`-derived bytes straight to the destination | 18→13 cycles (`x*10`, 123→1230) |
+| **W6** (**already done**, found so in 0.1.69) `x * K` (K constant) ends with `movff __C0,__A0; movff __C1,__A1` before the store | 18 words | store `PRODL`-derived bytes straight to the destination | 18→13 cycles (`x*10`, 123→1230) |
 | **W7** (**done, 0.1.68**) `x > K`, `x >= K` stage K into `__B0:__B0+1` first | 9 words | `movf x,w; sublw lo; movlw hi; subfwb x+1,w; bc/bnc` | 11→7 cycles; 1500>1000 |
 | **W8** (**done, 0.1.67**) `x >= 256`, `x > 255`, `x < 256` (byte-boundary compares) | 7-9 words | `movf x+1,f; bnz/bz` (2 words) | counted |
 | **W9** (**done, 0.1.67**) `x = 0` / `x <> 0` tests byte by byte | 4 words (Word), 8 (Long) | `movf x,w; iorwf x+1,w; bnz` (3 / 5 words) | counted; a few cycles slower on the early-exit path, so size-only: apply under `Optimize = Size` |
@@ -143,8 +143,8 @@ pay off (skip leading zero bytes of the dividend: a dividend that fits 16 bits f
 | Finding | Now | Proposed | Measured |
 |---|---|---|---|
 | **A1** `c = arr(a)`, `arr(a) = b` for a Byte index build a 16-bit address in `__A`, add the base, copy it to `FSR0` | 12 words | `lfsr 0,arr; movf a,w; movf PLUSW0,w` (`PLUSW0` offsets by the *signed* W, so valid only when the array has ≤ 128 elements; elements beyond that keep the current path) | 13→5; 77 read back |
-| **A2** read-modify-write `arr(a) = arr(a) + 1` computes the address twice and parks the value in `__main__TMP` | 27 words | `lfsr 0,arr; movf a,w; incf PLUSW0,f` | 27→4 cycles; −1 B temp |
-| **A3** Word arrays, `x = warr(a)`: `movff POSTINC0,__A0; movff POSTINC0,__A1; movff __A0,x; movff __A1,x+1` | 8 words | `movff POSTINC0,x; movff POSTINC0,x+1` (P3) | counted |
+| **A2** (**done for `+ 1` / `- 1`, 0.1.69**) read-modify-write `arr(a) = arr(a) + 1` computes the address twice and parks the value in `__main__TMP` | 27 words | `lfsr 0,arr; movf a,w; incf PLUSW0,f` | 27→4 cycles; −1 B temp |
+| **A3** (**already done**, found so in 0.1.69) Word arrays, `x = warr(a)`: `movff POSTINC0,__A0; movff POSTINC0,__A1; movff __A0,x; movff __A1,x+1` | 8 words | `movff POSTINC0,x; movff POSTINC0,x+1` (P3) | counted |
 | **A4** Word index doubling (`rlcf` through `__A`, 16-bit add) | ≈14 words | `movf a,w; addwf WREG,w` then `PLUSW0` while `a < 64`; keep `FSR0` loaded across several accesses to the same array | counted |
 | **L1** counted `For` loop with a Byte variable | `clrf v; movlw n; movwf H; … dcfsnz H; bra; incf v; bra` + 1 hidden byte | when the body never reads `v`, count with `v` itself (no hidden byte); otherwise unchanged | counted |
 
