@@ -535,7 +535,7 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movlw 0
         subwfb __C1, f, c
     FLD_LP0:
-        movlw 32
+        movlw 25
         movwf __D3, c
     FLD_LP:
         movf __B0, w, c
@@ -571,6 +571,15 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         bsf __D0, 0, c
         decfsz __D3, f, c
         bra FLD_LP
+        rrcf __A3, w, c
+        rrcf __A2, w, c
+        movwf __A3, c
+        rrcf __A1, w, c
+        movwf __A2, c
+        rrcf __A0, w, c
+        movwf __A1, c
+        clrf __A0, c
+        rrcf __A0, f, c
         movf __C2, w, c
         iorwf __C3, w, c
         iorwf __D1, w, c
@@ -1485,7 +1494,7 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         movlw 0
         subwfb __C1, f
     FLD_LP0:
-        movlw 32
+        movlw 25
         movwf __D3
     FLD_LP:
         movf __B0, w
@@ -1521,6 +1530,15 @@ Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
         bsf __D0, 0
         decfsz __D3, f
         bra FLD_LP
+        rrf __A3, w
+        rrf __A2, w
+        movwf __A3
+        rrf __A1, w
+        movwf __A2
+        rrf __A0, w
+        movwf __A1
+        clrf __A0
+        rrf __A0, f
         movf __C2, w
         iorwf __C3, w
         iorwf __D1, w
