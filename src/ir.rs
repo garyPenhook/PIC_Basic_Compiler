@@ -118,6 +118,9 @@ pub enum BinKind {
     Xor,
     Shl,
     Shr,
+    /// Unsigned Byte `Min` / `Max` (other widths are expanded by `lower::minmax_expand`).
+    Min,
+    Max,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

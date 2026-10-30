@@ -306,6 +306,8 @@ fn fold(e: &mut Ex) {
                         BinKind::And => Some(x & y),
                         BinKind::Or => Some(x | y),
                         BinKind::Xor => Some(x ^ y),
+                        BinKind::Min => Some(x.min(y)),
+                        BinKind::Max => Some(x.max(y)),
                         BinKind::Div if !signed && y != 0 => Some(x / y),
                         BinKind::Mod if !signed && y != 0 => Some(x % y),
                         BinKind::Shl if y < w as u32 => Some(x << y),

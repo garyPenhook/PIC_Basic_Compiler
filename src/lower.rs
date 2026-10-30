@@ -62,6 +62,17 @@ fn sign_extend(v: u32, w: u8) -> i64 {
     }
 }
 
+/// Min = b + ((a - b) & mask) with mask all ones when a < b; Max the same with a > b. `a` and `b` have the result's width.
+pub fn minmax_expand(max: bool, a: Ex, b: Ex) -> Ex {
+    let (w, s) = (a.w, a.signed);
+    let kind = if max { CmpKind::Gt } else { CmpKind::Lt };
+    let pick_a = Ex::boolean(ExK::Cmp(kind, Box::new(a.clone()), Box::new(b.clone())));
+    let mask = Ex::new(ExK::Neg(Box::new(conv(pick_a, w, false))), w, s);
+    let diff = Ex::new(ExK::Bin(BinKind::Sub, Box::new(a), Box::new(b.clone())), w, s);
+    let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(diff), Box::new(mask)), w, s);
+    Ex::new(ExK::Bin(BinKind::Add, Box::new(b), Box::new(pick)), w, s)
+}
+
 /// Converts `ex` to `w`/`signed`, extending by the operand's own signedness.
 pub fn conv(ex: Ex, w: u8, signed: bool) -> Ex {
     if ex.w == w && ex.signed == signed {
@@ -1928,7 +1939,7 @@ impl<'a> Lowerer<'a> {
                 let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(minus_twice), Box::new(mask)), w, s);
                 Some(Ex::new(ExK::Bin(BinKind::Add, Box::new(x), Box::new(pick)), w, s))
             }
-            // Min = b + ((a - b) & mask) with mask all ones when a < b; Max the same with a > b.
+            // An unsigned Byte is selected with skip instructions; the other widths use the mask form.
             "min" | "max" => {
                 let (w, s) = nat(&ty)?;
                 let a = conv(self.expr(&args[0])?, w, s);
@@ -1937,12 +1948,11 @@ impl<'a> Lowerer<'a> {
                     self.unsupported(e.span, &format!("a call inside the arguments of {}", if name == "min" { "Min" } else { "Max" }));
                     return None;
                 }
-                let kind = if name == "min" { CmpKind::Lt } else { CmpKind::Gt };
-                let pick_a = Ex::boolean(ExK::Cmp(kind, Box::new(a.clone()), Box::new(b.clone())));
-                let mask = Ex::new(ExK::Neg(Box::new(conv(pick_a, w, false))), w, s);
-                let diff = Ex::new(ExK::Bin(BinKind::Sub, Box::new(a), Box::new(b.clone())), w, s);
-                let pick = Ex::new(ExK::Bin(BinKind::And, Box::new(diff), Box::new(mask)), w, s);
-                Some(Ex::new(ExK::Bin(BinKind::Add, Box::new(b), Box::new(pick)), w, s))
+                let max = name == "max";
+                if w == 8 && !s {
+                    return Some(Ex::new(ExK::Bin(if max { BinKind::Max } else { BinKind::Min }, Box::new(a), Box::new(b)), 8, false));
+                }
+                Some(minmax_expand(max, a, b))
             }
             n => {
                 self.unsupported(e.span, &format!("the intrinsic `{n}`"));

@@ -566,6 +566,7 @@ impl<'p> G<'p> {
             BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor => self.alu(k, a, b, e),
             BinKind::Shl | BinKind::Shr => self.shift(k, a, b, e),
             BinKind::Mul | BinKind::Div | BinKind::Mod => self.muldiv(k, a, b, e),
+            BinKind::Min | BinKind::Max => self.ev(&crate::lower::minmax_expand(k == BinKind::Max, a.clone(), b.clone())),
         }
     }
 

@@ -1531,6 +1531,38 @@ impl<'p> Gen<'p> {
             BinKind::Mul => self.gen_mul(l, r, e),
             BinKind::Div | BinKind::Mod => self.gen_div(op, l, r, e),
             BinKind::Shl | BinKind::Shr => self.gen_shift(op, l, r, e),
+            BinKind::Min | BinKind::Max => self.gen_minmax(op == BinKind::Max, l, r),
+        }
+    }
+
+    /// Unsigned Byte `Min` / `Max`: W takes `b`, then `cpfsgt` / `cpfslt` skips the load of `a` when `b` wins.
+    fn gen_minmax(&mut self, max: bool, a: &Ex, b: &Ex) {
+        if !self.tgt.opt {
+            self.gen_val(&crate::lower::minmax_expand(max, a.clone(), b.clone()));
+            return;
+        }
+        let volatile = |m: &Mem| m.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile);
+        // The compare reads `a` from memory, and the load reads it again: a volatile variable is read once, by a spill.
+        let a_mem = |s: &Self, e: &Ex| match s.simple(e) {
+            Some(Src::Mem(m, _)) if !volatile(&m) => Some(m),
+            _ => None,
+        };
+        let (a, b) = match (a_mem(self, a), a_mem(self, b)) {
+            (None, Some(_)) => (b, a),
+            _ => (a, b),
+        };
+        let (m, spilled) = match a_mem(self, a) {
+            Some(m) => (m, false),
+            None => (self.spill(a), true),
+        };
+        match self.simple(b) {
+            Some(s) => self.src_to_w(&s.byte(0)),
+            None => self.gen_val(b),
+        }
+        self.fo(if max { "cpfslt" } else { "cpfsgt" }, &m);
+        self.fop("movf", &m, "w");
+        if spilled {
+            self.free(1);
         }
     }
 
