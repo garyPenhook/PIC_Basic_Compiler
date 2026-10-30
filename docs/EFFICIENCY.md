@@ -83,7 +83,7 @@ constants.
 | **W7** `x > K`, `x >= K` stage K into `__B0:__B0+1` first | 9 words | `movf x,w; sublw lo; movlw hi; subfwb x+1,w; bc/bnc` | 11→7 cycles; 1500>1000 |
 | **W8** `x >= 256`, `x > 255`, `x < 256` (byte-boundary compares) | 7-9 words | `movf x+1,f; bnz/bz` (2 words) | counted |
 | **W9** `x = 0` / `x <> 0` tests byte by byte | 4 words (Word), 8 (Long) | `movf x,w; iorwf x+1,w; bnz` (3 / 5 words) | counted; a few cycles slower on the early-exit path, so size-only: apply under `Optimize = Size` |
-| **W10** `i / 2^k`, `i Mod 2^k` for signed types call `__sdiv2` | 344-348 cycles | `i/2`: `rlcf i+1,w; movlw 0; addwfc i; addwfc i+1; rlcf i+1,w; rrcf i+1; rrcf i` (7 words); general k: add `(i>>15) And (2^k-1)` then arithmetic shift | 348→7; −1234→−617, −1→0, −32768→−16384, 32767→16383, 1235→617 |
+| **W10** `i / 2^k` (**done for `/`, k = 1..8, 0.1.63**; `Mod` not yet), `i Mod 2^k` for signed types call `__sdiv2` | 344-348 cycles | `i/2`: `rlcf i+1,w; movlw 0; addwfc i; addwfc i+1; rlcf i+1,w; rrcf i+1; rrcf i` (7 words); general k: add `(i>>15) And (2^k-1)` then arithmetic shift | 348→7; −1234→−617, −1→0, −32768→−16384, 32767→16383, 1235→617 |
 | **W11** `x = a * 256 + b`, `(a << 8) Or b`: the "pack two bytes" idiom | 11 words | `movff a,x+1; movff b,x` | counted |
 | **W12** `Abs(i)`, `Min(i,j)`, `Max(i,j)` use the mask trick with 16-bit negations and `__main__TMP` | `Abs` 44 words, `Min`/`Max` ≈55 | `Abs`: `btfss i+1,7; bra end; comf i+1,f; negf i; movlw 0; addwfc i+1,f` (6 words); Min/Max: signed compare (P11) and a conditional 2-byte move (≈14 words) | Abs 44→6 cycles (−1234→1234); Min unmeasured *(counted)* |
 

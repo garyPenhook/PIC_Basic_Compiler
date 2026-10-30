@@ -859,3 +859,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `tests/exec/array_plusw.bas` (`scripts/gen-plusw-tests.py`: load, variable/constant/expression stores, computed index, read-modify-write, the 128- and 129-byte limit, ShortInt elements);
   both pass on 18F27Q10, 18F16Q41, 16F17146 and at `-O0`. Unit test `peephole::tests::plusw_access_reads_w`.
 - Not done: Integer `Abs` (16-bit negate in place), `x > 0` / `x <= 0`, signed `Min`/`Max`, PLUSW for Word elements and read-modify-write.
+
+## Signed `/ 2^k` (done 2026-10-30, 0.1.63; EFFICIENCY.md W10)
+- `codegen::div_signed_pow2`: a signed `x / 2^k` (k = 1..8, `Optimize` on) adds the bias `2^k - 1` to a negative `x` (k = 1: the sign bit through `rlcf`/`addwfc`; otherwise
+  `movlw 0 / btfsc top,7 / movlw 2^k-1 / addwf / addwfc`) and then shifts arithmetically right, in `__A`. `Integer / 2` is 5 words plus the shift instead of the `rcall __sdiv2`,
+  and a program with no other signed divide no longer carries `__sdiv2`/`__div2` (probe program 117 -> 58 words). Signed `Mod 2^k` and k > 8 still use the helper.
+- Test: `tests/exec/sdiv_pow2.bas` (ShortInt, Integer, LongInt; truncation toward zero, -32768, 32767, -1 / 256); passes on 18F27Q10.

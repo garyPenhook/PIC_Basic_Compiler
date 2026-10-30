@@ -2119,6 +2119,16 @@ impl<'p> Gen<'p> {
         {
             return;
         }
+        if op == BinKind::Div
+            && e.signed
+            && self.tgt.opt
+            && let Some(k) = r.as_const()
+            && k.is_power_of_two()
+            && (2..=256).contains(&k)
+        {
+            self.div_signed_pow2(l, k.trailing_zeros(), n);
+            return;
+        }
         self.prep_ab(l, r, n);
         let s = if e.signed { "s" } else { "" };
         self.call_helper(format!("{s}div{n}"));
@@ -2128,6 +2138,38 @@ impl<'p> Gen<'p> {
                 self.movff(&a, &c);
             }
         }
+        if n == 1 {
+            let m = self.a(0);
+            self.fop("movf", &m, "w");
+        }
+    }
+
+    /// Signed `x / 2^k` (1 <= k <= 8), truncating toward zero: a negative `x` gets `2^k - 1` added, then an
+    /// arithmetic shift right.
+    fn div_signed_pow2(&mut self, l: &Ex, k: u32, n: u32) {
+        self.gen_to_acc(l);
+        let top = self.a(n - 1);
+        if k == 1 {
+            // The bias is the sign bit itself, taken through the carry.
+            self.fop("rlcf", &top, "w");
+            self.ins("movlw 0");
+            for i in 0..n {
+                let m = self.a(i);
+                self.fop("addwfc", &m, "f");
+            }
+        } else {
+            self.ins("movlw 0");
+            self.fbit("btfsc", &top, 7);
+            self.ins(format!("movlw 0x{:02X}", (1u32 << k) - 1));
+            let a0 = self.a(0);
+            self.fop("addwf", &a0, "f");
+            self.ins("movlw 0");
+            for i in 1..n {
+                let m = self.a(i);
+                self.fop("addwfc", &m, "f");
+            }
+        }
+        self.shift_acc(false, true, k, n);
         if n == 1 {
             let m = self.a(0);
             self.fop("movf", &m, "w");
