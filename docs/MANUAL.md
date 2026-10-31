@@ -4466,26 +4466,237 @@ End If
 
 ## pulse, irremote and x10  (`Include "pulse"`, `Include "irremote"`, `Include "x10"`)
 
-Bit-banged commands on any pin, called as `Pulse.PulseIn(pin, True)` and so on. Pins are numbers 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16); a pin the part lacks
+Bit-banged commands (each has its own entry below) on any pin, called as `Pulse.PulseIn(pin, True)` and so on. Pins are numbers 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16); a pin the part lacks
 makes a routine do nothing (a measurement returns 0). Timing is by polling and cycle-counted delays, so it follows `Clock`: a "unit" of `PulseIn`, `PulseOut`
 and `RCin` is a 10 us poll plus loop time (10 to 14 us at 16 MHz and above), and interrupts lengthen every time. Calibrate against a known pulse where the number matters.
 
-| Routine | Effect |
-|---|---|
-| `PulseOut(pin, period, level)`, `PulseOut(pin, period)` | pulse of `period` units, high or low (two-argument form: opposite of the present level); pin becomes an output |
-| `w = PulseIn(pin, level)` | `Word` width in units of the next pulse at `level`; 0 after about 0.65 s |
-| `w = RCin(pin, level)` | `Word` units the pin stays at `level` (1 if not at `level` at the call, 0 after 65535) |
-| `b = Pot(pin, scale)` | `Byte`: 1 ms discharge, `RCin` of the rise, `units * scale / 256`, at most 255 |
-| `Servo(pin, width)` | one pulse of `width` us, 500..2500; repeat every 20 ms |
-| `PwmPin(pin, duty, cycles)` | software PWM for an R-C filter: 256 steps of 10 us per cycle, high for `duty` steps |
-| `Sound(pin, note, duration)` | note 0 silence, 1..127 tone (about 78.74 x note Hz), 128..255 noise; `duration` in 10 ms |
-| `Sound2(pin1, pin2, f1, f2, ms)` | two tones at once, exact to about 10 % |
-| `w = SonyIn(pin)`, `w = RC5In(pin)` | Sony SIRC 12-bit / Philips RC5 frame from an active-low receiver module: command in the low byte, system in the high byte, 65535 for no valid frame in 0.65 s. `RC5In` needs a clock of 16 MHz or more |
-| `ok = Xout(dataPin, zeroPin, house, key, reps)` | X-10 code through a PL513 / TW523: house 0..15, key 0..15 unit or 16 + function (`X10.UnitOn` ...); returns False when the zero-cross pulses fail |
-| `ok = Xin(dataPin, zeroPin, timeout, value)` | receives one X-10 code (house in the high byte of `value`, key in the low); `timeout` in half-cycles, 0 = wait |
+### PulseOut
 
-**Notes** Never connect a pin to the AC line; use the X-10 interface module. The X-10 line codes follow the protocol as cross-checked against the Positron key-code table, not
-measured on a real interface. Tests: `tests/exec/lib_pulse.bas`, and `tests/exec_pins/lib_pins_model.bas` against a pin model. See `docs/LIBRARY.md`.
+**Syntax**
+```basic
+PulseOut(pin, period, level)
+PulseOut(pin, period)
+```
+**Overview** Generates a pulse of `period` units on `pin`; the pin is made an output. With `level` the pulse is high (True) or low (False); without it the pulse is the opposite of the pin's present level.
+
+**Parameters** `pin` 0..23; `period` a `Word`, in units (see above); `level` a `Boolean`.
+
+**Example**
+```basic
+Include "pulse"
+Pulse.PulseOut(8, 100, True)   ' 1 ms high pulse on RB0
+```
+**Notes** The pin ends at the opposite of `level`. A pin the part lacks does nothing.
+
+**See also** `PulseIn`, `Servo`
+
+### PulseIn
+
+**Syntax**
+```basic
+w = PulseIn(pin, level)
+```
+**Overview** Measures the width of the next pulse at `level` on `pin`; the pin is made an input.
+
+**Parameters** `level` True for a high pulse. Returns a `Word`.
+
+**Example**
+```basic
+w = Pulse.PulseIn(9, True)
+```
+**Notes** The clock starts at the edge into `level`: a pin already at `level` must leave it first. Returns 0 when no complete pulse arrives (about 0.65 s for each of three phases).
+
+**See also** `PulseOut`, `RCin`
+
+### RCin
+
+**Syntax**
+```basic
+w = RCin(pin, level)
+```
+**Overview** Counts the time `pin` stays at `level`, to time the charge or discharge of an R-C network. The pin is left an input.
+
+**Parameters** Returns a `Word` in units. 1 if the pin is not at `level` at the call; 0 if it stays for 65535 units.
+
+**Example**
+```basic
+High(PORTB.0) : DelayMS(1)   ' discharge the capacitor first (make the pin an output)
+w = Pulse.RCin(8, True)
+```
+**Notes** Charge or discharge the capacitor before the call.
+
+**See also** `Pot`, `PulseIn`
+
+### Pot
+
+**Syntax**
+```basic
+b = Pot(pin, scale)
+```
+**Overview** Reads a variable resistor with a capacitor to ground on `pin`.
+
+**Parameters** `scale` a `Byte`. Returns a `Byte`.
+
+**Example**
+```basic
+b = Pulse.Pot(11, 255)
+```
+**Notes** Discharges the capacitor for 1 ms, times the rise with `RCin`, and returns `units * scale / 256`, at most 255. Find `scale` by reading once with 255 at the largest resistance.
+
+**See also** `RCin`, `adc` module
+
+### Servo
+
+**Syntax**
+```basic
+Servo(pin, width)
+```
+**Overview** Sends one pulse to a radio-control servo.
+
+**Parameters** `width` a `Word` in microseconds: about 500 to 2500, 1500 is centre.
+
+**Example**
+```basic
+Do
+    Pulse.Servo(12, 1500)
+    DelayMS(20)
+Wend
+```
+**Notes** Call it about every 20 ms; the servo holds position only while pulses keep coming. Timing is by cycle-counted delay, accurate to a few us at 16 MHz and above.
+
+**See also** `PulseOut`
+
+### PwmPin
+
+**Syntax**
+```basic
+PwmPin(pin, duty, cycles)
+```
+**Overview** Software pulse-width modulation to charge an R-C filter (Positron's `PWM`; it is not the hardware `pwm` module).
+
+**Parameters** `duty` 0..255 steps high out of 256; `cycles` the number of 256-step periods (10 us a step).
+
+**Example**
+```basic
+Pulse.PwmPin(13, 100, 10)   ' about 39 % of the supply
+```
+**Notes** Duty 0 is low all the time, 255 high all the time. The pin is an input afterwards.
+
+**See also** `pwm` module
+
+### Sound
+
+**Syntax**
+```basic
+Sound(pin, note, duration)
+```
+**Overview** Plays a tone or noise.
+
+**Parameters** `note` 0 silence, 1..127 a tone of about 78.74 x note Hz, 128..255 noise at the pitch of note - 127; `duration` in 10 ms.
+
+**Example**
+```basic
+Pulse.Sound(14, 60, 20)    ' about 4.7 kHz for 200 ms
+```
+**Notes** The pin is made an output and ends low.
+
+**See also** `Sound2`
+
+### Sound2
+
+**Syntax**
+```basic
+Sound2(pin1, pin2, f1, f2, ms)
+```
+**Overview** Plays two tones at once, one on each pin.
+
+**Parameters** `f1`, `f2` frequencies in Hz (0 is silent); `ms` the time in milliseconds.
+
+**Example**
+```basic
+Pulse.Sound2(14, 15, 2500, 3500, 1000)
+```
+**Notes** Both pins run from one 10 us time base, so frequencies are exact to about 10 % and the lowest is about 197 Hz. The list syntax `[Note\Note\Duration]` is not available.
+
+**See also** `Sound`
+
+### SonyIn
+
+**Syntax**
+```basic
+w = SonyIn(pin)
+```
+**Overview** Receives a Sony SIRC 12-bit frame from an infrared receiver module that idles high.
+
+**Parameters** Returns a `Word`: command in the low byte, system in the high byte; 65535 when no valid frame arrives in about 0.65 s.
+
+**Example**
+```basic
+w = Irremote.SonyIn(9)
+If w <> 65535 Then
+    cmd = Byte(w And 255)
+EndIf
+```
+**Notes** Pulse widths are judged against the header, so the exact poll time does not matter.
+
+**See also** `RC5In`
+
+### RC5In
+
+**Syntax**
+```basic
+w = RC5In(pin)
+```
+**Overview** Receives a Philips RC5 frame from an infrared receiver module that idles high.
+
+**Parameters** Returns a `Word`: 7-bit command (low byte) and system (high byte); 65535 for no valid frame.
+
+**Example**
+```basic
+w = Irremote.RC5In(9)
+```
+**Notes** The line is sampled at fixed times: use `Clock` 16 MHz or more and no interrupts. The toggle bit is dropped.
+
+**See also** `SonyIn`
+
+### Xout
+
+**Syntax**
+```basic
+ok = Xout(dataPin, zeroPin, house, key, reps)
+```
+**Overview** Sends an X-10 code through a PL513 or TW523.
+
+**Parameters** `house` 0..15 (A..P); `key` 0..15 a unit (1..16) or 16 + a function (`X10.UnitOn` 18, `UnitOff` 26, `UnitsOff` 28, `LightsOn` 20, `LightsOff` 16, `Bright` 22, `DimIt` 30); `reps` frames to send, at least 2.
+
+**Example**
+```basic
+ok = X10.Xout(8, 9, 0, 7, 2)           ' select unit 8 of house A
+ok = X10.Xout(8, 9, 0, X10.UnitOn, 2)  ' turn it on
+```
+**Notes** Returns False if the zero-cross pulses fail. Use 4.7 k pull-ups on the interface outputs. Never connect a pin to the AC line.
+
+**See also** `Xin`
+
+### Xin
+
+**Syntax**
+```basic
+ok = Xin(dataPin, zeroPin, timeout, value)
+```
+**Overview** Receives one X-10 code through a TW523.
+
+**Parameters** `timeout` in half-cycles (about 8.33 ms), 0 = wait; `value` a `Word` that gets house in the high byte and key in the low byte.
+
+**Example**
+```basic
+ok = X10.Xin(8, 9, 120, w)
+```
+**Notes** False on timeout or a bad frame. `Xin_Translate`/`Xout_Translate` are not provided.
+
+**See also** `Xout`
+
+The module routines `WaitUs(us)` (in `pulse`) and `CodeOf` / `NumberOf` (in `x10`) are also public. Tests: `tests/exec/lib_pulse.bas` and `tests/exec_pins/lib_pins_model.bas` against a pin model. See `docs/LIBRARY.md`.
 
 ## floatlib  (automatic)
 
