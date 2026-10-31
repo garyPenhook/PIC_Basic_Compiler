@@ -112,6 +112,11 @@ struct FuncInfo {
     asm: String,
     params: Vec<(VarId, Option<Ex>)>,
     result: Option<VarId>,
+    /// Where a `Reentrant` function's structure or String result is left for the caller: a static object
+    /// that the recursive call's frame restore does not touch. The routine copies `Result` into it on every return.
+    out: Option<VarId>,
+    /// `ByVal` structure and String parameters: the pointer the caller passes, and the routine's own copy.
+    copies: Vec<(VarId, VarId)>,
 }
 
 /// The shared routine that calls whichever handler an event variable holds: its first parameter is
@@ -149,6 +154,11 @@ pub struct Lowerer<'a> {
     cur_func: Option<FuncId>,
     cur_asm: String,
     cur_result: Option<(VarId, String)>,
+    /// The `Result` object and static copy of the `Reentrant` structure or String function being lowered.
+    cur_out: Option<(VarId, VarId)>,
+    /// Statements the expression being lowered needs run first (a String or structure function result passed on, `Val`);
+    /// `with_pre` puts them in front of the statement.
+    pre: Vec<S>,
     labels: HashMap<String, LabelId>,
     hidden: u32,
     /// Static buffers holding string literals passed to `ByRefConst` parameters.
@@ -282,6 +292,8 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         cur_func: None,
         cur_asm: String::new(),
         cur_result: None,
+        cur_out: None,
+        pre: Vec::new(),
         labels: HashMap::new(),
         hidden: 0,
         lits: HashMap::new(),
@@ -335,7 +347,7 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         lw.cur_func = None;
         lw.cur_asm = unit_prefix(proj, ui);
         for d in &lu.unit.decls {
-            lw.decl(d, ui, &mut main_body);
+            lw.decl_pre(d, ui, &mut main_body);
         }
         let mut body = lw.block(&lu.unit.stmts, ui);
         main_body.append(&mut body);
@@ -349,6 +361,9 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         lw.lower_routine(sym);
     }
     lw.finish_event_dispatch();
+    if !lw.pre.is_empty() {
+        lw.err("E-BACKEND", Span::default(), "internal: statements an expression needed were left behind");
+    }
     for &sym in &a.exports {
         lw.export_thunk(sym);
     }
@@ -583,7 +598,7 @@ impl<'a> Lowerer<'a> {
         self.cur_asm = asm.clone();
         let mut body = Vec::new();
         for d in &i.body.decls {
-            self.decl(d, ui, &mut body);
+            self.decl_pre(d, ui, &mut body);
         }
         self.in_isr = true;
         let mut rest = self.block(&i.body.stmts, ui);
@@ -597,6 +612,20 @@ impl<'a> Lowerer<'a> {
         self.cur_asm = saved.1;
         self.labels = saved.2;
         self.cur_result = saved.3;
+    }
+
+    /// Runs `f` with an empty `pre` and puts what it leaves there in front of what it wrote.
+    fn with_pre(&mut self, out: &mut Vec<S>, f: impl FnOnce(&mut Self, &mut Vec<S>)) {
+        let outer = std::mem::take(&mut self.pre);
+        let mut body = Vec::new();
+        f(self, &mut body);
+        out.append(&mut self.pre);
+        out.append(&mut body);
+        self.pre = outer;
+    }
+
+    fn decl_pre(&mut self, d: &'a Decl, ui: usize, inits: &mut Vec<S>) {
+        self.with_pre(inits, |this, out| this.decl(d, ui, out));
     }
 
     fn dim(&mut self, dim: &'a DimDecl, ui: usize, inits: &mut Vec<S>) {
@@ -790,6 +819,7 @@ impl<'a> Lowerer<'a> {
         self.cur_func = Some(id);
         self.cur_asm = asm.clone();
         let mut params = Vec::new();
+        let mut copies = Vec::new();
         let mut ok = true;
         for (p, info) in r.params.iter().zip(&params_info) {
             let pointee = match &info.ty {
@@ -797,13 +827,27 @@ impl<'a> Lowerer<'a> {
                 t => t,
             };
             let supported = match info.mode {
-                ParamMode::ByVal => nat(&info.ty).is_some(),
+                ParamMode::ByVal => nat(&info.ty).is_some() || matches!(info.ty, Ty::Str(_) | Ty::Struct(_)),
                 ParamMode::ByRef => matches!(pointee, Ty::Str(_) | Ty::Struct(_)) || (nat(pointee).is_some() && (!matches!(pointee, Ty::Bit) || matches!(info.ty, Ty::Array(..)))),
                 ParamMode::ByRefConst => matches!(info.ty, Ty::Str(_) | Ty::Struct(_)) || (matches!(info.ty, Ty::Array(..)) && (nat(pointee).is_some() || matches!(pointee, Ty::Str(_) | Ty::Struct(_)))),
             };
             if !supported {
                 self.unsupported(p.name.span, &format!("parameter `{}` ({})", p.name.name, if info.mode == ParamMode::ByVal { "non-scalar" } else { "this by-reference form" }));
                 ok = false;
+                continue;
+            }
+            if info.mode == ParamMode::ByVal && nat(&info.ty).is_none() {
+                // A String or structure by value: the caller passes its address and the routine copies it into
+                // its own object on entry (`lower_routine`), so the callee may change it and the caller's copy stays.
+                let ptr = self.new_var(format!("{asm}__{}_P", sanitize(&p.name.name)), &format!("{}@", p.name.name), info.ty.clone(), VarKind::Param, None);
+                self.vars[ptr].by_ref = true;
+                self.vars[ptr].bytes = 2;
+                let own = self.new_var(format!("{asm}__{}", sanitize(&p.name.name)), &p.name.name, info.ty.clone(), VarKind::Param, None);
+                if let Some(&psym) = self.a.decl_syms.get(&p.name.span) {
+                    self.sym_var.insert(psym, own);
+                }
+                copies.push((ptr, own));
+                params.push((ptr, None));
                 continue;
             }
             let v = self.new_var(format!("{asm}__{}", sanitize(&p.name.name)), &p.name.name, info.ty.clone(), VarKind::Param, None);
@@ -818,11 +862,20 @@ impl<'a> Lowerer<'a> {
             let default = p.default.as_ref().and_then(|e| self.a.consts.get(&e.id)).map(|c| Ex::konst(cval_for(c, &info.ty), w, s));
             params.push((v, default));
         }
+        let mut out = None;
         let result = match &ret {
             Some(t) if nat(t).is_some() => Some(self.new_var(format!("{asm}__RESULT"), "Result", t.clone(), VarKind::Result, None)),
             // A structure or String comes back in the frame: the caller copies it out right after the call.
-            Some(t @ (Ty::Struct(_) | Ty::Str(_))) if !matches!(&self.a.symbols[sym].kind, SymKind::Routine { reentrant: true, .. }) => {
-                Some(self.new_var(format!("{asm}__RESULT"), "Result", t.clone(), VarKind::Result, None))
+            Some(t @ (Ty::Struct(_) | Ty::Str(_))) => {
+                let rv = self.new_var(format!("{asm}__RESULT"), "Result", t.clone(), VarKind::Result, None);
+                if matches!(&self.a.symbols[sym].kind, SymKind::Routine { reentrant: true, .. }) {
+                    // A recursive call puts the caller's frame back, `Result` included, before the caller can copy
+                    // it out: the routine leaves a copy in an object that belongs to no frame.
+                    let own = self.cur_func.take();
+                    out = Some(self.new_var(format!("{asm}__OUT"), "(result)", t.clone(), VarKind::Hidden, None));
+                    self.cur_func = own;
+                }
+                Some(rv)
             }
             Some(t) => {
                 self.unsupported(span, &format!("a function returning {t}"));
@@ -834,7 +887,7 @@ impl<'a> Lowerer<'a> {
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         let _ = ok;
-        self.sym_func.insert(sym, FuncInfo { id, asm, params, result });
+        self.sym_func.insert(sym, FuncInfo { id, asm, params, result, out, copies });
         self.queue.push(sym);
         Some(id)
     }
@@ -865,7 +918,7 @@ impl<'a> Lowerer<'a> {
         }
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
-        self.sym_func.insert(sym, FuncInfo { id, asm, params, result: None });
+        self.sym_func.insert(sym, FuncInfo { id, asm, params, result: None, out: None, copies: Vec::new() });
         self.event_order.push(sym);
         self.queue.push(sym);
         Some((id, self.event_order.len() as u32))
@@ -890,7 +943,7 @@ impl<'a> Lowerer<'a> {
         self.cur_asm = asm.clone();
         let mut body = Vec::new();
         for d in &e.body.decls {
-            self.decl(d, ui, &mut body);
+            self.decl_pre(d, ui, &mut body);
         }
         let mut rest = self.block(&e.body.stmts, ui);
         body.append(&mut rest);
@@ -993,22 +1046,35 @@ impl<'a> Lowerer<'a> {
             return self.lower_event(sym, e);
         }
         let r = self.routines[&sym];
-        let (id, asm, result, params) = {
+        let (id, asm, result, params, out, copies) = {
             let fi = &self.sym_func[&sym];
-            (fi.id, fi.asm.clone(), fi.result, fi.params.iter().map(|p| p.0).collect::<Vec<_>>())
+            (fi.id, fi.asm.clone(), fi.result, fi.params.iter().map(|p| p.0).collect::<Vec<_>>(), fi.out, fi.copies.clone())
         };
         let ui = self.a.symbols[sym].unit;
         let saved = (self.cur_func, std::mem::take(&mut self.cur_asm), std::mem::take(&mut self.labels), self.cur_result.take());
+        let saved_out = self.cur_out.take();
         self.cur_func = Some(id);
         self.cur_asm = asm.clone();
         self.cur_result = result.map(|v| (v, r.name.key()));
+        self.cur_out = result.zip(out);
         let mut body = Vec::new();
+        // A `ByVal` String or structure is copied from the caller's object first thing.
+        for &(ptr, own) in &copies {
+            let ty = self.vars[own].ty.clone();
+            let dst = Place { base: Base::Var(own), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
+            let src = Place { base: Base::Ptr(ptr), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
+            let st = match ty {
+                Ty::Str(cap) => St::StrSet { dst, cap, parts: vec![StrSrc::Ram(src)], keep: false },
+                _ => St::Copy { dst, src, bytes: self.vars[own].bytes },
+            };
+            body.push(S { st, span: r.name.span });
+        }
         if r.ext {
             self.ext_funcs.push(id);
             body.push(S { st: St::Asm(self.extern_thunk(r, &params, result)), span: r.name.span });
         }
         for d in &r.body.decls {
-            self.decl(d, ui, &mut body);
+            self.decl_pre(d, ui, &mut body);
         }
         let mut rest = self.block(&r.body.stmts, ui);
         body.append(&mut rest);
@@ -1017,12 +1083,13 @@ impl<'a> Lowerer<'a> {
         let mut entry = if reg { Vec::new() } else { self.entry_clears(id, &body, r.name.span) };
         entry.append(&mut body);
         let mut body = entry;
-        body.push(S { st: St::Return, span: r.name.span });
+        self.push_return(&mut body, r.name.span);
         self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span, reg });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
         self.cur_result = saved.3;
+        self.cur_out = saved_out;
     }
 
     /// How the parameter or result `v` crosses to C. A by-reference one is a pointer to the C type of its
@@ -1534,7 +1601,20 @@ impl<'a> Lowerer<'a> {
                     return self.float_binary(*op, l, r, e);
                 }
                 let lv = self.expr(l)?;
+                let before = self.pre.len();
                 let rv = self.expr(r)?;
+                if self.pre.len() > before && matches!(op, BinOp::And | BinOp::Or) && ty == Ty::Bool {
+                    // The right side's statements run only when the left does not decide the result.
+                    let right = self.pre.split_off(before);
+                    let h = self.hidden_var(Ty::Bool);
+                    let load = || Ex::boolean(ExK::Load(h.clone()));
+                    Self::push(&mut self.pre, St::Assign(h.clone(), lv), e.span);
+                    let go = if *op == BinOp::And { load() } else { Ex::boolean(ExK::NotB(Box::new(load()))) };
+                    let mut then = right;
+                    Self::push(&mut then, St::Assign(h.clone(), rv), e.span);
+                    Self::push(&mut self.pre, St::If(vec![(go, then)], vec![]), e.span);
+                    return Some(load());
+                }
                 self.binary(*op, lv, rv, &ty, w, ns, e)
             }
             _ => {
@@ -1818,23 +1898,34 @@ impl<'a> Lowerer<'a> {
                     }
                     self.lit_place(bytes, span)
                 } else {
-                    let Some(Expr { kind: ExprKind::Designator(dd), .. }) = args.get(i) else {
+                    let Some(arg) = args.get(i) else {
                         self.unsupported(span, "this ByRef argument");
                         return None;
                     };
-                    let pl = self.place_idx_of(dd)?;
-                    if pl.is_bit() {
-                        self.unsupported(dd.span, "a bit passed ByRef");
-                        return None;
-                    }
-                    match pl.base {
-                        // A constant table is read through a RAM copy made at start-up.
-                        Base::Flash(f) if pl.off == 0 && pl.idx.is_none() => self.flash_copy(f, &pl.ty.clone(), dd.span),
-                        Base::Flash(_) => {
-                            self.unsupported(dd.span, "part of a constant array passed by reference");
+                    let agg = matches!(self.vars[*pv].ty, Ty::Str(_) | Ty::Struct(_));
+                    let variable = matches!(&arg.kind, ExprKind::Designator(d) if self.callee_of(d).is_none()) && !matches!(self.a.types.get(&arg.id), Some(Ty::Char));
+                    if agg && !variable {
+                        // A function result, a concatenation or a Char: worked out into a hidden object first.
+                        self.agg_temp(arg)?
+                    } else {
+                        let ExprKind::Designator(dd) = &arg.kind else {
+                            self.unsupported(span, "this ByRef argument");
+                            return None;
+                        };
+                        let pl = self.place_idx_of(dd)?;
+                        if pl.is_bit() {
+                            self.unsupported(dd.span, "a bit passed ByRef");
                             return None;
                         }
-                        _ => pl,
+                        match pl.base {
+                            // A constant table is read through a RAM copy made at start-up.
+                            Base::Flash(f) if pl.off == 0 && pl.idx.is_none() => self.flash_copy(f, &pl.ty.clone(), dd.span),
+                            Base::Flash(_) => {
+                                self.unsupported(dd.span, "part of a constant array passed by reference");
+                                return None;
+                            }
+                            _ => pl,
+                        }
                     }
                 };
                 if matches!(self.vars[*pv].ty, Ty::Array(..)) {
@@ -2089,6 +2180,7 @@ impl<'a> Lowerer<'a> {
                 let zero = Ex::konst(0, x.w, x.signed);
                 Some(Ex::boolean(ExK::Cmp(CmpKind::Ne, Box::new(x), Box::new(zero))))
             }
+            "val" => self.val_of_str(&args[0], e.span),
             "bound" => {
                 // Only an array parameter gets here (sema folds the others): its length travels
                 // with the address, in the two bytes after it.
@@ -2223,7 +2315,54 @@ impl<'a> Lowerer<'a> {
         let rv = self.sym_func[&sym].result;
         let Some(rv) = rv.filter(|&v| matches!(self.vars[v].ty, Ty::Struct(_) | Ty::Str(_))) else { return None };
         Self::push(out, St::Call(id, a), e.span);
-        Some(Some(Place { base: Base::Var(rv), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[rv].ty.clone() }))
+        // A `Reentrant` routine leaves the result where its callers' frame restore does not reach.
+        let at = self.sym_func[&sym].out.unwrap_or(rv);
+        Some(Some(Place { base: Base::Var(at), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[rv].ty.clone() }))
+    }
+
+    /// A String or structure argument that is not a variable (a function result, a concatenation, a Char) worked out
+    /// into a hidden object, ahead of the statement; the place of that object.
+    fn agg_temp(&mut self, e: &'a Expr) -> Option<Place> {
+        let mut pre = Vec::new();
+        let ty = self.a.types.get(&e.id).cloned();
+        let is_call = matches!(&e.kind, ExprKind::Designator(d) if self.callee_of(d).is_some());
+        let place = match ty {
+            Some(Ty::Struct(_) | Ty::Str(_)) if is_call => {
+                let Some(Some(r)) = self.agg_call(e, &mut pre) else {
+                    self.unsupported(e.span, "this argument");
+                    return None;
+                };
+                let tmp = self.hidden_var(r.ty.clone());
+                let st = match r.ty {
+                    Ty::Str(cap) => St::StrSet { dst: tmp.clone(), cap, parts: vec![StrSrc::Ram(r)], keep: false },
+                    _ => St::Copy { dst: tmp.clone(), src: r.clone(), bytes: self.size_of(&r.ty) },
+                };
+                Self::push(&mut pre, st, e.span);
+                tmp
+            }
+            Some(Ty::Str(_) | Ty::Char) => {
+                let mut parts = Vec::new();
+                self.str_parts(e, &mut parts, &mut pre)?;
+                // Sized for the longest text it can hold.
+                let cap = match ty {
+                    Some(Ty::Str(n)) => n,
+                    _ => 1,
+                };
+                if cap > 255 {
+                    self.unsupported(e.span, "a string longer than 255 characters");
+                    return None;
+                }
+                let tmp = self.hidden_var(Ty::Str(cap));
+                Self::push(&mut pre, St::StrSet { dst: tmp.clone(), cap, parts, keep: false }, e.span);
+                tmp
+            }
+            _ => {
+                self.unsupported(e.span, "this argument");
+                return None;
+            }
+        };
+        self.pre.append(&mut pre);
+        Some(place)
     }
 
     /// `a = b` for two structures (or two arrays) of one type: a block copy.
@@ -2323,6 +2462,147 @@ impl<'a> Lowerer<'a> {
         load
     }
 
+    /// Character `k` (a hidden Byte) of a string place.
+    fn str_elem(p: &Place, k: &Place) -> Place {
+        let kx = conv(Ex::new(ExK::Load(k.clone()), 8, false), 16, false);
+        let idx = match &p.idx {
+            Some(prev) => Ex::new(ExK::Bin(BinKind::Add, prev.clone(), Box::new(kx)), 16, false),
+            None => kx,
+        };
+        Place { idx: Some(Box::new(idx)), ty: Ty::Char, ..p.clone() }
+    }
+
+    /// `Str(dst, n)`: the decimal text of `n`, cut off at the destination's size. Digits are taken from the low end
+    /// into a hidden String and copied back to front, so no digit count is needed first.
+    fn str_of_num(&mut self, args: &'a [Expr], span: Span, out: &mut Vec<S>) {
+        let ExprKind::Designator(dd) = &args[0].kind else {
+            self.unsupported(span, "this destination");
+            return;
+        };
+        let Some(mut dst) = self.place_idx_of(dd) else { return };
+        let Ty::Str(cap) = dst.ty else {
+            self.unsupported(span, "this destination");
+            return;
+        };
+        if dst.is_bit() {
+            self.unsupported(span, "this string");
+            return;
+        }
+        self.hoist_idx(&mut dst, span, out);
+        // A known number is text at compile time.
+        if let Some(CVal::Int(c)) = self.a.consts.get(&args[1].id) {
+            let text = c.to_string().into_bytes();
+            let take = text.len().min(cap as usize);
+            Self::push(out, St::StrSet { dst, cap, parts: vec![StrSrc::Lit(text[..take].to_vec())], keep: false }, span);
+            return;
+        }
+        let aty = self.a.types.get(&args[1].id).cloned().unwrap_or(BYTE);
+        let Some((aw, asg)) = nat(&aty) else {
+            self.unsupported(args[1].span, "this number");
+            return;
+        };
+        let Some(x) = self.expr(&args[1]) else { return };
+        // Digits are worked out at the argument's own width (a Byte needs no 32-bit division).
+        let w = aw.max(8);
+        let digits = match w {
+            8 => 3,
+            16 => 5,
+            _ => 10,
+        };
+        let uty = Ty::Int(w, false);
+        let (m, n, k, neg) = (self.hidden_var(uty.clone()), self.hidden_var(BYTE), self.hidden_var(BYTE), self.hidden_var(BYTE));
+        let buf = self.hidden_var(Ty::Str(digits + 1));
+        let load = |p: &Place, w: u8| Ex::new(ExK::Load(p.clone()), w, false);
+        let cmp = |c: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(c, Box::new(a), Box::new(b)));
+        let bin = |o: BinKind, a: Ex, b: Ex, w: u8| Ex::new(ExK::Bin(o, Box::new(a), Box::new(b)), w, false);
+        Self::push(out, St::Assign(neg.clone(), Ex::konst(0, 8, false)), span);
+        if asg {
+            let sv = self.hidden_var(Ty::Int(w, true));
+            Self::push(out, St::Assign(sv.clone(), conv(x, w, true)), span);
+            let svl = Ex::new(ExK::Load(sv.clone()), w, true);
+            let negative = vec![
+                S { st: St::Assign(neg.clone(), Ex::konst(1, 8, false)), span },
+                S { st: St::Assign(m.clone(), conv(Ex::new(ExK::Neg(Box::new(svl.clone())), w, true), w, false)), span },
+            ];
+            let positive = vec![S { st: St::Assign(m.clone(), conv(svl.clone(), w, false)), span }];
+            Self::push(out, St::If(vec![(cmp(CmpKind::Lt, svl, Ex::konst(0, w, true)), negative)], positive), span);
+        } else {
+            Self::push(out, St::Assign(m.clone(), conv(x, w, false)), span);
+        }
+        Self::push(out, St::Assign(n.clone(), Ex::konst(0, 8, false)), span);
+        let ten = || Ex::konst(10, w, false);
+        let digit = conv(bin(BinKind::Mod, load(&m, w), ten(), w), 8, false);
+        let body = vec![
+            S { st: St::Assign(Self::str_elem(&buf, &n), bin(BinKind::Add, digit, Ex::konst(48, 8, false), 8)), span },
+            S { st: St::Assign(m.clone(), bin(BinKind::Div, load(&m, w), ten(), w)), span },
+            S { st: St::Add(n.clone(), 1), span },
+        ];
+        Self::push(out, St::Repeat(body, cmp(CmpKind::Eq, load(&m, w), Ex::konst(0, w, false))), span);
+        if asg {
+            let sign = vec![
+                S { st: St::Assign(Self::str_elem(&buf, &n), Ex::konst(45, 8, false)), span },
+                S { st: St::Add(n.clone(), 1), span },
+            ];
+            Self::push(out, St::If(vec![(cmp(CmpKind::Ne, load(&neg, 8), Ex::konst(0, 8, false)), sign)], vec![]), span);
+        }
+        Self::push(out, St::Assign(k.clone(), Ex::konst(0, 8, false)), span);
+        let room = cmp(CmpKind::Lt, load(&k, 8), Ex::konst(cap.min(255), 8, false));
+        let more = cmp(CmpKind::Ne, load(&n, 8), Ex::konst(0, 8, false));
+        let copy = vec![
+            S { st: St::Add(n.clone(), u32::MAX), span },
+            S { st: St::Assign(Self::str_elem(&dst, &k), Ex::new(ExK::Load(Self::str_elem(&buf, &n)), 8, false)), span },
+            S { st: St::Add(k.clone(), 1), span },
+        ];
+        Self::push(out, St::While(Ex::boolean(ExK::AndAlso(Box::new(more), Box::new(room))), copy), span);
+        Self::push(out, St::Assign(Self::str_elem(&dst, &k), Ex::konst(0, 8, false)), span);
+    }
+
+    /// `Val(s)`: the LongInt a String starts with. The statements that read it run ahead of the statement it is in.
+    fn val_of_str(&mut self, arg: &'a Expr, span: Span) -> Option<Ex> {
+        let mut src = match (&arg.kind, self.a.consts.get(&arg.id)) {
+            (_, Some(CVal::Str(t))) => {
+                let bytes: Vec<u8> = t.bytes().take_while(|&b| b != 0).collect();
+                self.lit_place(bytes, arg.span)
+            }
+            (ExprKind::Designator(sd), _) if self.callee_of(sd).is_none() => self.place_idx_of(sd)?,
+            _ => self.agg_temp(arg)?,
+        };
+        if !matches!(src.ty, Ty::Str(_)) || src.is_bit() {
+            self.unsupported(span, "this string");
+            return None;
+        }
+        let mut pre = Vec::new();
+        self.hoist_idx(&mut src, span, &mut pre);
+        let (acc, i, c, neg) = (self.hidden_var(LONGINT), self.hidden_var(BYTE), self.hidden_var(BYTE), self.hidden_var(BYTE));
+        let byte = |p: &Place| Ex::new(ExK::Load(p.clone()), 8, false);
+        let cmp = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
+        let at = Self::str_elem(&src, &i);
+        Self::push(&mut pre, St::Assign(i.clone(), Ex::konst(0, 8, false)), span);
+        Self::push(&mut pre, St::Assign(neg.clone(), Ex::konst(0, 8, false)), span);
+        Self::push(&mut pre, St::Assign(c.clone(), byte(&at)), span);
+        let minus = vec![S { st: St::Assign(neg.clone(), Ex::konst(1, 8, false)), span }, S { st: St::Add(i.clone(), 1), span }];
+        let plus = vec![S { st: St::Add(i.clone(), 1), span }];
+        let arms = vec![(cmp(CmpKind::Eq, byte(&c), Ex::konst(45, 8, false)), minus), (cmp(CmpKind::Eq, byte(&c), Ex::konst(43, 8, false)), plus)];
+        Self::push(&mut pre, St::If(arms, vec![]), span);
+        Self::push(&mut pre, St::Assign(acc.clone(), Ex::konst(0, 32, true)), span);
+        // The digit is the character less '0'; anything else (the Null included) is 10 or more as a Byte.
+        let d = c.clone();
+        let next = || S { st: St::Assign(d.clone(), Ex::new(ExK::Bin(BinKind::Sub, Box::new(byte(&Self::str_elem(&src, &i))), Box::new(Ex::konst(48, 8, false))), 8, false)), span };
+        let a32 = Ex::new(ExK::Load(acc.clone()), 32, true);
+        let step = Ex::new(
+            ExK::Bin(BinKind::Add, Box::new(Ex::new(ExK::Bin(BinKind::Mul, Box::new(a32), Box::new(Ex::konst(10, 32, true))), 32, true)), Box::new(conv(byte(&d), 32, true))),
+            32,
+            true,
+        );
+        Self::push(&mut pre, next().st, span);
+        let body = vec![S { st: St::Assign(acc.clone(), step), span }, S { st: St::Add(i.clone(), 1), span }, next()];
+        Self::push(&mut pre, St::While(cmp(CmpKind::Lt, byte(&d), Ex::konst(10, 8, false)), body), span);
+        let flip = vec![S { st: St::Assign(acc.clone(), Ex::new(ExK::Neg(Box::new(Ex::new(ExK::Load(acc.clone()), 32, true))), 32, true)), span }];
+        Self::push(&mut pre, St::If(vec![(cmp(CmpKind::Ne, byte(&neg), Ex::konst(0, 8, false)), flip)], vec![]), span);
+        self.pre.append(&mut pre);
+        Some(Ex::new(ExK::Load(acc), 32, true))
+    }
+
     /// `Left`, `Mid` and `Right`: copy part of a String into another, cut off at the destination's size.
     /// Positions count from 0, as in `s(i)`. Written out as loops, so both back ends take it as it is.
     fn str_slice(&mut self, name: &str, args: &'a [Expr], span: Span, out: &mut Vec<S>) {
@@ -2361,15 +2641,7 @@ impl<'a> Lowerer<'a> {
         let mut counts = counts.into_iter();
         let byte = |p: &Place| Ex::new(ExK::Load(p.clone()), 8, false);
         let cmp = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
-        // Character `k` of a string place.
-        let elem = |p: &Place, k: &Place| -> Place {
-            let kx = conv(byte(k), 16, false);
-            let idx = match &p.idx {
-                Some(prev) => Ex::new(ExK::Bin(BinKind::Add, prev.clone(), Box::new(kx)), 16, false),
-                None => kx,
-            };
-            Place { idx: Some(Box::new(idx)), ty: Ty::Char, ..p.clone() }
-        };
+        let elem = Self::str_elem;
         let (i, k) = (self.hidden_var(BYTE), self.hidden_var(BYTE));
         let not_end = |i: &Place| cmp(CmpKind::Ne, byte(&elem(&src, i)), Ex::konst(0, 8, false));
         let lim = match name {
@@ -2423,10 +2695,7 @@ impl<'a> Lowerer<'a> {
         let mut pre = Vec::new();
         self.str_parts(l, &mut lp, &mut pre)?;
         self.str_parts(r, &mut rp, &mut pre)?;
-        if !pre.is_empty() {
-            self.unsupported(e.span, "a string element whose index reads an array or calls a routine, in a comparison");
-            return None;
-        }
+        self.pre.append(&mut pre);
         // An empty literal compares as the Null string; a concatenation is built into a hidden String first.
         let side = |this: &mut Self, v: Vec<StrSrc>, x: &Expr| match v.len() {
             0 => Some(StrSrc::Lit(Vec::new())),
@@ -2499,6 +2768,10 @@ impl<'a> Lowerer<'a> {
     }
 
     fn stmt(&mut self, s: &'a Stmt, ui: usize, out: &mut Vec<S>) {
+        self.with_pre(out, |this, out| this.stmt_inner(s, ui, out));
+    }
+
+    fn stmt_inner(&mut self, s: &'a Stmt, ui: usize, out: &mut Vec<S>) {
         let span = s.span;
         match &s.kind {
             StmtKind::Assign { target, value } => {
@@ -2525,8 +2798,13 @@ impl<'a> Lowerer<'a> {
             StmtKind::Call(d) => self.call_stmt(d, span, out),
             StmtKind::If { arms, otherwise } => {
                 let mut a = Vec::new();
-                for (c, b) in arms {
+                for (i, (c, b)) in arms.iter().enumerate() {
+                    let before = self.pre.len();
                     let Some(cv) = self.expr(c) else { return };
+                    if i > 0 && self.pre.len() > before {
+                        self.unsupported(c.span, "a String or structure function result, Str or Val in an ElseIf condition");
+                        return;
+                    }
                     a.push((cv, self.block(b, ui)));
                 }
                 let o = otherwise.as_ref().map(|b| self.block(b, ui)).unwrap_or_default();
@@ -2540,18 +2818,31 @@ impl<'a> Lowerer<'a> {
             StmtKind::Select { subject, cases, otherwise } => self.select(subject, cases, otherwise.as_deref(), ui, span, out),
             StmtKind::While { cond, body } => {
                 let Some(cv) = self.expr(cond) else { return };
+                let mut cond_pre = std::mem::take(&mut self.pre);
                 let b = self.block(body, ui);
-                Self::push(out, St::While(cv, b), span);
+                if cond_pre.is_empty() {
+                    Self::push(out, St::While(cv, b), span);
+                } else {
+                    // The condition needs statements run on every pass: `While True` with the test at the top.
+                    let leave = Ex::boolean(ExK::NotB(Box::new(cv)));
+                    Self::push(&mut cond_pre, St::If(vec![(leave, vec![S { st: St::Break, span }])], vec![]), span);
+                    cond_pre.extend(b);
+                    Self::push(out, St::While(Ex::konst(1, 8, false), cond_pre), span);
+                }
             }
             StmtKind::Repeat { body, until } => {
                 let b = self.block(body, ui);
                 let Some(cv) = self.expr(until) else { return };
+                if !self.pre.is_empty() {
+                    self.unsupported(until.span, "a String or structure function result, Str or Val in an Until condition");
+                    return;
+                }
                 Self::push(out, St::Repeat(b, cv), span);
             }
             StmtKind::For { var, from, to, step, body } => self.for_stmt(var, from, to, step.as_ref(), body, ui, span, out),
             StmtKind::Break => Self::push(out, St::Break, span),
             StmtKind::Continue => Self::push(out, St::Continue, span),
-            StmtKind::Exit => Self::push(out, St::Return, span),
+            StmtKind::Exit => self.push_return(out, span),
             StmtKind::GoTo(l) if self.in_save > 0 => self.unsupported(l.span, "Goto inside Save"),
             StmtKind::Label(l) if self.in_save > 0 => self.unsupported(l.span, "a label inside Save"),
             StmtKind::GoTo(l) => {
@@ -2571,6 +2862,10 @@ impl<'a> Lowerer<'a> {
                             if let Some((sym, _, sp)) = self.callee_of(d) {
                                 if let Some(f) = self.func_of(sym, sp) {
                                     its.push(SaveIt::Func(f));
+                                    // The static copy of a `Reentrant` structure or String result belongs to no frame.
+                                    if let Some(o) = self.sym_func[&sym].out {
+                                        its.push(SaveIt::Var(o));
+                                    }
                                 }
                             } else if let Some(p) = self.place_of(d) {
                                 match p.base {
@@ -2597,6 +2892,17 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+    }
+
+    /// A return from the routine being lowered. A `Reentrant` routine with a structure or String result leaves it
+    /// in its static copy first.
+    fn push_return(&self, out: &mut Vec<S>, span: Span) {
+        if let Some((rv, ov)) = self.cur_out {
+            let ty = self.vars[rv].ty.clone();
+            let at = |v: VarId| Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: ty.clone() };
+            Self::push(out, St::Copy { dst: at(ov), src: at(rv), bytes: self.vars[rv].bytes }, span);
+        }
+        Self::push(out, St::Return, span);
     }
 
     fn call_stmt(&mut self, d: &'a Designator, span: Span, out: &mut Vec<S>) {
@@ -2769,6 +3075,7 @@ impl<'a> Lowerer<'a> {
             }
             "terminate" => Self::push(out, St::Halt, span),
             "left" | "mid" | "right" => self.str_slice(&name, args, span, out),
+            "str" => self.str_of_num(args, span, out),
             n => self.unsupported(span, &format!("the intrinsic `{n}`")),
         }
     }

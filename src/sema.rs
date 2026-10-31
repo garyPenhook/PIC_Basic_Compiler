@@ -251,7 +251,24 @@ impl Ctx {
 }
 
 const CONVERSIONS: &[&str] = &["byte", "word", "integer", "longword", "longint", "shortint", "float", "boolean", "bit", "char"];
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right"];
+/// `Val` of a text: an optional sign and decimal digits, ending at the first other character; no digits is 0.
+/// Wraps like the code the compiler writes for it (32 bits).
+pub fn val_of(text: &str) -> i32 {
+    let b = text.as_bytes();
+    let (neg, mut i) = match b.first() {
+        Some(b'-') => (true, 1),
+        Some(b'+') => (false, 1),
+        _ => (false, 0),
+    };
+    let mut acc = 0i32;
+    while let Some(c @ b'0'..=b'9') = b.get(i) {
+        acc = acc.wrapping_mul(10).wrapping_add(i32::from(c - b'0'));
+        i += 1;
+    }
+    if neg { acc.wrapping_neg() } else { acc }
+}
+
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right", "str", "val"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -1233,8 +1250,8 @@ impl<'p, 'd> Sema<'p, 'd> {
             };
             let aggregate = matches!(base, Ty::Struct(_) | Ty::Str(_));
             let mode = if (p.is_array || aggregate) && !p.mode_explicit { ParamMode::ByRef } else { p.mode };
-            if (p.is_array || aggregate) && mode == ParamMode::ByVal {
-                self.diags.error("E-PARAM", p.name.span, format!("`{}`: arrays, strings and structures are passed ByRef or ByRefConst", p.name.name));
+            if p.is_array && mode == ParamMode::ByVal {
+                self.diags.error("E-PARAM", p.name.span, format!("`{}`: arrays are passed ByRef or ByRefConst", p.name.name));
                 ok = false;
             }
             if mode == ParamMode::ByRefConst && !(p.is_array || aggregate) {
@@ -1245,6 +1262,9 @@ impl<'p, 'd> Sema<'p, 'd> {
                 seen_default = true;
                 if mode != ParamMode::ByVal {
                     self.diags.error("E-PARAM", p.name.span, "only ByVal parameters can have a default value");
+                    ok = false;
+                } else if aggregate {
+                    self.diags.error("E-PARAM", p.name.span, "a String or structure parameter cannot have a default value");
                     ok = false;
                 } else if let Some(ei) = self.check_expr(def) {
                     if ei.val.is_none() {
@@ -2618,7 +2638,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                     let const_ok = p.mode == ParamMode::ByRefConst;
                     let is_lit_str = const_ok && ei.lit && matches!(ei.ty, Ty::Str(_));
                     if !is_lit_str {
-                        let place_ok = if const_ok { ei.place != Place::None } else { ei.place == Place::Var };
+                        // A ByRefConst String or structure can also be a value worked out on the spot (a function result, a concatenation).
+                        let place_ok = if const_ok { ei.place != Place::None || matches!(ei.ty, Ty::Str(_) | Ty::Struct(_)) } else { ei.place == Place::Var };
                         if !place_ok {
                             self.diags.error("E-PARAM", a.span, format!("argument `{}` is passed {}; give a {}", p.name, if const_ok { "ByRefConst" } else { "ByRef" }, if const_ok { "constant array or string" } else { "variable" }));
                             ok = false;
@@ -2747,6 +2768,35 @@ impl<'p, 'd> Sema<'p, 'd> {
                     }
                 }
                 call(Ty::Void)
+            }
+            "str" => {
+                // `Str(dst, n)`: the decimal text of a whole number.
+                if !want(self, 2) {
+                    return None;
+                }
+                let dst = self.lvalue_arg(&args[0], d.head.name.as_str())?;
+                if !matches!(dst.ty, Ty::Str(_)) {
+                    return self.err("E-TYPE", args[0].span, format!("the first argument of `{}` must be a String variable, found {}", d.head.name, dst.ty));
+                }
+                let v = self.check_expr(&args[1])?;
+                if !v.ty.is_numeric_int() {
+                    return self.err("E-TYPE", args[1].span, format!("`{}` needs a whole number to write as text, found {}", d.head.name, v.ty));
+                }
+                call(Ty::Void)
+            }
+            "val" => {
+                // `Val(s)`: the whole number a String starts with, as a LongInt.
+                if !want(self, 1) {
+                    return None;
+                }
+                let v = self.check_expr(&args[0])?;
+                if !matches!(v.ty, Ty::Str(_)) {
+                    return self.err("E-TYPE", args[0].span, format!("`{}` needs a String, found {}", d.head.name, v.ty));
+                }
+                Some(match &v.val {
+                    Some(CVal::Str(t)) => EI { val: Some(CVal::Int(i128::from(val_of(t.split('\0').next().unwrap_or(""))))), ..EI::new(LONGINT) },
+                    _ => EI::new(LONGINT),
+                })
             }
             "terminate" => {
                 if !want(self, 0) {

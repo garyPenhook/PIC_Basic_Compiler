@@ -154,15 +154,10 @@ fn string_fields_and_elements_picked_at_run_time_build() {
         let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
         assert!(r.status.success(), "{stmt}: {}", String::from_utf8_lossy(&r.stderr));
     }
-    // An index that itself reads an array is worked out first in an assignment.
-    std::fs::write(&src, format!("{prog}n(k(i)) = s\ns = n(k(i))\n")).unwrap();
+    // An index that itself reads an array is worked out first, in an assignment and in a comparison.
+    std::fs::write(&src, format!("{prog}n(k(i)) = s\ns = n(k(i))\nIf n(k(i)) = s Then\n i = 2\nEnd If\n")).unwrap();
     let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    // In a comparison it would disturb the string pointer: reported, not miscompiled.
-    std::fs::write(&src, format!("{prog}If n(k(i)) = s Then\n i = 2\nEnd If\n")).unwrap();
-    let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
-    assert!(!r.status.success());
-    assert!(String::from_utf8_lossy(&r.stderr).contains("E-BACKEND"));
 }
 
 /// Word addresses of the `;SYM name 0xADDR` lines (byte addresses) in generated assembly.
@@ -584,7 +579,7 @@ const P16_PARTS: [&str; 2] = ["16F17126", "16F17146"];
 /// `Clock` lines changed (the others use PIC18 registers, PIC18 assembly or cycle counts of a 64 MHz part).
 const P16_PORTABLE: &[&str] = &[
     "absminmax", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
-    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
+    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_oled", "lib_aht30", "lib_strings",
     "float_basic", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge",
 ];

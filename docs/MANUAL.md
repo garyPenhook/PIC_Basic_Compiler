@@ -508,6 +508,8 @@ Clear(s)
 Left(t, s, 3)                          ' first 3 characters of s into t
 Right(t, s, 3)                         ' last 3 characters
 Mid(t, s, 2, 3)                        ' 3 characters from position 2 (zero-based, like s(2)); Mid(t, s, 2) takes the rest
+Str(t, n)                              ' the decimal text of a whole number
+n = Val(s)                             ' the whole number a String starts with (a LongInt)
 ```
 
 `Left`, `Mid` and `Right` are statements, not functions: the destination comes first and must be a `String`
@@ -518,12 +520,36 @@ counts as too large. Destination and source can be the same string. They are ord
 declaration of `Left`, `Mid` or `Right` replaces. They are written out as loops, so a call costs 30 to 55 words on
 the PIC18; put repeated uses in a routine.
 
+`Str(dst, n)` is a statement too: it writes the decimal text of the whole number `n` (any integer type; a
+negative one starts with `-`) into the `String` variable `dst`, cut off at its size and ended with `Null`.
+`Val(s)` is a function that returns a `LongInt`: an optional `+` or `-`, then decimal digits up to the first other
+character (or the `Null`). Text with no digits gives 0, a value too big for 32 bits wraps, and a literal is worked
+out at compile time. Convert the result for a narrower variable (`w = Word(Val(s))`). Both are written out as loops
+(`Str` of a Byte is about 60 words on the PIC18, of a Word 75 plus the 16-bit divide, of a LongInt 165 plus the
+32-bit divide; `Val` about 100), so put repeated uses in a routine. A program's own `Str` or `Val` replaces them.
+Neither handles a `Float`.
+
+Oddities to know about:
+
+* A String or structure function result is copied into a hidden object *before* the statement it is in runs, so
+  in `x = F() + G(Name(1))` the call of `Name` happens first. On the right of `And` or `Or` it runs only when the
+  left side does not decide the result. In an `ElseIf` or `Until` condition it is `E-BACKEND`; in a `While`
+  condition it is fine (re-run on every pass).
+* The same goes for an array-read index on a String element in a comparison (`If n(k(i)) = s`) and for `Val`.
+* A `ByVal` String or structure costs the callee a block copy on entry; use `ByRefConst` when it only reads.
+* A `Reentrant` function returning a String or structure keeps a second, static copy of its result (its size
+  in RAM again) and copies into it on every return. `Save(F)` covers that copy too.
+* `Val` stops at the first character that is not a digit (no leading spaces, no decimal point, no `0x`), and
+  wraps past 32 bits. `Str` cuts the text off at the destination's size, keeping the leading characters
+  (`Str` of 65535 into a `String(3)` gives `655`). Neither handles a `Float`.
+* A concatenation passed as an argument is built in a hidden String of its full size (at most 255).
+
 Assignments are cut off at the declared size and always terminated with `Null`. There is no run-time
 bounds check on `s(i)`. String literals live in program memory and are read with `TBLRD`.
-A `String` parameter is `ByRef` (size must match the callee's `String(n)` exactly) or `ByRefConst`
-(any size, also accepts a literal).
+A `String` parameter is `ByRef` (size must match the callee's `String(n)` exactly), `ByRefConst`
+(any size, also accepts a literal, a concatenation or a function result) or `ByVal` (any size, cut off at the parameter's size).
 
-`Len(s)` is in the `strings` module (`Include "strings"`; see its section). `Left`, `Mid` and `Right` are built in (below). Not supported: `Str`, `Val`, `Print`. Output of text is done by the library routines
+`Len(s)` is in the `strings` module (`Include "strings"`; see its section). `Left`, `Mid`, `Right`, `Str` and `Val` are built in (below). Not supported: `Print`. Output of text is done by the library routines
 (`SerialWrite`, `LcdWrite`, `OledWrite`).
 
 ### Structures and unions
@@ -647,12 +673,22 @@ EndProc
 
 * Parameters are **by value** by default for scalars; arrays, `String` and structures are `ByRef`
   (or `ByRefConst`). A `ByRef` argument must be a variable, not an expression. A `ByRef` parameter
-  can be a Byte/Word/etc. scalar, an array, a String or a structure.
+  can be a Byte/Word/etc. scalar, an array, a String or a structure. A `String` or structure can also be
+  written `ByVal`: the caller passes its address and the routine copies it into its own object first thing, so
+  changing the parameter leaves the caller's variable alone (the copy costs the routine one block copy; a `ByVal`
+  String of any size is accepted and cut off at the parameter's size). A `ByVal` array is not allowed, and a
+  `String` or structure parameter has no default value.
 * A default value is allowed only on a trailing `ByVal` parameter, and must be a constant.
-* A function returns a scalar, a structure or a `String` (not an array, and a `Reentrant` function only a scalar).
-  A structure or String result is left in the function's frame and copied out at once, so it can be used as the whole
-  right side of an assignment (`p = MakePoint(3)`, `s = Name(1)`) or as a `+` operand in a String assignment
-  (`s = "<" + Name(1) + ">"`); it cannot be passed on as an argument or compared directly. A `ByRefConst` parameter can be a
+* A function returns a scalar, a structure or a `String` (not an array). A structure or String result is left in the
+  function's frame and copied out at once, so it can be used as the whole right side of an assignment
+  (`p = MakePoint(3)`, `s = Name(1)`), as a `+` operand in a String assignment (`s = "<" + Name(1) + ">"`), as an argument
+  to a `ByVal` or `ByRefConst` parameter (`Show(MakePoint(3))`, `n = Count(Name(1) + "!")`) and in a String comparison
+  (`If Name(1) = "cde" Then`). Such a result is copied into a hidden object of the caller's before the statement
+  runs, so it is not evaluated at its place in the expression: in `x = F() + G(Name(1))` the call of `Name` comes first.
+  On the right of `And` or `Or` it still runs only when the left side does not decide the result. In the condition of
+  an `ElseIf` or a `Repeat ... Until` it is not supported (`E-BACKEND`); a `While` condition is fine. A `Reentrant` function
+  returns a structure or String the same way; each return copies `Result` into a static object of the function's
+  (its size in RAM again) that a recursive call's frame restore leaves alone. A `ByRefConst` parameter can be a
   structure, and a `ByRef` or `ByRefConst` array can hold structures or strings. Calling a function as a
   statement discards its result.
 * **No recursion** (`E-RECURSION`). Because the call graph is acyclic, the compiler gives every
@@ -4307,8 +4343,8 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 | `W-REGNAME` | a declaration hides a register name |
 
 `E-BACKEND` ("not supported by the back end yet") means the front end accepted a rare form that the
-code generator does not handle: a `Reentrant` routine, a bit passed `ByRef`, a call inside the index
-of a bit, a function result of a String or structure used anywhere but as an assignment, and similar. The compiler
+code generator does not handle: a bit passed `ByRef`, a call inside the index
+of a bit, a String or structure function result in an `ElseIf` or `Until` condition, and similar. The compiler
 reports these rather than miscompiling them.
 
 ---

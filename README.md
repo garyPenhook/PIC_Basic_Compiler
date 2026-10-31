@@ -104,10 +104,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 
 ## Still to do
 
-* **Language:** a few rare string and structure forms are still missing (the compiler reports these
-  clearly rather than miscompiling them): a String or structure function result as an argument, in a comparison or
-  from a `Reentrant` function, `ByVal` structures and strings, `Str`/`Val`. `Reentrant` recursion is limited by the 31-level hardware
-  stack, and there is no forward declaration, so mutual recursion cannot be written.
+* **Language:** `Reentrant` recursion is limited by the 31-level hardware stack, and there is no forward
+  declaration, so mutual recursion cannot be written.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
   Serial output, PWM waveforms, I2C and SPI traffic, external timer inputs and the second EUSART
   are the main things that need a hardware run. `docs/MANUAL.md` Appendix B is the bench checklist.
