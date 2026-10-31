@@ -1037,7 +1037,9 @@ impl<'p, 'd> Sema<'p, 'd> {
                 }
             }
             let bytes = self.size_of(&vty);
-            let is_global = self.scopes.is_empty();
+            // Only the program's own globals are counted for `E-RAM` here: a module's variables are placed by the back end only
+            // when something uses them (the `oled` frame buffer is 1 KB), and an overflow there is reported as `E-RAM` as well.
+            let is_global = self.scopes.is_empty() && self.proj.units[self.unit].unit.kind != UnitKind::Module;
             let bit_array = match &vty {
                 Ty::Array(e, n) if matches!(**e, Ty::Bit | Ty::Bool) => Some(*n),
                 _ => None,

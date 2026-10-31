@@ -153,7 +153,7 @@ fn main() -> ExitCode {
         }
         let g = generate(p, &target);
         for (span, msg) in &g.errors {
-            diags.error("E-BACKEND", *span, msg.clone());
+            diags.error(if msg.starts_with("out of data RAM") { "E-RAM" } else { "E-BACKEND" }, *span, msg.clone());
         }
         if g.errors.is_empty() && g.stack_levels > target.hw_stack {
             diags.error("E-STACK", basil::diag::Span::default(), format!("the hardware return stack can need {} levels (calls, helpers and interrupt entries) but the device has {}", g.stack_levels, target.hw_stack));

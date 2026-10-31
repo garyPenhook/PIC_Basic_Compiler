@@ -964,3 +964,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `ByRef`/`ByRefConst` arrays of structures can be passed to an `Extern` routine (`struct T *`); `lower::carg` already handled the pointer type, only the check in `extern_ok` refused it.
 - Tests: `tests/exec_c/c_isr_call.bas` (one level; fails with the masking switched off, as checked), `c_isr_dual_call.bas` (two priorities, both handlers and the main program call C) on the PIC18F27Q10 and 18F16Q41; `c_args.bas` gained `sumarr`/`fillarr`. `tests/backend.rs`: a handler calling C inside `Save` builds, outside `Save` is `E-ISR-CALL`.
 - Not done: `Export` array parameters, structures/arrays by value, hardware runs.
+
+## PIC16F13145 family: Oled without the frame buffer, E-RAM for module variables (done 2026-10-31, 0.1.86)
+- `Include "oled"` alone stopped with `E-RAM` on the PIC16F13145 family (the 1 KB frame buffer plus the module's variables passed the 1 KB of RAM) although the back end never places a variable nothing uses. `sema::check_ram` now counts only the program's own globals; a module's variables are checked by the back end's layout, whose "out of data RAM" error is reported as `E-RAM` (was `E-BACKEND`). Text, `OledGoto`, `OledData`, `OledBitmap` build on the part (1560 words, 81 bytes of RAM for I2C text); a pixel command is refused with `E-RAM`.
+- Test: `tests/exec_p13/lib_oled_text.bas` (builds and runs in the simulator on the PIC16F13145).
