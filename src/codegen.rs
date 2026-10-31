@@ -2209,21 +2209,28 @@ impl<'p> Gen<'p> {
         self.ins(format!("movff {sfr}, {}", dst.sym));
     }
 
-    /// A multiplier `m` and shift `s` with `n * m >> s == n / k` for every byte `n`, `m` a byte and `s` from 8 to 15.
-    /// The smallest shift wins, because each bit past 8 costs a `rrncf`.
-    fn recip_byte(k: u32) -> Option<(u32, u32)> {
+    /// A multiplier `m`, shift `s` from 8 to 15 and a flag with `(n * m [+ m]) >> s == n / k` for every byte `n`, `m` a byte.
+    /// The flag says the product gets `m` added (`m = floor(2^s / k)`), for the divisors such as 7 whose rounded-up
+    /// multiplier does not fit a byte. The plain form and the smallest shift win, because each bit past 8 costs a `rrncf`.
+    fn recip_byte(k: u32) -> Option<(u32, u32, bool)> {
         if !(3..=255).contains(&k) {
             return None;
         }
-        (8..=15).find_map(|s| {
+        let up = (8..=15).find_map(|s| {
             let m = (1u32 << s).div_ceil(k);
-            (m <= 255 && (0..=255u32).all(|n| (n * m) >> s == n / k)).then_some((m, s))
+            (m <= 255 && (0..=255u32).all(|n| (n * m) >> s == n / k)).then_some((m, s, false))
+        });
+        up.or_else(|| {
+            (8..=15).find_map(|s| {
+                let m = (1u32 << s) / k;
+                (m != 0 && m <= 255 && (0..=255u32).all(|n| (n * m + m) >> s == n / k)).then_some((m, s, true))
+            })
         })
     }
 
     /// Unsigned Byte `l / k` and `l Mod k` with a constant `k`: `mullw m` and a shift of `PRODH` instead of the helper.
     fn div_byte_const(&mut self, op: BinKind, l: &Ex, k: u32) -> bool {
-        let Some((m, s)) = Self::recip_byte(k) else { return false };
+        let Some((m, s, inc)) = Self::recip_byte(k) else { return false };
         let src = match self.simple(l) {
             // A volatile variable is read once: `Mod` would otherwise see two different values.
             Some(Src::Mem(mem, _)) if !mem.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile) => Some(mem),
@@ -2241,6 +2248,13 @@ impl<'p> Gen<'p> {
             }
         };
         self.ins(format!("mullw {m}"));
+        if inc {
+            // (n + 1) * m is at most 256 * m, so the sum fits the product registers and only PRODH is used.
+            self.ins(format!("movlw {m}"));
+            self.ins("addwf PRODL, w, c");
+            self.ins("movlw 0");
+            self.ins("addwfc PRODH, f, c");
+        }
         match s - 8 {
             0 => self.ins("movf PRODH, w, c"),
             4 => {
