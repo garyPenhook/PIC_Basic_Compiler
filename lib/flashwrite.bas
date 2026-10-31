@@ -49,6 +49,12 @@ Module Flashwrite
 ' write do not write again before a Reset. A written word must be erased. The CPU stalls until each operation ends (about 2 ms for a row write), so there is no wait on WR.
 ' FlashUpdateWord keeps the row in a 64-byte RAM image (Example 15-4) because there is no sector buffer. The errata (DS80001009E) show nothing for
 ' the NVM. Interrupts are off from before the address is loaded to the end of the operation.
+'
+' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, section 11.4; the same branch, `Not _has(PRODL)`): the same row of 32 words and 32 write latches [Table 11-1],
+' the same NVMCON1 bits and the same flow [Figure 11-5: load the latches with LWLO = 1 and the unlock, then write them with LWLO = 0 and the unlock; a row erase is FREE, WREN
+' and the unlock] and no NOPs after the WR bit [11.4.2 note]. NVMADRH bit 7 is unimplemented and reads 1 [Register 11-4], so NVMADRH reads back 80h above the row address bits.
+' Errata (DS80000666H item 4.2, DS80000667E 1.2.2, DS80000668L 4.2): WRERR may be set again by a Reset after an interrupted write; FlashWriteWord clears NVMCON1 and reports
+' success only by the read-back. The LF parts may fail to write below 2.2 V at -40 C (item 4.1) and may not use NVM below 2.0 V at 25 C or less (item 5.3).
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim NvmErr As NVMCON1.7

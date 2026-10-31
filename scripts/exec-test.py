@@ -52,7 +52,9 @@ for src in a.files:
         text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, text, count=1, flags=re.M | re.I)
         if a.device.startswith("16F"):
             # Enhanced mid-range part: its own configuration names, and 32 MHz is its fastest internal oscillator.
-            text = re.sub(r"^[ \t]*Config[ \t].*$", "Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON", text, flags=re.M | re.I)
+            # The PIC16F183xx parts call the 32 MHz power-up setting HFINT32 (2x PLL), not HFINTOSC_32MHz.
+            rst = "HFINT32" if a.device.startswith("16F183") else "HFINTOSC_32MHz"
+            text = re.sub(r"^[ \t]*Config[ \t].*$", f"Config FEXTOSC = OFF, RSTOSC = {rst}, WDTE = OFF, LVP = ON", text, flags=re.M | re.I)
             text = re.sub(r"^(\s*Clock\s*=\s*)64\b", lambda m: m.group(1) + "32", text, flags=re.M | re.I)
         for cf in re.findall(r'^\s*CFile\s+"([^"]+)"', text, re.M | re.I):
             shutil.copy(os.path.join(os.path.dirname(src), cf), work)

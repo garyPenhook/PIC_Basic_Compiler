@@ -9,6 +9,11 @@ Module System
 ' is reported until it is cleared. The BOR flag is unknown after a power-on Reset (Table 9-3,
 ' "x"); POR is therefore tested first.
 '
+' PIC16F183xx (DS40001839E and the other three data sheets, chapters 6 and 7; chosen with `_has(ADCON0.CHS)`): PCON0 has no window violation flag (bit 5 is unimplemented, Table 4-4 p.46
+' and Table 6-5 p.77): the test for cause 5 is left out there, because the bit would read 0 and report a window violation for every Reset. Clock sources are COSC 110 = HFINTOSC
+' with OSCFRQ.HFFRQ 0 = 1, 1 = 2, 3 = 4, 4 = 8, 5 = 12, 6 = 16 MHz and 7 or more = 32 MHz, and COSC 000 = HFINTOSC with the 2x PLL with HFFRQ 4, 5, 6 = 16, 24, 32 MHz [Table 7-1, Register 7-6 p.93];
+' the 32 MHz power-up setting RSTOSC = HFINT32 is the second kind.
+'
 ' Clock check: the library modules and DelayUs/DelayMs compute from the compile-time `Clock`; the
 ' module does not change the clock at run time (that would make every one of them wrong), it
 ' reads what the oscillator really does and compares it with `Clock`.
@@ -28,8 +33,10 @@ Public Function SysResetCause() As Byte
         Result = 7
     ElseIf (f And 64) <> 0 Then
         Result = 8
+#if _has(PCON0.nWDTWV)
     ElseIf (f And 32) = 0 Then
         Result = 5
+#endif
     ElseIf (f And 16) = 0 Then
         Result = 4
     ElseIf (f And 8) = 0 Then
@@ -57,6 +64,40 @@ End Sub
 Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq As Byte) As LongWord
     Dim mhz As Byte
     Result = 0
+#if _has(ADCON0.CHS)
+    If (cosc <> 6 And cosc <> 0) Or cdiv > 9 Then
+        Exit
+    End If
+    mhz = 0
+    If cosc = 6 Then
+        If hffrq = 0 Then
+            mhz = 1
+        ElseIf hffrq = 1 Then
+            mhz = 2
+        ElseIf hffrq = 3 Then
+            mhz = 4
+        ElseIf hffrq = 4 Then
+            mhz = 8
+        ElseIf hffrq = 5 Then
+            mhz = 12
+        ElseIf hffrq = 6 Then
+            mhz = 16
+        ElseIf hffrq >= 7 Then
+            mhz = 32
+        End If
+    Else
+        If hffrq = 4 Then
+            mhz = 16
+        ElseIf hffrq = 5 Then
+            mhz = 24
+        ElseIf hffrq = 6 Then
+            mhz = 32
+        End If
+    End If
+    If mhz <> 0 Then
+        Result = (LongWord(mhz) * 1000000) >> cdiv
+    End If
+#else
     If cosc <> 6 Or cdiv > 9 Then
         Exit
     End If
@@ -90,6 +131,7 @@ Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq
     If mhz <> 0 Then
         Result = (LongWord(mhz) * 1000000) >> cdiv
     End If
+#endif
 End Function
 
 ' The system clock in Hz as the oscillator is set now (SysClockFrom of OSCCON2 and OSCFRQ).

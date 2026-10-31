@@ -31,6 +31,10 @@ Module I2c
 ' is waited for (bounded, status 1). `hz` is 2000..400000; each half period is DelayUS(ceil(500000 / hz)) plus
 ' the time of the routines, so the real clock is lower, much lower on a slow `Clock`. Arbitration: SDA is read
 ' back after each bit sent; a difference is status 2.
+' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapters 13 and 30; chosen with `_has(ADCON0.CHS)`): the same MSSP1 host [Register 30-2: SSPM = 1000, SSP1ADD 0..2 not
+' supported], with the pins numbered as on the PIC16F17126/46 (RA0..RA5 except RA3, RB4..RB7 on the 20-pin parts, RC0..RC5 on the 14-pin parts and RC0..RC7 on the 20-pin parts),
+' `RxyPPS` 18h (24) = SCL1 and 19h (25) = SDA1 [Register 13-2], SSP1IF and BCL1IF in PIR1 bits 3 and 2. The errata for I2C concern only the LF parts (acknowledge failure,
+' DS80000667E 1.4.1, DS80000668L 6.2) and the SMBus VIL level (DS80000666H 5.2); nothing for the F parts at the current silicon revision.
 ' PIC16F17126/46 (DS40002343F chapters 18 and 31; chosen with `Not _has(PRODL)`): the MSSP1 host of the Q10 below, with pins numbered 0..23 as
 ' on the Q41 (RA0..RA5 except RA3, RB4..RB7 on the 20-pin part, RC0..RC7), `RxyPPS` 27 = SCL1 and 28 = SDA1 [Table 18-2], SSP1IF and BCL1IF in
 ' PIR5 bits 2 and 3. Erratum 1.2.1 (spurious start and stop flags when I2C is enabled, silicon B0) does not matter here: SSP1IF is cleared
@@ -328,9 +332,16 @@ End Function
 #if _has(PRODL)
 Dim FlagSsp As PIR3.0
 Dim FlagBcl As PIR3.1
+#elseif _has(ADCON0.CHS)
+Dim FlagSsp As PIR1.3
+Dim FlagBcl As PIR1.2
+Const SclCode = 24
+Const SdaCode = 25
 #else
 Dim FlagSsp As PIR5.2
 Dim FlagBcl As PIR5.3
+Const SclCode = 27
+Const SdaCode = 28
 #endif
 Dim BitRcen As SSP1CON2.3
 Dim BitAckdt As SSP1CON2.5
@@ -553,8 +564,8 @@ Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As By
     SetPps(scl, 15)
     SetPps(sda, 16)
 #else
-    SetPps(scl, 27)
-    SetPps(sda, 28)
+    SetPps(scl, SclCode)
+    SetPps(sda, SdaCode)
 #endif
     SSP1ADD = Byte(d)
     SSP1CON2 = 0

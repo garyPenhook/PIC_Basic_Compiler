@@ -12,9 +12,28 @@ Module Timer
 ' Clock source is FOSC/4 [Table 19-1, T0CS = 010]. In 8-bit mode the timer counts 0..period and
 ' then restarts, so one overflow takes (period + 1) * 2^prescale instruction cycles
 ' (prescale 0..15 selects 1:1 to 1:32768 [T0CON1]).
+'
+' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapters 26, 27 and 28; chosen with `#if _has(T1CON.TMR1CS)`): Timer0 is the same. Timer1 has no
+' clock-select register: T1CON = TMR1CS<1:0> (bits 7-6) | T1CKPS<1:0> (5-4) | T1SOSC | T1SYNC | TMR1ON [Register 27-1], T1GCON holds the gate source
+' T1GSS<1:0> [Register 27-2], and there is no RD16 bit (bit 1 is unimplemented, although 27.4 describes it), so Timer1Read reads TMR1H twice. Timer2
+' is the older one: T2CON = T2OUTPS<3:0> (6-3) | TMR2ON (2) | T2CKPS<1:0> (1-0) with prescalers 1, 4, 16, 64 [Register 28-1]; PR2 and TMR2; no hardware-limit
+' modes, so there are no T2Mode*/T2Rst* constants and no Timer2StartLimit. The Timer2 prescale argument is 0..3 for 1:1, 1:4, 1:16, 1:64. The flags are in PIR1 (TMR1IF bit 0, TMR2IF
+' bit 1, TMR1GIF bit 7) and PIR0 (TMR0IF bit 5). No Timer1 secondary oscillator or Timer0 clock source constants are offered.
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
-#if _has(PIR3.TMR1IF)
+#if _has(T1CON.TMR1CS)
+' Timer1 clock sources, the TMR1CS field of T1CON [DS40001839E Table 27-2 p.285]. T1ClkPin counts rising edges on the pin selected by T1CKIPPS.
+Public Const T1ClkFosc4 = 0
+Public Const T1ClkFosc = 1
+Public Const T1ClkPin = 2
+Public Const T1ClkLfIntOsc = 3
+
+' Timer1 gate sources, the T1GSS field of T1GCON [Register 27-2 p.294]. T1GatePin is the pin selected by T1GPPS; the comparator outputs may be synchronised.
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateCmp1 = 2
+Public Const T1GateCmp2 = 3
+#elseif _has(PIR3.TMR1IF)
 ' Timer1 clock sources, the CS field of T1CLK [DS40002214G Table 25-4]. T1ClkPin counts rising edges on the
 ' pin selected by T1CKIPPS; T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise. T1ClkMfIntOsc is the
 ' 500 kHz MFINTOSC, T1ClkMfIntOsc32 the 32 kHz one.
@@ -93,6 +112,7 @@ Public Const T1GateCmp1 = 12
 Public Const T1GateCmp2 = 13
 #endif
 
+#if Not _has(T1CON.TMR1CS)
 ' Timer2 operating modes, the MODE field of T2HLT [Table 21-3]. The "Gate" and "Reset" modes
 ' keep the free-running period; the "OneShot" modes stop at the period match and clear ON;
 ' the "Mono" modes stop at the period match but leave ON set. Edge and level are those of the
@@ -118,8 +138,11 @@ Public Const T2ModeMonoFalling = 18
 Public Const T2ModeMonoAnyEdge = 19
 Public Const T2ModeOneShotLevelHigh = 22
 Public Const T2ModeOneShotLevelLow = 23
+#endif
 
-#if _has(PIR3.TMR1IF)
+#if _has(T1CON.TMR1CS)
+' No Timer2 reset sources on the PIC16F183xx.
+#elseif _has(PIR3.TMR1IF)
 ' Timer2 external reset sources, the RSEL field of T2RST [DS40002214G Table 26-4]. T2RstPin is the pin
 ' selected by T2INPPS; T2RstPwmNP1 / T2RstPwmNP2 are the outputs of PWM module N (PWMNS1P1 / PWMNS1P2).
 Public Const T2RstPin = 0
@@ -159,7 +182,15 @@ Public Const T2RstCmp1 = 8
 Public Const T2RstCmp2 = 9
 #endif
 
-#if _has(PIR3.TMR1IF)
+#if _has(T1CON.TMR1CS)
+Dim Tmr0If As PIR0.5
+Dim Tmr0Ie As PIE0.5
+Dim Tmr1If As PIR1.0
+Dim Tmr1GIf As PIR1.7
+Dim Tmr1Ie As PIE1.0
+Dim Tmr2If As PIR1.1
+Dim Tmr2Ie As PIE1.1
+#elseif _has(PIR3.TMR1IF)
 ' PIR3 / PIE3 bits 7, 4 and 3 [DS40002214G 11.13.21, 11.13.10].
 Dim Tmr0If As PIR3.7
 Dim Tmr0Ie As PIE3.7
@@ -185,7 +216,11 @@ Dim Tmr2Ie As PIE4.1
 #endif
 Dim T1GoDone As T1GCON.3
 Dim T1GateVal As T1GCON.2
+#if _has(T1CON.TMR1CS)
+Dim Tmr2On As T2CON.2
+#else
 Dim Tmr2On As T2CON.7
+#endif
 
 ' 8-bit periodic timer. period = 0..255.
 Public Sub Timer0Start(ByVal prescale As Byte, ByVal period As Byte)
@@ -255,12 +290,18 @@ End Sub
 ' (prescale 0..3 selects 1:1 to 1:8). With RD16 set, reading TMR1L latches TMR1H.
 Public Sub Timer1Start(ByVal prescale As Byte)
     T1CON = 0
+#if Not _has(T1CON.TMR1CS)
     T1CLK = 1
+#endif
     T1GCON = 0
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
+#if _has(T1CON.TMR1CS)
+    T1CON = (prescale And 3) * 16 + 1
+#else
     T1CON = (prescale And 3) * 16 + 3
+#endif
 End Sub
 
 ' Timer1 from any clock in T1Clk*, free-running and ungated. The external sources are
@@ -270,12 +311,18 @@ End Sub
 ' first rising edge counts [20.2.2 note], so the first pulse after a start may be missed.
 Public Sub Timer1StartSource(ByVal clk As Byte, ByVal prescale As Byte)
     T1CON = 0
+#if Not _has(T1CON.TMR1CS)
     T1CLK = clk And 31
+#endif
     T1GCON = 0
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
+#if _has(T1CON.TMR1CS)
+    T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + 1
+#else
     T1CON = (prescale And 3) * 16 + 3
+#endif
 End Sub
 
 ' Counts rising edges on the T1CKI pin.
@@ -289,6 +336,13 @@ End Sub
 ' cleared after the gate writes (erratum 1.7.1, DS80001009E: writing the gate source can set it).
 Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean)
     T1CON = 0
+#if _has(T1CON.TMR1CS)
+    If activeHigh Then
+        T1GCON = 192 + (source And 3)
+    Else
+        T1GCON = 128 + (source And 3)
+    End If
+#else
     T1CLK = clk And 31
     T1GATE = source And 31
     If activeHigh Then
@@ -296,13 +350,18 @@ Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
     Else
         T1GCON = 128
     End If
+#endif
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
 #if _has(PIR1.TMR1IF)
     Tmr1GIf = 0
 #endif
+#if _has(T1CON.TMR1CS)
+    T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + 1
+#else
     T1CON = (prescale And 3) * 16 + 3
+#endif
 End Sub
 
 ' Measures one gate pulse: the timer counts during the first pulse of the gate source after
@@ -311,6 +370,13 @@ End Sub
 ' time is a whole period of the source instead of its high (or low) time [20.7.3, 20.7.4].
 Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean, ByVal fullCycle As Boolean)
     T1CON = 0
+#if _has(T1CON.TMR1CS)
+    If activeHigh Then
+        T1GCON = 192 + (source And 3)
+    Else
+        T1GCON = 128 + (source And 3)
+    End If
+#else
     T1CLK = clk And 31
     T1GATE = source And 31
     If activeHigh Then
@@ -318,6 +384,7 @@ Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
     Else
         T1GCON = 128
     End If
+#endif
     If fullCycle Then
         T1GCON = T1GCON Or 32
     End If
@@ -328,7 +395,11 @@ Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
 #if _has(PIR1.TMR1IF)
     Tmr1GIf = 0
 #endif
+#if _has(T1CON.TMR1CS)
+    T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + 1
+#else
     T1CON = (prescale And 3) * 16 + 3
+#endif
     T1GCON = T1GCON Or 8
 End Sub
 
@@ -354,8 +425,21 @@ End Sub
 
 Public Function Timer1Read() As Word
     Dim lo As Byte
+#if _has(T1CON.TMR1CS)
+    ' No RD16 buffer: read the high byte before and after the low byte; when it changed the low byte wrapped in between, so read it again.
+    Dim hi As Byte
+    Dim hi2 As Byte
+    hi = TMR1H
+    lo = TMR1L
+    hi2 = TMR1H
+    If hi2 <> hi Then
+        lo = TMR1L
+    End If
+    Result = hi2 * 256 + lo
+#else
     lo = TMR1L
     Result = TMR1H * 256 + lo
+#endif
 End Function
 
 ' True once per overflow; clears the flag when it reports it.
@@ -397,6 +481,12 @@ End Sub
 ' 1:128, postscale 0..15 selects 1:1 to 1:16). T2TMR is not cleared by a T2CON write [21.1].
 Public Sub Timer2Start(ByVal prescale As Byte, ByVal postscale As Byte, ByVal period As Byte)
     T2CON = 0
+#if _has(T1CON.TMR1CS)
+    PR2 = period
+    TMR2 = 0
+    Tmr2If = 0
+    T2CON = 4 + (prescale And 3) + (postscale And 15) * 8
+#else
     T2CLKCON = 1
     T2HLT = 0
     T2RST = 0
@@ -404,6 +494,7 @@ Public Sub Timer2Start(ByVal prescale As Byte, ByVal postscale As Byte, ByVal pe
     T2TMR = 0
     Tmr2If = 0
     T2CON = 128 + (prescale And 7) * 16 + (postscale And 15)
+#endif
 End Sub
 
 ' Timer2 with a hardware-limit mode: mode is one of T2Mode*, source one of T2Rst* [T2HLT, T2RST]
@@ -415,6 +506,7 @@ End Sub
 ' postscale + 1 period matches. Edge-triggered modes need six timer clocks between triggers,
 ' level modes a level of at least three [21.5]. The T2RstPin input must be a digital input (ANSELx = 0,
 ' TRISx = 1).
+#if Not _has(T1CON.TMR1CS)
 Public Sub Timer2StartLimit(ByVal prescale As Byte, ByVal postscale As Byte, ByVal period As Byte, ByVal mode As Byte, ByVal source As Byte)
     T2CON = 0
     T2CLKCON = 1
@@ -425,6 +517,7 @@ Public Sub Timer2StartLimit(ByVal prescale As Byte, ByVal postscale As Byte, ByV
     Tmr2If = 0
     T2CON = 128 + (prescale And 7) * 16 + (postscale And 15)
 End Sub
+#endif
 
 ' True while the timer is on; a one-shot timer clears ON after its period [Table 21-3 note 2].
 Public Function Timer2Running() As Boolean
@@ -440,7 +533,11 @@ Public Sub Timer2Stop()
 End Sub
 
 Public Function Timer2Read() As Byte
+#if _has(T1CON.TMR1CS)
+    Result = TMR2
+#else
     Result = T2TMR
+#endif
 End Function
 
 ' True once per period; clears the flag when it reports it.

@@ -595,7 +595,8 @@ fn for_p16(src: &Path, device: &str, into: &Path) -> PathBuf {
             out += &format!("Device = {device}\n");
             device_done = true;
         } else if t.starts_with("config ") {
-            out += "Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\n";
+            // The PIC16F183xx parts call the 32 MHz power-up setting HFINT32 (2x PLL).
+            out += if device.starts_with("16F183") { "Config FEXTOSC = OFF, RSTOSC = HFINT32, WDTE = OFF, LVP = ON\n" } else { "Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\n" };
         } else if t.starts_with("clock") && t.contains("64") {
             out += "Clock = 32\n";
         } else {
@@ -737,6 +738,80 @@ fn p13_programs_in_simulator() {
     let files = p13_programs();
     for flags in ["", "-O0"] {
         let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F13145").args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
+const P183_PARTS: [&str; 8] = ["16F18313", "16F18323", "16F18324", "16F18325", "16F18326", "16F18344", "16F18345", "16F18346"];
+
+/// Programs of the PIC16F171xx sets that do not apply to the PIC16F183xx: Timer1 and Timer2 with their clock-select and hardware-limit registers, and the library
+/// modules whose registers differ (`tests/exec_p183` has the PIC16F183xx versions).
+const P183_SKIP: &[&str] = &["lib_timer12", "lib_timer_hw", "lib_adc", "lib_eeprom", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_serial", "lib_serial2", "lib_spi"];
+
+/// The programs for the PIC16F183xx: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p183`.
+fn p183_programs() -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = P16_PORTABLE.iter().filter(|p| !P183_SKIP.contains(p)).map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
+    files.extend(bas_files(&root().join("tests/exec_p16")).into_iter().filter(|f| !P183_SKIP.contains(&f.file_stem().unwrap().to_str().unwrap())));
+    files.extend(bas_files(&root().join("tests/exec_p183")));
+    files
+}
+
+/// Every member of the PIC16F183xx family builds the small program (port A only on the 8-pin part, 256 bytes of RAM, 2K words of flash); the
+/// PIC16F18346 builds all of its programs.
+#[test]
+fn p183_parts_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("p183parts");
+    let mut failures = Vec::new();
+    let small = std::fs::read_to_string(root().join("tests/exec_p183_parts/small.bas")).unwrap();
+    let mut programs: Vec<(String, PathBuf)> = Vec::new();
+    for dev in P183_PARTS {
+        let f = out.join(format!("small_{dev}.bas"));
+        std::fs::write(&f, small.replace("16F18313", dev)).unwrap();
+        programs.push((dev.to_string(), f));
+    }
+    for src in p183_programs() {
+        let name = src.file_stem().unwrap().to_string_lossy().into_owned();
+        // `tests/exec_p183` programs already name a part and its clock; the others are changed as for the PIC16F171xx.
+        let f = if src.starts_with(root().join("tests/exec_p183")) { src.clone() } else { for_p16(&src, "16F18346", &out.join(format!("{name}_16F18346.bas"))) };
+        programs.push(("16F18346".into(), f));
+    }
+    for (dev, src) in programs {
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        if !r.status.success() || text.contains("pic-as:") {
+            failures.push(format!("{} for {dev}:\n{text}", src.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The PIC16F183xx modules that stop with `#error` instead of using registers the part does not have.
+#[test]
+fn p183_unported_modules_stop() {
+    let out = scratch("p183err");
+    for m in ["serial2", "dma", "intosc"] {
+        let f = out.join(format!("e_{m}.bas"));
+        std::fs::write(&f, format!("Program E\nDevice = 16F18326\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINT32, WDTE = OFF, LVP = ON\nInclude \"{m}\"\nDim x As Byte\nx = 1\n")).unwrap();
+        let r = Command::new(basil()).arg(&f).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(!r.status.success() && text.contains("E-PP-ERROR"), "{m} did not stop with #error:\n{text}");
+    }
+}
+
+/// With `BASIL_MDB=1` the PIC16F183xx programs run on the simulator's `PIC16F18346`.
+#[test]
+fn p183_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files = p183_programs();
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F18346").args(&files).output().unwrap();
         let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
         assert!(r.status.success(), "flags `{flags}`:\n{text}");
     }

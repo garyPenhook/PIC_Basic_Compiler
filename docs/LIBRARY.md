@@ -47,6 +47,32 @@ only. Nothing was run on a real part.
 | `dma` | not applicable (no DMA) | not checked (the 16F17126/46 data sheet has not been read for DMA) | `#error` (no DMA) | written for software-started RAM/SFR copies (`DmaCopy`) trigger-started feeds (`DmaOnTrigger`) with abort triggers (`DmaAbortOn`) and flash- and EEPROM-source copies (`DmaCopyFlash`, `DmaCopyEeprom`; the EEPROM address form comes from Microchip's TB3164, not the Q41 data sheet); builds, register set-up tested, bytes moved checked only against a DMA model of the data sheet (`scripts/dma_sim.py`); a part without `DMAnCON0` gets `#error` | interrupts, priorities; data movement not seen on a real part (MDB has no DMA; the tests use the model) |
 | `floatlib` | done | done, **written in Basic** on `LongWord` arithmetic (the PIC18 routines are assembly): the same results bit for bit (`tests/exec_p16/float_random.bas`), about 1.2K words for `+` against 200 on the PIC18 | done (as the PIC16F171xx; about 1.2K words for `+`, so 2K-word parts have little room left) | builds (no device registers); not run on the Q41 | hand-written assembly for the enhanced mid-range core would be several times smaller; run the float tests on the Q41 simulator |
 
+### PIC16F18313 … 18346 (DS40001799F, DS40001800E, DS40001795K, DS40001839E; facts in `FACTS-16F183xx.md`)
+
+First-generation PPS parts: the register names and several codes differ from the PIC16F171xx, so every module that touches them has its own branch, chosen with `#if _has(ADCON0.CHS)` (or `_has(T1CON.TMR1CS)`,
+`_has(ADCON0.CHS)`, `_has(PWM5DCL)` for the part of a module that differs). A module that is not ported stops with `#error`. The simulator tests (`tests/exec_p183`, the portable programs and `tests/exec_p16`)
+run on the PIC16F18346; the simulator has no ADC for the part, so only its set-up is tested. Nothing was run on a real part.
+
+| Module | PIC16F183xx |
+|---|---|
+| `delay`, `strings` | portable |
+| `gpio` | done (`ANSELx`, `WPUx`, `ODCONx`, `_has` per port; 8-pin part has port A only, the 14-pin parts no port B) |
+| `intosc` | `#error`: the HFFRQ codes differ from the Q10 and 32 MHz goes through the 2x PLL; set the speed with `Config RSTOSC = HFINT32` (32 MHz) or `HFINT1` and give `Clock` to match |
+| `system` | done (no window violation cause on `PCON0`; clock decode for COSC 110 and for the 2x PLL, `HFFRQ` 1, 2, -, 4, 8, 12, 16 MHz) |
+| `timer` | done (Timer0 as the PIC16F171xx; Timer1 with `TMR1CS` in `T1CON`, gate source in `T1GCON`, no `RD16` so the read takes `TMR1H` twice; old Timer2 with `T2CKPS` 1, 4, 16, 64 and no mode registers, so no `Timer2StartLimit`, `T2Mode*` or `T2Rst*`; `T1Clk*`: Fosc4, Fosc, Pin, LfIntOsc; `T1Gate*`: Pin, Tmr0, Cmp1, Cmp2) |
+| `serial` | done (EUSART1, `RXPPS`, TX/CK = `14h`; TX RC4 and RX RC5, RA4 and RA5 on the 8-pin part) |
+| `serial2` | `#error` (one EUSART) |
+| `adc` | done (10 bits, `AdcMax` = 1023; `ADCON0.CHS`, `ADCON1.ADCS`; channels 60..63; TAD >= 1 us; the 5 us acquisition is a software delay after a channel change) |
+| `eeprom` | done (256 bytes at F000h through `NVMREGS = 1`, `NVMADRH` = 70h; erratum WRERR covered by the read-back) |
+| `flashwrite` | done (32-word row, 14-bit words; as the PIC16F171xx; `FlashLastSector` from the size) |
+| `spi` | done (MSSP1, `RxyPPS` 24 = SCK1 and 25 = SDO1) |
+| `i2c` | done (MSSP1 hardware host, `RxyPPS` 24 = SCL1 and 25 = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 3 and 2) |
+| `lcd` | done (pins of the part only: port B on the 20-pin parts, port C not on the 8-pin part) |
+| `pwm` | done (CCP1, CCP2, PWM5, PWM6 = channels 1..4 on Timer2 with prescalers 1, 4, 16, 64; `RxyPPS` 0Ch, 0Dh, 02h, 03h) |
+| `oled`, `aht30` | done over `i2c`/`spi` (the 1 KB frame buffer does not fit the parts with less than 2 KB of RAM: use OledGoto/OledData) |
+| `dma` | `#error` (no DMA) |
+| `floatlib` | done (as the PIC16F171xx; about 1.2K words for `+`, so the 2K-word parts have little room left) |
+
 On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check
 register values and set-up, not waveforms (no part of the PIC18-Q41 transfer code ran against a real bus). Limits of the simulator: it

@@ -7,6 +7,10 @@ Module Serial
 ' The EUSART1 registers and the baud-rate formula are the same on both families.
 ' PIC16F13145 family (DS40002519D, chapters 18 and 31): the same EUSART1 and codes (TX1/CK1 = 0x13 [Table 18-2 p.188]); TX RC4 and
 ' RX RC5 on the 14- and 20-pin parts, RA4 and RA5 on the 8-pin PIC16F13113 (port A only).
+' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E; chosen with `#if _has(ADCON0.CHS)`): the same EUSART1 registers; TXIF and RCIF
+' are PIR1 bits 4 and 5. TX goes out through RC4PPS = 14h (TX/CK) [Register 13-2] and RXPPS = PORT[4:3] | PIN[2:0] selects RX [Register 13-1];
+' RC4 and RC5 on the 14- and 20-pin parts, RA4 and RA5 on the 8-pin PIC16F18313 (port A only). An enabled receiver (SPEN) with TXEN = 0 drives
+' the TX pin low on the PIC16F18313/18323 silicon A3 only (DS80000666H item 2.1, not the current revision A6).
 ' PIC18F0x/1xQ41 (DS40002214G, chapters 21 and 34): UART1 (U1CON0/1/2, U1BRG, U1TXB, U1RXB, U1FIFO), TX on RC4
 ' and RX on RC5, which exist on the 14-pin parts too. RC4PPS = 0x10 selects UART1 TX [Table 21-2]; U1RXPPS =
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
@@ -28,6 +32,23 @@ Dim TxAnalog As ANSELC.4
 Dim RxAnalog As ANSELC.5
 Const SerTxCode = 16
 Const SerRxCode = 21
+#elseif _has(ADCON0.CHS)
+Dim TxIf As PIR1.4
+Dim RxIf As PIR1.5
+#if _has(TRISC)
+Dim TxPin As TRISC.4
+Dim RxPin As TRISC.5
+Dim RxAnalog As ANSELC.5
+Const SerRxCode = 21
+#else
+Dim TxPin As TRISA.4
+Dim RxPin As TRISA.5
+Dim RxAnalog As ANSELA.5
+Const SerRxCode = 5
+#endif
+Const SerTxCode = 20
+Dim OverrunErr As RC1STA.1
+Dim RxEnable As RC1STA.4
 #elseif _has(PIR4.TX1IF)
 Dim TxIf As PIR4.6
 Dim RxIf As PIR4.7
@@ -76,6 +97,18 @@ Public Sub SerialInit(ByVal baud As LongWord)
     U1CON0 = 176
     U1CON2 = 128
     U1CON1 = 128
+#elseif _has(ADCON0.CHS)
+#if _has(TRISC)
+    RC4PPS = SerTxCode
+#else
+    RA4PPS = SerTxCode
+#endif
+    RXPPS = SerRxCode
+    SP1BRGL = Byte(n)
+    SP1BRGH = Byte(n >> 8)
+    BAUD1CON = 8
+    TX1STA = 36
+    RC1STA = 144
 #elseif _has(PIR4.TX1IF)
 #if _has(TRISC)
     RC4PPS = SerTxCode

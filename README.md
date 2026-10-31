@@ -11,8 +11,9 @@ A BASIC compiler for PIC microcontrollers, built for small, fast code. It turns 
 typed BASIC (modules, subroutines and functions, structures, interrupts) into a `.hex` file, and
 comes with a library of ready-made modules for the common peripherals.
 
-First target: **PIC18F27Q10**. The **PIC18F04/05/06/14/15/16Q41** family, the enhanced mid-range **PIC16F17126/17146** and the
-nine-part **PIC16F13113/13114/13115/13123/13124/13125/13143/13144/13145** family (8, 14 and 20 pins) are supported too (see
+First target: **PIC18F27Q10**. The **PIC18F04/05/06/14/15/16Q41** family, the enhanced mid-range **PIC16F17126/17146**, the
+nine-part **PIC16F13113/13114/13115/13123/13124/13125/13143/13144/13145** family (8, 14 and 20 pins) and the eight-part
+**PIC16F18313/18323/18324/18325/18326/18344/18345/18346** family (8, 14 and 20 pins) are supported too (see
 `docs/MANUAL.md`, "Supported device", for what is ported). More microcontrollers will follow, one at a time.
 
 ## A taste
@@ -111,7 +112,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * **C interop:** calls from Basic into C (`CFile`, `Extern`) and from C into Basic (`Export`), with `Float` and `ByRef`
   arguments, `Interrupt` handlers and `-g` (0.1.49, `docs/ABI.md` §7). An `Extern` call from a handler works (inside `Save`; interrupts are off during a call into C when any handler uses C),
   as do `ByRef` arrays of structures. Not yet: hardware runs.
-* **More devices:** the PIC18F27Q10, the PIC18-Q41 parts, the PIC16F17126/17146 and the PIC16F13113 … 13145 are supported; each
+* **More devices:** the PIC18F27Q10, the PIC18-Q41 parts, the PIC16F17126/17146, the PIC16F13113 … 13145 and the PIC16F18313 … 18346 are supported; each
   further device is added only after it passes its own tests. Nothing has run on a real part yet.
 
 ## Debugging
@@ -152,7 +153,7 @@ in `docs/MANUAL.md` and `vscode-extension/README.md`.
   line (or XC8 `#pragma config` lines) to paste into a program. Changed settings are marked and
   can be reverted one by one or all at once. Its Clock drop-down adds `Device`, `Clock` and
   `Include "intosc"` lines (with a note when `CSWEN = ON` is needed) so the output is a whole header.
-  Covers every device basil supports (PIC18F27Q10, PIC18-Q41, PIC16F17126/17146, PIC16F13113 … 13145); more parts are a
+  Covers every device basil supports (PIC18F27Q10, PIC18-Q41, PIC16F17126/17146, PIC16F13113 … 13145, PIC16F18313 … 18346); more parts are a
   `.cfgdata` file away (see `tools/pic-config/README.md`).
 
   ![pic-config](docs/images/pic-config.png)

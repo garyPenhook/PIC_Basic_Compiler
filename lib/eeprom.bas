@@ -23,6 +23,11 @@ Module Eeprom
 ' and NVMADRH:NVMADRL = 70h:address. A read is RD; a write is NVMCON1 = WREN | NVMREGS, interrupts off, 55h and AAh to NVMCON2, WR [15.2.2.2,
 ' 15.2.2.4]; the CPU stalls until it is done and the byte is erased first. NVMCON1 is cleared afterwards (that also clears WRERR) and success is
 ' the read-back. The data sheet's errata (DS80001009E) show nothing for the NVM.
+' PIC16F183xx (DS40001799F p.116-122, DS40001839E 11.4; chosen the same way, `Not _has(PRODL)`): 256 bytes of EEPROM through NVMREG with NVMREGS = 1 and NVMADRH:NVMADRL = 70h:address
+' ("address + 7000h", 11.4.3), read with RD and written with WREN | NVMREGS, the 55h/AAh unlock in NVMCON2 and WR, which erases the byte first. The same code as the
+' PIC16F17126/46 serves; only the NVM interrupt flag differs (NVMIF is PIR2 bit 4). Errata (DS80000666H item 4.2, DS80000667E 1.2.2, DS80000668L 4.2): after a Reset during a write WRERR is set again
+' by every later Reset until a write succeeds; EepromWrite reports success by the read-back and clears NVMCON1 (WRERR with it) afterwards, so it is not affected. The LF parts
+' may not write below 2.2 V at -40 C (item 4.1, silicon A3/A4 only) and may not access NVM at all below 2.0 V at 25 C or less (item 5.3, all revisions).
 #if _eeprom = 0
 #error "eeprom needs a part with data EEPROM: the PIC16F13145 family has none (DS40002519D Table 1 p.1); use module Flashwrite"
 #endif
@@ -34,7 +39,11 @@ Dim NvmDone As PIR0.4
 Dim NvmWr As NVMCON1.1
 Dim NvmRd As NVMCON1.0
 Dim IntEn As INTCON.7
+#if _has(ADCON0.CHS)
+Dim NvmDone As PIR2.4
+#else
 Dim NvmDone As PIR1.0
+#endif
 #else
 Dim NvmWr As NVMCON1.4
 Dim NvmRd As NVMCON1.0

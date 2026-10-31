@@ -36,6 +36,9 @@ Module IntOsc
 
 ' HFINTOSC frequency codes: OSCFRQ.HFFRQ (Q10: 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz = codes 0..8) or
 ' OSCFRQ.FRQ (PIC16F171xx: 1, 2, 4, 8, 16, 32 MHz = codes 0..5, DS40002343F 11.5.6).
+#if _has(ADCON0.CHS)
+#error "intosc is not ported to the PIC16F183xx: its HFFRQ codes differ from the Q10 (1, 2, -, 4, 8, 12, 16 MHz = 0..6, 32 MHz through the 2x PLL with NOSC = 000, DS40001839E Register 7-6 p.93) and the clock switch to 32 MHz needs its own sequence; set the speed with Config RSTOSC (HFINT32 = 32 MHz, HFINT1 = 1 MHz) and Clock to match, and check it with System.SysClockOk()"
+#endif
 #if _has(OSCFRQ.HFFRQ)
 #elseif _has(OSCFRQ.FRQ)
 #else

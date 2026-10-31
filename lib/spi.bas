@@ -32,6 +32,12 @@ Module Spi
 ' PIC16F17126/46 (DS40002343F chapters 18 and 31; chosen with `Not _has(PRODL)`): the same MSSP1 host as the Q10 below, with the pins of the
 ' Q41 branch: numbered 0..23, RA0..RA5 except RA3 (input only: allowed for SDI, refused for SCK and SDO), RB4..RB7 (20-pin part), RC0..RC7,
 ' through PPS with SCK1 = RxyPPS 27 and SDO1 = 28 [Table 18-2]; SSP1CLKPPS and SSP1DATPPS take the pin number [Table 18-1].
+'
+' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapters 13 and 30; chosen with `_has(ADCON0.CHS)`): the same MSSP1 host and SSP1CON1/SSP1STAT/SSP1ADD
+' settings [Register 30-2: SSPM = 0000 FOSC/4, 1010 FOSC/(4 * (SSP1ADD + 1)), SSP1ADD = 0 not supported]; SCK1/SCL1 = RxyPPS 18h (24) and SDO1/SDA1 = 19h (25)
+' [Register 13-2], SSP1CLKPPS and SSP1DATPPS take the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [Register 13-1]). RA3 is input only. Pins that
+' exist: port A on every part, port C (RC0..RC5) on the 14-pin parts, RB4..RB7 and RC6, RC7 on the 20-pin parts. The silicon errata for the MSSP concern only SPI slave mode
+' (DS80000666H 3.4, DS80000667E 1.4.2, DS80000668L 6.1), which this module does not offer.
 #if _has(SPI1CON0) Or Not _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
@@ -239,6 +245,13 @@ Public Function SpiRead() As Byte
 End Function
 #else
 Dim BitWcol As SSP1CON1.7
+#if _has(ADCON0.CHS)
+Const SckCode = 24
+Const SdoCode = 25
+#else
+Const SckCode = 27
+Const SdoCode = 28
+#endif
 #if _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
@@ -345,14 +358,14 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
 #if _has(PRODL)
     SetPps(sck, 15)
 #else
-    SetPps(sck, 27)
+    SetPps(sck, SckCode)
 #endif
     If sdo <> 255 Then
         PinSetup(sdo, False)
 #if _has(PRODL)
         SetPps(sdo, 16)
 #else
-        SetPps(sdo, 28)
+        SetPps(sdo, SdoCode)
 #endif
     End If
     If d = 0 Then
