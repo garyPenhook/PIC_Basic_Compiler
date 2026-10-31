@@ -350,6 +350,24 @@ fn rtcc_models_in_simulator() {
     }
 }
 
+/// The `pulse`, `irremote` and `x10` routines against a model of the pins: `tests/exec_pins/pinio.bas` replaces `Pinio` (a poll of the
+/// pin steps a waveform, X-10 bursts are recorded and played back), and the modules under test are symlinked next to the program.
+/// Optimised, and as the `-O0` reference build.
+#[test]
+fn pin_models_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files: Vec<PathBuf> = bas_files(&root().join("tests/exec_pins")).into_iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("lib_")).collect();
+    assert_eq!(files.len(), 1);
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
 /// The DMA model that gives the simulator tests a DMA engine (`scripts/dma_sim.py`) against the data sheet's rules.
 #[test]
 fn dma_model_unit_tests() {

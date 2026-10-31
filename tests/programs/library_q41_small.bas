@@ -20,7 +20,11 @@ Include "i2c"
 Include "pwm"
 Include "rtcc"
 Include "rtccspi"
+Include "pulse"
+Include "irremote"
+Include "x10"
 Dim x As Word
+Dim x10ok As Boolean
 Dim r As Byte
 Dim hz As LongWord
 Gpio.GpioAllDigital()
@@ -75,3 +79,15 @@ r = Rtccspi.RtccspiSet(24, 10, 31, 5, 14, 30, 15)
 r = Rtccspi.RtccspiRead()
 r = Rtccspi.RtccspiAlarm(1, 5, 1, 1, 1, 7, 0, 0, 0)
 r = Rtccspi.RtccspiEeWrite(0, r)
+Pulse.PulseOut(8, 5)
+x = Pulse.PulseIn(9, True)
+x = Pulse.RCin(9, False)
+r = Pulse.Pot(9, 255)
+Pulse.Servo(10, 1500)
+Pulse.PwmPin(10, 128, 4)
+Pulse.Sound(11, 60, 10)
+Pulse.Sound2(11, 12, 440, 880, 100)
+x = Irremote.SonyIn(9)
+x = Irremote.RC5In(9)
+x10ok = X10.Xout(8, 9, 0, X10.UnitOn, 2)
+x10ok = X10.Xin(8, 9, 10, x)

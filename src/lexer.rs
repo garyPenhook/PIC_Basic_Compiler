@@ -50,7 +50,7 @@ pub fn keyword(lower: &str) -> Option<&'static str> {
 /// Reserved words that name an intrinsic or a conversion and so can head a designator
 /// (`Inc(x)`, `Byte(x)`).
 pub const CALLABLE_KEYWORDS: &[&str] = &[
-    "addressof", "bitof", "bound", "clear", "dec", "delayms", "delayus", "high", "inc", "input", "low", "output",
+    "addressof", "bitof", "bound", "clear", "dec", "delayms", "delayus", "disable", "enable", "high", "inc", "input", "low", "output",
     "terminate", "toggle", "byte", "word", "integer", "longword", "longint", "shortint", "boolean", "bit", "float",
     "char", "string",
 ];

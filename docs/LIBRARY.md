@@ -456,6 +456,45 @@ Bit-banged shift for 74HC595/74HC165, DACs, ADCs: `ShiftOut(data, dataPin, clkPi
 low, data changes while low and is valid on the rising edge (SPI mode 0). Bad pins or bit counts do nothing.
 Test `tests/exec/lib_shift.bas` (set-up only; the simulator has no pin model); built for every family.
 
+## pulse (PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound, Sound2)
+
+Bit-banged pulse measurement and generation on any pin (pins 0..23 as in `pinio`; a missing pin or a zero count stops a routine, a
+measurement then returns 0). Time is kept by polling and cycle-counted delays; one "unit" is a 10 us poll plus the loop time, so units are
+10 to 14 us at 16 MHz and above and the results are not exact: calibrate with a known pulse, or use a hardware timer. Interrupts lengthen every time.
+
+| Routine | Effect |
+|---|---|
+| `PulseOut(pin, period, level)` / `PulseOut(pin, period)` | a pulse of `period` units, high (`level` True) or low; the two-argument form is the opposite of the pin's present level. The pin becomes an output |
+| `PulseIn(pin, level)` | `Word`: width in units of the next pulse at `level` (the clock starts at the edge into `level`); 0 after about 0.65 s without a complete pulse. The pin becomes an input |
+| `RCin(pin, level)` | `Word`: units the pin stays at `level` (1 if it is not at `level` at the call, 0 after 65535 units): times an R-C network |
+| `Pot(pin, scale)` | `Byte`: discharges the capacitor for 1 ms, times the rise with `RCin`, returns `units * scale / 256` (at most 255) |
+| `Servo(pin, width)` | one pulse of `width` microseconds (500..2500) high; call it every 20 ms |
+| `PwmPin(pin, duty, cycles)` | software PWM for an R-C filter: `cycles` periods of 256 steps of 10 us, high for `duty` steps (0 = always low, 255 = always high); the pin is an input afterwards |
+| `Sound(pin, note, duration)` | note 0 silence, 1..127 a tone of about 78.74 x note Hz, 128..255 noise; `duration` in 10 ms |
+| `Sound2(pin1, pin2, f1, f2, ms)` | two tones (Hz, 0 = silent) at once on two pins for `ms` ms, from one 10 us time base: exact to about 10 % |
+| `WaitUs(us)` | delay of `us` microseconds (a `Word`) |
+
+Tests: `tests/exec/lib_pulse.bas` (set-up and final pin states) and `tests/exec_pins/lib_pins_model.bas` (against a pin model: waveforms measured by `PulseIn`, `RCin`
+and `Pot`, and the pin writes of the others counted). Not run on hardware.
+
+## irremote (SonyIn, RC5In)
+
+Infrared remote decoders for the output of a receiver module that idles high and goes low during a burst. `SonyIn(pin)` reads a Sony SIRC 12-bit frame
+(the pulse widths are judged against the header, so the poll time does not matter); `RC5In(pin)` reads a Philips RC5 frame (the line is sampled at fixed
+times, so it needs a `Clock` of 16 MHz or more and no interrupts). Both return a `Word`, command in the low byte and system in the high byte, or 65535 when
+no valid frame arrives in about 0.65 s. `RC5In` returns the 7-bit command (the second start bit is the inverse of command bit 6) and drops the toggle bit.
+Tested: `SonyIn` against a waveform in `tests/exec_pins/lib_pins_model.bas`; `RC5In` only for the no-signal case (its timing is in microseconds, which the pin model cannot play).
+
+## x10 (Xout, Xin: X-10 power-line control)
+
+`Xout(dataPin, zeroPin, house, key, reps)` sends a code through a PL513 or TW523; `Xin(dataPin, zeroPin, timeout, value)` receives one through a TW523.
+`house` is 0..15 (A..P), `key` 0..15 is the unit 1..16 and 16 + n a function (`UnitOn` 18, `UnitOff` 26, `UnitsOff` 28, `LightsOn` 20, `LightsOff` 16,
+`Bright` 22, `DimIt` 30), sent as in the Positron manual. Frames go out `reps` times (at least 2) in pairs with three silent cycles between pairs, except `Bright` and `DimIt`.
+`Xin` gives house in the high byte and key in the low byte and returns False on a timeout (in half-cycles; 0 = until the zero-cross pulses stop), a frame whose bit and complement agree,
+or no zero-cross pulses for about 50 ms. The interface outputs are open collector: use 4.7 k pull-ups. `CodeOf` / `NumberOf` convert a house or unit number to the 4-bit line code and back.
+The start code, bit order and function codes follow the X-10 protocol as recalled with the Positron key-code table (all seven function codes agree with it); the 1 ms burst
+and the 0.5 ms sampling delay are not measured on a real interface. Tested against a pin model: frames recorded by `Xout` are played back through `Xin`. Never connect a pin to the AC line.
+
 ## aht30 (AHT30 temperature and humidity sensor, I2C)
 Source: the Aosong AHT30 data sheet (Sep 2023): address 0x38 (5.1), measurement command 0xAC 0x33 0x00 and 80 ms wait (5.2), status word (Table 9), CRC8 (5.2), conversion formulas (5.2), I2C timing (Table 8). The caller sets up the bus first (`I2cInit` at no more than 400 kHz, external pull-ups); sample at most once a second to keep self-heating under 0.1 C (2.4). Results: temperature `Integer` in 1/100 degree C, humidity `Word` in 1/100 %RH, rounded to nearest, written only on status 0.
 

@@ -1762,6 +1762,60 @@ Next
 * A device with no `WPUx` register for the port has no individual pull-ups: the pull-up part of `PullUp` and `Input_PullUp` is skipped with the warning `W-NOPULLUP`.
 * Parentheses are required (`PinMode PORTB.0, Input` is not accepted), and `Pin_A0` style names do not exist: use the number or `PORTA.0`.
 
+## PinSet / PinClear
+
+**Syntax**
+```basic
+PinSet(pin)
+PinClear(pin)
+```
+**Overview** Sets (`PinSet`) or clears (`PinClear`) the output latch of a pin without changing its direction, so a pin that is an input
+takes the level when it is later made an output. `pin` is as for `PinMode`: a port bit, a whole port, or a pin number (constant, or any `Byte`
+expression, `RA0` = 0, `RB0` = 8 ...).
+
+**Example**
+```basic
+Dim p As Byte
+Output(PORTB)
+PinSet(PORTB.0)        ' RB0 high
+PinClear(9)            ' RB1 low
+For p = 8 To 15
+    PinClear(p)        ' each pin of port B in turn
+    DelayMS(100)
+    PinSet(p)
+Next
+```
+**Notes**
+* `PinSet(PORTB.0)` is the same code as `High(PORTB.0)`; `PinSet(PORTB)` writes `LATB = 0xFF`, `PinClear(PORTB)` writes `LATB = 0`.
+* A run-time pin number changes `LATx` by read-modify-write (see `PinMode`); do not use it on a port that an interrupt handler also changes.
+  A pin number the device has no port for changes nothing; a constant one is the error `E-PIN`.
+* The `pinio` module has a routine `PinSet(pin, level)` of its own; it is called as `Pinio.PinSet(pin, level)`, and a bare `PinSet(pin)` is this command.
+
+**See also** `PinMode`, `PinPullup`, `High`, `Low`.
+
+## PinPullup
+
+**Syntax**
+```basic
+PinPullup(pin)
+PinPullup(Enable, pin)        ' also On
+PinPullup(Disable, pin)       ' also Off
+```
+**Overview** Turns the internal pull-up resistor of a pin, or of every pin of a port, on or off by writing its `WPUx` bit. With no mode it turns it on.
+The mode is a word (`Enable`, `On`, `Disable` or `Off`), not an expression.
+
+**Example**
+```basic
+PinPullup(PORTB.0)             ' RB0 pull-up on
+PinPullup(Enable, PORTB)       ' every pull-up of port B on
+PinPullup(Disable, 9)          ' RB1 off
+PinPullup(Off, p)              ' the pin number in the Byte p
+```
+**Notes** A device with no `WPUx` register for the port has no individual pull-ups: the request is skipped with the warning `W-NOPULLUP`.
+There are no `Pin_A0` style names: use `PORTA.0` or the number. The pull-up works only while the pin is an input.
+
+**See also** `PinMode`, `PinSet`, `PinClear`.
+
 ## If ... Then ... ElseIf ... Else ... EndIf
 
 **Syntax**

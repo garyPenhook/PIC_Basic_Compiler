@@ -60,5 +60,5 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-ISR-CALL, E-ISR-PRIO, E-ENABLE | Interrupt rules (D22), priorities, `Enable` of a non-interrupt |
 | E-SAVE, E-ASM | Bad `Save` item, unknown register in `Asm Preserves` |
 | E-EXTERN | Bad `Extern` declaration or use together with interrupt handlers (calling C, ABI.md §7) |
-| E-PIN, W-NOPULLUP | `PinMode` of a pin the device does not have (constant pin number); `PinMode` pull-up on a port with no `WPUx` register |
+| E-PIN, W-NOPULLUP | `PinMode`, `PinSet`, `PinClear` or `PinPullup` of a pin the device does not have (constant pin number); a pull-up (`PinMode`, `PinPullup`) on a port with no `WPUx` register |
 | E-UNSUPPORTED | Feature reserved but not specified (`BitOf`) or not built yet |

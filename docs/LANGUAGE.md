@@ -252,6 +252,7 @@ Exit                                     ' leave the current Sub/Function
 GoTo label  /  label:
 Inc(v)  Inc(v, n)  Dec(v)  Dec(v, n)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)  Input(bit)  Output(bit)
 PinMode(pin, Input|Output|PullUp|Input_PullUp)
+PinSet(pin)  PinClear(pin)  PinPullup(pin)  PinPullup(Enable|Disable, pin)
 ```
 (SF.) Notes:
 * The limit of `For` is evaluated once, the step must be a constant, and after a loop that ran the variable keeps the last value it took, not one past it (D33). The loop variable of `For` must not be modified inside the loop (SF); the compiler may keep it
@@ -401,7 +402,7 @@ Options (`#option`): `Optimize = Size|Speed|Balanced`, `Strict = true|false`, `I
 ## 12. Built-in routines
 
 Compiler intrinsics (no module needed): `AddressOf`, `BitOf`, `Bound`, `Clear`, `Inc`, `Dec`,
-`High`, `Low`, `Input`, `Output`, `PinMode`, `Toggle`, `DelayMS`, `DelayUS`, `Terminate`, plus width
+`High`, `Low`, `Input`, `Output`, `PinMode`, `PinSet`, `PinClear`, `PinPullup`, `Toggle`, `DelayMS`, `DelayUS`, `Terminate`, plus width
 conversions (`Byte(x)`, `Word(x)`, `LongWord(x)`, `ShortInt(x)`, `Integer(x)`, `LongInt(x)`) and
 `Abs`, `Min`, `Max` for integers. (SF + NEW)
 
@@ -448,6 +449,10 @@ Anything not listed here is not accepted.
 | `Do … Loop Until c`, `Do … Loop While c` | `Repeat … Until c`, `Repeat … Until Not c` |
 | `$FF`, `%1010`, `0xFF`, `0b1010` | native |
 | `:` between statements | native |
+| `PinSet`, `PinClear`, `PinPullup`, `PinMode` | intrinsics with parentheses: `PinPullup(Enable, PORTB)`; `Pin_A0` style names are not defined (use `PORTA.0` or the number) |
+| `Pot`, `PulseIn`, `PulseOut`, `RCin`, `Servo`, `Sound`, `Sound2`, `PWM` (software), `SonyIn`, `RC5In`, `Xin`, `Xout` | `pulse`, `irremote`, `x10` modules (pins are numbers 0..23, `PWM` is `PwmPin`, and `Sound2` takes two frequencies and a time in ms) |
+| `Shin`, `Shout` | `ShiftIn`, `ShiftOut` of the `shift` module |
+| `USBinit`, `USBin`, `USBout`, `USBpoll` | not provided: no supported device has a USB peripheral |
 | `HRSOut`, `HRSIn`, `Toggle`, `Inc`, `Dec`, `DelayMS`, `DelayUS` | library or intrinsic with the same name where the behaviour matches |
 
 Global `Declare` switches (for example for LCD pins or baud rate) are **not**

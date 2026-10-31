@@ -99,6 +99,9 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `pinio` | run-time pin access by number (0..23), digital set-up, open-drain emulation |
 | `shift` | bit-banged `ShiftOut` / `ShiftIn` (1..16 bits, either bit order) on any two pins |
+| `pulse` | `PulseIn`, `PulseOut`, `RCin`, `Pot`, `Servo`, `PwmPin`, `Sound`, `Sound2` on any pin (bit-banged) |
+| `irremote` | `SonyIn` (SIRC) and `RC5In` infrared remote decoders |
+| `x10` | `Xout` / `Xin` X-10 power-line control through a PL513 / TW523 |
 | `rtcc` | Microchip I2C RTCCs (MCP7940M/N, MCP79400/1/2, MCP79410/1/2): time, alarms, trim, SRAM, EEPROM, protected EEPROM, time stamps |
 | `rtccspi` | Microchip SPI RTCCs (MCP7951x/7952x, MCP795W1x/2x): the same, plus hundredths, watchdog and event detection |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |

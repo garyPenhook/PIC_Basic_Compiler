@@ -270,7 +270,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right", "str", "val", "pinmode"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right", "str", "val", "pinmode", "pinset", "pinclear", "pinpullup"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -2814,6 +2814,37 @@ impl<'p, 'd> Sema<'p, 'd> {
                     }
                 } else if !(matches!(v.ty, Ty::Bit | Ty::Bool) && v.place == Place::Var) && !v.ty.is_numeric_int() {
                     return self.err("E-TYPE", args[0].span, format!("`PinMode` needs a port bit, a port or a constant pin number, found {}", v.ty));
+                }
+                call(Ty::Void)
+            }
+            "pinset" | "pinclear" | "pinpullup" => {
+                // `PinSet(pin)`, `PinClear(pin)`, `PinPullup([Enable|On|Disable|Off,] pin)`: pin as for `PinMode`.
+                let pin = if name == "pinpullup" {
+                    if args.len() == 2 {
+                        let w = match &args[0].kind {
+                            ExprKind::Designator(m) if m.parts.is_empty() => m.head.key(),
+                            _ => String::new(),
+                        };
+                        if !matches!(w.as_str(), "enable" | "on" | "disable" | "off") {
+                            return self.err("E-ARGS", args[0].span, "the mode of `PinPullup` must be Enable, On, Disable or Off");
+                        }
+                    } else if args.len() != 1 {
+                        return self.err("E-ARGS", span, format!("`PinPullup` takes a pin, or a mode and a pin, found {} arguments", args.len()));
+                    }
+                    &args[args.len() - 1]
+                } else {
+                    if !want(self, 1) {
+                        return None;
+                    }
+                    &args[0]
+                };
+                let v = self.check_expr(pin)?;
+                if let Some(CVal::Int(c)) = &v.val {
+                    if *c < 0 {
+                        return self.err("E-CONST-RANGE", pin.span, "a pin number cannot be negative");
+                    }
+                } else if !(matches!(v.ty, Ty::Bit | Ty::Bool) && v.place == Place::Var) && !v.ty.is_numeric_int() {
+                    return self.err("E-TYPE", pin.span, format!("`{}` needs a port bit, a port or a pin number, found {}", d.head.name, v.ty));
                 }
                 call(Ty::Void)
             }
