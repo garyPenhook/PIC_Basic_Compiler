@@ -28,6 +28,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-VIS, E-NESTED | `Public`/`Private` on a local; routine or type declared inside a routine |
 | E-RAM | Global variables exceed the device's usable RAM |
 | E-RECURSION | Call cycle without `Reentrant` (D13) |
+| E-FORWARD | `Declare` never defined, or a definition that differs from its `Declare` |
 | E-STACK | The hardware return stack can need more levels than the device has (31 on the Q10, 127 on the PIC18-Q41, `hw_stack` in the device file): deepest call chain of the main program (library helpers included) plus one level per interrupt priority and that handler's own chain |
 
 ## Types and expressions

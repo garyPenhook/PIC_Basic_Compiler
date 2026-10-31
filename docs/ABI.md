@@ -167,9 +167,14 @@ array's length word is not passed.
 
 **Interrupts.** With C linked the vectors are two absolute psects (`basilvhi` at 08h, `basilvlo` at 18h, written after
 the code) holding a `goto` to `__ISR_H` / `__ISR_L`; the handlers are in `basilcode`. The XC8 `intcode` psects are not
-used: the Q41 start-up does not place them at 08h. A handler cannot reach an `Extern` routine (`E-EXTERN`, sema
-`check_isr_extern`), so C never runs inside a handler and `basil_io` is not shared with one. The handler saves the
-registers its own code uses, which is all C needs; C's registers are never touched by it otherwise.
+used: the Q41 start-up does not place them at 08h. A handler may call an `Extern` routine (0.1.84), inside
+`Save` like any routine. C then runs in two contexts that share `basil_io` and C's static frames, so sema notes it
+(`Analysis::isr_calls_c`, `check_isr_extern`) and the thunk of every `Extern` routine becomes: save `INTCON`/`INTCON0`,
+clear the global enable (`St::Int`, with the Q10's read-back loop), the argument copy, the call and the result copy,
+then set the enable again if the saved copy had it. In a handler the enable is already off (or, with priorities, a low
+handler is the only one that can be preempted, and only by a high handler that the cleared GIEH keeps out), so the same
+code serves both. `Func::ext` marks the thunk; `compute_facts` gives it `Regs::c_call` (all of FSR0..2, `TBLPTR`, `TABLAT`,
+`PROD`, `PCLATH`/`PCLATU`), which the handler's `Save` copies. Without a handler that reaches C the thunk is as before.
 
 **C calls Basic (`Export`).** For each exported routine `R` the lowerer makes a thunk routine `_basil_x_R` (`ExportSig`):
 `movff` of the argument bytes from `basil_io` into `R`'s parameters, a plain call of `R`, `movff` of the result back. The
@@ -180,7 +185,7 @@ routine that waits for C and anything an exported routine runs, and the recursio
 optimiser treats an exported routine like a handler (no parameter propagation, no argument in WREG) because its calls
 are not all visible. Frames are static, so there is no recursion through C.
 
-Not supported: an `Extern` call from a handler, structure or array arguments by value, `Export` array parameters.
+Not supported: structure or array arguments by value, `Export` array parameters. A by-reference array of structures (`struct T *`) is supported (0.1.84).
 
 ## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50, library and `Float` in 0.1.51, assembly `Float` in 0.1.52)
 

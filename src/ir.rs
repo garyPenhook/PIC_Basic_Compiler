@@ -360,6 +360,8 @@ pub struct Func {
     /// second into `__B` instead of storing them in the parameters, and the value comes back in `__A` (WREG when
     /// it is a byte). The parameters and `Result` are never stored.
     pub reg: bool,
+    /// An `Extern` routine: its body calls into C, which may use any register XC8 does.
+    pub ext: bool,
 }
 
 /// A routine implemented in C (`Extern`), as the C stub that keeps it in the link declares it.

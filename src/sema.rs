@@ -150,6 +150,8 @@ pub struct Analysis {
     pub cfiles: Vec<String>,
     /// `Extern` routines (implemented in C).
     pub externs: HashSet<SymId>,
+    /// An `Interrupt` handler (or a routine it calls) calls an `Extern` routine, so every call into C masks interrupts.
+    pub isr_calls_c: bool,
     /// `Export` routines (Basic routines C may call), in source order.
     pub exports: Vec<SymId>,
 }
@@ -284,6 +286,8 @@ pub struct Sema<'p, 'd> {
     enabled: HashMap<Option<i64>, SymId>,
     interrupts: Vec<SymId>,
     reentrant_ok: HashSet<SymId>,
+    /// Routines announced with `Declare` whose definition has not come yet.
+    forward: HashSet<SymId>,
     /// Dimensions of the multi-dimensional array the designator being checked has just named.
     md_cur: Option<Vec<u32>>,
     /// True while the operand of `Bound` is checked: it only needs the array's type.
@@ -311,6 +315,7 @@ pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Ana
         enabled: HashMap::new(),
         interrupts: Vec::new(),
         reentrant_ok: HashSet::new(),
+        forward: HashSet::new(),
         md_cur: None,
         in_bound: false,
         in_extern: false,
@@ -525,6 +530,12 @@ impl<'p, 'd> Sema<'p, 'd> {
                 self.stmt(s);
             }
             self.ctx = Ctx::main();
+        }
+        let mut open: Vec<SymId> = self.forward.iter().copied().collect();
+        open.sort_unstable();
+        for id in open {
+            let (sp, nm) = (self.a.symbols[id].span, self.a.symbols[id].name.clone());
+            self.diags.error("E-FORWARD", sp, format!("`{nm}` is declared with Declare but never defined"));
         }
         self.check_recursion();
         self.check_isr_extern();
@@ -1297,7 +1308,19 @@ impl<'p, 'd> Sema<'p, 'd> {
             return;
         }
         let kind = SymKind::Routine { params: params.clone(), ret: ret.clone(), reentrant: r.reentrant, inlining: r.inlining };
-        let Some(id) = self.declare_routine(&r.name, vis, kind, &params) else { return };
+        let id = if r.forward {
+            let Some(id) = self.declare_routine(&r.name, vis, kind, &params) else { return };
+            self.forward.insert(id);
+            if r.reentrant {
+                self.reentrant_ok.insert(id);
+            }
+            return;
+        } else if let Some(id) = self.take_forward(r, vis, &params, ret.as_ref()) {
+            id
+        } else {
+            let Some(id) = self.declare_routine(&r.name, vis, kind, &params) else { return };
+            id
+        };
         if r.reentrant {
             self.reentrant_ok.insert(id);
         }
@@ -1310,6 +1333,45 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
         self.body(&r.body, if r.is_function { Kind::Function } else { Kind::Sub }, Some(id), ret, Some(r.name.key()), &params_with_ast(&r.params, &params));
         self.in_extern = false;
+    }
+
+    /// The routine a `Declare` announced that this definition completes, if there is one. The heading must
+    /// repeat the declaration's parameters, result and `Reentrant`.
+    fn take_forward(&mut self, r: &Routine, vis: Vis, params: &[ParamInfo], ret: Option<&Ty>) -> Option<SymId> {
+        if self.scopes.last().is_some() {
+            return None;
+        }
+        let first = self.unit_scopes[self.unit].get(&r.name.key()).copied()?;
+        let mut all = vec![first];
+        all.extend(self.a.overloads.get(&first).cloned().unwrap_or_default());
+        let id = all.into_iter().find(|id| {
+            self.forward.contains(id)
+                && matches!(&self.a.symbols[*id].kind, SymKind::Routine { params: pp, .. }
+                    if pp.len() == params.len() && pp.iter().zip(params).all(|(x, y)| x.ty == y.ty && x.mode == y.mode))
+        })?;
+        let SymKind::Routine { params: pp, ret: pr, reentrant, .. } = &self.a.symbols[id].kind else { return None };
+        let at = self.a.symbols[id].span.line;
+        let name = r.name.name.clone();
+        let mut problem = None;
+        if pr.as_ref() != ret {
+            problem = Some("a different result type");
+        } else if *reentrant != r.reentrant {
+            problem = Some("a different Reentrant attribute");
+        } else if pp.iter().zip(params).any(|(x, y)| x.has_default != y.has_default) {
+            problem = Some("different default values");
+        } else if self.a.symbols[id].vis != vis {
+            problem = Some("a different Public/Private");
+        }
+        if let Some(p) = problem {
+            self.diags.error("E-FORWARD", r.name.span, format!("`{name}` is defined with {p} than its Declare (line {at})"));
+        }
+        self.forward.remove(&id);
+        self.a.symbols[id].span = r.name.span;
+        self.a.decl_syms.insert(r.name.span, id);
+        if let SymKind::Routine { inlining, .. } = &mut self.a.symbols[id].kind {
+            *inlining = r.inlining;
+        }
+        Some(id)
     }
 
     /// An `Extern` routine is called by value with integer, Char or Boolean arguments (at most
@@ -1334,10 +1396,10 @@ impl<'p, 'd> Sema<'p, 'd> {
             let good = !p.has_default
                 && match p.mode {
                     ParamMode::ByVal => !p.is_array && value(&p.ty),
-                    ParamMode::ByRef | ParamMode::ByRefConst => (!r.export || !matches!(p.ty, Ty::Array(..))) && value(elem) || matches!(p.ty, Ty::Str(_) | Ty::Struct(_)),
+                    ParamMode::ByRef | ParamMode::ByRefConst => (!r.export || !matches!(p.ty, Ty::Array(..))) && (value(elem) || matches!(elem, Ty::Struct(_))) || matches!(p.ty, Ty::Str(_) | Ty::Struct(_)),
                 };
             if !good {
-                self.diags.error("E-EXTERN", ast.name.span, format!("`{}`: an {what} parameter is an integer, Char, Boolean or Float (ByVal), or a ByRef variable, array, String or structure, without a default value", ast.name.name));
+                self.diags.error("E-EXTERN", ast.name.span, format!("`{}`: an {what} parameter is an integer, Char, Boolean or Float (ByVal), or a ByRef variable, array (of integers, Char, Boolean, Float or structures), String or structure, without a default value", ast.name.name));
                 ok = false;
             }
         }
@@ -2921,7 +2983,9 @@ impl<'p, 'd> Sema<'p, 'd> {
     // ---- whole-program checks ------------------------------------------------------------
 
     /// C routines use static frames, `basil_io` and registers the handler would not save, and one may be in
-    /// the middle of a call when the interrupt comes: a handler (or anything it calls) cannot call one.
+    /// the middle of a call when the interrupt comes. A handler may call C all the same: the call is made inside
+    /// `Save`, which saves the registers C uses, and every call into C turns interrupts off for its duration
+    /// (see `Lowerer::extern_thunk`), so C is never entered twice. This notes whether any handler does.
     fn check_isr_extern(&mut self) {
         if self.a.externs.is_empty() {
             return;
@@ -2940,10 +3004,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                 }
             }
         }
-        let bad: Vec<(Span, String)> = self.a.calls.iter().filter(|c| c.caller.is_some_and(|f| from_isr[f]) && self.a.externs.contains(&c.callee)).map(|c| (c.span, self.a.symbols[c.callee].name.clone())).collect();
-        for (sp, name) in bad {
-            self.diags.error("E-EXTERN", sp, format!("`{name}` is implemented in C and an interrupt handler (or a routine it calls) cannot call it"));
-        }
+        self.a.isr_calls_c = self.a.calls.iter().any(|c| c.caller.is_some_and(|f| from_isr[f]) && self.a.externs.contains(&c.callee));
     }
 
     fn check_recursion(&mut self) {

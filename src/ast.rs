@@ -214,6 +214,8 @@ pub struct Routine {
     pub ext: bool,
     /// `Export Sub/Function`: a Basic routine C code may call.
     pub export: bool,
+    /// `Declare Sub/Function`: only the heading; the routine is defined later in the same file.
+    pub forward: bool,
     pub params: Vec<Param>,
     pub ret: Option<TypeSpec>,
     pub body: Body,

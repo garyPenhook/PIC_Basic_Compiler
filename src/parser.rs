@@ -251,7 +251,7 @@ impl<'a> Parser<'a> {
                     let Tok::Str(name) = self.bump().tok else { unreachable!() };
                     self.end_stmt()?;
                     unit.headers.push(Header { kind: HeaderKind::CFile(name), span: sp });
-                } else if matches!(self.peek(), Tok::Kw("device" | "clock" | "config" | "declare")) {
+                } else if matches!(self.peek(), Tok::Kw("device" | "clock" | "config")) || (self.at_kw("declare") && !self.forward_ahead()) {
                     if phase > 0 {
                         self.diags.error("E-ORDER", sp, "Device, Clock and Config must come before includes and declarations");
                     }
@@ -304,8 +304,14 @@ impl<'a> Parser<'a> {
         unit
     }
 
+    /// True at `Declare` when a routine follows (a forward declaration), not `Xtal`.
+    fn forward_ahead(&self) -> bool {
+        matches!(self.peek_at(1), Tok::Kw("sub" | "function" | "proc" | "inline" | "noinline" | "reentrant"))
+    }
+
     fn starts_decl(&self) -> bool {
         match self.peek() {
+            Tok::Kw("declare") => self.forward_ahead(),
             Tok::Kw(k) if DECL_STARTERS.contains(k) => true,
             Tok::Ident(n) if n.eq_ignore_ascii_case("extern") || n.eq_ignore_ascii_case("export") => matches!(self.peek_at(1), Tok::Kw("sub" | "function")),
             Tok::Kw("event") => matches!(self.peek_at(1), Tok::Ident(_)),
@@ -475,7 +481,7 @@ impl<'a> Parser<'a> {
                 let body = self.body("endevent")?;
                 DeclKind::Event(EventDecl { name, params, body })
             }
-            Tok::Kw("sub" | "function" | "proc" | "inline" | "noinline" | "reentrant") => DeclKind::Routine(self.routine()?),
+            Tok::Kw("sub" | "function" | "proc" | "inline" | "noinline" | "reentrant" | "declare") => DeclKind::Routine(self.routine()?),
             Tok::Ident(n) if n.eq_ignore_ascii_case("extern") || n.eq_ignore_ascii_case("export") => DeclKind::Routine(self.routine()?),
             _ => return self.expected("a declaration"),
         };
@@ -641,6 +647,7 @@ impl<'a> Parser<'a> {
     }
 
     fn routine(&mut self) -> PResult<Routine> {
+        let forward = self.eat_kw("declare");
         let mut inlining = Inlining::Default;
         let mut reentrant = false;
         let ext = self.at_ident("extern");
@@ -691,8 +698,8 @@ impl<'a> Parser<'a> {
             is_function = true;
         }
         self.end_stmt()?;
-        if ext {
-            return Ok(Routine { name, is_function, inlining, reentrant, ext, export, params, ret, body: Body { decls: Vec::new(), stmts: Vec::new() } });
+        if ext || forward {
+            return Ok(Routine { name, is_function, inlining, reentrant, ext, export, forward, params, ret, body: Body { decls: Vec::new(), stmts: Vec::new() } });
         }
         let end = if is_proc {
             "endproc"
@@ -702,7 +709,7 @@ impl<'a> Parser<'a> {
             "endsub"
         };
         let body = self.body(end)?;
-        Ok(Routine { name, is_function, inlining, reentrant, ext, export, params, ret, body })
+        Ok(Routine { name, is_function, inlining, reentrant, ext, export, forward, params, ret, body })
     }
 
     /// `( [param {, param}] )` of an event type or handler.

@@ -211,11 +211,18 @@ struct Regs {
     prod: u8,
     /// Bytes used of `__A`..`__D`.
     scr: [u32; 4],
+    /// PCLATH and PCLATU, which XC8 uses for its jump tables.
+    pclat: bool,
 }
 
 impl Regs {
     fn full(scr: [u32; 4]) -> Regs {
-        Regs { fsr: 0b11, tbl: true, tablat: true, prod: 3, scr }
+        Regs { fsr: 0b11, tbl: true, tablat: true, prod: 3, scr, pclat: false }
+    }
+
+    /// What a call into C may change: XC8's code uses any of them (FSR2 and the PCLAT pair included).
+    fn c_call() -> Regs {
+        Regs { fsr: 0b111, pclat: true, ..Regs::full([0; 4]) }
     }
 
     fn merge(&mut self, o: &Regs) {
@@ -223,6 +230,7 @@ impl Regs {
         self.tbl |= o.tbl;
         self.tablat |= o.tablat;
         self.prod |= o.prod;
+        self.pclat |= o.pclat;
         for r in 0..4 {
             self.scr[r] = self.scr[r].max(o.scr[r]);
         }
@@ -280,6 +288,9 @@ impl Regs {
         }
         if self.tablat {
             v.push("TABLAT".into());
+        }
+        if self.pclat {
+            v.extend(["PCLATH", "PCLATU"].map(String::from));
         }
         if self.prod & 1 != 0 {
             v.push("PRODL".into());
@@ -344,6 +355,9 @@ fn compute_facts(g: &Gen, items: &[Item]) -> Facts {
                 r.merge(hr);
                 stack.extend(hc.iter().filter(|c| helpers.contains_key(*c)).cloned());
             }
+        }
+        if g.p.funcs.get(*f).is_some_and(|x| x.ext) {
+            r.merge(&Regs::c_call());
         }
         regs[*f] = r;
     }

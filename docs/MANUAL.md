@@ -250,7 +250,7 @@ Program Name                        ' name is optional
 * **Order is enforced**: Device/Clock/Config, then `Include`, then constants/types/variables/aliases,
   then routines, then statements. After the first executable statement, `Include`, `Dim` and
   routine declarations are an error (`E-ORDER`).
-* Identifiers must be declared before use. There is no forward reference.
+* Identifiers must be declared before use. A routine that is defined further down can be announced with `Declare` (see *Forward declarations*).
 * The program and all modules are compiled together. A module included by several files is loaded once.
 
 A `Proc ... EndProc` flat/procedural layout is accepted (see *Procedures*).
@@ -721,8 +721,37 @@ a recursive call costs two instructions per byte of the routine's frame. The sta
 the compiler (32 pushes of the largest frame) and exists only in programs that recurse.
 Each level also uses one of the 31 hardware return-address levels, so **recursion deeper than
 about 30 calls resets the device** (stack overflow); the compiler does not know the depth and does
-not check it. `Static` locals are shared by all levels. A routine must be declared before it is
-called, so mutual recursion cannot be written yet.
+not check it. `Static` locals are shared by all levels. Mutual recursion needs a forward declaration (below).
+
+### Forward declarations
+
+`Declare` gives a routine's heading before its body, so that a routine defined earlier can call it:
+
+```
+Declare Reentrant Function IsOdd(ByVal n As Byte) As Boolean
+
+Reentrant Function IsEven(ByVal n As Byte) As Boolean
+    If n = 0 Then
+        Result = True
+    Else
+        Result = IsOdd(n - 1)
+    End If
+End Function
+
+Reentrant Function IsOdd(ByVal n As Byte) As Boolean
+    If n = 0 Then
+        Result = False
+    Else
+        Result = IsEven(n - 1)
+    End If
+End Function
+```
+
+The definition must come later in the same file and repeat the parameter types and modes, the result type, `Reentrant`
+and the `Public`/`Private` word of the `Declare`; the parameter names may differ. A parameter with a default value
+has one in both. A declaration that is never defined, or a definition that differs from it, is `E-FORWARD`. A
+cycle of calls still needs `Reentrant` on at least one routine in it (`E-RECURSION` otherwise). `Declare` must be
+among the declarations, before the first statement. Overloads are declared one by one.
 * Routines are called as `Name(args)`, or `Module.Name(args)`.
 
 ## Interrupts, events and context saving
@@ -1116,6 +1145,7 @@ pointer to the element type, written exactly so:
 | `ByRef a As Word` | `unsigned int *a` |
 | `ByRef a As Float` | `float *a` |
 | `ByRef a() As Byte` (an array) | `unsigned char *a` (the length is not passed; pass it as another parameter) |
+| `ByRef a() As Pt` (an array of structures) | `struct Pt *a` (the structures are packed one after the other) |
 | `ByRef s As String(16)` | `char *s` (the characters, then a Null) |
 | `ByRef p As Pt` (a `Structure`) | `struct Pt *p` (the tag is the Basic name, case included) |
 | `ByRefConst s As String(16)` | `const char *s` |
@@ -1142,10 +1172,17 @@ write through the pointer during the call only.
   wrapper, and the buffer's RAM. Call C for work that is worth that, not for one-instruction operations.
 * The call into C uses a hardware stack level, and the C function's own calls use more. `E-STACK` counts the call but
   not what happens inside the C code, so check the depth of nested C calls yourself.
-* A program that calls C can have `Interrupt` handlers; basil writes their vectors itself (at 08h and 18h). A handler,
-  and any routine it calls inside `Save`, **cannot call an `Extern` routine** (`E-EXTERN`): C uses static frames and
-  registers the handler does not save. Do not write `__interrupt` functions in the C files; they would use the same
-  vectors. The handler saves what it uses, so C code that is interrupted carries on unharmed.
+* A program that calls C can have `Interrupt` handlers; basil writes their vectors itself (at 08h and 18h). Do not write
+  `__interrupt` functions in the C files; they would use the same vectors. The handler saves what it uses, so C code
+  that is interrupted carries on unharmed.
+* **A handler may call an `Extern` routine**, like any routine, inside `Save(…) … Restore` (without it, `E-ISR-CALL`);
+  `Save` also saves everything C may change (FSR0 to FSR2, `TBLPTR`, `TABLAT`, `PROD`, `PCLATH`/`PCLATU`). C uses static
+  frames and the shared `basil_io`, so it must never be entered twice: when any handler (or a routine it calls) calls
+  C, **every call into C runs with the global interrupt enable off** (it is put back only if it was on), from the first
+  argument byte to the last result byte. Costs: about ten more program words per `Extern` routine, and an interrupt
+  that comes during a C call waits for it, so keep the C routines a handler shares short. A program in which no handler
+  reaches C has none of this. The hardware stack is shared with the handler, so allow for the C code's depth on top of
+  the handler's.
 * `-g` works: the debugger sees the Basic variables beside the C debug information.
 * The names `main` and `basil_...` are used by the generated C and cannot be `Extern` names.
 * The flash used by a C build starts at 0x1002 in the XC8 layout.
@@ -1195,7 +1232,8 @@ also be called from Basic as usual.
   call; basil takes care of that.
 * **No recursion through C.** If an exported routine (or a routine it calls) calls an `Extern` routine, `E-RECURSION`
   is reported, as the exported routine could be called again while it runs. `Reentrant` does not apply.
-* An `Interrupt` handler cannot call an exported routine from C, as it cannot call C at all.
+* An `Interrupt` handler may call C (see above), and C called from a handler may call an exported routine; the routine runs
+  in the handler, so its frame is saved by the handler's `Save` like that of any routine the handler calls.
 * The cost is the same as for a call into C: the arguments pass through `basil_io`.
 
 ### If the build fails
@@ -1205,7 +1243,7 @@ also be called from Basic as usual.
 | `xc8-cc not found` | MPLAB XC8 C compiler not installed beside `pic-as`; set `BASIL_XC8CC` |
 | `C file ... not found` | the `CFile` path is relative to the main program's folder |
 | `undefined symbol _name` from the linker | the C function is not in a `CFile`, or the `Extern` name differs from the C name in case or spelling, or the C function is `static` |
-| `E-EXTERN` | parameter or result type not supported, a default value, an `Extern` routine called from an `Interrupt` handler, a reserved name, or the same name declared twice with different types |
+| `E-EXTERN` | parameter or result type not supported, a default value, a reserved name, or the same name declared twice with different types |
 | `conflicting declarations for variable "_name"` from the linker | the C definition has other types than the `Extern` line gives (see the tables above) |
 
 ## Preprocessor
@@ -4334,9 +4372,10 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 | `E-CONST-RANGE`, `E-BOUNDS` | constant does not fit; constant index out of range |
 | `E-RAM`, `E-STACK` | variables exceed RAM; hardware stack deeper than the device has (31 / 127) |
 | `E-RECURSION` | call cycle |
+| `E-FORWARD` | a `Declare` with no definition, or a definition that does not match its `Declare` |
 | `E-ISR-CALL` | call from a handler without `Save ... Restore` (also float maths) |
 | `E-BACKEND` | valid per the front end but not generated yet (see below) |
-| `E-EXTERN` | bad `Extern` or `Export` declaration (parameter or result type, `Reentrant`), two `Extern`s of one C name with different types, or an `Extern` routine called from an `Interrupt` handler |
+| `E-EXTERN` | bad `Extern` or `Export` declaration (parameter or result type, `Reentrant`), two `Extern`s of one C name with different types, |
 | `E-EXPORT` | a name given to `Export` twice, or to `Export` and `Extern` |
 | `E-UNSUPPORTED` | reserved but not available (`BitOf`, `Declare` other than `Xtal`, ...) |
 | `W-CLOCK` | `Clock` differs from the `RSTOSC` speed and nothing sets the oscillator |

@@ -85,7 +85,7 @@ type        = "Boolean" | "Bit" | "Byte" | "ShortInt" | "Word" | "Integer"
             | "LongWord" | "LongInt" | "Float" | "Char"
             | "String" [ "(" const_expr ")" ] | IDENT ;       (* IDENT = structure/event type *)
 
-routine_decl= { "Inline" | "NoInline" | "Reentrant" }
+routine_decl= [ "Declare" ] { "Inline" | "NoInline" | "Reentrant" }   (* Declare: heading only, no body or End *)
               ( "Sub" IDENT "(" [ params ] ")" EOL body "End" "Sub"
               | "Function" IDENT "(" [ params ] ")" "As" type EOL body "End" "Function"
               | "Proc" IDENT "(" [ params ] ")" [ "," type ] EOL body "EndProc" ) ;

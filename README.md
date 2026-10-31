@@ -104,14 +104,13 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 
 ## Still to do
 
-* **Language:** `Reentrant` recursion is limited by the 31-level hardware stack, and there is no forward
-  declaration, so mutual recursion cannot be written.
+* **Language:** `Reentrant` recursion is limited by the 31-level hardware stack.
 * **Hardware:** everything has been verified in the Microchip simulator, **not yet on a real chip**.
   Serial output, PWM waveforms, I2C and SPI traffic, external timer inputs and the second EUSART
   are the main things that need a hardware run. `docs/MANUAL.md` Appendix B is the bench checklist.
 * **C interop:** calls from Basic into C (`CFile`, `Extern`) and from C into Basic (`Export`), with `Float` and `ByRef`
-  arguments, `Interrupt` handlers and `-g` (0.1.49, `docs/ABI.md` §7). Not yet: an `Extern` call from a handler,
-  `ByRef` arrays of structures, hardware runs.
+  arguments, `Interrupt` handlers and `-g` (0.1.49, `docs/ABI.md` §7). An `Extern` call from a handler works (inside `Save`; interrupts are off during a call into C when any handler uses C),
+  as do `ByRef` arrays of structures. Not yet: hardware runs.
 * **More devices:** the PIC18F27Q10, the PIC18-Q41 parts, the PIC16F17126/17146 and the PIC16F13113 … 13145 are supported; each
   further device is added only after it passes its own tests. Nothing has run on a real part yet.
 

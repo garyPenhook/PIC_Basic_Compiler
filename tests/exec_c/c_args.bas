@@ -1,4 +1,4 @@
-' expect: T_FS=1090519040 T_FH=1069547520 T_A=22 T_B=11 T_N=8 T_F4=1086324736 T_SUM1=60 T_W2=2000 T_L=5 T_U=1 T_PX=1235 T_PY=9 T_PZ=300000 T_SP=301244
+' expect: T_FS=1090519040 T_FH=1069547520 T_A=22 T_B=11 T_N=8 T_F4=1086324736 T_SUM1=60 T_W2=2000 T_L=5 T_U=1 T_PX=1235 T_PY=9 T_PZ=300000 T_SP=301244 T_SA=70126 T_A2Y=41 T_A2Z=2042
 ' Float by value and every ByRef form crossing to C: a scalar, an array, a String and a structure.
 Program T
 Device = 18F27Q10
@@ -21,6 +21,8 @@ Extern Function slen(ByRef s As String(16)) As Byte
 Extern Sub upper(ByRef s As String(16))
 Extern Sub bump_pt(ByRef p As Pt)
 Extern Function sumpt(ByRef p As Pt) As LongWord
+Extern Function sumarr(ByRef a() As Pt, n As Byte) As LongWord
+Extern Sub fillarr(ByRef a() As Pt, n As Byte)
 Dim fs As Float
 Dim fh As Float
 Dim a As Word = 11
@@ -40,6 +42,10 @@ Dim px As Word
 Dim py As Byte
 Dim pz As LongWord
 Dim sp As LongWord
+Dim pa(3) As Pt
+Dim sa As LongWord
+Dim a2y As Byte
+Dim a2z As LongWord
 fs = scale(2.5, 3)
 fh = half(3.0)
 swap16(a, b)
@@ -65,3 +71,13 @@ px = p.X
 py = p.Y
 pz = p.Z
 sp = sumpt(p)
+pa(0).X = 1
+pa(0).Y = 2
+pa(0).Z = 3
+pa(2).X = 100
+pa(2).Y = 20
+pa(2).Z = 70000
+sa = sumarr(pa, 3)
+fillarr(pa, 3)
+a2y = pa(1).Y
+a2z = pa(2).Z

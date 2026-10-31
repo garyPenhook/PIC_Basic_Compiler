@@ -579,7 +579,7 @@ const P16_PARTS: [&str; 2] = ["16F17126", "16F17146"];
 /// `Clock` lines changed (the others use PIC18 registers, PIC18 assembly or cycle counts of a 64 MHz part).
 const P16_PORTABLE: &[&str] = &[
     "absminmax", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
-    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
+    "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_oled", "lib_aht30", "lib_strings",
     "float_basic", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge",
 ];
@@ -762,12 +762,15 @@ fn c_routines_link() {
     assert!(!String::from_utf8_lossy(&r.stderr).contains("warning"), "{}", String::from_utf8_lossy(&r.stderr));
     let elf = std::fs::read(out.join("g.elf")).unwrap();
     assert!(elf.windows(13).any(|w| w == b"T_BUMP__RESUL"), "no Basic variable in the debug information");
-    // A handler may coexist with C, but it (or a routine it calls) cannot call a C routine.
+    // A handler may call a C routine inside Save; outside Save it is E-ISR-CALL like any routine.
     let src = out.join("isr.bas");
     std::fs::write(&src, "Program T\nDevice = 18F27Q10\nClock = 16\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF\nCFile \"x.c\"\nExtern Sub f()\nInterrupt H()\n    Save(0, f)\n        f()\n    Restore\nEnd Interrupt\nf()\n").unwrap();
     let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nClock = 16\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF\nCFile \"x.c\"\nExtern Sub f()\nInterrupt H()\n    f()\nEnd Interrupt\nf()\n").unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
     assert!(!r.status.success());
-    assert!(String::from_utf8_lossy(&r.stderr).contains("E-EXTERN"), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(String::from_utf8_lossy(&r.stderr).contains("E-ISR-CALL"), "{}", String::from_utf8_lossy(&r.stderr));
     let r = Command::new(basil()).arg(root().join("tests/exec_c/c_isr.bas")).arg("-o").arg(out.join("c_isr.hex")).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     std::fs::remove_dir_all(&out).ok();

@@ -17,3 +17,10 @@ unsigned char slen(char *s) { unsigned char n = 0; while (s[n]) n++; return n; }
 void upper(char *s) { for (; *s; s++) if (*s >= 'a' && *s <= 'z') *s -= 32; }
 void bump_pt(struct Pt *p) { p->x += 1; p->y += 2; p->z += 100000; }
 unsigned long sumpt(struct Pt *p) { return p->x + (unsigned long)p->y + p->z; }
+unsigned long sumarr(struct Pt *a, unsigned char n) {
+    unsigned long s = 0;
+    unsigned char i;
+    for (i = 0; i < n; i++) s += a[i].x + (unsigned long)a[i].y + a[i].z;
+    return s;
+}
+void fillarr(struct Pt *a, unsigned char n) { unsigned char i; for (i = 0; i < n; i++) { a[i].y = i + 40; a[i].z = 1000UL * i + a[i].y; } }

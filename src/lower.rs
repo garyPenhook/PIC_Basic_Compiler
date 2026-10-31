@@ -324,6 +324,7 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
     for lu in &proj.units {
         for d in &lu.unit.decls {
             if let DeclKind::Routine(r) = &d.kind
+                && !r.forward
                 && let Some(&sym) = a.decl_syms.get(&r.name.span)
             {
                 lw.routines.insert(sym, r);
@@ -398,7 +399,7 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         config.push((reg.name.clone(), reg.addr, v as u16));
     }
 
-    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default(), reg: false };
+    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default(), reg: false, ext: false };
     let mut funcs: Vec<Func> = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
     let mut main = main;
     strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
@@ -606,7 +607,7 @@ impl<'a> Lowerer<'a> {
         body.append(&mut rest);
         let mut entry = self.entry_clears(id, &body, i.name.span);
         entry.append(&mut body);
-        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span, reg: false });
+        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span, reg: false, ext: false });
         self.isrs.push((id, level));
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
@@ -951,7 +952,7 @@ impl<'a> Lowerer<'a> {
         entry.append(&mut body);
         let mut body = entry;
         body.push(S { st: St::Return, span: e.name.span });
-        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params, result: None, body, span: e.name.span, reg: false });
+        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params, result: None, body, span: e.name.span, reg: false, ext: false });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
@@ -1024,7 +1025,7 @@ impl<'a> Lowerer<'a> {
             let name = if k == 0 { "__EVDISP".to_string() } else { format!("__EVDISP{k}") };
             let mut params = vec![idv];
             params.extend(pvs);
-            self.funcs[id] = Some(Func { asm: name, name: "event".into(), params, result: None, body, span: sp, reg: false });
+            self.funcs[id] = Some(Func { asm: name, name: "event".into(), params, result: None, body, span: sp, reg: false, ext: false });
         }
     }
 
@@ -1071,7 +1072,24 @@ impl<'a> Lowerer<'a> {
         }
         if r.ext {
             self.ext_funcs.push(id);
-            body.push(S { st: St::Asm(self.extern_thunk(r, &params, result)), span: r.name.span });
+            let call = St::Asm(self.extern_thunk(r, &params, result));
+            let sp = r.name.span;
+            let intcon = if self.a.isr_calls_c { self.reg_place("INTCON", sp).or_else(|| self.reg_place("INTCON0", sp)) } else { None };
+            match intcon {
+                // A handler also calls C: nothing may interrupt a call into C (it would enter C again, and `basil_io`
+                // and C's frames are shared), so interrupts are off from the first argument byte to the last result
+                // byte, and back on only if they were on. The same code serves a handler, where they are already off.
+                Some(intcon) => {
+                    let saved = self.hidden_var(BYTE);
+                    body.push(S { st: St::Assign(saved.clone(), Ex::new(ExK::Load(intcon), 8, false)), span: sp });
+                    body.push(S { st: St::Int { level: Level::High, on: false }, span: sp });
+                    body.push(S { st: call, span: sp });
+                    let was_on = Ex::new(ExK::Bin(BinKind::And, Box::new(Ex::new(ExK::Load(saved), 8, false)), Box::new(Ex::konst(0x80, 8, false))), 8, false);
+                    let cond = Ex::boolean(ExK::Cmp(CmpKind::Ne, Box::new(was_on), Box::new(Ex::konst(0, 8, false))));
+                    body.push(S { st: St::If(vec![(cond, vec![S { st: St::Int { level: Level::High, on: true }, span: sp }])], Vec::new()), span: sp });
+                }
+                None => body.push(S { st: call, span: sp }),
+            }
         }
         for d in &r.body.decls {
             self.decl_pre(d, ui, &mut body);
@@ -1084,7 +1102,7 @@ impl<'a> Lowerer<'a> {
         entry.append(&mut body);
         let mut body = entry;
         self.push_return(&mut body, r.name.span);
-        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span, reg });
+        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span, reg, ext: r.ext });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
@@ -1161,7 +1179,7 @@ impl<'a> Lowerer<'a> {
         }
         body.push(S { st: St::Return, span });
         sig.entry = asm.trim_start_matches('_').to_string();
-        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span, reg: false }));
+        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span, reg: false, ext: false }));
         self.exports.push(sig);
     }
 
