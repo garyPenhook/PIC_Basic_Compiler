@@ -19,6 +19,10 @@ Module Timer
 ' is the older one: T2CON = T2OUTPS<3:0> (6-3) | TMR2ON (2) | T2CKPS<1:0> (1-0) with prescalers 1, 4, 16, 64 [Register 28-1]; PR2 and TMR2; no hardware-limit
 ' modes, so there are no T2Mode*/T2Rst* constants and no Timer2StartLimit. The Timer2 prescale argument is 0..3 for 1:1, 1:4, 1:16, 1:64. The flags are in PIR1 (TMR1IF bit 0, TMR2IF
 ' bit 1, TMR1GIF bit 7) and PIR0 (TMR0IF bit 5). No Timer1 secondary oscillator or Timer0 clock source constants are offered.
+'
+' PIC16F152xx (DS40002195E, chapters 19, 20 and 21; chosen with `#if _has(ADCON1.PREF)`): Timer0 is the same, Timer1 (T1CON, T1CLK, T1GATE, T1GCON, RD16) and Timer2 (T2CON, T2HLT, T2CLKCON, T2RST,
+' T2PR) have the layout of the PIC16F171xx, with the flags in PIR0 (TMR0IF bit 5), PIR1 (TMR1IF bit 5, TMR2IF bit 6) and PIR2 (TMR1GIF bit 5) [12.9.5 to 12.9.7] and their enables in PIE0 and PIE1. The clock,
+' gate and reset source codes are the part's own [Tables 20-4, 20-5, 21-4 p.174-197]: there is no secondary oscillator and no comparator, and the CCP1, CCP2, PWM3 and PWM4 outputs are the gate and reset sources.
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
 #if _has(T1CON.TMR1CS)
@@ -33,6 +37,27 @@ Public Const T1GatePin = 0
 Public Const T1GateTmr0 = 1
 Public Const T1GateCmp1 = 2
 Public Const T1GateCmp2 = 3
+#elseif _has(ADCON1.PREF)
+' Timer1 clock sources, the CS field of T1CLK [DS40002195E Table 20-4 p.174]. T1ClkPin counts rising edges on the pin selected by T1CKIPPS; T1ClkMfIntOsc is the 500 kHz MFINTOSC,
+' T1ClkMfIntOsc32 the 32 kHz one.
+Public Const T1ClkPin = 0
+Public Const T1ClkFosc4 = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkHfIntOsc = 3
+Public Const T1ClkLfIntOsc = 4
+Public Const T1ClkSfIntOsc = 5
+Public Const T1ClkMfIntOsc = 6
+Public Const T1ClkMfIntOsc32 = 7
+Public Const T1ClkTmr0 = 8
+
+' Timer1 gate sources, the GSS field of T1GATE [Table 20-5 p.175]. T1GatePin is the pin selected by T1GPPS; T1GateTmr2 is the postscaled Timer2 output.
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateTmr2 = 2
+Public Const T1GateCcp1 = 3
+Public Const T1GateCcp2 = 4
+Public Const T1GatePwm3 = 5
+Public Const T1GatePwm4 = 6
 #elseif _has(PIR3.TMR1IF)
 ' Timer1 clock sources, the CS field of T1CLK [DS40002214G Table 25-4]. T1ClkPin counts rising edges on the
 ' pin selected by T1CKIPPS; T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise. T1ClkMfIntOsc is the
@@ -142,6 +167,13 @@ Public Const T2ModeOneShotLevelLow = 23
 
 #if _has(T1CON.TMR1CS)
 ' No Timer2 reset sources on the PIC16F183xx.
+#elseif _has(ADCON1.PREF)
+' Timer2 external reset sources, the RSEL field of T2RST [DS40002195E Table 21-4 p.197]. T2RstPin is the pin selected by T2INPPS.
+Public Const T2RstPin = 0
+Public Const T2RstCcp1 = 1
+Public Const T2RstCcp2 = 2
+Public Const T2RstPwm3 = 3
+Public Const T2RstPwm4 = 4
 #elseif _has(PIR3.TMR1IF)
 ' Timer2 external reset sources, the RSEL field of T2RST [DS40002214G Table 26-4]. T2RstPin is the pin
 ' selected by T2INPPS; T2RstPwmNP1 / T2RstPwmNP2 are the outputs of PWM module N (PWMNS1P1 / PWMNS1P2).
@@ -190,6 +222,14 @@ Dim Tmr1GIf As PIR1.7
 Dim Tmr1Ie As PIE1.0
 Dim Tmr2If As PIR1.1
 Dim Tmr2Ie As PIE1.1
+#elseif _has(ADCON1.PREF)
+Dim Tmr0If As PIR0.5
+Dim Tmr0Ie As PIE0.5
+Dim Tmr1If As PIR1.5
+Dim Tmr1GIf As PIR2.5
+Dim Tmr1Ie As PIE1.5
+Dim Tmr2If As PIR1.6
+Dim Tmr2Ie As PIE1.6
 #elseif _has(PIR3.TMR1IF)
 ' PIR3 / PIE3 bits 7, 4 and 3 [DS40002214G 11.13.21, 11.13.10].
 Dim Tmr0If As PIR3.7

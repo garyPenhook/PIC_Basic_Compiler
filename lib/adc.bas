@@ -35,6 +35,11 @@ Module Adc
 ' The silicon errata of the latest revisions (DS80000666H, DS80000667E, DS80000668L, DS80000709H) list nothing for the ADC conversion or reference except the
 ' auto-conversion trigger in Sleep (not used here), so no workaround is applied.
 '
+' PIC16F152xx (DS40002195E, chapter 27, 10 bits; chosen with `#if _has(ADCON1.PREF)` inside the branches above): the same register layout as the PIC16F183xx (ADCON0 = CHS<5:0> | GO | ON,
+' ADCON1 = FM | CS<2:0> | PREF<1:0> with the same CS codes, no ADNREF, no ADACQ) [Registers 27-1, 27-2 p.328-329]. Channels: RA0..RA2, RA4, RA5 = 0..2, 4, 5, RB5..RB7 = 13..15, RC2..RC5 = 18..21 (no channel for RB4, RC0, RC1,
+' RC6, RC7), VSS 27 and FVR buffer 1 30; there is no temperature indicator and no DAC channel. The positive reference is VDD (PREF = 00) or the FVR (11) [27.4.2]. TAD must be 0.5..9 us (AD20, Table 32-12 p.378), so SetClock picks
+' the smallest FOSC/n with n / FOSC >= 0.5 us. CPON resets to 00 (charge pump off) [CPCON p.335], so AdcInit writes 01: the pump runs when the ADC is on and VDD < 4.6 V. The silicon errata (DS80000918K) list nothing for the ADC.
+'
 ' Errata (DS80000832G):
 '  1.4.4  after the input channel changes, the first conversion can have its top bit wrongly set
 '         (a fall of more than 3.2 V faster than 11 V/us). AdcRead converts once and drops the
@@ -47,7 +52,10 @@ Module Adc
 ' pin may have been changed by `Gpio.GpioAllDigital`).
 ' ADC channel numbers, the ADPCH values of Table 33-1. Pins: RA0..RA7 = 0..7, RB0..RB7 = 8..15,
 ' RC0..RC7 = 16..23.
-#if _has(ADCON0.CHS)
+#if _has(ADCON1.PREF)
+Public Const AdcChVss = 27
+Public Const AdcChFvr = 30
+#elseif _has(ADCON0.CHS)
 Public Const AdcChVss = 60
 Public Const AdcChTemp = 61
 Public Const AdcChDac = 62
@@ -101,6 +109,8 @@ Const AcqUs = 5
 ' Smallest TAD in nanoseconds: 1 us [AD20], 2 us on the PIC16F13145 family (erratum 1.1.1).
 #if _has(CLBCON)
 Const MinTadNs = 2000
+#elseif _has(ADCON1.PREF)
+Const MinTadNs = 500
 #else
 Const MinTadNs = 1000
 #endif
@@ -165,6 +175,10 @@ Public Sub AdcInit()
     ADCON0 = 0
     ADCON1 = 128
     ADACT = 0
+#if _has(ADCON1.PREF)
+    ' CPON resets to 00 (off) [CPCON p.335]; 01 = on when the ADC is enabled and VDD < 4.6 V.
+    CPCON = 64
+#endif
     SetClock(MinTadNs)
     lastCh = 255
     ' ADON with channel 0; ADFM = 1 (right-justified) is set above; the channel is selected by AdcRead.

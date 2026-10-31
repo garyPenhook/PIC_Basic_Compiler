@@ -1,0 +1,133 @@
+# Generated 02/09/2026 GMT
+
+# Copyright (c) 2026 Microchip Technology Inc. and its subsidiaries.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#   http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Microchip PIC16F15244 Configuration Word Definitions
+
+# File Syntax:
+# Each configuration register is given as:
+# 
+#     CWORD:<address>:<mask>:<default value>[:<name>[,<alias list>]]
+# 
+# for each CWORD the configuration settings are listed as
+# 
+#     CSETTING:<mask>:<name>[,<alias list>]:<description>
+# 
+# lastly for each CSETTING all possible values are listed as
+# 
+#     CVALUE:<value>:<name>[,<alias list>]:<description>
+# 
+# All numerical values are given in unqualified hex.  In terms of
+# #pragma config, note the following correspondence:
+# 
+#    #pragma config CSETTING<name> = CVALUE<name>
+# 
+# The compiler may also emit a message when it detects certain programming.
+# This behaviour is defined by the following record
+# 
+#     CMSG:<CSETTING name>=<CVALUE name>[,...]:<message number>
+# 
+# If the compiler encounters the given programming then it will emit the
+# with the corresponding numnber.  Note that these records must appear last
+# in the file.
+# 
+# Comments are also permitted.  Any line beginning with a '#'
+# character will be treated as a comment.
+
+CWORD:8007:1133:3FFF:CONFIG1
+CSETTING:3:FEXTOSC:External Oscillator Mode Selection bits
+CVALUE:3:ECH:EC (external clock) 16 MHz and above
+CVALUE:2:ECL:EC (external clock) below 16MHz
+CVALUE:1:OFF:Oscillator not enabled
+CSETTING:30:RSTOSC:Power-up Default Value for COSC bits
+CVALUE:30:EXTOSC:EXTOSC operating per FEXTOSC bits
+CVALUE:20:HFINTOSC_1MHZ:HFINTOSC (1 MHz)
+CVALUE:10:LFINTOSC:LFINTOSC
+CVALUE:0:HFINTOSC_32MHZ:HFINTOSC (32 MHz)
+CSETTING:100:CLKOUTEN:Clock Out Enable bit
+CVALUE:0:ON:CLKOUT function is enabled; FOSC/4 clock appears on RA4
+CVALUE:100:OFF:CLKOUT function is disabled; I/O function on RA4
+CSETTING:1000:VDDAR:VDD Range Analog Calibration Selection bit
+CVALUE:1000:HI:Internal analog systems are calibrated for operation between VDD = 2.3V - 5.5V
+CVALUE:0:LO:Internal analog systems are calibrated for operation between VDD = 1.8V - 3.6V
+CWORD:8008:3ADF:3FFF:CONFIG2
+CSETTING:1:MCLRE:Master Clear Enable bit
+CVALUE:1:EXTMCLR:If LVP = 0, MCLR pin is MCLR; If LVP = 1, RA3 pin function is MCLR
+CVALUE:0:INTMCLR:If LVP = 0, MCLR pin is port defined function; If LVP = 1, RA3 pin function is MCLR
+CSETTING:6:PWRTS:Power-up Timer Selection bits
+CVALUE:6:PWRT_OFF:PWRT is disabled
+CVALUE:4:PWRT_64:PWRT set at 64 ms
+CVALUE:2:PWRT_16:PWRT set at 16 ms
+CVALUE:0:PWRT_1:PWRT set at 1 ms
+CSETTING:18:WDTE:WDT Operating Mode bits
+CVALUE:18:ON:WDT enabled regardless of Sleep; SEN bit is ignored
+CVALUE:10:NSLEEP:WDT enabled while Sleep = 0, suspended when Sleep = 1; SEN is ignored
+CVALUE:8:SWDTEN:WDT enabled/disabled by SEN bit
+CVALUE:0:OFF:WDT disabled; SEN is ignored
+CSETTING:C0:BOREN:Brown-out Reset Enable bits
+CVALUE:C0:ON:Brown-out Reset Enabled, SBOREN bit is ignored
+CVALUE:80:NSLEEP:Brown-out Reset enabled while running, disabled in Sleep; SBOREN is ignored
+CVALUE:40:SBOREN:Brown-out Reset enabled according to SBOREN bit
+CVALUE:0:OFF:Brown-out Reset disabled
+CSETTING:200:BORV:Brown-out Reset Voltage Selection bit
+CVALUE:200:LO:Brown-out Reset Voltage (VBOR) set to 1.9V
+CVALUE:0:HI:Brown-out Reset Voltage (VBOR) is set to 2.85V
+CSETTING:800:PPS1WAY:PPSLOCKED One-Way Set Enable bit
+CVALUE:800:ON:The PPSLOCKED bit can be set once after an unlocking sequence is executed; once PPSLOCKED is set, all future changes to PPS registers are prevented
+CVALUE:0:OFF:The PPSLOCKED bit can be set and cleared as needed (unlocking sequence is required)
+CSETTING:1000:STVREN:Stack Overflow/Underflow Reset Enable bit
+CVALUE:1000:ON:Stack Overflow or Underflow will cause a reset
+CVALUE:0:OFF:Stack Overflow or Underflow will not cause a reset
+CWORD:8009:0:3FFF:CONFIG3
+CWORD:800A:2B9F:3FFF:CONFIG4
+CSETTING:7:BBSIZE:Boot Block Size Selection bits
+CVALUE:7:BB512:512 words boot block size
+CVALUE:6:BB1K:1024 words boot block size
+CVALUE:5:BB2K:2048 words boot block size
+CVALUE:4:BB4K:4096 words boot block size
+CVALUE:3:BB8K:* half of user program memory
+CVALUE:2:BB16K:* half of user program memory
+CVALUE:1:BB32K:* half of user program memory
+CVALUE:0:BB64K:* half of user program memory
+CSETTING:8:BBEN:Boot Block Enable bit
+CVALUE:8:OFF:Boot Block is disabled
+CVALUE:0:ON:Boot Block is enabled
+CSETTING:10:SAFEN:SAF Enable bit
+CVALUE:10:OFF:SAF is disabled
+CVALUE:0:ON:SAF is enabled
+CSETTING:80:WRTAPP:Application Block Write Protection bit
+CVALUE:80:OFF:Application Block is not write-protected
+CVALUE:0:ON:Application Block is write-protected
+CSETTING:100:WRTB:Boot Block Write Protection bit
+CVALUE:100:OFF:Boot Block is not write-protected
+CVALUE:0:ON:Boot Block is write-protected
+CSETTING:200:WRTC:Configuration Registers Write Protection bit
+CVALUE:200:OFF:Configuration Registers are not write-protected
+CVALUE:0:ON:Configuration Registers are write-protected
+CSETTING:800:WRTSAF:Storage Area Flash (SAF) Write Protection bit
+CVALUE:800:OFF:SAF is not write-protected
+CVALUE:0:ON:SAF is write-protected
+CSETTING:2000:LVP:Low Voltage Programming Enable bit
+CVALUE:2000:ON:Low Voltage programming enabled. MCLR/Vpp pin function is MCLR. MCLRE Configuration bit is ignored.
+CVALUE:0:OFF:High Voltage on MCLR/Vpp must be used for programming
+CWORD:800B:1:3FFF:CONFIG5
+CSETTING:1:CP:User Program Flash Memory Code Protection bit
+CVALUE:1:OFF:User Program Flash Memory code protection is disabled
+CVALUE:0:ON:User Program Flash Memory code protection is enabled
+CWORD:8000:3FFF:3FFF:IDLOC0
+CWORD:8001:3FFF:3FFF:IDLOC1
+CWORD:8002:3FFF:3FFF:IDLOC2
+CWORD:8003:3FFF:3FFF:IDLOC3
+CMSG:SAFEN=ON:1604

@@ -93,7 +93,7 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
         "16Exxx" => Ok(FamilyFacts {
             family: "pic16e",
             vectors: (0x00, 0x04, 0x04),
-            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37; PIC16F13145 family data sheet DS40002519D p.34; PIC16F18313/18323 data sheet DS40001799F Fig. 4-1 p.22, PIC16F18324/44 DS40001800E p.26, PIC16F18325/45 DS40001795K p.28, PIC16F18326/46 DS40001839E p.28 (Reset vector 0000h, interrupt vector 0004h)",
+            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37; PIC16F13145 family data sheet DS40002519D p.34; PIC16F18313/18323 data sheet DS40001799F Fig. 4-1 p.22, PIC16F18324/44 DS40001800E p.26, PIC16F18325/45 DS40001795K p.28, PIC16F18326/46 DS40001839E p.28; PIC16F15213/14/23/24/43/44 data sheet DS40002195E Fig. 9-1 p.33 (Reset vector 0000h, interrupt vector 0004h)",
         }),
         other => Err(format!("architecture '{other}' has no family table in devgen yet; add and verify one before generating")),
     }

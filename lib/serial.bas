@@ -11,6 +11,10 @@ Module Serial
 ' are PIR1 bits 4 and 5. TX goes out through RC4PPS = 14h (TX/CK) [Register 13-2] and RXPPS = PORT[4:3] | PIN[2:0] selects RX [Register 13-1];
 ' RC4 and RC5 on the 14- and 20-pin parts, RA4 and RA5 on the 8-pin PIC16F18313 (port A only). An enabled receiver (SPEN) with TXEN = 0 drives
 ' the TX pin low on the PIC16F18313/18323 silicon A3 only (DS80000666H item 2.1, not the current revision A6).
+' PIC16F152xx (DS40002195E, chapters 18 and 24; chosen with `#if _has(ADCON1.PREF)`): the same EUSART1 registers; TX1IF and RC1IF are PIR1 bits 3 and 4 [12.9.6]. TX goes out through
+' RxyPPS = 05h (TX1/CK1) [Table 18-2 p.148] and RX1PPS = PORT[5:3] | PIN[2:0] selects RX [18.8.1]; RC4 and RC5 on the 14- and 20-pin parts, RA4 and RA5 on the 8-pin PIC16F15213/14 (port A only).
+' Silicon erratum 1.3.1 (DS80000918K, all revisions): a byte written to TX1REG just as the shift register empties can be sent twice. SerialWriteByte therefore waits for TRMT (the shift
+' register empty, workaround method 2) instead of TXIF; characters still go out back to back, as the byte is written within a few cycles of the stop bit.
 ' PIC18F0x/1xQ41 (DS40002214G, chapters 21 and 34): UART1 (U1CON0/1/2, U1BRG, U1TXB, U1RXB, U1FIFO), TX on RC4
 ' and RX on RC5, which exist on the 14-pin parts too. RC4PPS = 0x10 selects UART1 TX [Table 21-2]; U1RXPPS =
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
@@ -32,6 +36,22 @@ Dim TxAnalog As ANSELC.4
 Dim RxAnalog As ANSELC.5
 Const SerTxCode = 16
 Const SerRxCode = 21
+#elseif _has(ADCON1.PREF)
+Dim RxIf As PIR1.4
+#if _has(TRISC)
+Dim TxPin As TRISC.4
+Dim RxPin As TRISC.5
+Dim RxAnalog As ANSELC.5
+Const SerRxCode = 21
+#else
+Dim TxPin As TRISA.4
+Dim RxPin As TRISA.5
+Dim RxAnalog As ANSELA.5
+Const SerRxCode = 5
+#endif
+Const SerTxCode = 5
+Dim OverrunErr As RC1STA.1
+Dim RxEnable As RC1STA.4
 #elseif _has(ADCON0.CHS)
 Dim TxIf As PIR1.4
 Dim RxIf As PIR1.5
@@ -97,6 +117,18 @@ Public Sub SerialInit(ByVal baud As LongWord)
     U1CON0 = 176
     U1CON2 = 128
     U1CON1 = 128
+#elseif _has(ADCON1.PREF)
+#if _has(TRISC)
+    RC4PPS = SerTxCode
+#else
+    RA4PPS = SerTxCode
+#endif
+    RX1PPS = SerRxCode
+    SP1BRGL = Byte(n)
+    SP1BRGH = Byte(n >> 8)
+    BAUD1CON = 8
+    TX1STA = 36
+    RC1STA = 144
 #elseif _has(ADCON0.CHS)
 #if _has(TRISC)
     RC4PPS = SerTxCode
@@ -138,6 +170,11 @@ Public Sub SerialWriteByte(ByVal b As Byte)
     While TxFull = 1
     Wend
     U1TXB = b
+#elseif _has(ADCON1.PREF)
+    ' Erratum 1.3.1: write only when the shift register is empty (TRMT, TX1STA bit 1).
+    While TX1STA.1 = 0
+    Wend
+    TX1REG = b
 #else
     While TxIf = 0
     Wend

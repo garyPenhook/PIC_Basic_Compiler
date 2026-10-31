@@ -39,6 +39,9 @@ Module I2c
 ' on the Q41 (RA0..RA5 except RA3, RB4..RB7 on the 20-pin part, RC0..RC7), `RxyPPS` 27 = SCL1 and 28 = SDA1 [Table 18-2], SSP1IF and BCL1IF in
 ' PIR5 bits 2 and 3. Erratum 1.2.1 (spurious start and stop flags when I2C is enabled, silicon B0) does not matter here: SSP1IF is cleared
 ' before each step and the start and stop interrupts are not used.
+' PIC16F152xx (DS40002195E chapters 18 and 25; chosen with `_has(ADCON1.PREF)`): the same MSSP1 host [SSPM = 1000, SSP1ADD 0..2 not valid], the pins numbered as on the PIC16F183xx, `RxyPPS` 07h = SCL1 and 08h = SDA1
+' [Table 18-2 p.148], SSP1IF and BCL1IF in PIR1 bits 1 and 2 [12.9.6]. Silicon erratum 1.4.1 (DS80000918K, all revisions: Start and Stop flags can be set when I2C is enabled) does not matter here, as on the PIC16F17126/46:
+' SCIE and PCIE stay 0 (SSP1CON3 = 0), SSP1IF is cleared before each step, and the S and P bits are never read.
 #if _has(I2C1CON0)
 Dim sclPort As Byte
 Dim sclMask As Byte
@@ -332,6 +335,11 @@ End Function
 #if _has(PRODL)
 Dim FlagSsp As PIR3.0
 Dim FlagBcl As PIR3.1
+#elseif _has(ADCON1.PREF)
+Dim FlagSsp As PIR1.1
+Dim FlagBcl As PIR1.2
+Const SclCode = 7
+Const SdaCode = 8
 #elseif _has(ADCON0.CHS)
 Dim FlagSsp As PIR1.3
 Dim FlagBcl As PIR1.2

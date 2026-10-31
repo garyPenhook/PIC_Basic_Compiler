@@ -20,7 +20,7 @@ Module Serial2
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
 #if Not _has(U2CON0) And Not _has(TX2STA)
-#error "serial2 needs a second EUSART: the PIC16F13145 family and the PIC16F183xx parts have one (DS40002519D Table 1 p.1; DS40001799F Family Types table p.3); use module Serial"
+#error "serial2 needs a second EUSART: the PIC16F13145 family, the PIC16F183xx parts and the PIC16F152xx parts have one (DS40002519D Table 1 p.1; DS40001799F Family Types table p.3; DS40002195E Table 1 p.1); use module Serial"
 #endif
 #if _has(U2CON0)
 Dim TxFull As U2FIFO.4

@@ -820,6 +820,80 @@ fn p183_programs_in_simulator() {
     }
 }
 
+const P152_PARTS: [&str; 6] = ["16F15213", "16F15214", "16F15223", "16F15224", "16F15243", "16F15244"];
+
+/// Programs of the PIC16F171xx sets that do not apply to the PIC16F152xx (or do not fit its 512 bytes of RAM and 4K words of flash): the library
+/// modules whose registers differ (`tests/exec_p152` has the PIC16F152xx versions) and the programs that are too big.
+const P152_SKIP: &[&str] = &["arith_byte", "arith_integer", "arith_shortint", "arith_word", "agg_byval", "arrays_full", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_adc", "lib_eeprom", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_serial2", "lib_serial", "lib_spi"];
+
+/// The programs for the PIC16F152xx: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p152`.
+fn p152_programs() -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = P16_PORTABLE.iter().filter(|p| !P152_SKIP.contains(p)).map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
+    files.extend(bas_files(&root().join("tests/exec_p16")).into_iter().filter(|f| !P152_SKIP.contains(&f.file_stem().unwrap().to_str().unwrap())));
+    files.extend(bas_files(&root().join("tests/exec_p152")));
+    files
+}
+
+/// Every member of the PIC16F152xx family builds the small program (port A only on the 8-pin parts, 256 bytes of RAM, 2K words of flash); the
+/// PIC16F15244 builds all of its programs.
+#[test]
+fn p152_parts_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("p152parts");
+    let mut failures = Vec::new();
+    let small = std::fs::read_to_string(root().join("tests/exec_p152_parts/small.bas")).unwrap();
+    let mut programs: Vec<(String, PathBuf)> = Vec::new();
+    for dev in P152_PARTS {
+        let f = out.join(format!("small_{dev}.bas"));
+        std::fs::write(&f, small.replace("16F15213", dev)).unwrap();
+        programs.push((dev.to_string(), f));
+    }
+    for src in p152_programs() {
+        let name = src.file_stem().unwrap().to_string_lossy().into_owned();
+        // `tests/exec_p152` programs already name a part and its clock; the others are changed as for the PIC16F171xx.
+        let f = if src.starts_with(root().join("tests/exec_p152")) { src.clone() } else { for_p16(&src, "16F15244", &out.join(format!("{name}_16F15244.bas"))) };
+        programs.push(("16F15244".into(), f));
+    }
+    for (dev, src) in programs {
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        if !r.status.success() || text.contains("pic-as:") {
+            failures.push(format!("{} for {dev}:\n{text}", src.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The PIC16F152xx modules that stop with `#error` instead of using registers or memory the part does not have.
+#[test]
+fn p152_unported_modules_stop() {
+    let out = scratch("p152err");
+    for m in ["eeprom", "serial2", "dma"] {
+        let f = out.join(format!("e_{m}.bas"));
+        std::fs::write(&f, format!("Program E\nDevice = 16F15244\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHZ, WDTE = OFF, LVP = ON\nInclude \"{m}\"\nDim x As Byte\nx = 1\n")).unwrap();
+        let r = Command::new(basil()).arg(&f).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(!r.status.success() && text.contains("E-PP-ERROR"), "{m} did not stop with #error:\n{text}");
+    }
+}
+
+/// With `BASIL_MDB=1` the PIC16F152xx programs run on the simulator's `PIC16F15244`.
+#[test]
+fn p152_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files = p152_programs();
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F15244").args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
 /// A program that calls C routines is linked by xc8-cc (`CFile` / `Extern`); the simulator run of the same
 /// program is `tests/exec_c`.
 #[test]

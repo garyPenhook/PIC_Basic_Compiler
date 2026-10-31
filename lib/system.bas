@@ -14,6 +14,10 @@ Module System
 ' with OSCFRQ.HFFRQ 0 = 1, 1 = 2, 3 = 4, 4 = 8, 5 = 12, 6 = 16 MHz and 7 or more = 32 MHz, and COSC 000 = HFINTOSC with the 2x PLL with HFFRQ 4, 5, 6 = 16, 24, 32 MHz [Table 7-1, Register 7-6 p.93];
 ' the 32 MHz power-up setting RSTOSC = HFINT32 is the second kind.
 '
+' PIC16F152xx (DS40002195E chapters 10 and 11; chosen with `_has(ADCON1.PREF)`): PCON0 has no window violation flag (bit 5 is unimplemented, p.73), so cause 5 is left out as on the PIC16F183xx. There is no
+' clock switching and no divider: RSTOSC fixes the source, OSCCON holds only COSC<1:0> (bits 5:4; 00 and 10 are the HFINTOSC, 01 LFINTOSC, 11 the external clock) and the HFINTOSC runs at OSCFRQ.FRQ = 0..5 =
+' 1, 2, 4, 8, 16, 32 MHz [Table 11-1 p.77, OSCFRQ p.85]. SysClockFrom takes `cosc` 0 or 2 and `cdiv` 0 there; any divider code gives 0.
+'
 ' Clock check: the library modules and DelayUs/DelayMs compute from the compile-time `Clock`; the
 ' module does not change the clock at run time (that would make every one of them wrong), it
 ' reads what the oscillator really does and compares it with `Clock`.
@@ -64,7 +68,28 @@ End Sub
 Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq As Byte) As LongWord
     Dim mhz As Byte
     Result = 0
-#if _has(ADCON0.CHS)
+#if _has(ADCON1.PREF)
+    If (cosc <> 0 And cosc <> 2) Or cdiv <> 0 Then
+        Exit
+    End If
+    mhz = 0
+    If hffrq = 0 Then
+        mhz = 1
+    ElseIf hffrq = 1 Then
+        mhz = 2
+    ElseIf hffrq = 2 Then
+        mhz = 4
+    ElseIf hffrq = 3 Then
+        mhz = 8
+    ElseIf hffrq = 4 Then
+        mhz = 16
+    ElseIf hffrq = 5 Then
+        mhz = 32
+    End If
+    If mhz <> 0 Then
+        Result = LongWord(mhz) * 1000000
+    End If
+#elseif _has(ADCON0.CHS)
     If (cosc <> 6 And cosc <> 0) Or cdiv > 9 Then
         Exit
     End If
@@ -136,7 +161,11 @@ End Function
 
 ' The system clock in Hz as the oscillator is set now (SysClockFrom of OSCCON2 and OSCFRQ).
 Public Function SysClockHz() As LongWord
+#if _has(ADCON1.PREF)
+    Result = SysClockFrom((OSCCON >> 4) And 3, 0, OSCFRQ And 7)
+#else
     Result = SysClockFrom((OSCCON2 >> 4) And 7, OSCCON2 And 15, OSCFRQ And 15)
+#endif
 End Function
 
 ' True when the oscillator runs at the frequency the program was compiled for (`Clock`).

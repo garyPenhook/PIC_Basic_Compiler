@@ -29,7 +29,7 @@ Module Eeprom
 ' by every later Reset until a write succeeds; EepromWrite reports success by the read-back and clears NVMCON1 (WRERR with it) afterwards, so it is not affected. The LF parts
 ' may not write below 2.2 V at -40 C (item 4.1, silicon A3/A4 only) and may not access NVM at all below 2.0 V at 25 C or less (item 5.3, all revisions).
 #if _eeprom = 0
-#error "eeprom needs a part with data EEPROM: the PIC16F13145 family has none (DS40002519D Table 1 p.1); use module Flashwrite"
+#error "eeprom needs a part with data EEPROM: the PIC16F13145 family and the PIC16F152xx parts have none (DS40002519D Table 1 p.1; DS40002195E Table 1 p.1); use module Flashwrite"
 #endif
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0

@@ -38,6 +38,9 @@ Module Spi
 ' [Register 13-2], SSP1CLKPPS and SSP1DATPPS take the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [Register 13-1]). RA3 is input only. Pins that
 ' exist: port A on every part, port C (RC0..RC5) on the 14-pin parts, RB4..RB7 and RC6, RC7 on the 20-pin parts. The silicon errata for the MSSP concern only SPI slave mode
 ' (DS80000666H 3.4, DS80000667E 1.4.2, DS80000668L 6.1), which this module does not offer.
+' PIC16F152xx (DS40002195E chapters 18 and 25; chosen with `_has(ADCON1.PREF)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 07h and SDO1/SDA1 = 08h [Table 18-2 p.148], SSP1CLKPPS and SSP1DATPPS take
+' the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [18.8.1]); the pins that exist are those of the PIC16F183xx (port A on every part, RC0..RC5 on the 14-pin parts, RB4..RB7 and
+' RC6, RC7 on the 20-pin parts; RA3 is input only). The silicon errata (DS80000918K) concern only the MSSP I2C start and stop flags, which SPI does not use.
 #if _has(SPI1CON0) Or Not _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
@@ -245,7 +248,10 @@ Public Function SpiRead() As Byte
 End Function
 #else
 Dim BitWcol As SSP1CON1.7
-#if _has(ADCON0.CHS)
+#if _has(ADCON1.PREF)
+Const SckCode = 7
+Const SdoCode = 8
+#elseif _has(ADCON0.CHS)
 Const SckCode = 24
 Const SdoCode = 25
 #else

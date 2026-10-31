@@ -42,6 +42,9 @@ Module Pwm
 ' f = FOSC / (4 * prescale * (PR2 + 1)) [Equation 18-1, 29-1] and the duty steps are 1 / (4 * (PR2 + 1)) of the period [Equation 18-3]; PwmInit therefore tries the prescalers 1, 4, 16, 64.
 ' The flag is TMR2IF = PIR1 bit 1. CCPxCON = EN | FMT | MODE 11xx (156) and PWMxCON = EN | POL as before. CCPTMRS and PWMTMRS reset to 01 = Timer2 [Registers 29-5, 18-4]; they are written to
 ' 01 anyway where the part has them (not the 8- and 14-pin PIC16F18313/18323). The errata of the latest silicon show nothing for CCP or PWM.
+' PIC16F152xx (DS40002195E chapters 22 and 23; chosen with `_has(PWM3CON) And _has(PIR1.TMR2IF)`): the Q10 channels and registers (channels 1 and 2 are CCP1 and CCP2, 3 and 4 are PWM3 and PWM4,
+' Timer2 with T2CLKCON, T2PR and prescalers 1..128, CCPxCON and PWMxCON as above) with the PPS routing of the PIC16F13145 family: any pin of the part, RxyPPS = 01h CCP1, 02h CCP2, 03h PWM3, 04h PWM4
+' [Table 18-2 p.148]. The Timer2 flag is TMR2IF = PIR1 bit 6 [12.9.6]; there is no CCPTMRS or PWMTMRS (CCP PWM and PWM3/4 always use Timer2, Table 22-1).
 #if _has(PWMEN)
 ' Output channels: three modules of two on the PIC18-Q41, two modules of two on the PIC16F171xx.
 #if _has(PWM3CON)
@@ -436,6 +439,8 @@ End Function
 Dim Tmr2If As PIR1.1
 #elseif _has(PWM1DCL)
 Dim Tmr2If As PIR2.2
+#elseif (_has(PWM3CON) And _has(PIR1.TMR2IF))
+Dim Tmr2If As PIR1.6
 #else
 Dim Tmr2If As PIR4.1
 #endif
@@ -513,7 +518,7 @@ End Function
 ' (RC6, RC7 on the 20-pin parts; port C is missing on the 8-pin part).
 Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
     Result = False
-#if _has(PWM1DCL) Or _has(PWM5DCL)
+#if _has(PWM1DCL) Or _has(PWM5DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
     If ch >= 1 And ch <= 4 Then
         Result = pin <= 5 And pin <> 3
 #if _has(RB4PPS)
@@ -591,7 +596,7 @@ Sub PinDigital(ByVal pin As Byte)
 End Sub
 
 ' RxyPPS = code for pin 0..23 (code 0 gives the pin back to its LATxy bit).
-#if _has(PWM1DCL) Or _has(PWM5DCL)
+#if _has(PWM1DCL) Or _has(PWM5DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     If pin = 0 Then
         RA0PPS = code
@@ -820,6 +825,9 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     Else
         SetPps(pin, ch + 41)
     End If
+#elseif (_has(PWM3CON) And _has(PIR1.TMR2IF))
+    ' RxyPPS: CCP1 01h, CCP2 02h, PWM3 03h, PWM4 04h [Table 18-2 p.148]. Timer2 is the only PWM timer; there is no CCPTMRS.
+    SetPps(pin, ch)
 #else
     SetPps(pin, ch + 4)
     ' CCPTMRS: CnTSEL / PnTSEL = 01 selects Timer2 for PWM [22.6.4, 23.12.2].

@@ -3,7 +3,7 @@
 Written in the language, found by `Include "name"` in the project's `lib/` folder (LANGUAGE.md §9).
 A routine is called as `Module.Routine(...)` or, when the name is unambiguous, by its own name.
 Only what a program calls is compiled in. Each module cites the data sheet pages its register
-values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F, PIC16F13113..13145 values from DS40002519D, PIC16F183xx values from DS40001799F / DS40001800E / DS40001795K / DS40001839E and PIC18F0x/1xQ41
+values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F, PIC16F13113..13145 values from DS40002519D, PIC16F183xx values from DS40001799F / DS40001800E / DS40001795K / DS40001839E, PIC16F152xx values from DS40002195E and PIC18F0x/1xQ41
 values from DS40002214G / DS40002242F where the module is ported, see "Device support" below); the values were
 checked against those documents.
 
@@ -73,6 +73,32 @@ run on the PIC16F18346; the simulator has no ADC for the part, so only its set-u
 | `dma` | `#error` (no DMA) |
 | `floatlib` | done (as the PIC16F171xx; about 1.2K words for `+`, so the 2K-word parts have little room left) |
 
+### PIC16F15213 … 15244 (DS40002195E; facts in `FACTS-16F152xx.md`)
+
+Parts with a fixed clock (no clock switching), a 10-bit ADC without ADCC, no data EEPROM and the PIC16F171xx register names for PPS and the timers. Several codes and flag bits differ from every other family,
+so the modules tell this part apart with `#if _has(ADCON1.PREF)` (the PIC16F183xx calls the field `ADPREF`; `_has(PIR1.TMR1IF)` is true here too but with other bit numbers). A module that is not ported stops with `#error`.
+The simulator tests (`tests/exec_p152`, the portable programs and `tests/exec_p16` that fit) run on the PIC16F15244; the simulator has no ADC for the part, so only its set-up is tested. Nothing was run on a real part.
+
+| Module | PIC16F152xx |
+|---|---|
+| `delay`, `strings` | portable |
+| `gpio` | done (`ANSELx`, `WPUx`, `ODCONx`, `_has` per port; the 8-pin parts have port A only, the 14-pin parts no port B) |
+| `intosc` | done for `Clock` = 32, 16, 8, 4, 2, 1: only `OSCFRQ.FRQ` is written (no clock switching, no divider, so no `Clock` below 1 and `SetClockDiv` needs shift 0); `Config RSTOSC = HFINTOSC_32MHZ` or `HFINTOSC_1MHZ` must be the source |
+| `system` | done (no window violation cause on `PCON0`; clock decode for COSC 00 and 10 with `OSCFRQ.FRQ` 0..5 = 1, 2, 4, 8, 16, 32 MHz, no divider) |
+| `timer` | done (Timer0, Timer1 and Timer2 as the PIC16F171xx; flags `TMR1IF` and `TMR2IF` in `PIR1` bits 5 and 6, `TMR1GIF` in `PIR2`; `T1Clk*`: Pin, Fosc4, Fosc, HfIntOsc, LfIntOsc, SfIntOsc, MfIntOsc, MfIntOsc32, Tmr0; `T1Gate*`: Pin, Tmr0, Tmr2, Ccp1, Ccp2, Pwm3, Pwm4; `T2Rst*`: Pin, Ccp1, Ccp2, Pwm3, Pwm4) |
+| `serial` | done (EUSART1, `RX1PPS`, TX/CK = `05h`; TX RC4 and RX RC5, RA4 and RA5 on the 8-pin parts; waits for TRMT, erratum 1.3.1) |
+| `serial2` | `#error` (one EUSART) |
+| `adc` | done (10 bits, `AdcMax` = 1023; `ADCON0.CHS`, `ADCON1.CS`/`PREF`; `AdcChVss` 27 and `AdcChFvr` 30, no temperature or DAC channel; TAD >= 0.5 us; the charge pump is switched on) |
+| `eeprom` | `#error` (no data EEPROM; use `flashwrite`) |
+| `flashwrite` | done (32-word row, 14-bit words; as the PIC16F171xx; `FlashLastSector` from the size, 63 or 127) |
+| `spi` | done (MSSP1, `RxyPPS` 07h = SCK1 and 08h = SDO1) |
+| `i2c` | done (MSSP1 hardware host, `RxyPPS` 07h = SCL1 and 08h = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 1 and 2; erratum 1.4.1 does not apply) |
+| `lcd` | done (pins of the part only: port B on the 20-pin parts, port C not on the 8-pin parts) |
+| `pwm` | done (CCP1, CCP2, PWM3, PWM4 = channels 1..4 on Timer2 with prescalers 1..128; `RxyPPS` 01h, 02h, 03h, 04h; any pin of the part; erratum 1.2.1 cannot be reached) |
+| `oled`, `aht30` | done over `i2c`/`spi` (the 1 KB frame buffer does not fit: use OledGoto/OledData) |
+| `dma` | `#error` (no DMA) |
+| `floatlib` | done (as the PIC16F171xx; about 1.2K words for `+`, so the 2K-word parts have little room left) |
+
 On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check
 register values and set-up, not waveforms (no part of the PIC18-Q41 transfer code ran against a real bus). Limits of the simulator: it
@@ -132,6 +158,8 @@ make), never fall through to the Q10 registers.
 | `Timer0OnExpire`, `Timer1OnExpire`, `Timer2OnExpire` | event variables of type `TTimerEvent` (`Event()`); assign a handler (`Timer0OnExpire = Tick`) |
 | `Timer0Service()`, `Timer1Service()`, `Timer2Service()` | if the timer has overflowed (clearing the flag), call its `OnExpire` handler; call from the main loop, or from your own `Interrupt` inside `Save(0, Timer0Service)` |
 
+PIC16F152xx (DS40002195E chapters 19-21): as the PIC16F171xx; `T1ClkPin`, `T1ClkFosc4`, `T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkSfIntOsc`, `T1ClkMfIntOsc`, `T1ClkMfIntOsc32`, `T1ClkTmr0`; `T1GatePin`, `T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GatePwm3`, `T1GatePwm4`; `T2RstPin`, `T2RstCcp1`, `T2RstCcp2`, `T2RstPwm3`, `T2RstPwm4`; no secondary oscillator.
+
 PIC16F183xx (DS40001839E chapters 26-28): Timer0 as above; Timer1 has `T1ClkFosc4`, `T1ClkFosc`, `T1ClkPin`, `T1ClkLfIntOsc` and the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateCmp1`, `T1GateCmp2`, and `Timer1Read` reads `TMR1H` twice (no `RD16`); Timer2 prescales 1, 4, 16, 64 (`prescale` 0..3) and there are no `Timer2StartLimit`, `T2Mode*` or `T2Rst*`.
 
 ## serial (EUSART1, 8N1, TX on RC6, RX on RC7; PIC16F17126/46 and PIC18-Q41 UART1: TX on RC4, RX on RC5)
@@ -154,6 +182,8 @@ with voltage and temperature (data sheet 29.1.3), so use a crystal for anything 
 
 PIC16F183xx: `RC4PPS = 20`, `RXPPS = 21` (RA4/RA5 with `RA4PPS = 20`, `RXPPS = 5` on the 8-pin PIC16F18313/PIC16LF18313); `TXIF`/`RCIF` are `PIR1` bits 4 and 5.
 
+PIC16F152xx: `RC4PPS = 5` (TX1/CK1), `RX1PPS = 21` (RA4/RA5 with `RA4PPS = 5`, `RX1PPS = 5` on the 8-pin parts); `RC1IF` is `PIR1` bit 4. `SerialWriteByte` waits for TRMT, not TXIF (erratum 1.3.1: a byte written as the shift register empties can be sent twice).
+
 ## serial2 (EUSART2, 8N1, TX on RB6, RX on RB7; PIC18-Q41 UART2: TX on RC2, RX on RC1)
 Same routines as `serial` with the prefix `Serial2` (`Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
 `Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`, `Serial2Flush`).
@@ -164,6 +194,7 @@ disconnect the programmer while using them. Both modules can be included and run
 I2C1 data pin.
 
 The PIC16F183xx parts have one EUSART: `serial2` stops with `#error`.
+The PIC16F152xx parts have one EUSART as well: `serial2` stops with `#error`.
 
 ## adc (ADCC, basic mode, right-justified results: 10 bits on the Q10, 12 bits on the PIC16F17126/46 and PIC18-Q41)
 | Routine | Effect |
@@ -183,6 +214,8 @@ The temperature indicator needs `FVRCON.TSEN` (not set here). Source impedance a
 larger `ADACQ`.
 
 PIC16F183xx: 10 bits (`AdcMax` 1023) on `ADCON0.CHS` / `ADCON1.ADCS`; `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63; the conversion clock is FOSC/n with TAD >= 1 us and the 5 us acquisition is a software delay after the channel or reference changes. The LF parts have no 4.096 V FVR gain.
+
+PIC16F152xx: 10 bits (`AdcMax` 1023) on `ADCON0.CHS` / `ADCON1.CS` / `ADCON1.PREF`; `AdcChVss` 27 and `AdcChFvr` 30 (no `AdcChTemp` or `AdcChDac`); channels RA0..RA2, RA4, RA5 = 0..2, 4, 5, RB5..RB7 = 13..15, RC2..RC5 = 18..21; TAD >= 0.5 us (FOSC/n, n = 2 .. 64), the 5 us acquisition is a software delay, and `AdcInit` writes `CPCON = 01` (the charge pump is off at reset).
 
 ## eeprom (data EEPROM, 1024 bytes; 512 bytes on the PIC18-Q41, 256 on the PIC16F17126/46)
 | Routine | Effect |
@@ -205,6 +238,8 @@ is restored). The CPU stalls until the write is done. `NVMCON1` is cleared after
 cleared; success is the read-back as on the other parts). The data sheet and its errata (DS80001009E) show no erratum for the NVM.
 
 PIC16F183xx and PIC16LF183xx: 256 bytes at F000h through `NVMREGS = 1`, `NVMADRH = 70h` (reads back F0h); the WRERR erratum is covered by the read-back.
+
+PIC16F152xx: no data EEPROM, `eeprom` stops with `#error`; use `flashwrite`.
 
 ## flashwrite (program flash self-write)
 PIC16F17126/46 (DS40002343F section 15.1): addresses are word addresses 0..16383 and a **sector is the 32-word row** (`FlashSectorWords` = 32,
@@ -245,6 +280,8 @@ Q41 turned on `DEBUG` and the write protection of the application block: self-wr
 
 PIC16F183xx: as the PIC16F17126/46 (32-word row, 14-bit words); `NVMADRH` bit 7 reads 1.
 
+PIC16F152xx: as the PIC16F17126/46 (32-word row, 14-bit words, 2K or 4K words of flash, so `FlashLastSector` is 63 or 127); the Memory Access Partition write-protect bits (CONFIG4) are off unless the program sets them.
+
 ## pwm (CCP1, CCP2, PWM3, PWM4 on Timer2; PIC18-Q41: six outputs of PWM1..PWM3; PIC16F17126/46: four outputs of PWM1 and PWM2)
 PIC16F17126/46: the same module as on the Q41 with two PWM modules (DS40002343F chapter 29): channels 1..4 are PWM1S1P1, PWM1S1P2, PWM2S1P1,
 PWM2S1P2 on RA0..RA5 (not RA3), RB4..RB7 (20-pin part), RC0..RC7, `RxyPPS` = 10 + channel (PWM1S1P1_OUT = 0Bh, Table 18-2); channels 5 and 6 are
@@ -270,6 +307,8 @@ registers are double buffered and copied at the period match; if that falls betw
 update, one period can use a mixed value. Not reentrant: do not call it from a handler and from the main program.
 
 PIC16F183xx: CCP1, CCP2, PWM5 and PWM6 are channels 1..4 on Timer2 (prescalers 1, 4, 16, 64); `RxyPPS` 0Ch, 0Dh, 02h, 03h.
+
+PIC16F152xx: CCP1, CCP2, PWM3 and PWM4 are channels 1..4 on Timer2 (prescalers 1..128, `T2CLKCON`); `RxyPPS` 01h, 02h, 03h, 04h; any pin of the part; there is no `CCPTMRS`.
 
 ## i2c (MSSP1 host; PIC18-Q41: software host)
 PIC16F17126/46: the MSSP1 host as on the Q10 (DS40002343F chapter 31) with the pins of the Q41 numbering: 0..23, RA0..RA5 except RA3, RB4..RB7 and
@@ -300,6 +339,8 @@ needed. Single host only; not reentrant.
 
 PIC16F183xx: the same hardware host; `RxyPPS` 24 = SCL1 and 25 = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 3 and 2.
 
+PIC16F152xx: the same hardware host; `RxyPPS` 07h = SCL1 and 08h = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 1 and 2.
+
 ## spi (MSSP1 host)
 PIC16F17126/46: pins numbered 0..23 as on the Q41 (RA0..RA5 except RA3, RB4..RB7 and RC0..RC7 as the part has them; SCK on RA3 is refused);
 `RxyPPS` 27 = SCK1, 28 = SDO1 (Table 18-2), `SSP1CLKPPS`/`SSP1DATPPS` = the pin number. The rest is as for the Q10 below.
@@ -317,6 +358,8 @@ does not use its interrupt, and is not reentrant.
 
 PIC16F183xx: `RxyPPS` 24 = SCK1 and 25 = SDO1.
 
+PIC16F152xx: `RxyPPS` 07h = SCK1 and 08h = SDO1.
+
 ## intosc (internal oscillator set-up)
 `Include "intosc"` makes the hardware run at `Clock`: its start-up code, run before the main program, writes `OSCFRQ` and
 `OSCCON1` (HFINTOSC, divider) and waits for `OSCCON3.ORDY` and `OSCSTAT.HFOR`, each wait bounded. `Clock` must be 64, 48,
@@ -331,6 +374,8 @@ A run-time change does not change the compile-time `Clock` that `DelayMs`/`Delay
 description, register order and the design background: `docs/CLOCK.md`.
 
 PIC16F183xx: `#error`; set the speed with `Config RSTOSC = HFINT32` (32 MHz) or `HFINT1` and give `Clock` to match, then check with `System.SysClockOk()`.
+
+PIC16F152xx: `Clock` = 32, 16, 8, 4, 2 or 1 writes `OSCFRQ.FRQ`; there is no divider and no clock switching, so the source must be `RSTOSC = HFINTOSC_32MHZ` or `HFINTOSC_1MHZ`.
 
 ## system (reset cause, clock check)
 | Routine | Effect |
@@ -348,6 +393,8 @@ unknown, so power-on is tested first. The module does not change the clock (that
 `SysClockOk` is the run-time check that the oscillator really runs at `Clock`.
 
 PIC16F183xx: no window-violation cause (`PCON0` has no such bit); `SysClockFrom` decodes COSC 110 (HFFRQ 1, 2, 4, 8, 12, 16, 32 MHz) and COSC 000 (2x PLL: 16, 24, 32 MHz).
+
+PIC16F152xx: no window-violation cause; `SysClockFrom(cosc, 0, frq)` takes COSC 0 or 2 and `OSCFRQ.FRQ` 0..5 = 1, 2, 4, 8, 16, 32 MHz (any divider code gives 0).
 
 ## lcd (HD44780U character LCD, 4-bit)
 Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "Initializing by Instruction" (Figure 24), DDRAM map, bus timing. Pins `0..23` (RA0 = 0, RB0 = 8, RC0 = 16 ...); R/W tied to ground, the busy flag is not read (fixed waits: 50 us, 2 ms after Clear/Home).
