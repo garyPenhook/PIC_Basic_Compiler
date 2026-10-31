@@ -743,7 +743,10 @@ fn p13_programs_in_simulator() {
     }
 }
 
-const P183_PARTS: [&str; 8] = ["16F18313", "16F18323", "16F18324", "16F18325", "16F18326", "16F18344", "16F18345", "16F18346"];
+const P183_PARTS: [&str; 16] = [
+    "16F18313", "16F18323", "16F18324", "16F18325", "16F18326", "16F18344", "16F18345", "16F18346", "16LF18313", "16LF18323", "16LF18324", "16LF18325", "16LF18326", "16LF18344", "16LF18345",
+    "16LF18346",
+];
 
 /// Programs of the PIC16F171xx sets that do not apply to the PIC16F183xx: Timer1 and Timer2 with their clock-select and hardware-limit registers, and the library
 /// modules whose registers differ (`tests/exec_p183` has the PIC16F183xx versions).
