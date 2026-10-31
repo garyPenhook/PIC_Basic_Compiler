@@ -4349,6 +4349,28 @@ If st = 0 Then
 End If
 ```
 
+## rtcc and rtccspi  (`Include "rtcc"`, `Include "rtccspi"`, Microchip real-time clock/calendar chips)
+
+`rtcc` drives the I2C parts MCP7940M, MCP7940N, MCP79400/1/2 and MCP79410/1/2 over the `I2c` module (set it up
+first); `rtccspi` drives the SPI parts MCP7951x/7952x and MCP795W1x/2x over the `Spi` module (mode 0; the parts
+run at 1.8 to 3.6 V) and takes the chip select pin in `RtccspiInit`. Times are plain numbers (year 0..99 for
+2000..2099, hours 0..23). Set the clock once with `RtccSet`, then `RtccRead` takes a snapshot that the accessors
+(`RtccHour()`, `RtccMinute()` ...) decode. `RtccSet` blocks until the crystal runs (up to 2 s). Every routine
+returns a status: 0 ok, 1..4 as the bus module, 5 argument out of range, 6 a wait ran out. See `docs/LIBRARY.md`
+for the routines, the parts each block exists on and the errata the code handles.
+
+```basic
+Dim st As Byte
+st = I2cInit(100000, 19, 20)
+st = RtccSet(26, 3, 14, 6, 9, 30, 0)     ' 2026-03-14, weekday 6, 09:30:00
+st = RtccAlarm(0, 1, 1, 1, 1, 0, 31, 0)  ' alarm 0 when minutes = 31
+st = RtccAlarmEnable(0, True)
+st = RtccRead()
+If st = 0 Then
+    ' RtccHour(), RtccMinute(), RtccSecond() ...
+End If
+```
+
 ## floatlib  (automatic)
 
 Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong

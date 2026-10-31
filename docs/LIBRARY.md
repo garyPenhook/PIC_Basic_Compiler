@@ -441,6 +441,21 @@ Pixel drawing uses a 1024-byte frame buffer in RAM (the display cannot be read b
 | `OledBufBitmap(x, y, w, pages, opaque, img)` | `Const` image into the buffer at any pixel position: `w` columns, `pages` rows of 8 pixels; `opaque` also clears the image's clear pixels |
 | `OledBufChar(x, y, ch, on)` / `OledBufText(x, y, on, s)` | 5 x 7 text at any pixel position, set pixels only (so text can go over a picture) |
 
+## pinio (pin access by number)
+
+Support module for the bit-banged modules. Pins are numbered 0..23 as in `lcd` (RA0 = 0, RB0 = 8, RC0 = 16).
+`PinOk(pin)`, `PinSet(pin, level)`, `PinGet(pin)`, `PinOutput(pin)`, `PinInput(pin)` (both clear ANSELx),
+`PinDriveLow(pin)` / `PinRelease(pin)` for an open-drain line without ODCONx. Pins the part lacks (port B on
+the 14-pin PIC18-Q41 and PIC16F13123..13125, port B and C on the PIC16F13113) are refused by `PinOk` and ignored.
+Works on every supported family (only LATx, PORTx, TRISx and ANSELx are used).
+
+## shift (ShiftOut / ShiftIn)
+
+Bit-banged shift for 74HC595/74HC165, DACs, ADCs: `ShiftOut(data, dataPin, clkPin, lsbFirst, bits)`,
+`ShiftIn(dataPin, clkPin, lsbFirst, bits)` (1..8 bits) and `ShiftOut16` / `ShiftIn16` (1..16 bits). Clock idles
+low, data changes while low and is valid on the rising edge (SPI mode 0). Bad pins or bit counts do nothing.
+Test `tests/exec/lib_shift.bas` (set-up only; the simulator has no pin model); built for every family.
+
 ## aht30 (AHT30 temperature and humidity sensor, I2C)
 Source: the Aosong AHT30 data sheet (Sep 2023): address 0x38 (5.1), measurement command 0xAC 0x33 0x00 and 80 ms wait (5.2), status word (Table 9), CRC8 (5.2), conversion formulas (5.2), I2C timing (Table 8). The caller sets up the bus first (`I2cInit` at no more than 400 kHz, external pull-ups); sample at most once a second to keep self-heating under 0.1 C (2.4). Results: temperature `Integer` in 1/100 degree C, humidity `Word` in 1/100 %RH, rounded to nearest, written only on status 0.
 
@@ -452,6 +467,52 @@ Source: the Aosong AHT30 data sheet (Sep 2023): address 0x38 (5.1), measurement 
 | `Aht30Measure(temp, rh)` | `Aht30Start`, `DelayMs(80)`, `Aht30Fetch` |
 
 Status: 0 ok, 1..4 as `I2cStatus` (timeout, collision, no acknowledge, I2c not initialised), 5 busy (fetched too early), 6 CRC mismatch. The calibration and CRC_flag bits of the status byte are not checked.
+
+## rtcc (Microchip I2C real-time clock/calendars)
+Source: DS20005010J (MCP7940N), DS20002292C (MCP7940M), DS20005009 (MCP79400/1/2), DS20002266K (MCP79410/1/2) and the errata DS80000611F, DS80000612F, DS80000608, DS80000604. All of them share one register map, with the RTCC and the 64-byte SRAM at 7-bit address 0x6F and the EEPROM at 0x57. The caller sets up `I2c` first (400 kHz at 2.5 V and above, 100 kHz below). The module owns no pins.
+
+| Part | RTCC, alarms, SRAM | VBAT, power-fail time stamps | Protected EEPROM (8 bytes) | EEPROM (128 bytes) |
+|---|---|---|---|---|
+| MCP7940M | yes | no | no | no |
+| MCP7940N | yes | yes | no | no |
+| MCP79400/1/2 | yes | yes | yes (79401 EUI-48, 79402 EUI-64) | no |
+| MCP79410/1/2 | yes | yes | yes (79411 EUI-48, 79412 EUI-64) | yes |
+
+| Routine | Effect |
+|---|---|
+| `RtccSet(year, month, day, weekday, hour, minute, second)` | stops the oscillator, loads the time in 24-hour mode in the order the errata ask for, starts it, waits for OSCRUN (at most 2 s, status 6 if it never runs), writes the weekday again. Years 0..99 = 2000..2099 |
+| `RtccRead()` | copies the seven time registers in one transfer (the chip buffers them, so the copy cannot straddle a rollover) |
+| `RtccYear()`, `RtccMonth()`, `RtccDay()`, `RtccWeekday()`, `RtccHour()`, `RtccMinute()`, `RtccSecond()` | decode the copy (binary, 0..23 hours even if the clock is in 12-hour mode) |
+| `RtccOscRun()`, `RtccPowerFail()`, `RtccBatteryOn()`, `RtccLeap()` | flags of the copy |
+| `RtccStart()`, `RtccStop()` | ST bit |
+| `RtccBattery(en)`, `RtccClearPowerFail()` | VBATEN; both also clear PWRFAIL |
+| `RtccStamp(up, month, day, hour, minute)` | power-down (`up` False) or power-up time stamp |
+| `RtccAlarm(n, mask, month, day, weekday, hour, minute, second)`, `RtccAlarmEnable(n, arm)`, `RtccAlarmFlag(n, flag)`, `RtccAlarmClear(n)`, `RtccAlarmPolarity(activeHigh)` | the two alarms (mask 0 seconds, 1 minutes, 2 hours, 3 weekday, 4 date, 7 all) and the MFP polarity |
+| `RtccSquareWave(sel)`, `RtccPinLevel(level)` | MFP as 1 Hz / 4.096 / 8.192 / 32.768 kHz output, or as a general purpose output |
+| `RtccTrim(steps, coarse)` | digital trim, -127..127 steps of about 1 ppm |
+| `RtccRamRead(addr, v)`, `RtccRamWrite(addr, v)` | the 64 SRAM bytes |
+| `RtccEeRead(addr, v)`, `RtccEeWrite(addr, v)`, `RtccEeProtect(level)` | the 128-byte EEPROM and its block protection (MCP79410/1/2) |
+| `RtccIdRead(i, v)`, `RtccIdWrite(i, v)` | the 8 protected bytes, written after the 0x55 / 0xAA unlock |
+
+Status: 0 ok, 1..4 as `I2cStatus`, 5 an argument out of range (nothing was sent), 6 a wait ran out (oscillator, EEPROM write cycle). The EEPROM routines on a part without EEPROM also give 6, after 20 ms, because a busy EEPROM and an absent one both fail to acknowledge. Errata worked around: date increment at noon (24-hour mode only), date changing on a month or year write, weekday changing after a write. Not worked around: the spurious minute/hour alarm with a slowing trim (DS80000611F issue 2). Tests: `tests/exec/lib_rtcc.bas` (no bus: status 4, bad arguments 5) and `tests/exec_rtcc/lib_rtcc_model.bas`, which runs every routine in the simulator against a software model of the chip (`tests/exec_rtcc/i2c.bas`). Nothing has run on a real chip.
+
+## rtccspi (Microchip SPI real-time clock/calendars)
+Source: DS20002300E (MCP79510/11/12, MCP79520/21/22), DS20002280F (MCP795W10/11/12, MCP795W20/21/22) and the errata DS80000680E and DS80000542. The parts run from 1.8 V to 3.6 V, so a 5 V PIC needs level shifting. Set up `Spi` first in mode 0 at up to 5 MHz (3 MHz below 2.5 V); `RtccspiInit(cs)` takes the chip select pin (`Pinio` numbering, 0..23) and drives it high. The register map is that of the I2C parts moved up by one (hundredths of a second at 0).
+
+Same routines as `rtcc` with the prefix `Rtccspi` (`RtccspiSet`, `RtccspiRead`, `RtccspiSecond` ..., `RtccspiHundredths`, `RtccspiAlarm(n, mask, month, day, weekday, hour, minute, second, hundredths)`, `RtccspiTrim(steps, coarse)` with 8-bit steps -255..255, `RtccspiSquareWave`, `RtccspiSquareWaveOff`, `RtccspiRamRead/Write`, `RtccspiStamp`, `RtccspiBattery`, `RtccspiClearPowerFail`, `RtccspiStart/Stop`), and in addition:
+
+| Routine | Effect |
+|---|---|
+| `RtccspiInit(cs)` | chip select pin; 1 ok, 0 not a pin of the part |
+| `RtccspiAlarmPin(n, wdo)` | W parts: alarm n on the WDO or IRQ pin |
+| `RtccspiRamClear()` | CLRRAM |
+| `RtccspiEeRead/Write(addr, v)`, `RtccspiEeProtect(level)` | EEPROM (128 or 256 bytes) with EEWREN and WIP polling handled |
+| `RtccspiIdRead/Write(i, v)` | the 16 protected bytes (EUI node address in the first 8 of the X1/X2 parts), EEWREN + UNLOCK 0x55 + UNLOCK 0xAA + IDWRITE |
+| `RtccspiWdt(en, period, delay, longPulse)`, `RtccspiWdtClear()`, `RtccspiWdtFlag(f)`, `RtccspiWdtFlagClear()` | W parts: watchdog |
+| `RtccspiEvents(lowEnable, slow, highCount)`, `RtccspiEventFlags(low, high, clr)` | W parts: event detection |
+| `RtccspiReadReg(reg, v)`, `RtccspiWriteReg(reg, v)` | any register 0..95 |
+
+Status as for `rtcc` (4 = `RtccspiInit` or `Spi` not done). Errata worked around: as for `rtcc`, plus the weekday reset to 1 (DS80000680E issue 3). Documented, not worked around: hundredths not in step with seconds until the first minute rollover, hundredths reading the same twice, the 8 kHz / 32 kHz output disturbing a crystal MCP795xx. `RtccspiTrim` writes RTCHOUR (the trim sign lives there) only when the sign changes, so the window in which a rollover could be overwritten is small. Test: `tests/exec_rtcc/lib_rtccspi_model.bas` runs every routine against a software model of the chip. Nothing has run on a real chip.
 
 ## strings (String helpers)
 | Routine | Effect |

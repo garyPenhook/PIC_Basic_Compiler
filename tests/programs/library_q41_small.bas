@@ -18,6 +18,8 @@ Include "dma"
 Include "lcd"
 Include "i2c"
 Include "pwm"
+Include "rtcc"
+Include "rtccspi"
 Dim x As Word
 Dim r As Byte
 Dim hz As LongWord
@@ -64,3 +66,12 @@ Pwm.PwmStop(1)
 r = Dma.DmaCopy(1, @x, @hz, 2)
 r = Dma.DmaDone(1)
 Dma.DmaStop(1)
+r = Rtcc.RtccSet(24, 10, 31, 5, 14, 30, 15)
+r = Rtcc.RtccRead()
+r = Rtcc.RtccAlarm(0, 2, 1, 1, 1, 7, 0, 0)
+r = Rtcc.RtccEeWrite(0, r)
+r = Rtccspi.RtccspiInit(16)
+r = Rtccspi.RtccspiSet(24, 10, 31, 5, 14, 30, 15)
+r = Rtccspi.RtccspiRead()
+r = Rtccspi.RtccspiAlarm(1, 5, 1, 1, 1, 7, 0, 0, 0)
+r = Rtccspi.RtccspiEeWrite(0, r)

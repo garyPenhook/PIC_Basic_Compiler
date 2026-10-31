@@ -18,6 +18,8 @@ Include "system"
 Include "lcd"
 Include "oled"
 Include "aht30"
+Include "rtcc"
+Include "rtccspi"
 Include "strings"
 Dim x As Word
 Dim r As Byte
@@ -131,3 +133,12 @@ Aht30.Aht30Init()
 r = Aht30.Aht30Start()
 r = Aht30.Aht30Fetch(ti, rhw)
 r = Aht30.Aht30Measure(ti, rhw)
+r = Rtcc.RtccSet(24, 10, 31, 5, 14, 30, 15)
+r = Rtcc.RtccRead()
+r = Rtcc.RtccAlarm(0, 2, 1, 1, 1, 7, 0, 0)
+r = Rtcc.RtccEeWrite(0, r)
+r = Rtccspi.RtccspiInit(16)
+r = Rtccspi.RtccspiSet(24, 10, 31, 5, 14, 30, 15)
+r = Rtccspi.RtccspiRead()
+r = Rtccspi.RtccspiAlarm(1, 5, 1, 1, 1, 7, 0, 0, 0)
+r = Rtccspi.RtccspiEeWrite(0, r)

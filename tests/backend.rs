@@ -332,6 +332,24 @@ fn exec_programs_in_simulator() {
     }
 }
 
+/// The RTCC drivers (`rtcc`, `rtccspi`) against software models of the chips: the folder holds test doubles for `I2c`, `Spi` and
+/// `Pinio` next to the programs, and symlinks to the modules under test, so the programs run the real driver logic. Optimised, and as the
+/// `-O0` reference build.
+#[test]
+fn rtcc_models_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files: Vec<PathBuf> = bas_files(&root().join("tests/exec_rtcc")).into_iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("lib_")).collect();
+    assert_eq!(files.len(), 2);
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
 /// The DMA model that gives the simulator tests a DMA engine (`scripts/dma_sim.py`) against the data sheet's rules.
 #[test]
 fn dma_model_unit_tests() {
@@ -580,7 +598,7 @@ const P16_PARTS: [&str; 2] = ["16F17126", "16F17146"];
 const P16_PORTABLE: &[&str] = &[
     "absminmax", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
-    "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_oled", "lib_aht30", "lib_strings",
+    "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings",
     "float_basic", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge",
 ];
 
