@@ -251,6 +251,7 @@ Continue                                 ' next iteration of the innermost loop
 Exit                                     ' leave the current Sub/Function
 GoTo label  /  label:
 Inc(v)  Inc(v, n)  Dec(v)  Dec(v, n)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)  Input(bit)  Output(bit)
+PinMode(pin, Input|Output|PullUp|Input_PullUp)
 ```
 (SF.) Notes:
 * The limit of `For` is evaluated once, the step must be a constant, and after a loop that ran the variable keeps the last value it took, not one past it (D33). The loop variable of `For` must not be modified inside the loop (SF); the compiler may keep it
@@ -400,7 +401,7 @@ Options (`#option`): `Optimize = Size|Speed|Balanced`, `Strict = true|false`, `I
 ## 12. Built-in routines
 
 Compiler intrinsics (no module needed): `AddressOf`, `BitOf`, `Bound`, `Clear`, `Inc`, `Dec`,
-`High`, `Low`, `Input`, `Output`, `Toggle`, `DelayMS`, `DelayUS`, `Terminate`, plus width
+`High`, `Low`, `Input`, `Output`, `PinMode`, `Toggle`, `DelayMS`, `DelayUS`, `Terminate`, plus width
 conversions (`Byte(x)`, `Word(x)`, `LongWord(x)`, `ShortInt(x)`, `Integer(x)`, `LongInt(x)`) and
 `Abs`, `Min`, `Max` for integers. (SF + NEW)
 

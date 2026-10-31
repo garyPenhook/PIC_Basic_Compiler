@@ -270,7 +270,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right", "str", "val"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right", "str", "val", "pinmode"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -2791,6 +2791,29 @@ impl<'p, 'd> Sema<'p, 'd> {
                 let ok = matches!(v.ty, Ty::Bit | Ty::Bool) || (matches!(name, "input" | "output") && v.ty == BYTE);
                 if !ok {
                     return self.err("E-TYPE", args[0].span, format!("`{}` needs a Bit or Boolean{}, found {}", d.head.name, if matches!(name, "input" | "output") { " (or a Byte port)" } else { "" }, v.ty));
+                }
+                call(Ty::Void)
+            }
+            "pinmode" => {
+                // `PinMode(pin, Mode)`: a port bit or a whole port, or a constant pin number (A0 = 0, B0 = 8 ...).
+                // The mode is a word, not an expression: Input, Output, PullUp or Input_PullUp.
+                if !want(self, 2) {
+                    return None;
+                }
+                let mode = match &args[1].kind {
+                    ExprKind::Designator(m) if m.parts.is_empty() => m.head.key(),
+                    _ => String::new(),
+                };
+                if !matches!(mode.as_str(), "input" | "output" | "pullup" | "input_pullup") {
+                    return self.err("E-ARGS", args[1].span, "the mode of `PinMode` must be Input, Output, PullUp or Input_PullUp");
+                }
+                let v = self.check_expr(&args[0])?;
+                if let Some(CVal::Int(c)) = &v.val {
+                    if *c < 0 {
+                        return self.err("E-CONST-RANGE", args[0].span, "a pin number cannot be negative");
+                    }
+                } else if !(matches!(v.ty, Ty::Bit | Ty::Bool) && v.place == Place::Var) && !v.ty.is_numeric_int() {
+                    return self.err("E-TYPE", args[0].span, format!("`PinMode` needs a port bit, a port or a constant pin number, found {}", v.ty));
                 }
                 call(Ty::Void)
             }

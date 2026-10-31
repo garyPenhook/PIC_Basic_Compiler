@@ -3087,6 +3087,7 @@ impl<'a> Lowerer<'a> {
                 let Some(p) = arg_place(self) else { return };
                 Self::push(out, St::Direction { place: p, output: name == "output" }, span);
             }
+            "pinmode" => self.pin_mode(args, span, out),
             "delayms" | "delayus" => {
                 let Some(x) = self.expr(&args[0]) else { return };
                 Self::push(out, if name == "delayms" { St::DelayMs(x) } else { St::DelayUs(x) }, span);
@@ -3095,6 +3096,123 @@ impl<'a> Lowerer<'a> {
             "left" | "mid" | "right" => self.str_slice(&name, args, span, out),
             "str" => self.str_of_num(args, span, out),
             n => self.unsupported(span, &format!("the intrinsic `{n}`")),
+        }
+    }
+
+    /// `PinMode(pin, Mode)`. The pin is a port bit, a whole port, or a constant pin number (A0 = 0, B0 = 8, ...).
+    /// Input and Output write TRISx as `Input(pin)` / `Output(pin)` do; PullUp sets the pin's WPUx bit.
+    fn pin_mode(&mut self, args: &'a [Expr], span: Span, out: &mut Vec<S>) {
+        let mode = match args.get(1).map(|a| &a.kind) {
+            Some(ExprKind::Designator(m)) => m.head.key(),
+            _ => return,
+        };
+        let place = match (self.a.consts.get(&args[0].id), &args[0].kind) {
+            (Some(CVal::Int(n)), _) => {
+                let (port, bit) = (*n / 8, (*n % 8) as u8);
+                let found = if port < 12 { self.reg_place(&format!("PORT{}", (b'A' + port as u8) as char), span) } else { None };
+                match found {
+                    Some(p) => Place { bit: Some(bit), ..p },
+                    None => {
+                        self.err("E-PIN", args[0].span, format!("pin {n} is not a pin of this device"));
+                        return;
+                    }
+                }
+            }
+            (_, ExprKind::Designator(dd)) => {
+                let Some(p) = self.place_of(dd) else { return };
+                if p.is_bit() && !matches!(p.base, Base::Abs { .. }) {
+                    self.err("E-PIN", args[0].span, "`PinMode` needs a port bit, a port or a pin number, not a Bit variable");
+                    return;
+                }
+                if !matches!(p.base, Base::Abs { .. }) || p.idx.is_some() {
+                    self.pin_mode_run(&args[0], &mode, span, out);
+                    return;
+                }
+                p
+            }
+            _ => {
+                self.pin_mode_run(&args[0], &mode, span, out);
+                return;
+            }
+        };
+        let Base::Abs { name: port, .. } = &place.base else { return };
+        if !port.starts_with("PORT") {
+            self.err("E-PIN", args[0].span, format!("`PinMode` needs a port pin, found {port}"));
+            return;
+        }
+        if mode != "pullup" {
+            Self::push(out, St::Direction { place: place.clone(), output: mode == "output" }, span);
+        }
+        if matches!(mode.as_str(), "pullup" | "input_pullup") {
+            let wpu = format!("WPU{}", &port[4..]);
+            match self.reg_place(&wpu, span) {
+                Some(w) => {
+                    let w = Place { off: place.off, bit: place.bit, ..w };
+                    if w.bit.is_some() {
+                        Self::push(out, St::SetBit(w, true), span);
+                    } else {
+                        Self::push(out, St::Assign(w, Ex::konst(0xFF, 8, false)), span);
+                    }
+                }
+                None => self.diags.warn("W-NOPULLUP", span, format!("this device has no {wpu} register, so the pin has no internal pull-up resistor and the request is ignored")),
+            }
+        }
+    }
+
+    /// `PinMode` of a pin number known only at run time. The port is picked by `pin >> 3` and the bit by `1 << (pin & 7)`,
+    /// then TRISx (and WPUx) are changed by read-modify-write, as the `pinio` routines do: do not use it on a port that
+    /// an interrupt handler also changes. A pin number the device does not have changes nothing.
+    fn pin_mode_run(&mut self, pin: &'a Expr, mode: &str, span: Span, out: &mut Vec<S>) {
+        let Some(x) = self.expr(pin) else { return };
+        if x.w > 8 {
+            self.unsupported(pin.span, "PinMode with a pin number wider than a Byte (convert it with Byte(...))");
+            return;
+        }
+        let pv = self.hidden_var(BYTE);
+        let mv = self.hidden_var(BYTE);
+        let k8 = |v: u32| Ex::konst(v, 8, false);
+        let load = |p: &Place| Ex::new(ExK::Load(p.clone()), 8, false);
+        let bin = |k: BinKind, a: Ex, b: Ex| Ex::new(ExK::Bin(k, Box::new(a), Box::new(b)), 8, false);
+        Self::push(out, St::Assign(pv.clone(), conv(x, 8, false)), span);
+        let low3 = bin(BinKind::And, load(&pv), k8(7));
+        Self::push(out, St::Assign(mv.clone(), bin(BinKind::Shl, k8(1), low3)), span);
+        let mut arms = Vec::new();
+        let mut no_wpu = Vec::new();
+        for port in 0..12u32 {
+            let letter = (b'A' + port as u8) as char;
+            if self.reg_place(&format!("PORT{letter}"), span).is_none() {
+                continue;
+            }
+            let mut body = Vec::new();
+            // (register, set the bit)
+            let mut ops: Vec<(String, bool)> = Vec::new();
+            if mode != "pullup" {
+                ops.push((format!("TRIS{letter}"), mode != "output"));
+            }
+            if matches!(mode, "pullup" | "input_pullup") {
+                if self.reg_place(&format!("WPU{letter}"), span).is_some() {
+                    ops.push((format!("WPU{letter}"), true));
+                } else {
+                    no_wpu.push(format!("WPU{letter}"));
+                }
+            }
+            for (reg, set) in ops {
+                let Some(r) = self.reg_place(&reg, span) else { continue };
+                let m = if set { load(&mv) } else { bin(BinKind::Xor, load(&mv), k8(255)) };
+                let v = bin(if set { BinKind::Or } else { BinKind::And }, load(&r), m);
+                body.push(S { st: St::Assign(r, v), span });
+            }
+            if body.is_empty() {
+                continue;
+            }
+            let sel = bin(BinKind::Shr, load(&pv), k8(3));
+            arms.push((Ex::boolean(ExK::Cmp(CmpKind::Eq, Box::new(sel), Box::new(k8(port)))), body));
+        }
+        if !no_wpu.is_empty() {
+            self.diags.warn("W-NOPULLUP", span, format!("this device has no {} register, so those pins have no internal pull-up resistor and the request is ignored for them", no_wpu.join(" or ")));
+        }
+        if !arms.is_empty() {
+            Self::push(out, St::If(arms, Vec::new()), span);
         }
     }
 

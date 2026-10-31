@@ -224,7 +224,7 @@
     },
     {
      "name": "support.function.intrinsic.picbasic",
-     "match": "\\b(?i:Terminate|AddressOf|DelayMs|DelayUs|Disable|Toggle|Enable|Output|Input|Bound|BitOf|Clear|High|Dec|Low|Inc)\\b"
+     "match": "\\b(?i:Terminate|AddressOf|DelayMs|DelayUs|Disable|Toggle|Enable|Output|Input|PinMode|Bound|BitOf|Clear|High|Dec|Low|Inc)\\b"
     },
     {
      "name": "keyword.control.picbasic",

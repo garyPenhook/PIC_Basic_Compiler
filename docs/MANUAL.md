@@ -1721,7 +1721,46 @@ EndIf
 reset to analog, so make them digital first. Pin numbers for the library routines are 0..23 (`RA0` = 0,
 `RB0` = 8, `RC0` = 16).
 
-**See also** `gpio` module.
+**See also** `gpio` module, `PinMode`.
+
+## PinMode
+
+**Syntax**
+```basic
+PinMode(pin, Mode)
+```
+**Overview** Makes a pin an input or an output, or turns on its internal pull-up resistor.
+
+**Parameters** `pin` is a port bit (`PORTB.0`, or a `Bit` alias of one), a whole port (`PORTB`), or a
+pin number: `RA0` = 0 … `RA7` = 7, `RB0` = 8, `RC0` = 16 and so on, 8 numbers to a port. A pin number may be a
+constant or any `Byte` expression. `Mode` is a word, not an expression:
+
+| Mode | Effect |
+|---|---|
+| `Input` | `TRISx` bit = 1 (same as `Input(pin)`) |
+| `Output` | `TRISx` bit = 0 (same as `Output(pin)`) |
+| `PullUp` | `WPUx` bit = 1; the pin should already be an input |
+| `Input_PullUp` | `Input`, then `PullUp` |
+
+**Example**
+```basic
+PinMode(PORTB.0, Input)            ' RB0 an input
+PinMode(0, Output)                 ' RA0 an output
+PinMode(8, Input_PullUp)           ' RB0 an input with its pull-up on
+For p = 0 To 15                    ' p is a Byte: flash every pin of ports A and B
+    PinMode(p, Output)
+    DelayMs(500)
+    PinMode(p, Input)
+Next
+```
+**Notes**
+* `PinMode(PORTB, PullUp)` writes `WPUB = 0xFF`: every pin of the port gets its pull-up, whatever its direction. A run-time pin number must fit a Byte.
+* A port bit or a constant pin number compiles to one `bsf`/`bcf` (PIC18) per register, as `Input(pin)` does. A pin number in a variable
+  compiles to a short run-time sequence that picks the port by `pin >> 3`; it changes `TRISx`/`WPUx` by read-modify-write, so do not use it on a
+  port that an interrupt handler also changes. A run-time pin number the device has no port for changes nothing; a constant one is the error `E-PIN`.
+* Like `Input`/`Output`, `PinMode` does not clear `ANSELx`: a pin that resets to analog must be made digital first.
+* A device with no `WPUx` register for the port has no individual pull-ups: the pull-up part of `PullUp` and `Input_PullUp` is skipped with the warning `W-NOPULLUP`.
+* Parentheses are required (`PinMode PORTB.0, Input` is not accepted), and `Pin_A0` style names do not exist: use the number or `PORTA.0`.
 
 ## If ... Then ... ElseIf ... Else ... EndIf
 
@@ -4428,7 +4467,7 @@ reports these rather than miscompiling them.
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
 | `Declare` switches (LCD pins, baud, pin routing) | only `Declare Xtal`; peripherals take arguments in `...Init(...)` calls |
-| `PinHigh`, `PinLow`, `PinSet`, `PinGet`, `PinMode`, pin numbers in `High` | use register bits / aliases |
+| `PinHigh`, `PinLow`, `PinSet`, `PinGet`, pin numbers in `High` | use register bits / aliases (`PinMode` is available, see *PinMode*) |
 | `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
 | `Print`, `Cls`, `Cursor`, `Plot`, `Line`, graphic LCD commands | `lcd` module routines; no graphics |
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
