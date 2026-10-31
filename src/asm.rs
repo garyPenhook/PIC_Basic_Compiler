@@ -104,6 +104,8 @@ pub struct Assembled {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Form {
     Short,
+    /// A conditional branch out of reach of `bcc` but within reach of `bra`: the inverted test skips a `bra` (two words).
+    Medium,
     Long,
 }
 
@@ -113,7 +115,11 @@ fn size_of(it: &Item, f: Form) -> u32 {
         Item::Ins(t) => words_of(t),
         Item::Raw(t) => words_of(t),
         Item::Br(Cc::Always, _) => if f == Form::Short { 1 } else { 2 },
-        Item::Br(_, _) => if f == Form::Short { 1 } else { 3 },
+        Item::Br(_, _) => match f {
+            Form::Short => 1,
+            Form::Medium => 2,
+            Form::Long => 3,
+        },
         Item::Call(_) => if f == Form::Short { 1 } else { 2 },
         Item::SkipBr(..) => unreachable!("SkipBr is for the enhanced mid-range core"),
         Item::Data(b) => b.len().div_ceil(2) as u32,
@@ -152,18 +158,21 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
             if forms[i] == Form::Long {
                 continue;
             }
-            let (target, limit) = match it {
-                Item::Br(Cc::Always, t) | Item::Call(t) => (t, 1023i64),
-                Item::Br(_, t) => (t, 127i64),
+            // `reach` is how far the one-word instruction can go; `from` the address it sits at. A conditional
+            // branch gets a middle form (inverted skip over a `bra`) before the three-word one with a `goto`.
+            let (target, reach, from, next) = match it {
+                Item::Br(Cc::Always, t) | Item::Call(t) => (t, 1023i64, at[i], Form::Long),
+                Item::Br(_, t) if forms[i] == Form::Short => (t, 127i64, at[i], Form::Medium),
+                Item::Br(_, t) => (t, 1023i64, at[i] + 1, Form::Long),
                 _ => continue,
             };
             // Targets outside the generated code (device symbols) are assumed far away.
             let ok = labels.get(target).is_some_and(|&t| {
-                let d = t as i64 - (at[i] as i64 + 1);
-                (-limit - 1..=limit).contains(&d)
+                let d = t as i64 - (from as i64 + 1);
+                (-reach - 1..=reach).contains(&d)
             });
             if !ok {
-                forms[i] = Form::Long;
+                forms[i] = next;
                 changed = true;
             }
         }
@@ -198,13 +207,13 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
                             lines.extend(cur.map(str::to_string));
                             lines.push(format!("    goto {t}"));
                         }
-                        (Form::Long, cc) => {
+                        (form, cc) => {
                             skip_n += 1;
                             let l = format!("__skip{skip_n}");
                             lines.extend(cur.map(str::to_string));
                             lines.push(format!("    {} {l}", cc.invert().mnemonic()));
                             lines.extend(cur.map(str::to_string));
-                            lines.push(format!("    goto {t}"));
+                            lines.push(format!("    {} {t}", if form == Form::Medium { "bra" } else { "goto" }));
                             lines.push(format!("{l}:"));
                         }
                     },
@@ -403,5 +412,61 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
             }
         }
         return Assembled { lines, labels, words };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn branch_over(n: usize, back: bool) -> Vec<String> {
+        let mut items = Vec::new();
+        let nops = (0..n).map(|_| Item::Ins("nop".into()));
+        if back {
+            items.push(Item::Label("far".into()));
+            items.extend(nops);
+            items.push(Item::Br(Cc::Z, "far".into()));
+        } else {
+            items.push(Item::Br(Cc::Z, "far".into()));
+            items.extend(nops);
+            items.push(Item::Label("far".into()));
+        }
+        assemble(&items, 0).lines.into_iter().filter(|l| !l.contains("nop")).map(|l| l.trim().to_string()).collect()
+    }
+
+    #[test]
+    fn a_conditional_branch_has_three_sizes() {
+        // Within 127 words: one word.
+        assert_eq!(branch_over(100, false), ["bz far", "far:"]);
+        // Past `bcc`, within `bra`: the inverted test skips a `bra` (two words, not three).
+        assert_eq!(branch_over(200, false), ["bnz __skip1", "bra far", "__skip1:", "far:"]);
+        assert_eq!(branch_over(200, true), ["far:", "bnz __skip1", "bra far", "__skip1:"]);
+        assert_eq!(branch_over(100, true), ["far:", "bz far"]);
+        // Past `bra`: the inverted test skips a `goto`.
+        assert_eq!(branch_over(1100, false), ["bnz __skip1", "goto far", "__skip1:", "far:"]);
+    }
+
+    #[test]
+    fn the_middle_form_costs_two_words() {
+        let mut items = vec![Item::Br(Cc::Z, "far".into())];
+        items.extend((0..200).map(|_| Item::Ins("nop".into())));
+        items.push(Item::Label("far".into()));
+        assert_eq!(assemble(&items, 0).words, 202);
+    }
+
+    #[test]
+    fn the_bra_of_the_middle_form_is_measured_from_its_own_address() {
+        // The `bra` sits one word after the item, so a target exactly 1023 words past the `bra` still fits and one
+        // more does not.
+        let words = |n: usize| {
+            let mut items = vec![Item::Br(Cc::Z, "far".into())];
+            items.extend((0..n).map(|_| Item::Ins("nop".into())));
+            items.push(Item::Label("far".into()));
+            let a = assemble(&items, 0);
+            (a.words, a.lines.iter().any(|l| l.contains("goto")))
+        };
+        // bra at word 1; its target is word 2 + n; the offset (target - (bra + 1)) is n.
+        assert_eq!(words(1023), (1025, false));
+        assert_eq!(words(1024), (1027, true));
     }
 }

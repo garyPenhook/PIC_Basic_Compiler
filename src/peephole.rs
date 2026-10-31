@@ -484,6 +484,104 @@ fn flags_live_in_routine(items: &[Item], i: usize, mut needed: u8) -> bool {
     true
 }
 
+/// The flags a conditional branch reads.
+fn cc_flags(cc: Cc) -> u8 {
+    match cc {
+        Cc::Z | Cc::Nz => Z,
+        Cc::C | Cc::Nc => C,
+        Cc::N | Cc::Nn => N,
+        Cc::Ov | Cc::Nov => OV,
+        Cc::Always => 0,
+    }
+}
+
+/// Whether neither `WREG` (when `w`) nor any of the `need` flags can be read from item `from` on, following both
+/// sides of every branch and skip (a statement end ends the search; a call may take its argument in `WREG`, so a
+/// live `WREG` is read there; a return hands on no flags). Anything it cannot follow, or a search longer than a small
+/// budget, counts as a read.
+fn dead_paths(items: &[Item], from: usize, w: bool, need: u8) -> bool {
+    let label_at = |target: &str| items.iter().position(|x| matches!(x, Item::Label(l) if l == target));
+    let mut work = vec![(from, w, need)];
+    let mut seen = std::collections::HashSet::new();
+    let mut budget = 200usize;
+    while let Some((mut k, mut w, mut need)) = work.pop() {
+        if !seen.insert((k, w, need)) {
+            continue;
+        }
+        loop {
+            if !w && need == 0 {
+                break;
+            }
+            if budget == 0 {
+                return false;
+            }
+            budget -= 1;
+            let Some(it) = items.get(k) else { return false };
+            match it {
+                Item::Comment(_) | Item::Label(_) => {}
+                Item::Fence => break,
+                Item::Call(_) => {
+                    if w {
+                        return false;
+                    }
+                    break;
+                }
+                Item::Br(cc, target) => {
+                    if cc_flags(*cc) & need != 0 {
+                        return false;
+                    }
+                    let Some(p) = label_at(target) else { return false };
+                    if *cc == Cc::Always {
+                        k = p;
+                        continue;
+                    }
+                    work.push((p, w, need));
+                }
+                Item::Ins(t) => {
+                    if matches!(parse(t), Some((m, _)) if m == "return" || m == "retlw") {
+                        if w {
+                            return false;
+                        }
+                        break;
+                    }
+                    if is_skip(t) {
+                        // A skip passes over the next instruction. Anything but an instruction or a branch there
+                        // (a label would be a way in) is not followed.
+                        let mut n = k + 1;
+                        while matches!(items.get(n), Some(Item::Comment(_) | Item::Fence)) {
+                            n += 1;
+                        }
+                        if !matches!(items.get(n), Some(Item::Ins(_) | Item::Br(..))) {
+                            return false;
+                        }
+                        work.push((n + 1, w, need));
+                    }
+                    // A bit test reads one byte and changes neither `WREG` nor a flag (unless it tests `WREG`).
+                    if matches!(parse(t), Some((m, o)) if (m == "btfsc" || m == "btfss") && !o.is_empty() && !o[0].eq_ignore_ascii_case("WREG") && !o[0].to_ascii_uppercase().contains("STATUS")) {
+                        k += 1;
+                        continue;
+                    }
+                    match effect(t) {
+                        None => return false,
+                        Some(e) => {
+                            if (w && e.reads.contains(&Loc::W)) || e.flags_r & need != 0 {
+                                return false;
+                            }
+                            if e.writes.contains(&Loc::W) {
+                                w = false;
+                            }
+                            need &= !e.flags_w;
+                        }
+                    }
+                }
+                _ => return false,
+            }
+            k += 1;
+        }
+    }
+    true
+}
+
 /// Whether any of the `needed` flags may be read after item `i` (before being overwritten).
 fn flags_live(items: &[Item], i: usize, mut needed: u8) -> bool {
     for it in &items[i + 1..] {
@@ -899,6 +997,255 @@ fn match_bit_branch(items: &[Item], i: usize, keep: &[bool]) -> Option<(usize, V
     new.push(Item::Ins(format!("{mn} {rest}")));
     new.push(Item::Br(Cc::Always, target.clone()));
     Some((k + 4 - i, new))
+}
+
+/// Whether anything but the item at `skip` names the label `name`.
+fn label_referenced(items: &[Item], name: &str, skip: usize) -> bool {
+    items.iter().enumerate().any(|(k, it)| {
+        k != skip
+            && match it {
+                Item::Br(_, t) | Item::Call(t) => t == name,
+                Item::SkipBr(ins, t) => t == name || ins.contains(name),
+                Item::Ins(t) | Item::Raw(t) => t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| w == name),
+                _ => false,
+            }
+    })
+}
+
+/// A Boolean made on two paths and tested at once becomes a jump on each path:
+///
+/// ```text
+///     movlw A ; bra J ; X: movlw B ; J: movwf R ; movf R, w ; bz T      (A, B = 0, 1 in either order)
+/// ```
+/// is `movlw A ; movwf R ; bra T-or-next ; X: movlw B ; movwf R ; ...`. Each path keeps its own store to `R` (the
+/// write-only pass drops them when nothing reads `R`) and the value in `WREG`; only the flags `movf` set are lost,
+/// so none may be read at either destination. `J` must be reached only by the first path.
+fn pass_bool_thread(items: &mut Vec<Item>, env: &Env) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i < items.len() {
+        let keep = protected(items);
+        if let Some((n, new)) = match_bool_thread(items, i, &keep, env) {
+            items.splice(i..i + n, new);
+            changed = true;
+        }
+        i += 1;
+    }
+    changed
+}
+
+fn match_bool_thread(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Option<(usize, Vec<Item>)> {
+    let lit = |k: usize| -> Option<u8> {
+        match items.get(k)? {
+            Item::Ins(t) if !keep[k] => {
+                let (m, o) = parse(t)?;
+                if m == "movlw" && o.len() == 1 { parse_lit(o[0]).filter(|v| *v <= 1) } else { None }
+            }
+            _ => None,
+        }
+    };
+    // The index of the next instruction-like item at or after `k`, passing statement ends and comments.
+    let skip_marks = |mut k: usize| {
+        while matches!(items.get(k), Some(Item::Fence | Item::Comment(_))) {
+            k += 1;
+        }
+        k
+    };
+    let a = lit(i)?;
+    let Item::Br(Cc::Always, join) = items.get(i + 1)? else { return None };
+    if keep[i + 1] {
+        return None;
+    }
+    let mut k = i + 2;
+    let mut entry = Vec::new();
+    while let Some(Item::Label(l)) = items.get(k) {
+        entry.push(Item::Label(l.clone()));
+        k += 1;
+    }
+    if entry.is_empty() {
+        return None;
+    }
+    let b = lit(k)?;
+    if b == a {
+        return None;
+    }
+    k += 1;
+    // Only the join label may sit here: any other entry would arrive with an unknown `WREG`.
+    match items.get(k)? {
+        Item::Label(l) if l == join => {}
+        _ => return None,
+    }
+    if label_referenced(items, join, i + 1) {
+        return None;
+    }
+    k += 1;
+    let (m, o) = match items.get(k)? {
+        Item::Ins(t) if !keep[k] => parse(t)?,
+        _ => return None,
+    };
+    if m != "movwf" || o.is_empty() {
+        return None;
+    }
+    let sym = o[0];
+    let store = items[k].clone();
+    k = skip_marks(k + 1);
+    let (m, o) = match items.get(k)? {
+        Item::Ins(t) if !keep[k] => parse(t)?,
+        _ => return None,
+    };
+    if m != "movf" || o.len() < 2 || o[0] != sym || o[1] != "w" {
+        return None;
+    }
+    k += 1;
+    // The generator's zero test of `WREG`, when it is still there.
+    if let Some(Item::Ins(t)) = items.get(k) {
+        if matches!(parse(t), Some((m, o)) if (m == "iorlw" || m == "xorlw") && o.len() == 1 && parse_lit(o[0]) == Some(0)) && !keep[k] {
+            k += 1;
+        }
+    }
+    let Item::Br(cc, target) = items.get(k)? else { return None };
+    if keep[k] || !matches!(cc, Cc::Z | Cc::Nz) {
+        return None;
+    }
+    let end = k + 1;
+    // Taken when the Boolean is zero (`bz`) or non-zero (`bnz`).
+    let taken = |v: u8| (*cc == Cc::Z) == (v == 0);
+    // Both destinations must not read the flags `movf` set.
+    let target_at = items.iter().position(|x| matches!(x, Item::Label(l) if l == target))?;
+    if !dead_paths(items, end, false, Z | N) || !dead_paths(items, target_at + 1, false, Z | N) {
+        return None;
+    }
+    // Nothing else reads `R` (writes elsewhere do not count): then neither the store nor the value in `WREG`
+    // is needed, provided `WREG` is dead at both destinations.
+    let ident = |t: &str, name: &str| t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| w == name);
+    let used = items.iter().enumerate().any(|(n, it)| {
+        if (i..end).contains(&n) {
+            return false;
+        }
+        match it {
+            Item::Ins(t) => {
+                if matches!(parse(t), Some((m, o)) if m == "movwf" && o.first() == Some(&sym)) {
+                    return false;
+                }
+                ident(t, sym)
+            }
+            Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => ident(t, sym),
+            Item::SkipBr(ins, t) => ident(ins, sym) || ident(t, sym),
+            _ => false,
+        }
+    });
+    let droppable = !env.keep_writes
+        && sym.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).count() == 1
+        && env.is_plain(sym)
+        && !sym.starts_with("__")
+        && !used
+        && dead_paths(items, end, true, 0)
+        && dead_paths(items, target_at + 1, true, 0);
+    let first = |v: u8| -> Vec<Item> {
+        if droppable { vec![] } else { vec![Item::Ins(format!("movlw {v}")), store.clone()] }
+    };
+    let mut new = first(a);
+    if taken(a) {
+        new.push(Item::Br(Cc::Always, target.clone()));
+        new.extend(entry);
+        new.extend(first(b));
+    } else {
+        let rest = format!("{join}f");
+        new.push(Item::Br(Cc::Always, rest.clone()));
+        new.extend(entry);
+        new.extend(first(b));
+        new.push(Item::Br(Cc::Always, target.clone()));
+        new.push(Item::Label(rest));
+    }
+    Some((end - i, new))
+}
+
+/// A branch to a label that is followed by an unconditional branch goes straight to that branch's target.
+fn pass_jump_thread(items: &mut Vec<Item>) -> bool {
+    let mut inside = false;
+    let in_keep: Vec<bool> = items
+        .iter()
+        .map(|it| {
+            if let Item::Keep(on) = it {
+                inside = *on;
+            }
+            inside
+        })
+        .collect();
+    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    for (k, it) in items.iter().enumerate() {
+        if let Item::Label(l) = it {
+            label_at.insert(l.as_str(), k);
+        }
+    }
+    let mut updates = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        let Item::Br(cc, t) = it else { continue };
+        if in_keep[i] {
+            continue;
+        }
+        let Some(&p) = label_at.get(t.as_str()) else { continue };
+        let mut k = p + 1;
+        while matches!(items.get(k), Some(Item::Label(_) | Item::Comment(_) | Item::Fence)) {
+            k += 1;
+        }
+        if let Some(Item::Br(Cc::Always, m)) = items.get(k)
+            && m != t
+            && !in_keep[k]
+        {
+            updates.push((i, *cc, m.clone()));
+        }
+    }
+    let changed = !updates.is_empty();
+    for (i, cc, m) in updates {
+        items[i] = Item::Br(cc, m);
+    }
+    changed
+}
+
+/// `btfsc X ; bra L1 ; bra L2 ; L1:` is `btfss X ; bra L2 ; L1:` (and the other way round): the skip does the work of
+/// the first branch. Every match is rewritten.
+fn pass_skip_over_branch(items: &mut Vec<Item>) -> bool {
+    let mut changed = false;
+    while skip_over_branch_once(items) {
+        changed = true;
+    }
+    changed
+}
+
+fn skip_over_branch_once(items: &mut Vec<Item>) -> bool {
+    let mut inside = false;
+    let in_keep: Vec<bool> = items
+        .iter()
+        .map(|it| {
+            if let Item::Keep(on) = it {
+                inside = *on;
+            }
+            inside
+        })
+        .collect();
+    // The test must not be the instruction another skip passes over: then the rewrite would land elsewhere.
+    let keep = protected(items);
+    for i in 0..items.len().saturating_sub(3) {
+        if in_keep[i] || in_keep[i + 3] || keep[i] {
+            continue;
+        }
+        let (Item::Ins(t), Item::Br(Cc::Always, l1), Item::Br(Cc::Always, l2), Item::Label(l)) = (&items[i], &items[i + 1], &items[i + 2], &items[i + 3]) else { continue };
+        if l1 != l || l2 == l1 {
+            continue;
+        }
+        let Some((m, o)) = parse(t) else { continue };
+        let inverted = match m.as_str() {
+            "btfsc" => "btfss",
+            "btfss" => "btfsc",
+            _ => continue,
+        };
+        let new = Item::Ins(format!("{inverted} {}", o.join(", ")));
+        let l2 = l2.clone();
+        items.splice(i..i + 3, [new, Item::Br(Cc::Always, l2)]);
+        return true;
+    }
+    false
 }
 
 fn pass_branch_to_next(items: &mut Vec<Item>) -> bool {
@@ -1459,6 +1806,9 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_redundant_movlb(&mut items);
         changed |= pass_warg(&mut items);
         changed |= pass_bit_branch(&mut items);
+        changed |= pass_bool_thread(&mut items, env);
+        changed |= pass_jump_thread(&mut items);
+        changed |= pass_skip_over_branch(&mut items);
         changed |= pass_branch_to_next(&mut items);
         changed |= pass_branch_over_branch(&mut items);
         changed |= pass_xorlw_zero(&mut items);
@@ -1729,6 +2079,97 @@ mod tests {
         s2[8] = ins("addwf X, f, c");
         assert_eq!(run(&s2)[0], "movlw 0");
     }
+
+    /// `btfsc Q ; <A=1 / B=0 Boolean> ; movwf X ; movf X,w ; bz T ; <rest>`: the five lines of the Boolean build.
+    fn bool_seq(before_t: Vec<Item>, at_t: Vec<Item>) -> Vec<Item> {
+        let mut v = vec![
+            ins("btfsc Q, 1, b"), Item::Br(Cc::Always, "X1".into()),
+            ins("movlw 1"), Item::Br(Cc::Always, "J".into()),
+            Item::Label("X1".into()), ins("movlw 0"), Item::Label("J".into()),
+            ins("movwf X, c"), Item::Fence, ins("movf X, w, c"), Item::Br(Cc::Z, "T".into()),
+        ];
+        v.extend(before_t);
+        v.push(Item::Label("T".into()));
+        v.extend(at_t);
+        v
+    }
+
+    #[test]
+    fn a_boolean_built_and_tested_at_once_is_a_jump_on_each_path() {
+        // Nothing reads X, and WREG and the flags are dead at both destinations: no Boolean at all.
+        let s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
+        let r = run_alone(&s);
+        assert_eq!(&r[..2], ["btfsc Q, 1, b", "brAlways T"], "{r:?}");
+        assert!(!r.iter().any(|l| l.contains(" X")), "{r:?}");
+    }
+
+    #[test]
+    fn a_boolean_that_is_read_elsewhere_keeps_its_store() {
+        let s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
+        let r = run(&s);
+        // Each path stores its own value and the reload and test are gone.
+        assert_eq!(r.iter().filter(|l| *l == "movwf X, c").count(), 2, "{r:?}");
+        assert!(!r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
+    }
+
+    #[test]
+    fn a_boolean_whose_flags_are_read_at_a_destination_is_left_alone() {
+        // The code at T branches on Z: the `movf` is what set it.
+        let s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![Item::Br(Cc::Z, "T".into()), ins("movlw 6"), Item::Fence]);
+        let r = run_alone(&s);
+        assert!(r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
+    }
+
+    #[test]
+    fn a_boolean_whose_wreg_is_read_at_a_destination_keeps_its_value_in_wreg() {
+        // The rest of the code adds WREG to Y: the value must still be in WREG, so the loads stay.
+        let s = bool_seq(vec![ins("addwf Y, f, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
+        let r = run_alone(&s);
+        assert!(r.iter().any(|l| l == "movlw 1") && r.iter().any(|l| l == "movlw 0"), "{r:?}");
+        assert!(!r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
+    }
+
+
+    #[test]
+    fn a_boolean_stored_in_one_byte_of_a_wider_object_keeps_its_store() {
+        // `X+1` is a byte of X: the name alone does not show whether X is read, so the store stays.
+        let mut s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
+        for it in s.iter_mut() {
+            if let Item::Ins(t) = it {
+                *t = t.replace("movwf X, c", "movwf X+1, c").replace("movf X, w, c", "movf X+1, w, c");
+            }
+        }
+        let r = run_alone(&s);
+        assert!(r.iter().any(|l| l == "movwf X+1, c"), "{r:?}");
+    }
+
+    #[test]
+    fn a_bit_test_that_another_skip_passes_over_is_not_inverted() {
+        // `tstfsz Y` skips the `btfsc`; inverting it would change where that skip lands.
+        let s = vec![
+            ins("tstfsz Y, c"), ins("btfsc Q, 1, b"), Item::Br(Cc::Always, "L1".into()), Item::Br(Cc::Always, "L2".into()), Item::Label("L1".into()),
+            ins("movlw 1"), ins("movwf Y, c"), Item::Label("L2".into()), ins("movlw 2"), ins("movwf Y, c"), Item::Fence,
+        ];
+        let r = run(&s);
+        assert!(r.iter().any(|l| l == "btfsc Q, 1, b") && !r.iter().any(|l| l == "btfss Q, 1, b"), "{r:?}");
+    }
+
+    #[test]
+    fn a_branch_to_a_branch_goes_to_the_final_target() {
+        let s = vec![Item::Br(Cc::Z, "A".into()), ins("movlw 1"), ins("movwf Y, c"), Item::Label("A".into()), Item::Br(Cc::Always, "B".into()), ins("nop"), Item::Label("B".into()), ins("movlw 2"), ins("movwf Y, c"), Item::Fence];
+        let r = run(&s);
+        assert_eq!(r[0], "brZ B", "{r:?}");
+    }
+
+
+    #[test]
+    fn a_status_bit_test_at_a_destination_reads_the_flags_the_movf_set() {
+        // `btfsc STATUS, 2` is a Z test: the `movf` must stay.
+        let s = bool_seq(vec![ins("btfsc STATUS, 2, c"), ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
+        let r = run_alone(&s);
+        assert!(r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
+    }
+
     #[test]
     fn call_before_return_becomes_a_jump() {
         let r = run(&[Item::Call("F".into()), Item::Fence, ins("return")]);
