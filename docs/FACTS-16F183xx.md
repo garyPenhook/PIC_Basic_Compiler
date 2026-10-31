@@ -2,7 +2,7 @@
 
 Read from DS40001799F (PIC16(L)F18313/18323), DS40001800E (18324/18344), DS40001795K (18325/18345) and DS40001839E (18326/18346), and from the silicon errata
 DS80000666H, DS80000667E, DS80000668L and DS80000709H, through the pic-docs server. Page numbers are PDF pages; where the four data sheets differ only in page
-numbers the one of DS40001839E is given. The LF parts (PIC16LF183xx, 1.8 to 3.6 V) share the data sheets and the registers; the device files describe the F parts.
+numbers the one of DS40001839E is given. The LF parts (PIC16LF183xx, 1.8 to 3.6 V) share the data sheets and the registers and have their own device files (`devices/16LF183xx.toml`); the LF differences are a 2 higher device ID, no 4.096 V FVR gain, and the NVM errata for LF parts.
 The core, the instruction set, the interrupt and the stack are those of the PIC16F17126/46 (`docs/FACTS-16F1714x.md`); this file lists what differs. The code
 generator is the same one (`pic16e`).
 
