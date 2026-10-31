@@ -342,11 +342,26 @@ fn rtcc_models_in_simulator() {
         return;
     }
     let files: Vec<PathBuf> = bas_files(&root().join("tests/exec_rtcc")).into_iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("lib_")).collect();
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), 3);
+    // `lib_rtcc_model_hw` uses `#option I2c = Hardware`, which only a part with the I2C1 peripheral honours: it runs on the PIC18F16Q41 (the
+    // harness carries the included test double with the program), the others on the default PIC18F27Q10.
+    let (hw, sw): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|p| p.file_stem().unwrap().to_string_lossy().ends_with("_hw"));
+    assert_eq!(hw.len(), 1);
     for flags in ["", "-O0"] {
-        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).args(&files).output().unwrap();
-        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
-        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+        for (device, list) in [("18F27Q10", &sw), ("18F16Q41", &hw)] {
+            let r = Command::new("python3")
+                .arg(root().join("scripts/exec-test.py"))
+                .arg("--basil")
+                .arg(basil())
+                .arg(format!("--flags={flags}"))
+                .arg("--device")
+                .arg(device)
+                .args(list)
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+            assert!(r.status.success(), "flags `{flags}`, {device}:\n{text}");
+        }
     }
 }
 
@@ -576,6 +591,84 @@ fn q41_low_sfrs_are_not_access_bank_operands() {
     assert!(asm.contains("NVMCON1, b"), "{asm}");
     assert!(asm.contains("TRISC, c"), "{asm}");
     assert!(asm.contains("INTCON0, c"), "{asm}");
+}
+
+/// The RTCC model test double (`tests/exec_rtcc/i2c.bas`) carries a copy of the block routines of `lib/i2c.bas` so that `rtcc` runs against the
+/// real logic; the two must not drift apart. Each routine is compared with comments dropped and the module's `lastStatus` read as the model's `last`.
+#[test]
+fn rtcc_model_block_routines_match_the_library() {
+    fn routine(text: &str, name: &str) -> String {
+        let at = text.find(&format!("Function {name}(")).unwrap_or_else(|| panic!("{name} not found"));
+        let rest = &text[at..];
+        let end = rest.find("End Function").unwrap() + "End Function".len();
+        rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('\''))
+            .map(|l| l.trim_end().replace("lastStatus", "last"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    let lib = std::fs::read_to_string(root().join("lib/i2c.bas")).unwrap();
+    // the block routines of the software and MSSP hosts (the second definitions; the first are the hardware ones)
+    let generic = &lib[lib.find("#if Not _i2chw\n' Block transfers").expect("generic block routines")..];
+    let model = std::fs::read_to_string(root().join("tests/exec_rtcc/i2c.bas")).unwrap();
+    for name in ["Open", "I2cReadRegs", "I2cWriteRegs", "I2cProbe"] {
+        assert_eq!(routine(generic, name), routine(&model, name), "{name}: the model's copy differs from lib/i2c.bas");
+    }
+}
+
+/// `#option I2c = Hardware` (the I2C1 peripheral with the block routines and `Rtcc` on top) builds on all six PIC18-Q41 parts with no
+/// warning, and the software host stays the default: the same program without the option still builds.
+#[test]
+fn q41_hardware_i2c_builds() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("q41i2chw");
+    let all = root().join("tests/programs/i2c_hw_q41.bas");
+    for dev in Q41_PARTS {
+        let src = for_device(&all, dev, &out.join(format!("hw_{dev}.bas")));
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join(format!("hw_{dev}.hex"))).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(r.status.success() && !text.contains("warning"), "{dev}:\n{text}");
+        // The option really changes the code: the hardware build drives I2C1 and has no bit-banged clock routine, and the same
+        // program without the option is the software host.
+        let no_option = std::fs::read_to_string(&src).unwrap().replace("#option I2c = Hardware\n", "");
+        let sw = out.join(format!("sw_{dev}.bas"));
+        std::fs::write(&sw, no_option).unwrap();
+        let r = Command::new(basil()).arg(&sw).arg("-S").arg("-o").arg(out.join(format!("sw_{dev}.hex"))).output().unwrap();
+        assert!(r.status.success(), "{dev} (software):\n{}", String::from_utf8_lossy(&r.stderr));
+        let r = Command::new(basil()).arg(&src).arg("-S").arg("-o").arg(out.join(format!("hw_{dev}.hex"))).output().unwrap();
+        assert!(r.status.success());
+        let hw_s = std::fs::read_to_string(out.join(format!("hw_{dev}.S"))).unwrap();
+        let sw_s = std::fs::read_to_string(out.join(format!("sw_{dev}.S"))).unwrap();
+        assert!(hw_s.contains("I2C1TXB") && !hw_s.contains("I2C_SCLHIGH"), "{dev}: hardware build");
+        assert!(sw_s.contains("I2C_SCLHIGH") && !sw_s.contains("I2C1TXB"), "{dev}: software build");
+    }
+}
+
+/// The hardware I2C driver executed: `scripts/picsim.py` is an instruction-level simulator of the code the compiler writes, with a model of
+/// the I2C1 host (MDB has none) and a simulated client; `scripts/test_i2chw.py` checks every routine's status, data, register setup and the
+/// exact bus transcript, with faults, at several clock speeds, and `Rtcc` on top. It stops after assembly, so it needs no `pic-as`. Optimised,
+/// and as the `-O0` reference build (which found two order-of-read races the optimised code hid). It builds about 40 programs and runs them in
+/// pure Python, a few minutes in all, so like the MDB tests it is opt-in: `BASIL_SIM=1` (or `BASIL_MDB=1`).
+#[test]
+fn i2c_hardware_driver_in_simulator() {
+    if std::env::var("BASIL_SIM").is_err() && std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_SIM=1 (or BASIL_MDB=1) to run the hardware I2C simulator test");
+        return;
+    }
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3")
+            .arg(root().join("scripts/test_i2chw.py"))
+            .env("BASIL", basil())
+            .env("BASIL_LIB", root().join("lib"))
+            .env("BASIL_FLAGS", flags)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
 }
 
 /// With `BASIL_MDB=1` the programs that touch no peripheral, and the PIC18-Q41 library tests, run on the

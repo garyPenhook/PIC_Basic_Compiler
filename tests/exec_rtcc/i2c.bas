@@ -192,3 +192,75 @@ End Function
 Public Function ModelId(ByVal i As Byte) As Byte
     Result = idm(i)
 End Function
+
+' ---- Block routines: the same code as the block routines of lib/i2c.bas for the software backends (only the status
+' variable is `last` here), so `rtcc` runs its real logic against the model on the one-step routines above. ----
+Public Dim I2cBuf(8) As Byte
+
+Function Open(ByVal ctl As Byte, ByVal reg As Byte) As Byte
+    Result = I2cStart()
+    If Result = 0 Then
+        Result = I2cSend(ctl)
+    End If
+    If Result = 0 Then
+        Result = I2cSend(reg)
+    End If
+End Function
+
+Public Function I2cReadRegs(ByVal addr As Byte, ByVal reg As Byte, ByVal n As Byte) As Byte
+    Dim i As Byte
+    Dim s As Byte
+    Result = 5
+    If n = 0 Or n > 8 Then
+        last = Result
+        Exit
+    End If
+    Result = Open(addr << 1, reg)
+    If Result = 0 Then
+        Result = I2cRestart()
+    End If
+    If Result = 0 Then
+        Result = I2cSend((addr << 1) Or 1)
+    End If
+    i = 0
+    While Result = 0 And i < n
+        I2cBuf(i) = I2cReceive(i < n - 1)
+        Result = I2cStatus()
+        Inc(i)
+    Wend
+    s = I2cStop()
+    If Result = 0 Then
+        Result = s
+    End If
+    last = Result
+End Function
+
+Public Function I2cWriteRegs(ByVal addr As Byte, ByVal reg As Byte, ByVal n As Byte) As Byte
+    Dim i As Byte
+    Dim s As Byte
+    Result = 5
+    If n = 0 Or n > 8 Then
+        last = Result
+        Exit
+    End If
+    Result = Open(addr << 1, reg)
+    i = 0
+    While Result = 0 And i < n
+        Result = I2cSend(I2cBuf(i))
+        Inc(i)
+    Wend
+    s = I2cStop()
+    If Result = 0 Then
+        Result = s
+    End If
+    last = Result
+End Function
+
+Public Function I2cProbe(ByVal addr As Byte) As Byte
+    Result = I2cStart()
+    If Result = 0 Then
+        Result = I2cSend(addr << 1)
+    End If
+    I2cStop()
+    last = Result
+End Function

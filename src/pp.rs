@@ -34,10 +34,16 @@ pub struct Predef {
     /// Usable data RAM and data EEPROM of the device in bytes (`_ram`, `_eeprom`); `None` without a description.
     pub ram: Option<u32>,
     pub eeprom: Option<u32>,
+    /// The program asked for the I2C peripheral with `#option I2c = Hardware`. Libraries see it here, like the
+    /// clock: `#define` names are file-scoped, so they could not. `_i2chw` is this and the part having `I2C1CON0`.
+    pub i2c_hw: bool,
 }
 
-/// Reads `Clock = n` (or `Declare Xtal = n`) and `Device = name` from the program text. The header
-/// must come before any include or declaration, so the first match is the one that counts.
+/// Reads `Clock = n` (or `Declare Xtal = n`), `Device = name` and `#option I2c = Hardware` from the
+/// program text. The header must come before any include or declaration, so the first match is the
+/// one that counts for `Clock` and `Device`; the last `#option I2c` line counts, as for the other options
+/// (`sema::read_options`). The scan is of the raw text, so the option must be a plain line of the main
+/// program, not inside an `#if` block.
 pub fn scan_header(text: &str) -> Predef {
     let mut p = Predef::default();
     for line in text.lines() {
@@ -46,6 +52,14 @@ pub fn scan_header(text: &str) -> Predef {
             Some(i) => (&code[..i], code[i..].trim_start()),
             None => (code.as_str(), ""),
         };
+        if word == "#option" {
+            if let Some((name, value)) = rest.split_once('=') {
+                if name.trim() == "i2c" {
+                    p.i2c_hw = value.trim() == "hardware";
+                }
+            }
+            continue;
+        }
         let (word, rest) = if word == "declare" {
             match rest.strip_prefix("xtal") {
                 Some(r) => ("clock", r.trim_start()),
@@ -211,6 +225,8 @@ impl Eval<'_> {
             "_clock" => self.predef.clock.map(Val::Num).ok_or_else(|| "_clock is used but the program has no `Clock = n` line".into()),
             "_ram" => self.predef.ram.map(|n| Val::Num(f64::from(n))).ok_or_else(|| "_ram is used but the device description could not be loaded (is there a `Device = name` line?)".into()),
             "_eeprom" => self.predef.eeprom.map(|n| Val::Num(f64::from(n))).ok_or_else(|| "_eeprom is used but the device description could not be loaded (is there a `Device = name` line?)".into()),
+            // Asked for and the part has the peripheral: on a part with an MSSP the option changes nothing.
+            "_i2chw" => Ok(Val::Bool(self.predef.i2c_hw && self.predef.registers.as_ref().is_some_and(|r| r.contains("i2c1con0")))),
             "_has" => {
                 if !self.eat("(") {
                     return Err("`_has` needs a register name in parentheses: `_has(ANSELB)`".into());
@@ -241,7 +257,7 @@ impl Eval<'_> {
                 } else if t.starts_with("pic18") {
                     Ok(Val::Str(t[3..].to_string()))
                 } else {
-                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device, _ram, _eeprom, _has)"))
+                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device, _ram, _eeprom, _has, _i2chw)"))
                 }
             }
         }
@@ -438,4 +454,48 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
         diags.error("E-PP", Span { file, line: src.lines().count() as u32, col: 1 }, "#if/#ifdef/#ifndef without #endif");
     }
     Preprocessed { text: out, options }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(src: &str, predef: &Predef) -> (String, usize) {
+        let mut diags = Diagnostics::default();
+        let mut defined = HashSet::new();
+        let out = preprocess(0, src, &mut defined, predef, &mut diags);
+        (out.text, diags.error_count())
+    }
+
+    #[test]
+    fn header_scan_reads_the_i2c_option() {
+        assert!(scan_header("Device = 18F16Q41\n#option I2c = Hardware\n").i2c_hw);
+        assert!(scan_header("  #OPTION  i2C=HARDWARE ' trailing comment\n").i2c_hw);
+        assert!(!scan_header("#option I2c = Software\n").i2c_hw);
+        assert!(!scan_header("#option Optimize = Size\n").i2c_hw);
+        assert!(!scan_header("Device = 18F16Q41\n").i2c_hw);
+        // The other header values are still read when the option is present.
+        let p = scan_header("Device = 18F16Q41\n#option I2c = Hardware\nClock = 64\n");
+        assert_eq!(p.clock, Some(64.0));
+        assert_eq!(p.device.as_deref(), Some("18f16q41"));
+    }
+
+    #[test]
+    fn i2chw_selects_the_branch() {
+        let src = "#if _i2chw\nA\n#else\nB\n#endif\n#if not _i2chw\nC\n#endif\n";
+        let regs = |names: &[&str]| Some(names.iter().map(|n| n.to_string()).collect::<HashSet<String>>());
+        let off = Predef { registers: regs(&["i2c1con0"]), ..Predef::default() };
+        let on = Predef { i2c_hw: true, registers: regs(&["i2c1con0"]), ..Predef::default() };
+        // asked for, but the part has an MSSP and no I2C1: the option changes nothing
+        let mssp = Predef { i2c_hw: true, registers: regs(&["ssp1con1"]), ..Predef::default() };
+        let (t, errs) = run(src, &mssp);
+        assert_eq!(errs, 0);
+        assert!(t.contains('B') && !t.contains('A'), "{t:?}");
+        let (t, errs) = run(src, &off);
+        assert_eq!(errs, 0);
+        assert!(t.contains('B') && !t.contains('A') && t.contains('C'), "{t:?}");
+        let (t, errs) = run(src, &on);
+        assert_eq!(errs, 0);
+        assert!(t.contains('A') && !t.contains('B') && !t.contains('C'), "{t:?}");
+    }
 }

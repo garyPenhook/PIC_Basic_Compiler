@@ -40,7 +40,7 @@ only. Nothing was run on a real part.
 | `flashwrite` | done | done (a sector is the 32-word row; word write through the write latches; `FlashUpdateWord` keeps the row in a 64-byte RAM image; 14-bit words, erased = 3FFFh) | done (as the PIC16F171xx; 2K/4K/8K words, `FlashLastSector` from the size) | done (`FlashLastSector` from the flash size; page read, erase, write through the NVM buffer bank) | none |
 | `spi` | done | done (MSSP1, pins 0..23 as the Q41, `RxyPPS` 27 = SCK1 and 28 = SDO1, `SSP1CLKPPS`/`SSP1DATPPS` = the pin number) | done (MSSP1, `RxyPPS` 27 = SCK1 and 28 = SDO1; pins of the part only) | done (SPI1, any of RA/RB4..7/RC pins through PPS, at most 10 MHz) | none |
 | `lcd` | done | done (20-pin part; port B pins refused on the 14-pin one) | done (pins of the part only: port B on the 20-pin parts, port C not on the 8-pin part) | done (port B pins refused on the 14-pin parts) | the 16F: port B does not exist on the 14-pin part; choose the pins |
-| `i2c` | done | done (MSSP1 hardware host, pins 0..23, `RxyPPS` 27 = SCL1 and 28 = SDA1; `SSP1IF`/`BCL1IF` are `PIR5` bits 2 and 3) | done (MSSP1 hardware host as the PIC16F171xx; pins of the part only) | done, **in software** on two pins (see below) | a driver around the I2C1 peripheral would need the byte count first (FACTS-18F-Q41.md section 6, errata 1.3.x) |
+| `i2c` | done | done (MSSP1 hardware host, pins 0..23, `RxyPPS` 27 = SCL1 and 28 = SDA1; `SSP1IF`/`BCL1IF` are `PIR5` bits 2 and 3) | done (MSSP1 hardware host as the PIC16F171xx; pins of the part only) | done, **in software** on two pins by default; the I2C1 peripheral with `#option I2c = Hardware` (block routines only, see below) | run on the I2C1 peripheral in silicon (it ran only on the instruction-level model, `scripts/test_i2chw.py`) |
 | `pwm` | done | done (the 16-bit PWM1 and PWM2: channels 1..4 = PWM1S1P1 … PWM2S1P2, `RxyPPS` = 10 + channel; CCP1 and CCP2 are not offered) | done (CCP1, CCP2, PWM1, PWM2 = channels 1..4 on Timer2, as the Q10; `RxyPPS` 09h, 0Ah, 2Ch, 2Dh) | done with different channels: 1..6 = PWM1S1P1 … PWM3S1P2, one shared period (CCP1 not offered) | none |
 | `oled` | done | done (builds and the set-up test passes in the simulator; not run against a display) | done over `i2c`/`spi`; the frame buffer (1 KB) does not fit the 1 KB RAM of the largest part: text and OledGoto/OledData/OledBitmap build (the buffer is not placed unless a pixel command is used; a pixel command stops with `E-RAM`) | done (over the software `i2c`, or `spi`) | |
 | `aht30` | done | done (over the hardware `i2c`; set-up test passes in the simulator) | done (over the hardware `i2c`) | done (over the software `i2c`) | |
@@ -318,9 +318,11 @@ RC0..RC7 as the part has them; `RxyPPS` 27 = SCL1 and 28 = SDA1 (Table 18-2), `S
 
 PIC18-Q41: the same routines, in software on two ordinary pins (any of RA0..RA5 except RA3, RB4..RB7, RC0..RC7, numbered 0..23
 as the `Adc` channels), open drain by TRIS, `hz` 2000..400000 (the real clock is lower, much lower on a slow `Clock`), clock
-stretching waited for, arbitration checked by reading SDA back. Why not the I2C1 peripheral: it counts the bytes of a transfer
-in hardware, so the step-by-step API (`I2cReceive(ack)` decides the acknowledge after the byte has arrived) cannot be mapped onto
-it. A hardware driver can replace this branch later without changing the routines. The Q10 description below applies to the Q10.
+stretching waited for, arbitration checked by reading SDA back. The I2C1 peripheral cannot carry the step-by-step API: it counts the
+bytes of a transfer in hardware (`I2C1CNT`), the host sends the Stop or waits for the Restart when the count reaches 0, and it decides
+the acknowledge of a received byte from the count, not from the program (`I2cReceive(ack)` decides it after the byte has arrived; a byte
+sent is only acknowledged-or-not at the next byte or at the pause). So the peripheral is offered through block routines, selected by
+`#option I2c = Hardware` in the program (see "PIC18-Q41 hardware host" below). The Q10 description below applies to the Q10.
 | Routine | Effect |
 |---|---|
 | `I2cInit(hz, scl, sda)` | MSSP1 as I2C host at `hz` (1..1000000): `f = FOSC / (4 * (SSPxADD + 1))`, divider rounded up so the clock is at or below `hz`. `scl`, `sda` are pins 8..23 (ports B and C, as the `Adc` channels; reset selection RC3/RC4 = 19/20), routed through `SSP1CLKPPS`/`SSP1DATPPS` and `RxyPPS` = 0x0F/0x10. Returns 1, or 0 for a bad pin, equal pins, or no `SSPxADD` of 3..255 (at 64 MHz the slowest clock is 62 kHz) |
@@ -336,6 +338,33 @@ The host mode does not queue events, so every step waits for the previous one; e
 or unpulled bus gives status 1, after which the hardware may still be mid-operation: call `I2cInit` again to reset it). `I2cPing` ends with a Stop, so `I2cStatus` afterwards describes the Stop, not the address byte. The module polls `SSP1IF` and clears `BCL1IF`/`WCOL`, so keep the MSSP1
 interrupt disabled. `SMP` (slew rate) is cleared for clocks between 100 kHz and 1 MHz. External pull-ups are
 needed. Single host only; not reentrant.
+
+PIC18-Q41 hardware host (`#option I2c = Hardware` in the main program; ignored on parts with an MSSP, whose host is always hardware). The module
+drives I2C1 in host mode, 7-bit addressing, `ABD = 1` (a write to `I2C1TXB` starts the transfer), `I2C1CLK` = FOSC/4, `FME = 0`:
+`SCL = FOSC / (4 * 5 * (BAUD + 1))`, so `Clock` must be FOSC in MHz, the divider is rounded up (the clock is at most `hz`) and the slowest clock is
+FOSC / 5120 (12.5 kHz at 64 MHz). `I2cInit(hz, scl, sda)` accepts `hz` 1..400000 and the same pins as the software host (0..23 as the part has them,
+RA3 refused); any pin works through `RxyPPS` (33 = SCL1, 34 = SDA1; bidirectional, so `I2C1SCLPPS`/`I2C1SDAPPS` select the same pin), with the
+standard input levels except on the I2C pads (RB4 = SDA1 and RB6 = SCL1 on the 20-pin parts, RC0/RC1 on the 14-pin ones; not configured here).
+The pins are made digital and open drain; the module overrides TRISx and LATx [DS40002214G 21.3]. Routines:
+
+| Routine | Effect |
+|---|---|
+| `I2cReadRegs(addr, reg, n)` | Start, address + W, `reg`, Restart, address + R, `n` (1..8) bytes into `I2cBuf(0..n-1)`, the last not acknowledged, Stop. Returns the status (also in `I2cStatus`) |
+| `I2cWriteRegs(addr, reg, n)` | Start, address + W, `reg`, `I2cBuf(0..n-1)` (n 1..8), Stop. Returns the status |
+| `I2cProbe(addr)` | Start, address + W, Stop. Returns the status (0 acknowledged, 3 not) |
+| `I2cPing`, `I2cWriteReg`, `I2cReadReg`, `I2cStatus`, `I2cOff` | as above (built on the block routines in hardware mode) |
+| `I2cBuf(8)` | the data of the block routines |
+
+`I2cStart`, `I2cRestart`, `I2cStop`, `I2cSend` and `I2cReceive` do not exist in hardware mode (a program that calls them stops with an unknown-routine
+error; `aht30`, which uses only them, stops with `#error`; `oled` leaves out its I2C connection, so `OledInitI2c` does not exist and the SPI connection
+works). The block routines exist on every backend (built from the step routines on the software and MSSP hosts, where they also set `I2cStatus`), so a
+program written with them builds with and without the option. In hardware mode `I2cOff` ignores its arguments: the module remembers the pins of the last
+`I2cInit`, takes their `RxyPPS` back to `LATxy` and makes them push-pull again; call it before an `I2cInit` on other pins. Status 5 means a count outside 1..8 (nothing is sent). Every
+wait is bounded (20000 polls); after a timeout or a collision the module sends a Stop (P) if it is still active and is switched off
+and on again, so the next call starts from idle (a not acknowledge needs no reset: the module has stopped itself, and a register-phase NACK of a read gets its
+Stop with P). The module polls its flags and uses no interrupt; not reentrant; single host. The flags are cleared
+and the buffers emptied before each transfer, and 25 us are waited after enabling the module (errata DS80000901H 1.3.2). With the option, `rtcc` moves
+its blocks with these routines (`ReadBlock`/`WriteBlock` are thin wrappers); without it `rtcc` is byte-for-byte what it was.
 
 PIC16F183xx: the same hardware host; `RxyPPS` 24 = SCL1 and 25 = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 3 and 2.
 

@@ -396,8 +396,12 @@ test them), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and parenthes
 `_usart`, `_usb`, `_mssp`, `_ccp`, `_eccp`, `_comparator`, `_flash_write`, and more as devices
 need them. (SF; names follow the reference language; values come from our device files.)
 
-Options (`#option`): `Optimize = Size|Speed|Balanced`, `Strict = true|false`, `ISR_SHADOW`,
-`Warn.<id> = true|false`. (NEW/SF)
+Options (`#option`): `Optimize = Size|Speed|Balanced`, `Strict = true|false`, `ISR_SHADOW`, `I2c = Hardware|Software`,
+`Warn.<id> = true|false`. (NEW/SF) `#option I2c = Hardware` is also read before any module is loaded, from the main program's text like `Clock` and
+`Device` (so it must be a plain line of the main program, not inside an `#if` block), and is visible to the modules as the predefined boolean
+`_i2chw` (`#if _i2chw`): true when the program asked for it **and** the part has the I2C1 peripheral (`I2C1CON0`), so on a part with an MSSP the option
+changes nothing. `#define` names are file-scoped, so a module could not see an option of the program any other way. The `i2c` module uses it to
+drive the PIC18-Q41's I2C1 peripheral instead of two bit-banged pins.
 
 ## 12. Built-in routines
 

@@ -58,6 +58,12 @@ for src in a.files:
             text = re.sub(r"^(\s*Clock\s*=\s*)64\b", lambda m: m.group(1) + "32", text, flags=re.M | re.I)
         for cf in re.findall(r'^\s*CFile\s+"([^"]+)"', text, re.M | re.I):
             shutil.copy(os.path.join(os.path.dirname(src), cf), work)
+        # Modules the program includes from its own folder (a test double of a library module, or a link to the module under test)
+        # go with it, or the copy would build against the library's own modules instead.
+        for inc in re.findall(r'^\s*Include\s+"([^"]+)"', text, re.M | re.I):
+            mod = os.path.join(os.path.dirname(src), inc + ".bas")
+            if os.path.exists(mod):
+                shutil.copy(mod, work)
         src = os.path.join(work, name + ".bas")
         open(src, "w").write(text)
     r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)

@@ -1,5 +1,8 @@
 Module Aht30
 Include "i2c"
+#if _i2chw
+#error "aht30 sends one byte at a time with I2cStart / I2cSend / I2cStop, which `#option I2c = Hardware` does not provide (the I2C1 module needs the byte count before a transfer): remove the option or use the block routines I2cWriteRegs / I2cReadRegs"
+#endif
 ' Aosong AHT30 temperature and humidity sensor on I2C (AHT30 data sheet, Aosong/ASAIR, Sep 2023;
 ' section numbers below are from it). The WeAct AHT30 board carries the same part. The bus is set
 ' up by the caller first with the `I2c` module (at most 400 kHz [Table 8]; keep it at 400 kHz or

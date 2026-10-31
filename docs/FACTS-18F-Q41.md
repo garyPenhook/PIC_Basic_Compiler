@@ -84,6 +84,9 @@ uses both ranges (`in_access` in `src/codegen.rs`).
 | NVM: `NVMCON0.GO`, `NVMCON1` (`NVMCMD` bits 2:0, `WRERR` bit 7), `NVMLOCK` (55h, AAh), `NVMADR` (22-bit byte address), `NVMDAT`; data EEPROM bytes; flash word write needs an erased word; page read/erase/write use the buffer RAM; `TBLWT` writes it with `TBLPTRL` as the offset | DS-A 10.1–10.5 p.87–108 |
 | SPI1: `SPI1CON0` (`EN`, `LSBF`, `MST`, `BMODE`), `SPI1CON1` (`SMP`, `CKE`, `CKP`, `FST`, `SSP`, `SDIP`, `SDOP`), `SPI1CON2` (`TXR`, `RXR`), `SPI1BAUD`, `SPI1TWIDTH`, `SPI1TXB/RXB`; FSCK = Fclk / (2·(BAUD + 1)); host full duplex at most 10 MHz (95 ns) | DS-A 35.7 p.589–596, 35.3 p.575, Table 48-21 p.908 |
 | I2C1 host transfers count bytes in hardware (`I2C1CNT`, `I2C1ADB1`, `S`, `P`, `RSEN`, `MDR`) | DS-A 36.4.2 p.643–657, 36.5 p.669–672 |
+| I2C1 registers: `I2C1CON0` EN 7, RSEN 6, S 5, MDR 3, MODE 2:0 (100 = host, 7-bit); `I2C1CON1` ACKCNT 7, ACKDT 6, ACKSTAT 5, P 3; `I2C1CON2` ABD 4, FME 5, BFRET 1:0; `I2C1STAT0` MMA 5, BFRE 7; `I2C1STAT1` TXBE 5, RXBF 0, CLRBF 2, TXWE 7, RXRE 3; `I2C1ERR` NACKIF 4, BCLIF 5; `I2C1CLK` 0 = FOSC/4, 1 = FOSC; SCL = `I2CxCLK` / (BAUD + 1) / 5 (FME = 0) or / 4 (FME = 1) | DS-A 36.5.1–36.5.11 p.669–684, 36.4.2.2 p.645–648 |
+| I2C1 host sequences used by `i2c` in hardware mode: `ABD = 1`, a `TXB` write starts the transfer; write = `CNT` n+1 with `RSEN = 0`, the Stop follows the last byte; read = register byte with `CNT` 1 and `RSEN = 1` (pause with `MDR`), then `CNT` n, `ACKCNT` 1, a `TXB` write sends the Restart and the read address, `RSEN` back to 0, the last byte is not acknowledged and the Stop follows; `P` stops a paused or stuck transfer | DS-A 36.3.12 p.616, 36.4.2.5 p.650, 36.4.2.7 p.652–656, CON0 RSEN/S/MDR p.669–670, CON1 P p.671–672 |
+| I2C1 pins: `RxyPPS` 21h = SCL1, 22h = SDA1 (bidirectional: `I2C1SCLPPS`/`I2C1SDAPPS` select the same pin); the registers are `RA0PPS` = 0201h + pin number; open drain (`ODCONx`) is required; I2C-level pads are RB4 (SDA1) and RB6 (SCL1) on the 20-pin parts, RC0/RC1 on the 14-pin parts, other pins work with the `INLVLx` levels | DS-A Table 21-2 p.323, 21.4 p.324, CON0 note 1 p.670, 19.11 p.303, Table 3-2 note 4 p.16 |
 
 ## 7. Errata that touch this project
 
@@ -91,7 +94,9 @@ uses both ranges (`in_access` in `src/codegen.rs`).
 |---|---|---|
 | ADCC 1.1.2 double sample with `ADPRE = ADACQ = 0` | not used (the `adc` module uses basic mode with `ADACQ` set) | ES-A p.3, ES-B p.2 |
 | ADCC 1.1.1 (rev A4 only) ADC off with LFINTOSC/SOSC clock and BOR and FVR off | none for the library, which clocks from HFINTOSC | ES-A p.3 |
-| I2C 1.3.x / 1.4.x (start/stop flags, bus time-out, clock-stretch disable, multi-host) | the I2C module is not ported; recorded for when it is | ES-A p.4–6 |
+| I2C 1.3.2 start/stop flags may be set when the module is enabled | `i2c` in hardware mode waits 25 us after enabling and clears the flags (and clears them before every transfer); it polls `MMA`, `TXBE`, `RXBF`, `MDR` and `NACKIF`, not `SCIF`/`PCIF` | ES-A p.4–5 |
+| I2C 1.3.3 `MDR` is not cleared after a bus time-out; 1.3.4 and 1.3.5 (client-mode time-out, clock-stretch disable) | not reached: the bus time-out and `CSD` are not used; a stuck transfer is ended with `P` and a module reset | ES-A p.5 |
+| I2C 1.3.1 the `I2CxADRn` reset values | not reached: client mode is not used | ES-A p.4 |
 | UART 1.5.1 (`TXDE` may fall early), 1.5.2 (9-bit address mode mismatch) | the `serial` modules use neither | ES-A p.7–8 |
 | CPU 1.7.1 FSR shadow registers not writable | the compiler never writes a shadow register | ES-A p.8–9 |
 | Instruction set 1.9.1 `PUSHL` (extended instruction set) | the compiler does not use `PUSHL` or the extended instruction set | ES-A p.9 |

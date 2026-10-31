@@ -44,7 +44,6 @@ Include "i2c"
 ' match with a slowing trim, TRIMVAL > 0 and SIGN = 0) are not worked around: use RtccTrim only with the second
 ' or date masks, or recheck the time in the alarm handler.
 Dim frame(8) As Byte
-Dim buf(8) As Byte
 
 Function ToBcd(ByVal v As Byte) As Byte
     Result = ((v / 10) << 4) Or (v Mod 10)
@@ -86,6 +85,17 @@ Function EncHour(ByVal h As Byte, ByVal twelve As Boolean) As Byte
     End If
 End Function
 
+#if _i2chw
+' `#option I2c = Hardware`: the host moves whole blocks (I2cReadRegs / I2cWriteRegs, data in I2c.I2cBuf), `ctl` is the
+' control byte (7-bit address << 1).
+Function ReadBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As Byte
+    Result = I2c.I2cReadRegs(ctl >> 1, reg, n)
+End Function
+
+Function WriteBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As Byte
+    Result = I2c.I2cWriteRegs(ctl >> 1, reg, n)
+End Function
+#else
 ' Start, control byte `ctl`, register/address byte `reg`. Leaves the bus started.
 Function Open(ByVal ctl As Byte, ByVal reg As Byte) As Byte
     Result = I2c.I2cStart()
@@ -97,7 +107,7 @@ Function Open(ByVal ctl As Byte, ByVal reg As Byte) As Byte
     End If
 End Function
 
-' Reads n (1..8) bytes from `reg` of the block with control byte `ctl` into buf(0..n-1).
+' Reads n (1..8) bytes from `reg` of the block with control byte `ctl` into I2c.I2cBuf(0..n-1).
 Function ReadBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As Byte
     Dim i As Byte
     Dim s As Byte
@@ -110,7 +120,7 @@ Function ReadBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As Byt
     End If
     i = 0
     While Result = 0 And i < n
-        buf(i) = I2c.I2cReceive(i < n - 1)
+        I2c.I2cBuf(i) = I2c.I2cReceive(i < n - 1)
         Result = I2c.I2cStatus()
         Inc(i)
     Wend
@@ -120,14 +130,14 @@ Function ReadBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As Byt
     End If
 End Function
 
-' Writes buf(0..n-1) (n 1..8) from `reg` of the block with control byte `ctl`.
+' Writes I2c.I2cBuf(0..n-1) (n 1..8) from `reg` of the block with control byte `ctl`.
 Function WriteBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As Byte
     Dim i As Byte
     Dim s As Byte
     Result = Open(ctl, reg)
     i = 0
     While Result = 0 And i < n
-        Result = I2c.I2cSend(buf(i))
+        Result = I2c.I2cSend(I2c.I2cBuf(i))
         Inc(i)
     Wend
     s = I2c.I2cStop()
@@ -135,15 +145,16 @@ Function WriteBlock(ByVal ctl As Byte, ByVal reg As Byte, ByVal n As Byte) As By
         Result = s
     End If
 End Function
+#endif
 
-' Reads register `reg` of the RTCC block into buf(0).
+' Reads register `reg` of the RTCC block into I2c.I2cBuf(0).
 Function RdReg(ByVal reg As Byte) As Byte
     Result = ReadBlock(222, reg, 1)
 End Function
 
 ' Writes `v` to register `reg` of the RTCC block.
 Function WrReg(ByVal reg As Byte, ByVal v As Byte) As Byte
-    buf(0) = v
+    I2c.I2cBuf(0) = v
     Result = WriteBlock(222, reg, 1)
 End Function
 
@@ -154,7 +165,7 @@ Public Function RtccRead() As Byte
     If Result = 0 Then
         i = 0
         While i < 7
-            frame(i) = buf(i)
+            frame(i) = I2c.I2cBuf(i)
             Inc(i)
         Wend
     End If
@@ -239,8 +250,8 @@ Public Function RtccSet(ByVal year As Byte, ByVal month As Byte, ByVal day As By
     If Result <> 0 Then
         Exit
     End If
-    vb = buf(0) And 8
-    ctl = buf(4)
+    vb = I2c.I2cBuf(0) And 8
+    ctl = I2c.I2cBuf(4)
     ' Stop the oscillator: EXTOSC = 0 and ST = 0, and wait for OSCRUN to clear (TOSF is at least 1 ms).
     Result = WrReg(7, ctl And 247)
     If Result = 0 Then
@@ -250,7 +261,7 @@ Public Function RtccSet(ByVal year As Byte, ByVal month As Byte, ByVal day As By
     While Result = 0 And n < 100
         Result = RdReg(3)
         If Result = 0 Then
-            If (buf(0) And 32) = 0 Then
+            If (I2c.I2cBuf(0) And 32) = 0 Then
                 Break
             End If
             DelayMs(1)
@@ -260,17 +271,17 @@ Public Function RtccSet(ByVal year As Byte, ByVal month As Byte, ByVal day As By
     If Result <> 0 Then
         Exit
     End If
-    If (buf(0) And 32) <> 0 Then
+    If (I2c.I2cBuf(0) And 32) <> 0 Then
         Result = 6
         Exit
     End If
-    buf(0) = ToBcd(second)
-    buf(1) = ToBcd(minute)
-    buf(2) = ToBcd(hour)
-    buf(3) = weekday Or vb
-    buf(4) = ToBcd(day)
-    buf(5) = ToBcd(month)
-    buf(6) = ToBcd(year)
+    I2c.I2cBuf(0) = ToBcd(second)
+    I2c.I2cBuf(1) = ToBcd(minute)
+    I2c.I2cBuf(2) = ToBcd(hour)
+    I2c.I2cBuf(3) = weekday Or vb
+    I2c.I2cBuf(4) = ToBcd(day)
+    I2c.I2cBuf(5) = ToBcd(month)
+    I2c.I2cBuf(6) = ToBcd(year)
     Result = WriteBlock(222, 0, 7)
     If Result = 0 Then
         Result = WrReg(4, ToBcd(day))
@@ -287,7 +298,7 @@ Public Function RtccSet(ByVal year As Byte, ByVal month As Byte, ByVal day As By
     While Result = 0 And n < 200
         Result = RdReg(3)
         If Result = 0 Then
-            If (buf(0) And 32) <> 0 Then
+            If (I2c.I2cBuf(0) And 32) <> 0 Then
                 Break
             End If
             DelayMs(10)
@@ -295,7 +306,7 @@ Public Function RtccSet(ByVal year As Byte, ByVal month As Byte, ByVal day As By
         Inc(n)
     Wend
     If Result = 0 Then
-        If (buf(0) And 32) = 0 Then
+        If (I2c.I2cBuf(0) And 32) = 0 Then
             Result = 6
         Else
             Result = WrReg(3, weekday Or vb)
@@ -307,7 +318,7 @@ End Function
 Public Function RtccStart() As Byte
     Result = RdReg(0)
     If Result = 0 Then
-        Result = WrReg(0, buf(0) Or 128)
+        Result = WrReg(0, I2c.I2cBuf(0) Or 128)
     End If
 End Function
 
@@ -315,7 +326,7 @@ End Function
 Public Function RtccStop() As Byte
     Result = RdReg(0)
     If Result = 0 Then
-        Result = WrReg(0, buf(0) And 127)
+        Result = WrReg(0, I2c.I2cBuf(0) And 127)
     End If
 End Function
 
@@ -325,9 +336,9 @@ Function WkWrite(ByVal vb As Byte) As Byte
     Result = RdReg(3)
     If Result = 0 Then
         If vb = 255 Then
-            vb = buf(0) And 8
+            vb = I2c.I2cBuf(0) And 8
         End If
-        Result = WrReg(3, (buf(0) And 7) Or vb)
+        Result = WrReg(3, (I2c.I2cBuf(0) And 7) Or vb)
     End If
 End Function
 
@@ -354,10 +365,10 @@ Public Function RtccStamp(ByVal up As Boolean, ByRef month As Byte, ByRef day As
         Result = ReadBlock(222, 24, 4)
     End If
     If Result = 0 Then
-        minute = FromBcd(buf(0) And 127)
-        hour = DecHour(buf(1))
-        day = FromBcd(buf(2) And 63)
-        month = FromBcd(buf(3) And 31)
+        minute = FromBcd(I2c.I2cBuf(0) And 127)
+        hour = DecHour(I2c.I2cBuf(1))
+        day = FromBcd(I2c.I2cBuf(2) And 63)
+        month = FromBcd(I2c.I2cBuf(3) And 31)
     End If
 End Function
 
@@ -378,18 +389,18 @@ Public Function RtccAlarm(ByVal n As Byte, ByVal mask As Byte, ByVal month As By
         If Result <> 0 Then
             Exit
         End If
-        pol = buf(0) And 128
+        pol = I2c.I2cBuf(0) And 128
     End If
     Result = RdReg(2)
     If Result <> 0 Then
         Exit
     End If
-    buf(2) = EncHour(hour, (buf(0) And 64) <> 0)
-    buf(0) = ToBcd(second)
-    buf(1) = ToBcd(minute)
-    buf(3) = pol Or (mask << 4) Or weekday
-    buf(4) = ToBcd(day)
-    buf(5) = ToBcd(month)
+    I2c.I2cBuf(2) = EncHour(hour, (I2c.I2cBuf(0) And 64) <> 0)
+    I2c.I2cBuf(0) = ToBcd(second)
+    I2c.I2cBuf(1) = ToBcd(minute)
+    I2c.I2cBuf(3) = pol Or (mask << 4) Or weekday
+    I2c.I2cBuf(4) = ToBcd(day)
+    I2c.I2cBuf(5) = ToBcd(month)
     base = 10 + 7 * n
     Result = WriteBlock(222, base, 6)
 End Function
@@ -406,9 +417,9 @@ Public Function RtccAlarmEnable(ByVal n As Byte, ByVal arm As Boolean) As Byte
     Result = RdReg(7)
     If Result = 0 Then
         If arm Then
-            Result = WrReg(7, buf(0) Or m)
+            Result = WrReg(7, I2c.I2cBuf(0) Or m)
         Else
-            Result = WrReg(7, buf(0) And (m Xor 255))
+            Result = WrReg(7, I2c.I2cBuf(0) And (m Xor 255))
         End If
     End If
 End Function
@@ -422,7 +433,7 @@ Public Function RtccAlarmFlag(ByVal n As Byte, ByRef flag As Boolean) As Byte
     End If
     Result = RdReg(13 + 7 * n)
     If Result = 0 Then
-        flag = (buf(0) And 8) <> 0
+        flag = (I2c.I2cBuf(0) And 8) <> 0
     End If
 End Function
 
@@ -436,7 +447,7 @@ Public Function RtccAlarmClear(ByVal n As Byte) As Byte
     r = 13 + 7 * n
     Result = RdReg(r)
     If Result = 0 Then
-        Result = WrReg(r, buf(0))
+        Result = WrReg(r, I2c.I2cBuf(0))
     End If
 End Function
 
@@ -446,9 +457,9 @@ Public Function RtccAlarmPolarity(ByVal activeHigh As Boolean) As Byte
     Result = RdReg(13)
     If Result = 0 Then
         If activeHigh Then
-            Result = WrReg(13, buf(0) Or 128)
+            Result = WrReg(13, I2c.I2cBuf(0) Or 128)
         Else
-            Result = WrReg(13, buf(0) And 127)
+            Result = WrReg(13, I2c.I2cBuf(0) And 127)
         End If
     End If
 End Function
@@ -462,7 +473,7 @@ Public Function RtccSquareWave(ByVal sel As Byte) As Byte
     End If
     Result = RdReg(7)
     If Result = 0 Then
-        Result = WrReg(7, (buf(0) And 252) Or 64 Or sel)
+        Result = WrReg(7, (I2c.I2cBuf(0) And 252) Or 64 Or sel)
     End If
 End Function
 
@@ -472,9 +483,9 @@ Public Function RtccPinLevel(ByVal level As Boolean) As Byte
     Result = RdReg(7)
     If Result = 0 Then
         If level Then
-            Result = WrReg(7, (buf(0) And 15) Or 128)
+            Result = WrReg(7, (I2c.I2cBuf(0) And 15) Or 128)
         Else
-            Result = WrReg(7, buf(0) And 15)
+            Result = WrReg(7, I2c.I2cBuf(0) And 15)
         End If
     End If
 End Function
@@ -503,9 +514,9 @@ Public Function RtccTrim(ByVal steps As Integer, ByVal coarse As Boolean) As Byt
     End If
     If Result = 0 Then
         If coarse Then
-            Result = WrReg(7, buf(0) Or 4)
+            Result = WrReg(7, I2c.I2cBuf(0) Or 4)
         Else
-            Result = WrReg(7, buf(0) And 251)
+            Result = WrReg(7, I2c.I2cBuf(0) And 251)
         End If
     End If
 End Function
@@ -518,7 +529,7 @@ Public Function RtccRamRead(ByVal addr As Byte, ByRef value As Byte) As Byte
     End If
     Result = RdReg(32 + addr)
     If Result = 0 Then
-        value = buf(0)
+        value = I2c.I2cBuf(0)
     End If
 End Function
 
@@ -538,11 +549,15 @@ Function EeReady() As Byte
     Result = 6
     n = 0
     While n < 20
+#if _i2chw
+        s = I2c.I2cProbe(87)
+#else
         s = I2c.I2cStart()
         If s = 0 Then
             s = I2c.I2cSend(174)
         End If
         I2c.I2cStop()
+#endif
         If s = 0 Then
             Result = 0
             Exit
@@ -569,7 +584,7 @@ Public Function RtccEeRead(ByVal addr As Byte, ByRef value As Byte) As Byte
         Result = ReadBlock(174, addr, 1)
     End If
     If Result = 0 Then
-        value = buf(0)
+        value = I2c.I2cBuf(0)
     End If
 End Function
 
@@ -580,7 +595,7 @@ Public Function RtccEeWrite(ByVal addr As Byte, ByVal value As Byte) As Byte
     End If
     Result = EeReady()
     If Result = 0 Then
-        buf(0) = value
+        I2c.I2cBuf(0) = value
         Result = WriteBlock(174, addr, 1)
     End If
 End Function
@@ -594,7 +609,7 @@ Public Function RtccEeProtect(ByVal level As Byte) As Byte
     End If
     Result = EeReady()
     If Result = 0 Then
-        buf(0) = level << 2
+        I2c.I2cBuf(0) = level << 2
         Result = WriteBlock(174, 255, 1)
     End If
 End Function
@@ -611,7 +626,7 @@ Public Function RtccIdRead(ByVal i As Byte, ByRef value As Byte) As Byte
         Result = ReadBlock(174, 240 + i, 1)
     End If
     If Result = 0 Then
-        value = buf(0)
+        value = I2c.I2cBuf(0)
     End If
 End Function
 
@@ -630,7 +645,7 @@ Public Function RtccIdWrite(ByVal i As Byte, ByVal value As Byte) As Byte
         Result = WrReg(9, 170)
     End If
     If Result = 0 Then
-        buf(0) = value
+        I2c.I2cBuf(0) = value
         Result = WriteBlock(174, 240 + i, 1)
     End If
 End Function

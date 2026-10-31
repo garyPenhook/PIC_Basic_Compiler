@@ -4,6 +4,8 @@ Include "spi"
 ' Monochrome OLED with an SSD1309 driver, 128 x 64 pixels (Solomon Systech SSD1309 Rev 1.1, Jul 2011;
 ' section numbers below are from it). Two ways to connect it, chosen by the init routine:
 '   OledInitI2c(addr, res)           I2C [8.1.5]: 7-bit address 0x3C (SA0 = D/C# pin low) or 0x3D.
+'                                    (not with `#option I2c = Hardware` on the PIC18-Q41: the I2C1 module needs the byte count first, so
+'                                    the I2C transport is left out and OledInitI2c does not exist; the SPI connection works.)
 '   OledInitSpi(dc, cs, res)         4-wire SPI [8.1.3]: SCLK, SDIN, D/C#, CS#.
 ' The bus itself is set up by the caller first, with the `I2c` module (at most 400 kHz: SCL cycle
 ' time 2.5 us [Table 13-6]) or the `Spi` module (mode 0, at most 10 MHz: 100 ns cycle [Table 13-4]; the
@@ -122,6 +124,9 @@ End Sub
 ' byte with Co = 0 and D/C# = isData, so every following byte is of that kind until the Stop [8.1.5.2].
 ' SPI: D/C# set, CS# low.
 Sub Begin(ByVal isData As Boolean)
+#if _i2chw
+    If mode = 2 Then
+#else
     Dim s As Byte
     If mode = 1 Then
         s = I2c.I2cStart()
@@ -139,6 +144,7 @@ Sub Begin(ByVal isData As Boolean)
             err = s
         End If
     ElseIf mode = 2 Then
+#endif
         PinSet(pDc, isData)
         If pCs <> 255 Then
             PinSet(pCs, False)
@@ -147,6 +153,9 @@ Sub Begin(ByVal isData As Boolean)
 End Sub
 
 Sub Put(ByVal b As Byte)
+#if _i2chw
+    If mode = 2 Then
+#else
     Dim s As Byte
     If mode = 1 Then
         If err = 0 Then
@@ -156,11 +165,15 @@ Sub Put(ByVal b As Byte)
             End If
         End If
     ElseIf mode = 2 Then
+#endif
         Spi.SpiWrite(b)
     End If
 End Sub
 
 Sub Finish()
+#if _i2chw
+    If mode = 2 Then
+#else
     Dim s As Byte
     If mode = 1 Then
         s = I2c.I2cStop()
@@ -168,6 +181,7 @@ Sub Finish()
             err = s
         End If
     ElseIf mode = 2 Then
+#endif
         If pCs <> 255 Then
             PinSet(pCs, True)
         End If
@@ -263,6 +277,7 @@ End Sub
 ' Starts the display on I2C at 7-bit address `addr` (0x3C = 60 or 0x3D = 61), RES# on `res`
 ' (255 = none). `I2cInit` must have been called. Returns 1 when every byte was acknowledged, else 0
 ' (OledStatus gives the I2c status code).
+#if Not _i2chw
 Public Function OledInitI2c(ByVal addr As Byte, ByVal res As Byte) As Byte
     Result = 0
     If addr > 127 Or (res <> 255 And res > 23) Then
@@ -277,6 +292,7 @@ Public Function OledInitI2c(ByVal addr As Byte, ByVal res As Byte) As Byte
         Result = 1
     End If
 End Function
+#endif
 
 ' Starts the display on 4-wire SPI with D/C# on `dc`, CS# on `cs` and RES# on `res` (255 for `cs` or
 ' `res` = not controlled). `SpiInit` must have been called (mode 0, at most 10 MHz). Returns 1, or 0

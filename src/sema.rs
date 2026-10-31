@@ -613,6 +613,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                 "boundscheck" => bool_of(&d.value).map(|b| o.bounds_check = b).is_some(),
                 "isr_shadow" => bool_of(&d.value).map(|b| o.isr_shadow = b).is_some(),
                 "fetchnop" => bool_of(&d.value).map(|b| o.fetch_nop = b).is_some(),
+                // Read by the preprocessor before any module is loaded (`_i2chw`), so only the value is checked here.
+                "i2c" => matches!(d.value.as_str(), "hardware" | "software"),
                 "optimize" => {
                     let v = match d.value.as_str() {
                         "size" => Some(Optimize::Size),
@@ -635,7 +637,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                     None => false,
                 },
                 n => {
-                    self.diags.error("E-OPTION", d.span, format!("unknown option `{n}` (known: Strict, BoundsCheck, ISR_SHADOW, FetchNop, Optimize, Warn.<id>)"));
+                    self.diags.error("E-OPTION", d.span, format!("unknown option `{n}` (known: Strict, BoundsCheck, ISR_SHADOW, FetchNop, Optimize, I2c, Warn.<id>)"));
                     continue;
                 }
             };
