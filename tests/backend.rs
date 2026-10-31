@@ -608,10 +608,10 @@ fn rtcc_model_block_routines_match_the_library() {
             .collect::<Vec<_>>()
             .join("\n")
     }
-    let lib = std::fs::read_to_string(root().join("lib/i2c.bas")).unwrap();
+    let lib = std::fs::read_to_string(root().join("lib/i2c.bas")).unwrap().replace("\r\n", "\n");
     // the block routines of the software and MSSP hosts (the second definitions; the first are the hardware ones)
     let generic = &lib[lib.find("#if Not _i2chw\n' Block transfers").expect("generic block routines")..];
-    let model = std::fs::read_to_string(root().join("tests/exec_rtcc/i2c.bas")).unwrap();
+    let model = std::fs::read_to_string(root().join("tests/exec_rtcc/i2c.bas")).unwrap().replace("\r\n", "\n");
     for name in ["Open", "I2cReadRegs", "I2cWriteRegs", "I2cProbe"] {
         assert_eq!(routine(generic, name), routine(&model, name), "{name}: the model's copy differs from lib/i2c.bas");
     }
@@ -633,7 +633,7 @@ fn q41_hardware_i2c_builds() {
         assert!(r.status.success() && !text.contains("warning"), "{dev}:\n{text}");
         // The option really changes the code: the hardware build drives I2C1 and has no bit-banged clock routine, and the same
         // program without the option is the software host.
-        let no_option = std::fs::read_to_string(&src).unwrap().replace("#option I2c = Hardware\n", "");
+        let no_option: String = std::fs::read_to_string(&src).unwrap().lines().filter(|l| l.trim() != "#option I2c = Hardware").map(|l| format!("{l}\n")).collect();
         let sw = out.join(format!("sw_{dev}.bas"));
         std::fs::write(&sw, no_option).unwrap();
         let r = Command::new(basil()).arg(&sw).arg("-S").arg("-o").arg(out.join(format!("sw_{dev}.hex"))).output().unwrap();
