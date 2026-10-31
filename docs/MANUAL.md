@@ -4464,6 +4464,29 @@ If st = 0 Then
 End If
 ```
 
+## pulse, irremote and x10  (`Include "pulse"`, `Include "irremote"`, `Include "x10"`)
+
+Bit-banged commands on any pin, called as `Pulse.PulseIn(pin, True)` and so on. Pins are numbers 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16); a pin the part lacks
+makes a routine do nothing (a measurement returns 0). Timing is by polling and cycle-counted delays, so it follows `Clock`: a "unit" of `PulseIn`, `PulseOut`
+and `RCin` is a 10 us poll plus loop time (10 to 14 us at 16 MHz and above), and interrupts lengthen every time. Calibrate against a known pulse where the number matters.
+
+| Routine | Effect |
+|---|---|
+| `PulseOut(pin, period, level)`, `PulseOut(pin, period)` | pulse of `period` units, high or low (two-argument form: opposite of the present level); pin becomes an output |
+| `w = PulseIn(pin, level)` | `Word` width in units of the next pulse at `level`; 0 after about 0.65 s |
+| `w = RCin(pin, level)` | `Word` units the pin stays at `level` (1 if not at `level` at the call, 0 after 65535) |
+| `b = Pot(pin, scale)` | `Byte`: 1 ms discharge, `RCin` of the rise, `units * scale / 256`, at most 255 |
+| `Servo(pin, width)` | one pulse of `width` us, 500..2500; repeat every 20 ms |
+| `PwmPin(pin, duty, cycles)` | software PWM for an R-C filter: 256 steps of 10 us per cycle, high for `duty` steps |
+| `Sound(pin, note, duration)` | note 0 silence, 1..127 tone (about 78.74 x note Hz), 128..255 noise; `duration` in 10 ms |
+| `Sound2(pin1, pin2, f1, f2, ms)` | two tones at once, exact to about 10 % |
+| `w = SonyIn(pin)`, `w = RC5In(pin)` | Sony SIRC 12-bit / Philips RC5 frame from an active-low receiver module: command in the low byte, system in the high byte, 65535 for no valid frame in 0.65 s. `RC5In` needs a clock of 16 MHz or more |
+| `ok = Xout(dataPin, zeroPin, house, key, reps)` | X-10 code through a PL513 / TW523: house 0..15, key 0..15 unit or 16 + function (`X10.UnitOn` ...); returns False when the zero-cross pulses fail |
+| `ok = Xin(dataPin, zeroPin, timeout, value)` | receives one X-10 code (house in the high byte of `value`, key in the low); `timeout` in half-cycles, 0 = wait |
+
+**Notes** Never connect a pin to the AC line; use the X-10 interface module. The X-10 line codes follow the protocol as cross-checked against the Positron key-code table, not
+measured on a real interface. Tests: `tests/exec/lib_pulse.bas`, and `tests/exec_pins/lib_pins_model.bas` against a pin model. See `docs/LIBRARY.md`.
+
 ## floatlib  (automatic)
 
 Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong
@@ -4521,14 +4544,16 @@ reports these rather than miscompiling them.
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
 | `Declare` switches (LCD pins, baud, pin routing) | only `Declare Xtal`; peripherals take arguments in `...Init(...)` calls |
-| `PinHigh`, `PinLow`, `PinSet`, `PinGet`, pin numbers in `High` | use register bits / aliases (`PinMode` is available, see *PinMode*) |
+| `PinHigh`, `PinLow`, `PinGet`, pin numbers in `High` | use register bits / aliases; `PinMode`, `PinSet`, `PinClear` and `PinPullup` are available (see *PinMode*, *PinSet / PinClear*, *PinPullup*) |
 | `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
 | `Print`, `Cls`, `Cursor`, `Plot`, `Line`, graphic LCD commands | `lcd` module routines; no graphics |
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `SerialWriteWord`, `SerialWriteHex` only |
-| `ADin`, `Pot`, `RCin` | `adc` module |
-| `HPWM`, `PWM`, `Servo`, `Freqout`, `Sound` | `pwm` module (no servo/sound) |
-| `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin` | `i2c`, `spi` modules; no 1-wire, USB, software SPI |
+| `ADin` | `adc` module |
+| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2` | `pulse` module (see *pulse, irremote and x10*) |
+| `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
+| `HPWM`, `Freqout` | `pwm` module (hardware PWM; no `Freqout`) |
+| `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
 | `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `Const` arrays |
 | `Branch`, `On GoTo`, `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
 | `Select Case x` | `Select x` |
