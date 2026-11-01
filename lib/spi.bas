@@ -46,6 +46,30 @@ Dim ready As Boolean
 Dim lastStatus As Byte
 
 ' RxyPPS = code for pin 0..23 (a pin the part has).
+#if _has(PRODL)
+' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
+' [DS40002214G register summary: RA0PPS 0x0201 .. RC7PPS 0x0218] and the PIC18F27Q10 [DS40002043F: 0x0EE2 .. 0x0EF9], so one write
+' through FSR2 replaces a chain of one comparison per pin. Callers pass a pin PinOk accepted. FSR2 is saved and put back
+' (it is the stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the
+' compiler keeps them.
+Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+    Dim sl As Byte
+    Dim sh As Byte
+    sl = 0
+    sh = 0
+    Asm
+        movff FSR2L, SPI_SETPPS__SL
+        movff FSR2H, SPI_SETPPS__SH
+        lfsr 2, RA0PPS
+        movf SPI_SETPPS__PIN, w, c
+        addwf FSR2L, f, c
+        movf SPI_SETPPS__CODE, w, c
+        movwf INDF2, c
+        movff SPI_SETPPS__SL, FSR2L
+        movff SPI_SETPPS__SH, FSR2H
+    End Asm
+End Sub
+#else
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     If pin = 0 Then
         RA0PPS = code
@@ -89,6 +113,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
 #endif
     End If
 End Sub
+#endif
 
 ' True for a pin the part has: RA0..RA5, RB4..RB7 (20-pin parts), RC0..RC7 (RC6, RC7 on the 20-pin parts).
 Function PinOk(ByVal pin As Byte) As Boolean
@@ -262,40 +287,27 @@ Const SdoCode = 28
 Dim ready As Boolean
 Dim lastStatus As Byte
 
+' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
+' [DS40002214G register summary: RA0PPS 0x0201 .. RC7PPS 0x0218] and the PIC18F27Q10 [DS40002043F: 0x0EE2 .. 0x0EF9], so one write
+' through FSR2 replaces a chain of one comparison per pin. Callers pass a pin PinOk accepted. FSR2 is saved and put back
+' (it is the stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the
+' compiler keeps them.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    If pin = 8 Then
-        RB0PPS = code
-    ElseIf pin = 9 Then
-        RB1PPS = code
-    ElseIf pin = 10 Then
-        RB2PPS = code
-    ElseIf pin = 11 Then
-        RB3PPS = code
-    ElseIf pin = 12 Then
-        RB4PPS = code
-    ElseIf pin = 13 Then
-        RB5PPS = code
-    ElseIf pin = 14 Then
-        RB6PPS = code
-    ElseIf pin = 15 Then
-        RB7PPS = code
-    ElseIf pin = 16 Then
-        RC0PPS = code
-    ElseIf pin = 17 Then
-        RC1PPS = code
-    ElseIf pin = 18 Then
-        RC2PPS = code
-    ElseIf pin = 19 Then
-        RC3PPS = code
-    ElseIf pin = 20 Then
-        RC4PPS = code
-    ElseIf pin = 21 Then
-        RC5PPS = code
-    ElseIf pin = 22 Then
-        RC6PPS = code
-    ElseIf pin = 23 Then
-        RC7PPS = code
-    End If
+    Dim sl As Byte
+    Dim sh As Byte
+    sl = 0
+    sh = 0
+    Asm
+        movff FSR2L, SPI_SETPPS__SL
+        movff FSR2H, SPI_SETPPS__SH
+        lfsr 2, RA0PPS
+        movf SPI_SETPPS__PIN, w, c
+        addwf FSR2L, f, c
+        movf SPI_SETPPS__CODE, w, c
+        movwf INDF2, c
+        movff SPI_SETPPS__SL, FSR2L
+        movff SPI_SETPPS__SH, FSR2H
+    End Asm
 End Sub
 
 ' Makes pin 8..23 a digital input (asInput) or output.

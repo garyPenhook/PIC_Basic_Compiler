@@ -689,6 +689,8 @@ enum W {
     Imm(u8),
     /// A copy of this compiler-placed byte.
     Mem(String),
+    /// The constant, and also a copy of this compiler-placed byte (after `movlw k` / `movwf m`).
+    Both(u8, String),
 }
 
 fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
@@ -709,14 +711,14 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                 };
                 // Redundant load?
                 if e.writes == [Loc::W] && e.reads.is_empty() {
-                    if let (Some(k), W::Imm(h)) = (e.w_imm, &w)
+                    if let (Some(k), W::Imm(h) | W::Both(h, _)) = (e.w_imm, &w)
                         && k == *h
                         && e.flags_w == 0
                     {
                         dead[i] = true;
                         continue;
                     }
-                    if let (Some(m), W::Mem(h)) = (&e.w_mem, &w)
+                    if let (Some(m), W::Mem(h) | W::Both(_, h)) = (&e.w_mem, &w)
                         && m == h
                         && env.is_plain(m)
                         && (e.flags_w == 0 || !flags_live(items, i, e.flags_w))
@@ -736,18 +738,21 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                 } else {
                     w.clone()
                 };
-                if let W::Mem(h) = &next {
+                if let W::Mem(h) | W::Both(_, h) = &next {
                     let clobbered = e.wmem.iter().any(|m| match m {
                         Mem::Unknown => true,
                         Mem::Sym(s) => s == h,
                     });
                     if clobbered {
-                        next = W::Unknown;
+                        next = if let W::Both(k, _) = next { W::Imm(k) } else { W::Unknown };
                     }
                 }
                 // `movwf m` leaves a copy of W in m.
                 if !wrote_w && let Some(m) = &e.w_mem && e.reads == [Loc::W] && env.is_plain(m) && e.wmem == [Mem::Sym(m.clone())] {
-                    next = W::Mem(m.clone());
+                    next = match &next {
+                        W::Imm(k) | W::Both(k, _) => W::Both(*k, m.clone()),
+                        _ => W::Mem(m.clone()),
+                    };
                 }
                 // A scratch register copy of W stays valid only until it is rewritten: not tracked.
                 w = next;

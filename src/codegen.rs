@@ -4753,23 +4753,47 @@ impl<'p> Gen<'p> {
                 covered.insert(a + b);
             }
         }
+        let mut all: Vec<(u32, u32)> = Vec::new();
         for (s, e) in merged {
             let mut run: Option<u32> = None;
-            let mut spans: Vec<(u32, u32)> = Vec::new();
             for a in s..=e {
                 let need = a < e && !covered.contains(&a);
                 match (need, run) {
                     (true, None) => run = Some(a),
                     (false, Some(r)) => {
-                        spans.push((r, a));
+                        all.push((r, a));
                         run = None;
                     }
                     _ => {}
                 }
             }
-            for (a, b) in spans {
-                self.zero_range(a, b - a);
+        }
+        // Two spans with only this program's own storage between them (overlaid locals, scratch,
+        // temporaries: all free to hold zero at reset) are cleared as one when that is no longer.
+        let mut own: Vec<(u32, u32)> = layout.addr.iter().zip(&layout.size).filter_map(|(a, &n)| a.filter(|_| n > 0).map(|a| (a, a + n))).collect();
+        own.sort();
+        let mut joined: Vec<(u32, u32)> = Vec::new();
+        for (s, e) in own {
+            match joined.last_mut() {
+                Some(l) if s <= l.1 => l.1 = l.1.max(e),
+                _ => joined.push((s, e)),
             }
+        }
+        let own = joined;
+        let cost = |len: u32| if len <= 4 { len } else { 4 + 2 * len.div_ceil(255) };
+        let mut spans: Vec<(u32, u32)> = Vec::new();
+        for (a, b) in all {
+            if let Some(l) = spans.last_mut() {
+                let inside = own.iter().any(|&(s, e)| s <= l.0 && b <= e);
+                if inside && cost(b - l.0) <= cost(l.1 - l.0) + cost(b - a) {
+                    l.1 = b;
+                    continue;
+                }
+            }
+            spans.push((a, b));
+        }
+        for (a, b) in spans {
+            self.zero_range(a, b - a);
         }
         for (i, v) in inits {
             let ty = &self.p.vars[i].ty;
@@ -4788,18 +4812,16 @@ impl<'p> Gen<'p> {
             }
             return;
         }
-        let mut a = addr;
         let mut left = len;
+        self.ins(format!("lfsr 0, 0x{addr:03X}"));
         while left > 0 {
             let chunk = left.min(255);
-            self.ins(format!("lfsr 0, 0x{a:03X}"));
             self.ins(format!("movlw {chunk}"));
             let l = self.fresh();
             self.label(&l);
             self.ins("clrf POSTINC0, c");
             self.ins("decfsz WREG, f, c");
             self.br(Cc::Always, &l);
-            a += chunk;
             left -= chunk;
         }
     }

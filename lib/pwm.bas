@@ -167,6 +167,30 @@ Sub PinDigital(ByVal pin As Byte)
 End Sub
 
 ' RxyPPS = code for a pin the part has (code 0 gives the pin back to its LATxy bit).
+#if _has(PRODL)
+' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
+' [DS40002214G register summary: RA0PPS 0x0201 .. RC7PPS 0x0218] and the PIC18F27Q10 [DS40002043F: 0x0EE2 .. 0x0EF9], so one write
+' through FSR2 replaces a chain of one comparison per pin. Callers pass a pin PinOk accepted. FSR2 is saved and put back
+' (it is the stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the
+' compiler keeps them.
+Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+    Dim sl As Byte
+    Dim sh As Byte
+    sl = 0
+    sh = 0
+    Asm
+        movff FSR2L, PWM_SETPPS__SL
+        movff FSR2H, PWM_SETPPS__SH
+        lfsr 2, RA0PPS
+        movf PWM_SETPPS__PIN, w, c
+        addwf FSR2L, f, c
+        movf PWM_SETPPS__CODE, w, c
+        movwf INDF2, c
+        movff PWM_SETPPS__SL, FSR2L
+        movff PWM_SETPPS__SH, FSR2H
+    End Asm
+End Sub
+#else
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     If pin = 0 Then
         RA0PPS = code
@@ -208,6 +232,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
 #endif
     End If
 End Sub
+#endif
 
 ' The PWM module of channel 1..6: PWM1 for channels 1, 2; PWM2 for 3, 4; PWM3 for 5, 6.
 Function Inst(ByVal ch As Byte) As Byte
@@ -641,56 +666,27 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     End If
 End Sub
 #else
+' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
+' [DS40002214G register summary: RA0PPS 0x0201 .. RC7PPS 0x0218] and the PIC18F27Q10 [DS40002043F: 0x0EE2 .. 0x0EF9], so one write
+' through FSR2 replaces a chain of one comparison per pin. Callers pass a pin PinOk accepted. FSR2 is saved and put back
+' (it is the stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the
+' compiler keeps them.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    If pin = 0 Then
-        RA0PPS = code
-    ElseIf pin = 1 Then
-        RA1PPS = code
-    ElseIf pin = 2 Then
-        RA2PPS = code
-    ElseIf pin = 3 Then
-        RA3PPS = code
-    ElseIf pin = 4 Then
-        RA4PPS = code
-    ElseIf pin = 5 Then
-        RA5PPS = code
-    ElseIf pin = 6 Then
-        RA6PPS = code
-    ElseIf pin = 7 Then
-        RA7PPS = code
-    ElseIf pin = 8 Then
-        RB0PPS = code
-    ElseIf pin = 9 Then
-        RB1PPS = code
-    ElseIf pin = 10 Then
-        RB2PPS = code
-    ElseIf pin = 11 Then
-        RB3PPS = code
-    ElseIf pin = 12 Then
-        RB4PPS = code
-    ElseIf pin = 13 Then
-        RB5PPS = code
-    ElseIf pin = 14 Then
-        RB6PPS = code
-    ElseIf pin = 15 Then
-        RB7PPS = code
-    ElseIf pin = 16 Then
-        RC0PPS = code
-    ElseIf pin = 17 Then
-        RC1PPS = code
-    ElseIf pin = 18 Then
-        RC2PPS = code
-    ElseIf pin = 19 Then
-        RC3PPS = code
-    ElseIf pin = 20 Then
-        RC4PPS = code
-    ElseIf pin = 21 Then
-        RC5PPS = code
-    ElseIf pin = 22 Then
-        RC6PPS = code
-    ElseIf pin = 23 Then
-        RC7PPS = code
-    End If
+    Dim sl As Byte
+    Dim sh As Byte
+    sl = 0
+    sh = 0
+    Asm
+        movff FSR2L, PWM_SETPPS__SL
+        movff FSR2H, PWM_SETPPS__SH
+        lfsr 2, RA0PPS
+        movf PWM_SETPPS__PIN, w, c
+        addwf FSR2L, f, c
+        movf PWM_SETPPS__CODE, w, c
+        movwf INDF2, c
+        movff PWM_SETPPS__SL, FSR2L
+        movff PWM_SETPPS__SH, FSR2H
+    End Asm
 End Sub
 #endif
 
