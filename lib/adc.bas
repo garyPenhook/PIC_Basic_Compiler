@@ -29,7 +29,7 @@ Module Adc
 ' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapter 22, 10 bits; chosen with `#if _has(ADCON0.CHS)`): the older
 ' ADC without ADCC. ADCON0 holds CHS<5:0> (bits 7-2), GO/DONE (bit 1) and ADON; ADCON1 holds ADFM, ADCS<2:0>, ADNREF and ADPREF<1:0> [Registers 22-1, 22-2].
 ' Channels: RA0..RA2, RA4, RA5 = 0..2, 4, 5, RB4..RB7 = 12..15, RC0..RC7 = 16..23, VSS 60, temperature indicator 61, DAC1 62 and FVR 63 [Register 22-1].
-' The conversion clock is FOSC/n with n = 2, 4, 8, 16, 32, 64 (ADCS = 000, 100, 001, 101, 010, 110) [Table 22-1] and TAD must be 1..9 us (AD20, the same in all four data sheets), so SetClock picks the
+' The conversion clock is FOSC/n with n = 2, 4, 8, 16, 32, 64 (ADCS = 000, 100, 001, 101, 010, 110) [Table 22-1] and TAD must be 1..9 us (AD20, the same in all four data sheets), so SetClock (constants worked out by the compiler from `Clock`) uses the
 ' smallest n with n / FOSC >= 1 us. There is no ADACQ: the acquisition time is a software delay of 5 us (the 4.62 us worked example of Equation 22-1) after
 ' the channel is selected or changed [22.3]. The positive reference is VDD (ADPREF = 00) or the FVR (11) at the gain of ADFVR [Register 22-2, 16-1]. FVRRDY always reads 1 there.
 ' The silicon errata of the latest revisions (DS80000666H, DS80000667E, DS80000668L, DS80000709H) list nothing for the ADC conversion or reference except the
@@ -37,7 +37,7 @@ Module Adc
 '
 ' PIC16F152xx (DS40002195E, chapter 27, 10 bits; chosen with `#if _has(ADCON1.PREF)` inside the branches above): the same register layout as the PIC16F183xx (ADCON0 = CHS<5:0> | GO | ON,
 ' ADCON1 = FM | CS<2:0> | PREF<1:0> with the same CS codes, no ADNREF, no ADACQ) [Registers 27-1, 27-2 p.328-329]. Channels: RA0..RA2, RA4, RA5 = 0..2, 4, 5, RB5..RB7 = 13..15, RC2..RC5 = 18..21 (no channel for RB4, RC0, RC1,
-' RC6, RC7), VSS 27 and FVR buffer 1 30; there is no temperature indicator and no DAC channel. The positive reference is VDD (PREF = 00) or the FVR (11) [27.4.2]. TAD must be 0.5..9 us (AD20, Table 32-12 p.378), so SetClock picks
+' RC6, RC7), VSS 27 and FVR buffer 1 30; there is no temperature indicator and no DAC channel. The positive reference is VDD (PREF = 00) or the FVR (11) [27.4.2]. TAD must be 0.5..9 us (AD20, Table 32-12 p.378), so SetClock (constants worked out by the compiler from `Clock`) uses
 ' the smallest FOSC/n with n / FOSC >= 0.5 us. CPON resets to 00 (charge pump off) [CPCON p.335], so AdcInit writes 01: the pump runs when the ADC is on and VDD < 4.6 V. The silicon errata (DS80000918K) list nothing for the ADC.
 '
 ' Errata (DS80000832G):
@@ -98,7 +98,7 @@ Public Const AdcMax = 1023
 Public Const AdcMax = 4095
 #endif
 
-' Acquisition time set by SetClock, in microseconds: 5 us is the 10 kohm worked example of the Q10 (4.62 us);
+' Acquisition time written by SetClock, in microseconds: 5 us is the 10 kohm worked example of the Q10 (4.62 us);
 ' the Q41's own example for 12 bits is 7.79 us (Equation 40-1), covered by 8 us. [40.3]
 #if _has(ADCPCON)
 Const AcqUs = 8
@@ -122,56 +122,62 @@ Dim AdcGo As ADCON0.0
 #endif
 Dim FvrReady As FVRCON.6
 Dim lastCh As Byte
-Dim fosc As LongWord
 Dim adinUp As Boolean
 
-' Sets the conversion clock for at least `minNs` nanoseconds per TAD and the acquisition time
-' to 5 us: ADCS = n with n + 1 = ceil(FOSC * minNs / 2e9), at least 1 and at most 64.
-Sub SetClock(ByVal minNs As Word)
-    Dim m As LongWord
+' FOSC in Hz. Everything SetClock needs is known when the program is compiled, so the divisions below are
+' done by the compiler and SetClock is a few register writes (it used to be about 400 words of 32-bit arithmetic).
+Const FoscHz As LongWord = LongWord(_Clock * 1000000)
+' (As before, the ADC clock follows `Clock`, not a FOSC changed at run time with Intosc.)
+
 #if _has(ADCON0.CHS)
-    ' FOSC/n with n >= FOSC * minNs / 1e9: ADCS codes for n = 2, 4, 8, 16, 32, 64 are 0, 4, 1, 5, 2, 6 [Register 22-2].
+' FOSC/n with n >= FOSC * MinTadNs / 1e9: ADCS codes for n = 2, 4, 8, 16, 32, 64 are 0, 4, 1, 5, 2, 6 [Register 22-2].
+Const AdcN As LongWord = (FoscHz / 1000 * MinTadNs + 999999) / 1000000
+
+' Sets the conversion clock for at least MinTadNs nanoseconds per TAD.
+Sub SetClock()
     Dim code As Byte
-    m = (fosc / 1000 * minNs + 999999) / 1000000
     code = 6
-    If m <= 32 Then
+    If AdcN <= 32 Then
         code = 2
     End If
-    If m <= 16 Then
+    If AdcN <= 16 Then
         code = 5
     End If
-    If m <= 8 Then
+    If AdcN <= 8 Then
         code = 1
     End If
-    If m <= 4 Then
+    If AdcN <= 4 Then
         code = 4
     End If
-    If m <= 2 Then
+    If AdcN <= 2 Then
         code = 0
     End If
     ADCON1 = (ADCON1 And 143) Or (code << 4)
 End Sub
 #else
-    Dim acq As LongWord
-    m = (fosc / 1000 * minNs + 1999999) / 2000000
-    If m < 1 Then
-        m = 1
-    End If
-    If m > 64 Then
-        m = 64
-    End If
-    ADCLK = Byte(m - 1)
-    ' ADACQ = ceil(AcqUs / TAD) with TAD = 2 * m / FOSC
-    acq = (fosc * AcqUs + m * 2000000 - 1) / (m * 2000000)
-    If acq > 255 Then
-        acq = 255
-    End If
-    ADACQ = Byte(acq)
+' ADCS = m - 1 with m = ceil(FOSC * TAD / 2e9), 1..64, and ADACQ = ceil(AcqUs / TAD) with TAD = 2 * m / FOSC, at most 255.
+Const AdcM As LongWord = Min(Max((FoscHz / 1000 * MinTadNs + 1999999) / 2000000, 1), 64)
+Const AdcAcq As LongWord = Min((FoscHz * AcqUs + AdcM * 2000000 - 1) / (AdcM * 2000000), 255)
+
+' Sets the conversion clock for at least MinTadNs nanoseconds per TAD and the acquisition time to AcqUs.
+Sub SetClock()
+    ADCLK = Byte(AdcM - 1)
+    ADACQ = Byte(AdcAcq)
 End Sub
+
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
+' The same for TAD >= 8 us (erratum 1.4.1, AdcRefFvr).
+Const AdcMSlow As LongWord = Min(Max((FoscHz / 1000 * 8000 + 1999999) / 2000000, 1), 64)
+Const AdcAcqSlow As LongWord = Min((FoscHz * AcqUs + AdcMSlow * 2000000 - 1) / (AdcMSlow * 2000000), 255)
+
+Sub SetClockSlow()
+    ADCLK = Byte(AdcMSlow - 1)
+    ADACQ = Byte(AdcAcqSlow)
+End Sub
+#endif
 #endif
 
 Public Sub AdcInit()
-    fosc = LongWord(_Clock * 1000000)
 #if _has(ADCON0.CHS)
     ADCON0 = 0
     ADCON1 = 128
@@ -180,7 +186,7 @@ Public Sub AdcInit()
     ' CPON resets to 00 (off) [CPCON p.335]; 01 = on when the ADC is enabled and VDD < 4.6 V.
     CPCON = 64
 #endif
-    SetClock(MinTadNs)
+    SetClock()
     lastCh = 255
     ' ADON with channel 0; ADFM = 1 (right-justified) is set above; the channel is selected by AdcRead.
     ADCON0 = 1
@@ -202,7 +208,7 @@ End Sub
     ' when the ADC is enabled and VDD < 4.6 V [40.7.1].
     CPCON = 64
 #endif
-    SetClock(MinTadNs)
+    SetClock()
     lastCh = 255
     ' ADON, ADFM = 1 (right-justified), ADCS = 0 (FOSC); ADGO is set later, not with ADON [33.2.1].
     ADCON0 = 132
@@ -244,7 +250,7 @@ Public Sub AdcRefVdd()
     ADREF = 0
 #endif
     FVRCON = FVRCON And 252
-    SetClock(MinTadNs)
+    SetClock()
 End Sub
 
 ' Positive reference = FVR at gain 1, 2 or 4 (1.024, 2.048, 4.096 V; the output cannot exceed VDD)
@@ -267,9 +273,9 @@ Public Sub AdcRefFvr(ByVal gain As Byte)
     ADREF = 3
 #endif
 #if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
-    SetClock(8000)
+    SetClockSlow()
 #else
-    SetClock(MinTadNs)
+    SetClock()
 #endif
 End Sub
 

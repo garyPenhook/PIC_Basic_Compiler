@@ -1087,3 +1087,18 @@ fn write_only_globals_get_no_ram_and_counted_loops_share_their_variable() {
     assert!(s.contains("__H"), "{s}");
     std::fs::remove_dir_all(&d).ok();
 }
+
+/// `Adc` works out its conversion clock and acquisition time when the program is compiled: no 32-bit
+/// divide is linked and the registers get the constants (16 MHz: ADCS = 7, ADACQ = 5).
+#[test]
+fn adc_conversion_clock_is_computed_at_compile_time() {
+    if !have_pic_as() {
+        return;
+    }
+    let d = scratch("adcclock");
+    let s = asm_of(&d, "adcclk", "Include \"adc\"\nAdc.AdcInit()\n", &[]);
+    assert!(!s.contains("__div"), "{s}");
+    assert!(s.contains("movlw 0x07\n    movwf ADCLK") || s.contains("movlw 0x07\n    movlb"), "{s}");
+    assert!(s.contains("movlw 0x05"), "{s}");
+    std::fs::remove_dir_all(&d).ok();
+}
