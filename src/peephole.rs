@@ -915,11 +915,13 @@ fn dead_from(items: &[Item], from: usize, depth: u8, mut w: bool, mut needed: u8
 fn pass_bit_branch(items: &mut Vec<Item>) -> bool {
     let mut changed = false;
     let mut i = 0;
+    // Computed once and again after each rewrite (it parses every item, so per item it made the pass quadratic).
+    let mut keep = protected(items);
     while i < items.len() {
-        let keep = protected(items);
         if let Some((n, new)) = match_bit_branch(items, i, &keep) {
             // `n` items from `i`, minus an optional `movlb` between them that is kept.
             items.splice(i..i + n, new);
+            keep = protected(items);
             changed = true;
         }
         i += 1;
@@ -1030,10 +1032,12 @@ fn label_referenced(items: &[Item], name: &str, skip: usize) -> bool {
 fn pass_bool_thread(items: &mut Vec<Item>, env: &Env) -> bool {
     let mut changed = false;
     let mut i = 0;
+    // Computed once and again after each rewrite (it parses every item, so per item it made the pass quadratic).
+    let mut keep = protected(items);
     while i < items.len() {
-        let keep = protected(items);
         if let Some((n, new)) = match_bool_thread(items, i, &keep, env) {
             items.splice(i..i + n, new);
+            keep = protected(items);
             changed = true;
         }
         i += 1;
