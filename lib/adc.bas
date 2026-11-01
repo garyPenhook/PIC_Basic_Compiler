@@ -123,6 +123,7 @@ Dim AdcGo As ADCON0.0
 Dim FvrReady As FVRCON.6
 Dim lastCh As Byte
 Dim fosc As LongWord
+Dim adinUp As Boolean
 
 ' Sets the conversion clock for at least `minNs` nanoseconds per TAD and the acquisition time
 ' to 5 us: ADCS = n with n + 1 = ceil(FOSC * minNs / 2e9), at least 1 and at most 64.
@@ -322,4 +323,20 @@ End Function
 ' Converts a result to millivolts for a reference of `vrefMv` millivolts: raw * vref / AdcMax.
 Public Function AdcMillivolts(ByVal raw As Word, ByVal vrefMv As Word) As Word
     Result = Word(LongWord(raw) * vrefMv / AdcMax)
+End Function
+
+' ADin: the one-call read. The first call runs AdcInit; a call for another channel than the last one makes
+' that channel's pin an analog input (AdcPin; internal channels 24..63 need none). Then one conversion, 0..AdcMax.
+' Calling AdcInit or AdcRef... afterwards is fine (they keep the module state); a program that sets the ADC up
+' by hand before the first ADin has it set up again by that call.
+Public Function ADin(ByVal ch As Byte) As Word
+    If Not adinUp Then
+        AdcInit()
+        adinUp = True
+    End If
+    ch = ch And 63
+    If ch <> lastCh Then
+        AdcPin(ch)
+    End If
+    Result = AdcRead(ch)
 End Function

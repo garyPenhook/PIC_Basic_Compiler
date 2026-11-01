@@ -3008,6 +3008,28 @@ AdcPin(0)
 v = AdcRead(0)
 ```
 
+### ADin
+
+**Syntax**
+```basic
+raw = ADin(ch)
+```
+**Overview** One-call analog read: the first call runs `AdcInit`, a change of channel makes the pin an analog input (`AdcPin`), then one conversion as `AdcRead`.
+
+**Parameters** `ch` 0..63 (pins 0..23, internal channels as `AdcRead`).
+
+**Returns** `Word`, 0..`AdcMax`.
+
+**Example**
+```basic
+Include "adc"
+Dim v As Word
+v = Adc.ADin(0)
+```
+**Notes** Right-justified result, so there is no `ADCON0.ADFM` to set. For a source impedance above 10 kohm, or the FVR reference, use `AdcInit` / `AdcRefFvr` and write `ADACQ` yourself, then call `AdcRead`.
+
+**See also** `AdcRead`, `Pot`
+
 ### AdcReadAvg
 
 **Syntax**
@@ -4828,7 +4850,7 @@ reports these rather than miscompiling them.
 | `Print`, `Cls`, `Cursor`, `Plot`, `Line`, graphic LCD commands | `lcd` module routines; no graphics |
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `SerialWriteWord`, `SerialWriteHex` only |
-| `ADin` | `adc` module |
+| `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2` | `pulse` module (see *pulse, irremote and x10*) |
 | `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
 | `HPWM`, `Freqout` | `pwm` module (hardware PWM; no `Freqout`) |

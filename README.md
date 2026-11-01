@@ -92,7 +92,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `delay` | millisecond/microsecond/second delays |
 | `timer` | Timer0, Timer1 (external clock, gate, pulse measurement), Timer2 (hardware-limit and one-shot modes) |
 | `serial`, `serial2` | EUSART1 and EUSART2: send/receive bytes, strings and numbers |
-| `adc` | 10-bit ADC reads, averaging, millivolts, FVR reference (silicon errata worked around) |
+| `adc` | 10-bit ADC reads (`ADin`, `AdcRead`), averaging, millivolts, FVR reference (silicon errata worked around) |
 | `eeprom` | data EEPROM read/write (bytes and words) |
 | `flashwrite` | program flash self-write: read, sector erase, word write, word update (errata 1.9.1 NOPs) |
 | `i2c` | I2C host on MSSP1: write, read, register access, bus ping, bounded waits |
