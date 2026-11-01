@@ -146,7 +146,7 @@ pay off (skip leading zero bytes of the dividend: a dividend that fits 16 bits f
 | **A2** (**done for `+ 1` / `- 1`, 0.1.69**) read-modify-write `arr(a) = arr(a) + 1` computes the address twice and parks the value in `__main__TMP` | 27 words | `lfsr 0,arr; movf a,w; incf PLUSW0,f` | 27→4 cycles; −1 B temp |
 | **A3** (**already done**, found so in 0.1.69) Word arrays, `x = warr(a)`: `movff POSTINC0,__A0; movff POSTINC0,__A1; movff __A0,x; movff __A1,x+1` | 8 words | `movff POSTINC0,x; movff POSTINC0,x+1` (P3) | counted |
 | **A4** (**done, 0.1.70**) Word index doubling (`rlcf` through `__A`, 16-bit add) | ≈14 words | `movf a,w; addwf WREG,w` then `PLUSW0` while `a < 64`; keep `FSR0` loaded across several accesses to the same array | counted |
-| **L1** counted `For` loop with a Byte variable | `clrf v; movlw n; movwf H; … dcfsnz H; bra; incf v; bra` + 1 hidden byte | when the body never reads `v`, count with `v` itself (no hidden byte); otherwise unchanged | counted |
+| **L1** (**done for a loop variable that is read afterwards, 0.1.101**; a loop whose body reads the variable still has a hidden byte) counted `For` loop with a Byte variable | `clrf v; movlw n; movwf H; … dcfsnz H; bra; incf v; bra` + 1 hidden byte | when the body never reads `v`, count with `v` itself (no hidden byte); otherwise unchanged | counted |
 
 `For x = 0 To 999` on a Word variable already uses `infsnz/incf` for the increment, so W5 only needs to reuse that
 for `x = x + 1` statements.

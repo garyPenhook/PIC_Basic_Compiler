@@ -1366,6 +1366,114 @@ fn collect_asm<'a>(b: &'a [S], out: &mut Vec<&'a String>) {
     }
 }
 
+/// A copy of `p` without the stores to the globals in `names` (assembly symbols), for globals nothing in the
+/// program reads, takes the address of or names in an `Asm` block. `None` when no store could be removed.
+pub fn without_write_only(p: &Program, names: &HashSet<String>) -> Option<Program> {
+    let mut q = p.clone();
+    let mut all = Facts::default();
+    let mut in_asm: HashSet<String> = HashSet::new();
+    for (_, body) in all_bodies(&mut q) {
+        let f = scan(body);
+        all.read.extend(f.read);
+        all.addr.extend(f.addr);
+        all.save_func |= f.save_func;
+        let mut lines: Vec<&String> = Vec::new();
+        collect_asm(body, &mut lines);
+        for l in lines {
+            in_asm.extend(l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(str::to_string));
+        }
+    }
+    if all.save_func {
+        return None;
+    }
+    let vars = q.vars.clone();
+    let dead = |v: VarId| {
+        let var = &vars[v];
+        var.kind == VarKind::Global && !var.volatile && !var.by_ref && names.contains(&var.asm) && !in_asm.contains(&var.asm) && !all.read.contains(&v) && !all.addr.contains(&v)
+    };
+    let mut changed = false;
+    for (_, body) in all_bodies(&mut q) {
+        retain_stmts(body, &mut |s: &mut S| {
+            let drop = match &s.st {
+                St::Assign(pl, e) => matches!(pl.base, Base::Var(v) if dead(v)) && pl.idx.is_none() && pl.dbit.is_none() && pure(e),
+                St::Add(pl, _) | St::SetBit(pl, _) | St::ToggleBit(pl) | St::Clear(pl) | St::ClearMem(pl, _) => matches!(pl.base, Base::Var(v) if dead(v)) && pl.idx.is_none() && pl.dbit.is_none(),
+                _ => false,
+            };
+            changed |= drop;
+            !drop
+        });
+    }
+    if !changed {
+        return None;
+    }
+    for (i, v) in q.vars.iter_mut().enumerate() {
+        if dead(i) {
+            v.init = None;
+        }
+    }
+    Some(q)
+}
+
+/// A counted loop whose body never mentions its variable counts with that variable instead of a hidden byte
+/// (`Count` followed by the store of the last value). The variable then holds the count while the loop runs,
+/// so a global is used only when nothing outside the main program mentions it (an interrupt handler or a routine
+/// it calls could otherwise see the count).
+fn share_counters(p: &mut Program) -> bool {
+    let vars = p.vars.clone();
+    let mut outside: HashSet<VarId> = HashSet::new();
+    let mut read: HashSet<VarId> = HashSet::new();
+    for (owner, body) in all_bodies(p) {
+        read.extend(scan(body).read);
+        if owner.is_some() {
+            let f = scan(body);
+            outside.extend(f.read);
+            outside.extend(f.written);
+        }
+    }
+    fn walk(blk: &mut Vec<S>, vars: &[Var], outside: &HashSet<VarId>, read: &HashSet<VarId>) -> bool {
+        let mut changed = false;
+        for i in 0..blk.len() {
+            for sub in blocks_mut(&mut blk[i].st) {
+                changed |= walk(sub, vars, outside, read);
+            }
+            if i + 1 >= blk.len() {
+                continue;
+            }
+            let target = match (&blk[i].st, &blk[i + 1].st) {
+                (St::Count { counter, step: None, body, .. }, St::Assign(vp, e)) => match (&counter.base, whole_var(vp, vars)) {
+                    (Base::Var(h), Some(v))
+                        if vars[*h].kind == VarKind::Hidden
+                            && *h != v
+                            && vars[v].bytes == 1
+                            && !vars[v].volatile
+                            // A variable nothing reads is dropped with its stores, so a hidden counter is the cheaper one.
+                            && read.contains(&v)
+                            && e.as_const().is_some()
+                            && (vars[v].kind != VarKind::Global || !outside.contains(&v))
+                            && !blocks_count_loop(body, v, true, true) =>
+                    {
+                        Some(vp.clone())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(vp) = target {
+                if let St::Count { counter, .. } = &mut blk[i].st {
+                    *counter = vp;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+    let mut changed = false;
+    for (_, body) in all_bodies(p) {
+        changed |= walk(body, &vars, &outside, &read);
+    }
+    changed
+}
+
 pub fn optimize(p: &mut Program) {
     for _ in 0..8 {
         fold_all(p);
@@ -1379,6 +1487,7 @@ pub fn optimize(p: &mut Program) {
             break;
         }
     }
+    share_counters(p);
     // Last: later passes would not know about a table walk.
     if flash_walk(p) {
         drop_dead(p);

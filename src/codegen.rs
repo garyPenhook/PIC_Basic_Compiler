@@ -14,7 +14,7 @@
 use crate::asm::{Assembled, Cc, Item, assemble};
 use crate::diag::Span;
 use crate::ir::*;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 // ---- layout ------------------------------------------------------------------------------
 
@@ -4937,10 +4937,49 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
     }
 }
 
+/// Generates code for `p`. A global that only ever receives stores is dropped by the peephole pass after the
+/// data layout is fixed, so it would keep its RAM byte (and its start-up zeroing); when that happens the stores
+/// are removed from the IR and the program is generated again without it.
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
     if tgt.pic16.is_some() {
         return crate::codegen16::generate(p, tgt);
     }
+    let (g, unreferenced) = generate_inner(p, tgt);
+    if unreferenced.is_empty() || !g.errors.is_empty() || !tgt.opt || tgt.keep_vars {
+        return g;
+    }
+    let names: HashSet<String> = unreferenced.into_iter().collect();
+    if let Some(p2) = crate::opt::without_write_only(p, &names) {
+        let (g2, _) = generate_inner(&p2, tgt);
+        if g2.errors.is_empty() && g2.out.words <= g.out.words {
+            return g2;
+        }
+    }
+    g
+}
+
+/// Whether `it` mentions the identifier `name`; the symbols of `names` found in `items` are added to `seen`.
+fn note_symbols<'a>(items: &'a [Item], names: &HashSet<&'a str>, seen: &mut HashSet<&'a str>) {
+    let mut note = |t: &'a str| {
+        for w in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if names.contains(w) {
+                seen.insert(w);
+            }
+        }
+    };
+    for it in items {
+        match it {
+            Item::Ins(t) | Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => note(t),
+            Item::SkipBr(a, b) => {
+                note(a);
+                note(b);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     // Pass 1 sizes the objects; later passes emit code against the layout and repeat with the
     // sizes they actually needed until the two agree.
     let (g1, items1) = run_pass(p, tgt, None, None);
@@ -5021,7 +5060,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     }
     let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
-        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() };
+        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() }, Vec::new());
     };
     let items = if tgt.opt {
         let items = inline_single_calls(items, ranges);
@@ -5058,6 +5097,15 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     } else {
         items
     };
+    // Variables with storage that no instruction mentions any more.
+    let mut unreferenced: Vec<String> = Vec::new();
+    if tgt.opt {
+        let cand: Vec<usize> = (0..nvars).filter(|&i| layout.addr[i].is_some() && objs[i].bytes > 0 && p.vars[i].kind == VarKind::Global && !p.vars[i].volatile && !p.vars[i].by_ref).collect();
+        let names: HashSet<&str> = cand.iter().map(|&i| p.vars[i].asm.as_str()).collect();
+        let mut seen: HashSet<&str> = HashSet::new();
+        note_symbols(&items, &names, &mut seen);
+        unreferenced = cand.iter().map(|&i| p.vars[i].asm.clone()).filter(|n| !seen.contains(n.as_str())).collect();
+    }
     let asmd: Assembled = assemble(&items, 0);
     let mut text = String::new();
     text.push_str(&format!("; basil output for {}\n", p.device));
@@ -5187,7 +5235,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
             debug.vars.push(crate::dwarf::DVar { name: v.name.clone(), ty: if v.by_ref { crate::types::WORD } else { v.ty.clone() }, bytes: v.bytes, addr, scope, param: matches!(v.kind, VarKind::Param) });
         }
     }
-    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }
+    (Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }, unreferenced)
 }
 
 #[cfg(test)]

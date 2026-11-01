@@ -1013,3 +1013,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## ADin (done 2026-11-01, 0.1.98)
 - `Adc.ADin(ch)` in `lib/adc.bas`: lazy `AdcInit` on the first call, `AdcPin` when the channel changes, then `AdcRead`. Parenthesised function; the `ADin_Tad` / `ADin_Stime` declares are not supported.
 - Test: `tests/exec/lib_adin.bas` (simulator, Q10). Not run on hardware.
+
+## RAM: write-only globals, counted loops on their own variable (done 2026-11-01, 0.1.101)
+- A global that only receives stores (a `For` variable nobody reads) kept its RAM byte and start-up zeroing, because the peephole removes the stores after the data layout is fixed. `codegen::generate` now lists the globals no final instruction mentions; `opt::without_write_only` removes their stores (and `init`) from a copy of the IR and the program is generated again (kept only if it is not larger). Not done under `--keep-vars` (the simulator tests read those variables).
+- L1 (`opt::share_counters`): a pure counted loop (`Count` followed by the store of the last value) whose variable is a Byte read somewhere else counts with that variable, so the hidden byte goes. A global is used only when no routine other than the main program mentions it (a handler would see the count). A variable nothing reads keeps the hidden counter, because the first change removes it entirely.
+- Measured without `--keep-vars` (RAM, flash): crc8 6 -> 5 B, 70 -> 66 B; state 6 -> 5, 70 -> 66; bitbang 4 -> 3, 34 -> 28; cmpchain 6 -> 5, 60 -> 52. `scripts/bench.py` builds with `--keep-vars`, so its table is unchanged.
+- Test: `write_only_globals_get_no_ram_and_counted_loops_share_their_variable` in `tests/backend.rs`. Full `cargo test --release --no-fail-fast` passed apart from that test's first draft.
+- Not done: counted loops whose body reads the variable (still a separate counter; a compare-with-last form would save the byte and a word); the PIC16 back end (`codegen16`) does not retry; `fixmul`/`mul8` scratch bytes `__A`/`__C`; frame overlay review.

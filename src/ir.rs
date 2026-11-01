@@ -436,7 +436,7 @@ impl Program {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Program {
     /// Routines C may call, and the `Extern` routines through which C runs (each may call any of them).
     pub exports: Vec<ExportSig>,

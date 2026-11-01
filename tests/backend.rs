@@ -1056,3 +1056,34 @@ fn c_routines_link() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     std::fs::remove_dir_all(&out).ok();
 }
+
+fn asm_of(dir: &Path, name: &str, body: &str, extra: &[&str]) -> String {
+    let src = dir.join(format!("{name}.bas"));
+    let head = "Program T\nDevice = 18F27Q10\nClock = 16\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF\n";
+    std::fs::write(&src, format!("{head}{body}")).unwrap();
+    let r = Command::new(basil()).args(extra).arg("-S").arg(&src).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    std::fs::read_to_string(dir.join(format!("{name}.S"))).unwrap()
+}
+
+#[test]
+fn write_only_globals_get_no_ram_and_counted_loops_share_their_variable() {
+    if !have_pic_as() {
+        return;
+    }
+    let d = scratch("ramsave");
+    // A global that is only ever written takes no RAM; --keep-vars keeps it for simulator runs.
+    let wo = "Dim a, w As Byte\nDim k As Byte\nFor a = 1 To 5\n    k = k + 1\nNext\nw = k\n";
+    let s = asm_of(&d, "wo", wo, &[]);
+    assert!(!s.contains("T_A equ"), "{s}");
+    assert!(asm_of(&d, "wo_keep", wo, &["--keep-vars"]).contains("T_A equ"));
+    // A loop variable that is read afterwards is its own counter: no hidden byte.
+    let rd = "Dim a, k, r As Byte\nDim q As PORTB\nFor a = 1 To 5\n    k = k + 1\nNext\nq = a + k\n";
+    let s = asm_of(&d, "rd", rd, &[]);
+    assert!(!s.contains("__H"), "{s}");
+    // The count must not be seen by a handler: a variable an interrupt routine reads keeps a hidden counter.
+    let isr = "Dim a, k As Byte\nDim q As PORTB\nInterrupt H()\n    q = a\nEnd Interrupt\nFor a = 1 To 5\n    k = k + 1\nNext\nq = a + k\n";
+    let s = asm_of(&d, "isr", isr, &[]);
+    assert!(s.contains("__H"), "{s}");
+    std::fs::remove_dir_all(&d).ok();
+}
