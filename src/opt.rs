@@ -1414,6 +1414,169 @@ pub fn without_write_only(p: &Program, names: &HashSet<String>) -> Option<Progra
     Some(q)
 }
 
+/// A routine whose last statement is `Result = G(..)` and that uses its `Result` nowhere else (no early `Return`, no other
+/// write) needs no copy of its own: it shares `G`'s `Result` object, and its callers read that. This removes a
+/// `movff` pair per byte at every such hop (`ADin` -> `AdcRead` -> `Convert`), the entry clear of the `Result`, and its RAM.
+/// Skipped for byte results (they travel in W), routines in a call cycle, routines a handler can reach (an interrupt
+/// calling `G` would overwrite a result its caller has not read yet), and routines reachable other than by a plain call.
+fn share_results(p: &mut Program) -> bool {
+    struct Calls(HashSet<FuncId>);
+    impl Visit for Calls {
+        fn call(&mut self, f: FuncId, _: &[(Place, Ex)]) {
+            self.0.insert(f);
+        }
+    }
+    let n = p.funcs.len();
+    let calls: Vec<HashSet<FuncId>> = p
+        .funcs
+        .iter()
+        .map(|f| {
+            let mut c = Calls(HashSet::new());
+            w_block(&mut c, &f.body);
+            c.0
+        })
+        .collect();
+    let reach = |from: FuncId| -> HashSet<FuncId> {
+        let mut seen = HashSet::new();
+        let mut todo = vec![from];
+        while let Some(f) = todo.pop() {
+            for &g in &calls[f] {
+                if seen.insert(g) {
+                    todo.push(g);
+                }
+            }
+        }
+        seen
+    };
+    let mut hot: HashSet<FuncId> = reachable_otherwise(p);
+    for &(h, _) in &p.isrs {
+        hot.insert(h);
+        hot.extend(reach(h));
+    }
+    hot.extend(p.ext_funcs.iter().copied());
+    for (f, _) in p.funcs.iter().enumerate() {
+        if p.funcs[f].ext || p.funcs[f].reg {
+            hot.insert(f);
+        }
+    }
+    let mut asm_lines: Vec<String> = Vec::new();
+    {
+        let mut refs: Vec<&String> = Vec::new();
+        for b in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+            collect_asm(b, &mut refs);
+        }
+        asm_lines.extend(refs.into_iter().cloned());
+    }
+    let mut changed = false;
+    'next: for fi in 0..n {
+        let Some(rv) = p.funcs[fi].result else { continue };
+        if hot.contains(&fi) {
+            continue;
+        }
+        let var = &p.vars[rv];
+        if var.kind != VarKind::Result || var.owner != Some(fi) || var.by_ref || var.volatile || !matches!(var.ty, Ty::Int(w, _) if w >= 16) {
+            continue;
+        }
+        // The body ends with the statement, then the routine's own closing `Return`.
+        let blen = p.funcs[fi].body.len();
+        let k = if matches!(p.funcs[fi].body.last().map(|s| &s.st), Some(St::Return)) { blen.wrapping_sub(2) } else { continue };
+        let Some(last) = p.funcs[fi].body.get(k) else { continue };
+        let St::Assign(pl, ex) = &last.st else { continue };
+        let ExK::Call(g, _) = &ex.k else { continue };
+        let g = *g;
+        if !(matches!(pl.base, Base::Var(v) if v == rv) && pl.off == 0 && pl.bit.is_none() && pl.idx.is_none() && pl.dbit.is_none() && pl.ty == var.ty) {
+            continue;
+        }
+        let Some(gv) = p.funcs[g].result else { continue };
+        let gvar = &p.vars[gv];
+        if g == fi || hot.contains(&g) || gvar.kind != VarKind::Result || gvar.owner != Some(g) || gvar.by_ref || gvar.volatile || gvar.ty != var.ty {
+            continue;
+        }
+        if reach(g).contains(&g) || reach(g).contains(&fi) {
+            continue;
+        }
+        if asm_lines.iter().any(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|t| t == var.asm)) {
+            continue;
+        }
+        // Every other mention of `rv`: only whole-object clears at the top level of the routine's own body, and loads.
+        struct Uses {
+            rv: VarId,
+            bad: bool,
+            places: usize,
+            ret: bool,
+        }
+        impl Visit for Uses {
+            fn place(&mut self, p: &Place, _: Acc) {
+                if matches!(p.base, Base::Var(v) | Base::Ptr(v) if v == self.rv) {
+                    self.places += 1;
+                }
+            }
+            fn ex(&mut self, e: &Ex) {
+                if let ExK::Addr(p) = &e.k {
+                    if matches!(p.base, Base::Var(v) | Base::Ptr(v) if v == self.rv) {
+                        self.bad = true;
+                    }
+                }
+            }
+            fn stmt(&mut self, s: &S) {
+                match &s.st {
+                    St::Return | St::Goto(_) | St::Label(_) => self.ret = true,
+                    St::Save { items, .. } if items.contains(&SaveIt::Var(self.rv)) => self.bad = true,
+                    _ => {}
+                }
+            }
+        }
+        let mut u = Uses { rv, bad: false, places: 0, ret: false };
+        for b in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+            w_block(&mut u, b);
+        }
+        // An early `Return`, a jump or a label in this routine could leave `Result` unset (it would read 0 before).
+        let mut own = Uses { rv, bad: false, places: 0, ret: false };
+        w_block(&mut own, &p.funcs[fi].body[..=k]);
+        u.ret = own.ret;
+        let body = &p.funcs[fi].body;
+        let mut clears = 0;
+        for s in &body[..k] {
+            if let St::Clear(c) = &s.st {
+                if matches!(c.base, Base::Var(v) if v == rv) && c.off == 0 && c.idx.is_none() && c.bit.is_none() && c.dbit.is_none() {
+                    clears += 1;
+                }
+            }
+        }
+        // `places` counts the clears, the final target, and nothing else.
+        if u.bad || u.ret || u.places != clears + 1 {
+            continue 'next;
+        }
+        // Apply: the final assignment becomes a plain call, the clears go, and every read of `rv` reads `gv`.
+        let body = &mut p.funcs[fi].body;
+        let ret = body.pop().unwrap();
+        let last = body.pop().unwrap();
+        let St::Assign(_, Ex { k: ExK::Call(g, args), .. }) = last.st else { unreachable!() };
+        body.retain(|s| !matches!(&s.st, St::Clear(c) if matches!(c.base, Base::Var(v) if v == rv)));
+        body.push(S { st: St::Call(g, args), span: last.span });
+        body.push(ret);
+        for f in p.funcs.iter_mut() {
+            if f.result == Some(rv) {
+                f.result = Some(gv);
+            }
+        }
+        let mut rename = |e: &mut Ex| {
+            if let ExK::Load(pl) = &mut e.k {
+                if matches!(pl.base, Base::Var(v) if v == rv) {
+                    pl.base = Base::Var(gv);
+                }
+            }
+        };
+        for f in p.funcs.iter_mut() {
+            m_block(&mut f.body, &mut rename);
+        }
+        m_block(&mut p.main.body, &mut rename);
+        changed = true;
+        // The call graph and the hot set are unchanged by this rewrite; the next candidate may chain onto `gv`.
+    }
+    changed
+}
+
 /// A counted loop whose body never mentions its variable counts with that variable instead of a hidden byte
 /// (`Count` followed by the store of the last value). The variable then holds the count while the loop runs,
 /// so a global is used only when nothing outside the main program mentions it (an interrupt handler or a routine
@@ -1488,6 +1651,9 @@ pub fn optimize(p: &mut Program) {
         }
     }
     share_counters(p);
+    if share_results(p) {
+        drop_dead(p);
+    }
     // Last: later passes would not know about a table walk.
     if flash_walk(p) {
         drop_dead(p);
