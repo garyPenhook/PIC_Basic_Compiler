@@ -4271,6 +4271,39 @@ impl<'p> Gen<'p> {
                 self.ins("return");
             }
             "div" => {
+                if n >= 2 && self.p.speed {
+                    // Operands that fit the lower half of the width (the usual case) run the shorter routine, which has
+                    // a loop half as long. It leaves the upper bytes of the quotient (already zero in `__A`) alone
+                    // and the upper bytes of the remainder are cleared here.
+                    let t = if n == 4 { 2 } else { n - 1 };
+                    let slow = self.fresh();
+                    let a = self.a(t);
+                    self.fop("movf", &a, "w");
+                    for i in t + 1..n {
+                        let a = self.a(i);
+                        self.fop("iorwf", &a, "w");
+                    }
+                    for i in t..n {
+                        let b = self.b(i);
+                        self.fop("iorwf", &b, "w");
+                    }
+                    self.br(Cc::Nz, &slow);
+                    // A zero divisor stays on the full routine: its quotient is all ones across the whole width.
+                    let b0 = self.b(0);
+                    self.fop("movf", &b0, "w");
+                    for i in 1..t {
+                        let b = self.b(i);
+                        self.fop("iorwf", &b, "w");
+                    }
+                    self.br(Cc::Z, &slow);
+                    for i in t..n {
+                        let c = self.c(i);
+                        self.fo("clrf", &c);
+                    }
+                    self.helpers.insert(format!("div{t}"));
+                    self.br(Cc::Always, &format!("__div{t}"));
+                    self.label(&slow);
+                }
                 for i in 0..n {
                     let c = self.c(i);
                     self.fo("clrf", &c);
@@ -4326,18 +4359,12 @@ impl<'p> Gen<'p> {
                 self.neg_reg(1, n);
                 self.label(&pb);
                 self.call_helper(format!("div{n}"));
-                let (qd, rd) = (self.fresh(), self.fresh());
-                // quotient negative when exactly one operand was
-                self.fop("movf", &d1, "w");
-                self.ins("andlw 3");
-                self.ins("xorlw 1");
-                self.br(Cc::Z, &qd);
-                self.fop("movf", &d1, "w");
-                self.ins("andlw 3");
-                self.ins("xorlw 2");
-                self.br(Cc::Z, &qd);
+                let rd = self.fresh();
+                // quotient negative when exactly one operand was: bit 0 xor bit 1 of `__D1`
+                self.fop("rrncf", &d1, "w");
+                self.fop("xorwf", &d1, "w");
+                self.ins("btfss WREG, 0, c");
                 self.br(Cc::Always, &rd);
-                self.label(&qd);
                 self.neg_reg(0, n);
                 self.label(&rd);
                 // remainder takes the dividend's sign
