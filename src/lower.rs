@@ -1240,7 +1240,7 @@ impl<'a> Lowerer<'a> {
             }
             let ty = var.ty.clone();
             let scalar = nat(&ty).is_some();
-            if (scalar || matches!(ty, Ty::Str(_))) && written_first(body, v) {
+            if (scalar || matches!(ty, Ty::Str(_))) && written_first(body, v, var.kind != VarKind::Local) {
                 continue;
             }
             // A routine whose own `Asm` block stores into its `Result` sets it itself.

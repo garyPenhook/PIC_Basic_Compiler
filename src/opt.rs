@@ -666,7 +666,245 @@ fn set_offsets(args: &mut [(Place, Ex)], pv: VarId, offset: &HashMap<VarId, u32>
     }
 }
 
-/// Constants held in a routine's own locals flow forward through straight-line code.
+// ---- range checks --------------------------------------------------------------------------------
+
+/// Whether evaluating `e` twice gives the same value and has no effect: loads of ordinary variables
+/// (also with an index), no call, no device register, nothing `Volatile`.
+fn repeatable(e: &Ex, vars: &[Var]) -> bool {
+    match &e.k {
+        ExK::Const(_) => true,
+        ExK::Load(p) => {
+            let base_ok = match p.base {
+                Base::Var(v) | Base::Ptr(v) => !vars[v].volatile,
+                Base::Flash(_) => true,
+                Base::Abs { .. } | Base::FlashNext(_) => false,
+            };
+            base_ok && p.dbit.is_none() && p.idx.as_ref().is_none_or(|i| repeatable(i, vars))
+        }
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) => repeatable(x, vars),
+        ExK::Bin(_, a, b) => repeatable(a, vars) && repeatable(b, vars),
+        _ => false,
+    }
+}
+
+/// `x <relation> constant` as (x, relation with x on the left, constant as a number, signed, width).
+fn cmp_const(e: &Ex) -> Option<(&Ex, CmpKind, i64, bool, u8)> {
+    let ExK::Cmp(k, a, b) = &e.k else { return None };
+    if a.w != b.w {
+        return None;
+    }
+    if a.signed != b.signed {
+        return None;
+    }
+    let s = a.signed;
+    match (a.as_const(), b.as_const()) {
+        (None, Some(c)) => Some((a, *k, as_i64(c, b.w, s), s, a.w)),
+        (Some(c), None) => Some((b, k.swap(), as_i64(c, a.w, s), s, a.w)),
+        _ => None,
+    }
+}
+
+/// `lo <= x` and `x <= hi` from two comparisons of the same `x`, in either order, as the range (lo, hi).
+fn range_of(l: &Ex, r: &Ex, vars: &[Var]) -> Option<(Ex, i64, i64, bool)> {
+    let (x1, k1, c1, s1, w1) = cmp_const(l)?;
+    let (x2, k2, c2, s2, w2) = cmp_const(r)?;
+    if x1 != x2 || s1 != s2 || w1 != w2 || w1 > 32 || !repeatable(x1, vars) {
+        return None;
+    }
+    let low = |k: CmpKind, c: i64| match k {
+        CmpKind::Ge => Some(c),
+        CmpKind::Gt => Some(c + 1),
+        _ => None,
+    };
+    let high = |k: CmpKind, c: i64| match k {
+        CmpKind::Le => Some(c),
+        CmpKind::Lt => Some(c - 1),
+        _ => None,
+    };
+    let (lo, hi) = match (low(k1, c1), high(k2, c2)) {
+        (Some(lo), Some(hi)) => (lo, hi),
+        _ => (low(k2, c2)?, high(k1, c1)?),
+    };
+    let (min, max) = if s1 { (-(1i64 << (w1 - 1)), (1i64 << (w1 - 1)) - 1) } else { (0, (1i64 << w1) - 1) };
+    if lo > hi || lo < min || hi > max {
+        return None;
+    }
+    Some((x1.clone(), lo, hi, s1))
+}
+
+/// `x >= lo And x <= hi` is `x - lo <= hi - lo` compared unsigned, and `x < lo Or x > hi` its opposite: one
+/// load of `x` and one comparison instead of two of each (`cmd(i) < 48 Or cmd(i) > 57`).
+fn range_check(e: &mut Ex, vars: &[Var]) -> bool {
+    let (inside, l, r) = match &e.k {
+        ExK::AndAlso(l, r) => (true, l, r),
+        ExK::OrElse(l, r) => (false, l, r),
+        _ => return false,
+    };
+    let (negate_l, negate_r);
+    let (l2, r2);
+    if inside {
+        (l2, r2) = ((**l).clone(), (**r).clone());
+    } else {
+        // Not(Not a And Not b): turn each outside test into its opposite.
+        let neg = |x: &Ex| -> Option<Ex> {
+            let ExK::Cmp(k, a, b) = &x.k else { return None };
+            Some(Ex::new(ExK::Cmp(k.negate(), a.clone(), b.clone()), x.w, x.signed))
+        };
+        negate_l = neg(l);
+        negate_r = neg(r);
+        let (Some(a), Some(b)) = (negate_l, negate_r) else { return false };
+        (l2, r2) = (a, b);
+    }
+    let Some((x, lo, hi, s)) = range_of(&l2, &r2, vars) else { return false };
+    let w = x.w;
+    let rel = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
+    *e = if lo == hi {
+        rel(if inside { CmpKind::Eq } else { CmpKind::Ne }, x, Ex::konst(lo as u32, w, s))
+    } else {
+        let shifted = if lo == 0 && !s { x } else { Ex::new(ExK::Bin(BinKind::Sub, Box::new(x), Box::new(Ex::konst(lo as u32, w, false))), w, false) };
+        rel(if inside { CmpKind::Le } else { CmpKind::Gt }, shifted, Ex::konst((hi - lo) as u32, w, false))
+    };
+    true
+}
+
+fn range_checks(p: &mut Program) -> bool {
+    let vars = p.vars.clone();
+    let mut changed = false;
+    for (_, body) in all_bodies(p) {
+        m_block(body, &mut |e: &mut Ex| changed |= range_check(e, &vars));
+    }
+    changed
+}
+
+/// Replaces the loads of the variables in `env` by their values and folds.
+fn subst_known(e: &mut Ex, env: &HashMap<VarId, u32>, vars: &[Var]) -> bool {
+    let mut hit = false;
+    m_ex(e, &mut |x: &mut Ex| {
+        if let ExK::Load(pl) = &x.k
+            && let Some(v) = whole_var(pl, vars)
+            && let Some(&k) = env.get(&v)
+            && x.w == pl.width()
+        {
+            *x = Ex::konst(k, x.w, x.signed);
+            hit = true;
+        }
+        fold(x);
+    });
+    hit
+}
+
+/// The value of `e` when every variable it loads is in `env`.
+fn eval_known(e: &Ex, env: &HashMap<VarId, u32>, vars: &[Var]) -> Option<u32> {
+    if e.has_call() {
+        return None;
+    }
+    let mut c = e.clone();
+    subst_known(&mut c, env, vars);
+    c.as_const()
+}
+
+/// How a statement list ended when run at compile time.
+#[derive(PartialEq)]
+enum Flow {
+    Next,
+    Break,
+    Continue,
+}
+
+/// Compile-time run of a statement list over constant locals (see [`fold_loop`]).
+struct Sim<'a> {
+    env: HashMap<VarId, u32>,
+    written: Vec<VarId>,
+    vars: &'a [Var],
+    tracked: &'a dyn Fn(VarId) -> bool,
+    fuel: u32,
+}
+
+impl Sim<'_> {
+    fn set(&mut self, pl: &Place, val: u32) -> Option<()> {
+        let v = whole_var(pl, self.vars)?;
+        if !(self.tracked)(v) {
+            return None;
+        }
+        self.env.insert(v, val & mask(pl.width()));
+        if !self.written.contains(&v) {
+            self.written.push(v);
+        }
+        Some(())
+    }
+
+    fn block(&mut self, b: &[S]) -> Option<Flow> {
+        for s in b {
+            self.fuel = self.fuel.checked_sub(1)?;
+            match &s.st {
+                St::Assign(pl, e) if e.w == pl.width() => {
+                    let k = eval_known(e, &self.env, self.vars)?;
+                    self.set(pl, k)?;
+                }
+                St::Add(pl, k) => {
+                    let v = whole_var(pl, self.vars)?;
+                    let old = *self.env.get(&v)?;
+                    self.set(pl, old.wrapping_add(*k))?;
+                }
+                St::Clear(pl) => self.set(pl, 0)?,
+                St::If(arms, other) => {
+                    let mut chosen: &[S] = other;
+                    for (c, blk) in arms {
+                        if eval_known(c, &self.env, self.vars)? != 0 {
+                            chosen = blk;
+                            break;
+                        }
+                    }
+                    let f = self.block(chosen)?;
+                    if f != Flow::Next {
+                        return Some(f);
+                    }
+                }
+                St::While(c, body) => self.looping(c, body)?,
+                St::Break => return Some(Flow::Break),
+                St::Continue => return Some(Flow::Continue),
+                _ => return None,
+            }
+        }
+        Some(Flow::Next)
+    }
+
+    fn looping(&mut self, c: &Ex, body: &[S]) -> Option<()> {
+        loop {
+            self.fuel = self.fuel.checked_sub(1)?;
+            if eval_known(c, &self.env, self.vars)? == 0 {
+                return Some(());
+            }
+            if self.block(body)? == Flow::Break {
+                return Some(());
+            }
+        }
+    }
+}
+
+/// A `While` whose condition and body only read and write constant locals is run by the compiler: it
+/// becomes an assignment of the final value of every variable it wrote (and nothing at all when it
+/// runs no pass), so `I2cInit` finds its baud divider at compile time instead of adding in a loop.
+/// Gives up (None) for anything it cannot follow, or for a loop that needs more than a few thousand steps.
+fn fold_loop(c: &Ex, body: &[S], known: &HashMap<VarId, u32>, vars: &[Var], tracked: &dyn Fn(VarId) -> bool, span: crate::diag::Span) -> Option<Vec<S>> {
+    let mut sim = Sim { env: known.clone(), written: Vec::new(), vars, tracked, fuel: 20_000 };
+    sim.looping(c, body)?;
+    let out = sim
+        .written
+        .iter()
+        .map(|&v| {
+            let pl = Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: vars[v].ty.clone() };
+            let e = Ex::konst(sim.env[&v], pl.width(), pl.signed());
+            S { st: St::Assign(pl, e), span }
+        })
+        .collect();
+    Some(out)
+}
+
+/// Constants held in a routine's own locals flow forward through the routine's top-level statements:
+/// into the straight-line ones, into the conditions of an `If` (one whose condition is known is
+/// replaced by the arm it takes) and through a loop run at compile time. Any other compound statement
+/// only forgets the variables it mentions.
 fn propagate_locals(p: &mut Program) -> bool {
     let mut addr = HashSet::new();
     for (_, body) in all_bodies(p) {
@@ -679,15 +917,77 @@ fn propagate_locals(p: &mut Program) -> bool {
         let Some(owner) = owner else { continue };
         let tracked = |v: VarId| vars[v].kind == VarKind::Local && vars[v].owner == Some(owner) && !vars[v].by_ref && !vars[v].volatile && !addr.contains(&v);
         let mut known: HashMap<VarId, u32> = HashMap::new();
-        for s in body.iter_mut() {
+        let mut todo: std::collections::VecDeque<S> = std::mem::take(body).into();
+        let mut out: Vec<S> = Vec::with_capacity(todo.len());
+        while let Some(mut s) = todo.pop_front() {
             let straight = matches!(s.st, St::Assign(..) | St::Add(..) | St::SetBit(..) | St::ToggleBit(..) | St::Clear(..) | St::ClearMem(..) | St::Copy { .. } | St::StrSet { .. } | St::Call(..) | St::DelayUs(_) | St::DelayMs(_) | St::Direction { .. });
             if !straight {
-                known.clear();
+                let compound = matches!(s.st, St::If(..) | St::While(..)) && !known.is_empty() && !has_jump_target(std::slice::from_ref(&s));
+                if !compound {
+                    known.clear();
+                    out.push(s);
+                    continue;
+                }
+                match &mut s.st {
+                    St::If(arms, other) => {
+                        for (c, _) in arms.iter_mut() {
+                            changed |= subst_known(c, &known, &vars);
+                        }
+                        // Arms whose condition is false go; the first one that is true ends the chain.
+                        let before = arms.len();
+                        let mut taken = None;
+                        let mut kept = Vec::new();
+                        for (c, blk) in std::mem::take(arms) {
+                            match c.as_const() {
+                                Some(0) => {}
+                                Some(_) if kept.is_empty() => {
+                                    taken = Some(blk);
+                                    break;
+                                }
+                                Some(_) => {
+                                    // Always true after earlier arms that may be: it is the `Else`.
+                                    *other = blk;
+                                    break;
+                                }
+                                None => kept.push((c, blk)),
+                            }
+                        }
+                        *arms = kept;
+                        if let Some(blk) = taken {
+                            changed = true;
+                            for st in blk.into_iter().rev() {
+                                todo.push_front(st);
+                            }
+                            continue;
+                        }
+                        if arms.is_empty() {
+                            changed = true;
+                            for st in std::mem::take(other).into_iter().rev() {
+                                todo.push_front(st);
+                            }
+                            continue;
+                        }
+                        changed |= arms.len() != before;
+                    }
+                    St::While(c, body) => {
+                        if let Some(rep) = fold_loop(c, body, &known, &vars, &tracked, s.span) {
+                            changed = true;
+                            for st in rep.into_iter().rev() {
+                                todo.push_front(st);
+                            }
+                            continue;
+                        }
+                    }
+                    _ => {}
+                }
+                let one = std::slice::from_ref(&s);
+                known.retain(|&v, _| !mentions(one, v));
+                out.push(s);
                 continue;
             }
             if !known.is_empty() {
                 let mut hit = false;
-                m_stmt(s, &mut |e: &mut Ex| {
+                m_stmt(&mut s, &mut |e: &mut Ex| {
                     if let ExK::Load(pl) = &e.k
                         && let Some(v) = whole_var(pl, &vars)
                         && let Some(&k) = known.get(&v)
@@ -721,7 +1021,17 @@ fn propagate_locals(p: &mut Program) -> bool {
                         }
                     }
                 },
-                St::Add(pl, _) | St::SetBit(pl, _) | St::ToggleBit(pl) | St::ClearMem(pl, _) => {
+                St::Add(pl, k) => match whole_var(pl, &vars).and_then(|v| known.get(&v).map(|&old| (v, old))) {
+                    Some((v, old)) => {
+                        known.insert(v, old.wrapping_add(*k) & mask(pl.width()));
+                    }
+                    None => {
+                        if let Some(v) = base_var(pl) {
+                            known.remove(&v);
+                        }
+                    }
+                },
+                St::SetBit(pl, _) | St::ToggleBit(pl) | St::ClearMem(pl, _) => {
                     if let Some(v) = base_var(pl) {
                         known.remove(&v);
                     }
@@ -733,7 +1043,9 @@ fn propagate_locals(p: &mut Program) -> bool {
                 }
                 _ => {}
             }
+            out.push(s);
         }
+        *body = out;
     }
     changed
 }
@@ -1057,7 +1369,8 @@ fn collect_asm<'a>(b: &'a [S], out: &mut Vec<&'a String>) {
 pub fn optimize(p: &mut Program) {
     for _ in 0..8 {
         fold_all(p);
-        let mut changed = propagate_params(p);
+        let mut changed = range_checks(p);
+        changed |= propagate_params(p);
         changed |= specialize_literals(p);
         fold_all(p);
         changed |= propagate_locals(p);

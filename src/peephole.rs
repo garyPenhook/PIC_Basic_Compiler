@@ -42,6 +42,8 @@ pub struct Env {
     pub keep_writes: bool,
     /// Labels of the register-call routines, which read `__A` and `__B` (`ir::Func::reg`).
     pub reg_calls: Vec<String>,
+    /// Routines with a one-byte `Result`: (label, the result's symbol).
+    pub byte_results: Vec<(String, String)>,
 }
 
 impl Env {
@@ -1485,6 +1487,580 @@ fn pass_branch_over_branch(items: &mut Vec<Item>) -> bool {
     changed
 }
 
+/// A port-configuration register whose value is only what the program last wrote to it: `ANSELx`,
+/// `TRISx`, `LATx`, `WPUx`, `ODCONx`, `SLRCONx`, `INLVLx`. Setting a bit of one to the value it is known to
+/// hold changes nothing.
+fn quiet_sfr(sym: &str, env: &Env) -> bool {
+    if env.is_plain(sym) {
+        return false;
+    }
+    ["ANSEL", "TRIS", "LAT", "WPU", "ODCON", "SLRCON", "INLVL"].iter().any(|p| sym.strip_prefix(p).is_some_and(|r| r.len() == 1 && r.bytes().all(|b| b.is_ascii_uppercase())))
+}
+
+/// `clrf ANSELC / bcf ANSELC,5`: a bit set or cleared in a port-configuration register that a `clrf`, `setf`
+/// or `movlw k / movwf` in the same straight run already gave that value is not touched again.
+fn pass_known_sfr_bits(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut known: HashMap<String, u8> = HashMap::new();
+    let mut w: Option<u8> = None;
+    let mut dead = vec![false; items.len()];
+    for (i, it) in items.iter().enumerate() {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            // A conditional branch falls through with everything as it was.
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => {
+                let Some((mn, ops)) = parse(t) else {
+                    known.clear();
+                    w = None;
+                    continue;
+                };
+                if keep[i] || matches!(mn.as_str(), "return" | "retfie" | "goto" | "bra" | "call" | "rcall" | "reset") {
+                    known.clear();
+                    w = None;
+                    continue;
+                }
+                // A write through a pointer could land on any register.
+                if ops.iter().any(|o| ["INDF", "POSTINC", "POSTDEC", "PREINC", "PLUSW"].iter().any(|p| o.starts_with(p))) {
+                    known.clear();
+                }
+                let sym = ops.first().copied().unwrap_or("");
+                let tracked = quiet_sfr(sym, env);
+                match (mn.as_str(), tracked) {
+                    ("clrf", true) => {
+                        known.insert(sym.to_string(), 0);
+                    }
+                    ("setf", true) => {
+                        known.insert(sym.to_string(), 0xFF);
+                    }
+                    ("movwf", true) => match w {
+                        Some(v) => {
+                            known.insert(sym.to_string(), v);
+                        }
+                        None => {
+                            known.remove(sym);
+                        }
+                    },
+                    ("bcf" | "bsf", true) => {
+                        let set = mn == "bsf";
+                        match (ops.get(1).and_then(|b| b.parse::<u8>().ok()).filter(|b| *b < 8), known.get_mut(sym)) {
+                            (Some(b), Some(v)) => {
+                                if (*v >> b) & 1 == set as u8 {
+                                    dead[i] = true;
+                                } else if set {
+                                    *v |= 1 << b;
+                                } else {
+                                    *v &= !(1 << b);
+                                }
+                            }
+                            _ => {
+                                known.remove(sym);
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {
+                        // Any other mention of a tracked register may change it.
+                        known.retain(|k, _| !ops.iter().any(|o| o == k) && !(mn == "movff" && ops.get(1) == Some(&k.as_str())));
+                    }
+                }
+                w = match (mn.as_str(), ops.as_slice()) {
+                    ("movlw", [v]) => parse_lit(v),
+                    _ if keeps_w(t) => w,
+                    _ => None,
+                };
+            }
+            _ => {
+                known.clear();
+                w = None;
+            }
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// What is known about BSR at a point of the code.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Bank {
+    /// No path reaches the point yet.
+    Top,
+    Is(u8),
+    Unknown,
+}
+
+impl Bank {
+    fn meet(self, o: Bank) -> Bank {
+        match (self, o) {
+            (Bank::Top, x) | (x, Bank::Top) => x,
+            (Bank::Is(a), Bank::Is(b)) if a == b => Bank::Is(a),
+            _ => Bank::Unknown,
+        }
+    }
+}
+
+/// A label the code generator made for the inside of one routine (loops, `If`, the shared return).
+fn local_label(l: &str) -> bool {
+    l.starts_with("_L")
+}
+
+/// `movlb k` when BSR is already `k` on every path that reaches it.
+///
+/// A forward data-flow analysis over the whole item list, not just the straight run before the
+/// instruction: it follows branches, loops (a polling loop that selects its bank once), skips and
+/// joins, takes what a called routine leaves in BSR (the meet of the bank at its `return`s, computed
+/// together with everything else) and treats a branch to another routine as a call. The start of a
+/// routine, a label some raw assembly mentions and anything the analysis cannot follow have an
+/// unknown bank. Gives up without a change when the code has a branch it cannot place.
+fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
+    let n = items.len();
+    let keep = protected(items);
+    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    for (i, it) in items.iter().enumerate() {
+        if let Item::Label(l) = it {
+            label_at.insert(l.as_str(), i);
+        }
+    }
+    // Labels that raw assembly (or an instruction written as text) names can be entered from anywhere.
+    let mut named: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for it in items.iter() {
+        if let Item::Raw(t) = it {
+            for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                if let Some((&l, _)) = label_at.get_key_value(tok) {
+                    named.insert(l);
+                }
+            }
+        }
+    }
+    // The routine each instruction belongs to: the last label that is not local.
+    let mut routine = vec![usize::MAX; n];
+    let mut cur = usize::MAX;
+    for (i, it) in items.iter().enumerate() {
+        if let Item::Label(l) = it && !local_label(l) {
+            cur = i;
+        }
+        routine[i] = cur;
+    }
+    let next_real = |mut i: usize| {
+        while i < n && matches!(items[i], Item::Comment(_) | Item::Fence | Item::Keep(_)) {
+            i += 1;
+        }
+        i
+    };
+    let mut inb = vec![Bank::Top; n + 1];
+    let mut exit: HashMap<usize, Bank> = HashMap::new();
+    for (i, it) in items.iter().enumerate() {
+        if let Item::Label(l) = it && (!local_label(l) || named.contains(l.as_str())) {
+            inb[i] = Bank::Unknown;
+        }
+    }
+    if n > 0 {
+        inb[0] = Bank::Unknown;
+    }
+    for sweep in 0.. {
+        if sweep > 200 {
+            return false;
+        }
+        let mut changed = false;
+        let push = |inb: &mut Vec<Bank>, to: usize, b: Bank, changed: &mut bool| {
+            let m = inb[to].meet(b);
+            if m != inb[to] {
+                inb[to] = m;
+                *changed = true;
+            }
+        };
+        for i in 0..n {
+            let s = inb[i];
+            if s == Bank::Top {
+                continue;
+            }
+            // (state after this item, whether control continues to the next item, extra edges)
+            let mut out = s;
+            let mut falls = true;
+            let mut edges: Vec<(usize, Bank)> = Vec::new();
+            let exit_in = |routine: usize, b: Bank, exit: &mut HashMap<usize, Bank>, changed: &mut bool| {
+                let e = exit.entry(routine).or_insert(Bank::Top);
+                let m = e.meet(b);
+                if m != *e {
+                    *e = m;
+                    *changed = true;
+                }
+            };
+            let callee = |l: &str, exit: &HashMap<usize, Bank>| match label_at.get(l) {
+                Some(&k) => exit.get(&k).copied().unwrap_or(Bank::Top),
+                None => Bank::Unknown,
+            };
+            match &items[i] {
+                Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) => {}
+                Item::Call(l) => out = callee(l, &exit),
+                Item::Br(cc, l) => {
+                    match label_at.get(l.as_str()) {
+                        Some(&k) if local_label(l) => edges.push((k, s)),
+                        Some(&k) if routine[i] != usize::MAX => {
+                            // A branch to another routine is a call that does not come back here.
+                            let b = exit.get(&k).copied().unwrap_or(Bank::Top);
+                            exit_in(routine[i], b, &mut exit, &mut changed);
+                            // ... and what it passes on must not be thought known at its start.
+                        }
+                        Some(_) => {}
+                        None => {
+                            exit_in(routine[i], Bank::Unknown, &mut exit, &mut changed);
+                        }
+                    }
+                    if *cc == Cc::Always {
+                        falls = false;
+                    }
+                }
+                Item::Ins(t) => {
+                    let Some((mn, ops)) = parse(t) else { continue };
+                    let mentions_bsr = ops.iter().any(|o| o.eq_ignore_ascii_case("BSR"));
+                    match mn.as_str() {
+                        "movlb" => out = ops.first().and_then(|o| parse_lit(o)).filter(|k| *k < 16).map_or(Bank::Unknown, Bank::Is),
+                        "return" | "retlw" => {
+                            if routine[i] != usize::MAX {
+                                exit_in(routine[i], s, &mut exit, &mut changed);
+                            }
+                            falls = false;
+                        }
+                        "retfie" | "reset" | "sleep" => falls = false,
+                        "bra" | "goto" => {
+                            match ops.first().and_then(|o| label_at.get(*o)) {
+                                Some(&k) if local_label(ops[0]) => edges.push((k, s)),
+                                Some(&k) if routine[i] != usize::MAX => {
+                                    let b = exit.get(&k).copied().unwrap_or(Bank::Top);
+                                    exit_in(routine[i], b, &mut exit, &mut changed);
+                                }
+                                Some(_) => {}
+                                None => {
+                                    // `bra $+4` and the like land somewhere in this routine.
+                                    if ops.first().is_none_or(|o| !o.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')) {
+                                        return false;
+                                    }
+                                    if routine[i] != usize::MAX {
+                                        exit_in(routine[i], Bank::Unknown, &mut exit, &mut changed);
+                                    }
+                                }
+                            }
+                            falls = false;
+                        }
+                        "call" | "rcall" => out = ops.first().map_or(Bank::Unknown, |o| callee(o, &exit)),
+                        "bz" | "bnz" | "bc" | "bnc" | "bn" | "bnn" | "bov" | "bnov" => match ops.first().and_then(|o| label_at.get(*o)) {
+                            Some(&k) => edges.push((k, s)),
+                            None => return false,
+                        },
+                        _ if is_skip(t) => {
+                            let j = next_real(i + 1);
+                            // A label between the skip and the skipped instruction is not something to model.
+                            if matches!(items.get(j), Some(Item::Label(_)) | None) {
+                                return false;
+                            }
+                            edges.push((next_real(j + 1), s));
+                        }
+                        _ if mentions_bsr => out = Bank::Unknown,
+                        _ => {}
+                    }
+                    if mentions_bsr && mn != "movlb" {
+                        out = Bank::Unknown;
+                    }
+                }
+                Item::Raw(_) | Item::SkipBr(..) => out = Bank::Unknown,
+                Item::Data(_) => falls = false,
+                Item::Org(_) => {
+                    out = Bank::Unknown;
+                }
+            }
+            for (k, b) in edges {
+                push(&mut inb, k, b, &mut changed);
+            }
+            if falls && i + 1 <= n {
+                push(&mut inb, i + 1, out, &mut changed);
+                // Running on into the next routine (a tail call placed right before its target) leaves by that
+                // routine's exits.
+                let nx = next_real(i + 1);
+                if let Some(Item::Label(l)) = items.get(nx)
+                    && !local_label(l)
+                    && routine[i] != usize::MAX
+                    && routine[i] != nx
+                {
+                    let b = exit.get(&nx).copied().unwrap_or(Bank::Top);
+                    exit_in(routine[i], b, &mut exit, &mut changed);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut dead = vec![false; n];
+    for i in 0..n {
+        if let Item::Ins(t) = &items[i]
+            && !keep[i]
+            && let Some(("movlb", ops)) = parse(t).as_ref().map(|(m, o)| (m.as_str(), o))
+            && let Some(k) = ops.first().and_then(|o| parse_lit(o))
+            && inb[i] == Bank::Is(k)
+        {
+            dead[i] = true;
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+fn count_movlb(items: &[Item]) -> usize {
+    items.iter().filter(|it| matches!(it, Item::Ins(t) if t.trim_start().starts_with("movlb "))).count()
+}
+
+/// A routine that selects the same bank at several places gets one `movlb k` at its start when that
+/// lets the flow analysis drop more than it adds (`I2C_WAIT` selects bank 2 in each arm of its polling
+/// loop; with the bank selected once on entry the loop body has none). Each routine is tried on a copy.
+fn pass_bank_prologue(items: &mut Vec<Item>) -> bool {
+    let mut changed = false;
+    let mut r = 0;
+    while r < items.len() {
+        let Item::Label(l) = &items[r] else {
+            r += 1;
+            continue;
+        };
+        if local_label(l) {
+            r += 1;
+            continue;
+        }
+        let end = (r + 1..items.len()).find(|&k| matches!(&items[k], Item::Label(l) if !local_label(l))).unwrap_or(items.len());
+        let mut tally: HashMap<String, usize> = HashMap::new();
+        for it in &items[r..end] {
+            if let Item::Ins(t) = it && let Some(("movlb", ops)) = parse(t).as_ref().map(|(m, o)| (m.as_str(), o)) && let Some(k) = ops.first() {
+                *tally.entry(k.to_string()).or_default() += 1;
+            }
+        }
+        let best = tally.into_iter().filter(|(_, c)| *c >= 2).max_by_key(|(k, c)| (*c, std::cmp::Reverse(k.clone())));
+        let Some((k, _)) = best else {
+            r = end;
+            continue;
+        };
+        let mut trial = items.clone();
+        trial.insert(r + 1, Item::Ins(format!("movlb {k}")));
+        let mut guard = 0;
+        while pass_redundant_movlb_flow(&mut trial) && guard < 4 {
+            guard += 1;
+        }
+        if count_movlb(&trial) < count_movlb(items) {
+            *items = trial;
+            changed = true;
+            // The region shrank: look at the same label again from the top of the next routine.
+            r = (r + 1..items.len()).find(|&k| matches!(&items[k], Item::Label(l) if !local_label(l))).unwrap_or(items.len());
+        } else {
+            r = end;
+        }
+    }
+    changed
+}
+
+/// Whether an instruction sets Z and N before anything reads them, with no statement end, label, branch or call
+/// in between. (A statement end is not enough: an earlier pass lets the next statement reuse the flags a load set.)
+fn flags_overwritten_first(items: &[Item], from: usize) -> bool {
+    let mut need = Z | N;
+    for it in &items[from..] {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Ins(t) if t.trim() == "return" => return true,
+            Item::Ins(t) => match effect(t) {
+                None => return false,
+                Some(e) => {
+                    if e.flags_r & need != 0 {
+                        return false;
+                    }
+                    need &= !e.flags_w;
+                    if need == 0 {
+                        return true;
+                    }
+                }
+            },
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Whether `WREG` certainly holds `sym` at item `at`, from the instructions just before it (no label, no
+/// call, nothing that writes `WREG` or `sym` in between).
+fn w_holds(items: &[Item], at: usize, sym: &str) -> bool {
+    let mut j = at;
+    while j > 0 {
+        j -= 1;
+        match &items[j] {
+            Item::Comment(_) | Item::Fence => {}
+            // Not taken, a conditional branch changes nothing.
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => {
+                let Some((mn, ops)) = parse(t) else { return false };
+                // The instruction before is a skip: this one runs on one path only.
+                if j > 0 && matches!(&items[j - 1], Item::Ins(p) if is_skip(p)) {
+                    return false;
+                }
+                let first = ops.first().copied().unwrap_or("");
+                if mn == "movwf" && first == sym {
+                    return true;
+                }
+                if mn == "movf" && first == sym && ops.get(1).is_some_and(|d| matches!(*d, "w" | "0")) {
+                    return true;
+                }
+                if !keeps_w(t) || ops.iter().any(|o| *o == sym) || is_skip(t) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// A routine with a one-byte `Result` hands it back in `WREG` as well as in its variable, and the code that
+/// called it does not load it again: `rcall F / movf F__RESULT,w` loses the load when the flags it sets are not
+/// used. A `return` that does not already have the value in `WREG` gets a `movf F__RESULT,w` first, so the
+/// change is made only for a routine whose calls save more than its returns cost. (The variable is still
+/// written, and goes when nothing reads it any more.)
+fn pass_w_return(items: &mut Vec<Item>, env: &Env) -> bool {
+    let mut changed = false;
+    for (rt, sym) in &env.byte_results {
+        if !env.is_access(sym) {
+            continue;
+        }
+        let keep = protected(items);
+        let Some(r) = items.iter().position(|it| matches!(it, Item::Label(l) if l == rt)) else { continue };
+        let end = (r + 1..items.len()).find(|&k| matches!(&items[k], Item::Label(l) if !local_label(l))).unwrap_or(items.len());
+        // Only routines that leave by a plain `return`.
+        let mut returns = Vec::new();
+        let mut ok = true;
+        for k in r + 1..end {
+            match &items[k] {
+                Item::Raw(_) | Item::Data(_) | Item::Org(_) | Item::SkipBr(..) => ok = false,
+                Item::Br(_, l) if !local_label(l) => ok = false,
+                Item::Ins(t) => match parse(t) {
+                    Some((m, ops)) => match m.as_str() {
+                        "return" if ops.is_empty() => {
+                            if keep[k] {
+                                ok = false;
+                            }
+                            returns.push(k);
+                        }
+                        "return" | "retfie" | "retlw" | "goto" | "reset" | "bra" => ok = false,
+                        _ => {}
+                    },
+                    None => {}
+                },
+                _ => {}
+            }
+        }
+        // The routine must end in an exit of its own: one that runs on into the next routine (a tail call placed
+        // right before its target) hands back that routine's `WREG`.
+        let last = (r + 1..end).rev().find(|&k| !matches!(items[k], Item::Comment(_) | Item::Fence));
+        let closed = match last.map(|k| &items[k]) {
+            Some(Item::Br(Cc::Always, _)) => true,
+            Some(Item::Ins(t)) => t.trim() == "return",
+            _ => false,
+        };
+        if !ok || !closed || returns.is_empty() {
+            continue;
+        }
+        let missing: Vec<usize> = returns.iter().copied().filter(|&k| !w_holds(items, k, sym)).collect();
+        // The loads after calls that can go.
+        let mut loads = Vec::new();
+        for c in 0..items.len() {
+            if !matches!(&items[c], Item::Call(l) if l == rt) || keep[c] {
+                continue;
+            }
+            let mut d = c + 1;
+            while matches!(items.get(d), Some(Item::Comment(_))) {
+                d += 1;
+            }
+            let Some(Item::Ins(t)) = items.get(d) else { continue };
+            let Some((m, ops)) = parse(t) else { continue };
+            let is_load = m == "movf" && ops.len() == 3 && ops[0] == sym && matches!(ops[1], "w" | "0") && matches!(ops[2], "c" | "0");
+            if is_load && !keep[d] && flags_overwritten_first(items, d + 1) {
+                loads.push(d);
+            }
+        }
+        if loads.len() <= missing.len() {
+            continue;
+        }
+        let mut edits: Vec<(usize, bool)> = loads.iter().map(|&d| (d, false)).chain(missing.iter().map(|&k| (k, true))).collect();
+        edits.sort_by(|a, b| b.0.cmp(&a.0));
+        for (k, insert) in edits {
+            if insert {
+                items.insert(k, Item::Ins(format!("movf {sym}, w, c")));
+            } else {
+                items.remove(k);
+            }
+        }
+        changed = true;
+    }
+    changed
+}
+
+/// `movf V,w / xorlw A / bnz L … L: movf V,w / xorlw B`: an `If … ElseIf` chain on one variable. `WREG` holds
+/// `V xor A` at `L` (which nothing else reaches), so `xorlw A xor B` there gives `V xor B` without loading `V`
+/// again: one word and one cycle for each link of the chain.
+fn pass_xor_chain(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let lit = |t: &str| -> Option<u8> {
+        let (m, ops) = parse(t)?;
+        (m == "xorlw" && ops.len() == 1).then(|| parse_lit(ops[0]))?
+    };
+    for b in 1..items.len().saturating_sub(1) {
+        let (Item::Ins(load), Item::Ins(x1), Item::Br(Cc::Nz, l)) = (&items[b - 1], &items[b], &items[b + 1]) else { continue };
+        let Some(a) = lit(x1) else { continue };
+        let Some((m, ops)) = parse(load) else { continue };
+        if m != "movf" || ops.len() != 3 || !matches!(ops[1], "w" | "0") || !env.is_plain(ops[0]) || keep[b - 1] || keep[b] || keep[b + 1] {
+            continue;
+        }
+        let Some(lp) = items.iter().position(|it| matches!(it, Item::Label(x) if x == l)) else { continue };
+        if lp + 2 >= items.len() || keep[lp + 1] || keep[lp + 2] {
+            continue;
+        }
+        // Only the branch gets there: it is the single mention, and the code before it does not fall in.
+        let mentions = items
+            .iter()
+            .filter(|it| match it {
+                Item::Br(_, t) | Item::Call(t) => t == l,
+                Item::Ins(t) | Item::Raw(t) => t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == l),
+                _ => false,
+            })
+            .count();
+        let before = (0..lp).rev().find(|&k| !matches!(items[k], Item::Comment(_) | Item::Fence));
+        let closed = match before.map(|k| &items[k]) {
+            Some(Item::Br(Cc::Always, _)) => true,
+            Some(Item::Ins(t)) => t.trim() == "return",
+            _ => false,
+        };
+        if mentions != 1 || !closed {
+            continue;
+        }
+        let (Item::Ins(again), Item::Ins(x2)) = (&items[lp + 1], &items[lp + 2]) else { continue };
+        if again != load {
+            continue;
+        }
+        let Some(bv) = lit(x2) else { continue };
+        items[lp + 2] = Item::Ins(format!("xorlw 0x{:02X}", a ^ bv));
+        items.remove(lp + 1);
+        return true;
+    }
+    false
+}
+
 /// `movlb k` when the bank is already `k` along the straight run before it.
 fn pass_redundant_movlb(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
@@ -1796,7 +2372,8 @@ fn protected(items: &[Item]) -> Vec<bool> {
 
 /// Runs the pass to a fixed point.
 pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
-    for _ in 0..8 {
+    let mut prologues = true;
+    for _ in 0..12 {
         let mut changed = false;
         changed |= pass_unused_labels(&mut items);
         changed |= pass_tail_call(&mut items);
@@ -1804,6 +2381,8 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_halt_loop(&mut items);
         changed |= pass_hoist_movlb(&mut items);
         changed |= pass_redundant_movlb(&mut items);
+        changed |= pass_redundant_movlb_flow(&mut items);
+        changed |= pass_known_sfr_bits(&mut items, env);
         changed |= pass_warg(&mut items);
         changed |= pass_bit_branch(&mut items);
         changed |= pass_bool_thread(&mut items, env);
@@ -1812,6 +2391,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_branch_to_next(&mut items);
         changed |= pass_branch_over_branch(&mut items);
         changed |= pass_xorlw_zero(&mut items);
+        changed |= pass_xor_chain(&mut items, env);
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_forward(&mut items, env);
         changed |= pass_retarget(&mut items, env);
@@ -1821,9 +2401,19 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
             changed |= pass_write_only(&mut items, env);
         }
         if !changed {
-            break;
+            if !prologues {
+                break;
+            }
+            prologues = false;
+            // Once everything else has settled: one bank selection per routine.
+            if !pass_bank_prologue(&mut items) {
+                break;
+            }
         }
     }
+    // Last of all: the dead-store passes above take `WREG` to be dead at a `return`, so they must not run
+    // after this one, which makes the result in `WREG` something callers depend on.
+    pass_w_return(&mut items, env);
     items.retain(|it| !matches!(it, Item::Comment(t) if t == "warg"));
     items
 }
@@ -1875,7 +2465,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()] }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![] }
     }
 
     fn ins(t: &str) -> Item {
@@ -2293,4 +2883,160 @@ mod tests {
         let r = run16(&[ins("movf X, w"), ins("rlf Y, f"), Item::Br(Cc::Z, "L".into())]);
         assert!(r.contains(&"movf X, w".to_string()), "{r:?}");
     }
+    fn movlbs(r: &[String]) -> usize {
+        r.iter().filter(|t| t.starts_with("movlb")).count()
+    }
+
+    #[test]
+    fn bank_known_across_a_loop_and_a_join() {
+        // The polling loop selects the bank once; the code after it needs no second selection.
+        let r = run(&[ins("movlb 2"), Item::Label("_L1".into()), ins("btfsc P, 4, b"), Item::Br(Cc::Always, "_L1".into()), ins("movlb 2"), ins("clrf Q, b")]);
+        assert_eq!(movlbs(&r), 1, "{r:?}");
+        // Both paths into the join have bank 3.
+        let r = run(&[ins("movlb 3"), Item::Br(Cc::Z, "_L2".into()), ins("incf Q, f, b"), Item::Label("_L2".into()), ins("movlb 3"), ins("clrf P, b")]);
+        assert_eq!(movlbs(&r), 1, "{r:?}");
+        // Different banks on the two paths: the selection stays.
+        let r = run(&[ins("movlb 3"), Item::Br(Cc::Z, "_L2".into()), ins("movlb 4"), Item::Label("_L2".into()), ins("movlb 3"), ins("clrf P, b")]);
+        assert_eq!(movlbs(&r), 3, "{r:?}");
+        // A label raw assembly may jump to has an unknown bank.
+        let r = run(&[ins("movlb 3"), Item::Label("_L3".into()), ins("movlb 3"), ins("clrf P, b"), Item::Raw("goto _L3".into())]);
+        assert_eq!(movlbs(&r), 2, "{r:?}");
+    }
+
+    #[test]
+    fn bank_after_a_call_is_what_the_callee_leaves() {
+        let r = run(&[
+            Item::Call("F".into()),
+            ins("movlb 2"),
+            ins("clrf P, b"),
+            ins("return"),
+            Item::Label("F".into()),
+            ins("movlb 2"),
+            ins("clrf Q, b"),
+            ins("return"),
+        ]);
+        // The call leaves bank 2 behind, so the selection after it goes.
+        assert_eq!(movlbs(&r), 1, "{r:?}");
+        // A callee with two exits in different banks leaves nothing known.
+        let r = run(&[
+            Item::Call("F".into()),
+            ins("movlb 2"),
+            ins("clrf P, b"),
+            ins("return"),
+            Item::Label("F".into()),
+            ins("btfsc Q, 0, c"),
+            ins("bra _L1"),
+            ins("movlb 2"),
+            ins("return"),
+            Item::Label("_L1".into()),
+            ins("movlb 3"),
+            ins("return"),
+        ]);
+        assert_eq!(movlbs(&r), 3, "{r:?}");
+    }
+
+    #[test]
+    fn bank_prologue_replaces_several_selections() {
+        let r = run(&[
+            Item::Label("F".into()),
+            ins("btfsc Q, 0, c"),
+            ins("bra _L1"),
+            ins("movlb 2"),
+            ins("clrf P, b"),
+            ins("return"),
+            Item::Label("_L1".into()),
+            ins("movlb 2"),
+            ins("setf P, b"),
+            ins("return"),
+        ]);
+        assert_eq!(movlbs(&r), 1, "{r:?}");
+        assert_eq!(r[1], "movlb 2", "{r:?}");
+    }
+
+    #[test]
+    fn port_bits_already_at_that_value_are_not_set_again() {
+        let r = run(&[ins("clrf ANSELC, b"), ins("bcf ANSELC, 5, b"), ins("bsf TRISC, 5, c"), ins("bcf TRISC, 4, c"), ins("bcf ANSELC, 4, b")]);
+        assert_eq!(r, vec!["clrf ANSELC, b", "bsf TRISC, 5, c", "bcf TRISC, 4, c"]);
+        // A label can be entered with another value; a bit of the other value is a real change.
+        let r = run(&[ins("clrf LATB, b"), Item::Label("_L1".into()), ins("bcf LATB, 1, b"), ins("bsf LATB, 2, b"), ins("bsf LATB, 2, b"), Item::Br(Cc::Z, "_L1".into())]);
+        assert_eq!(r.len(), 6, "{r:?}");
+        // A compiler variable named like a port register is not one.
+        let r = run(&[ins("clrf X, c"), ins("bcf X, 0, c")]);
+        assert_eq!(r.len(), 2, "{r:?}");
+    }
+
+    fn w_env() -> Env {
+        let mut e = env();
+        e.plain.insert("FR".to_string(), (0x20, 1));
+        e.byte_results = vec![("F".to_string(), "FR".to_string())];
+        e
+    }
+
+    fn run_w(src: &[Item]) -> Vec<String> {
+        let mut all = vec![Item::Raw("lfsr 0, X+Y+R".into())];
+        all.extend_from_slice(src);
+        optimise(all, &w_env())
+            .iter()
+            .map(|i| match i {
+                Item::Ins(t) => t.clone(),
+                Item::Label(l) => format!("{l}:"),
+                Item::Br(cc, l) => format!("br{cc:?} {l}"),
+                Item::Call(l) => format!("call {l}"),
+                Item::Fence => "--".into(),
+                _ => "?".into(),
+            })
+            .skip(1)
+            .collect()
+    }
+
+    #[test]
+    fn result_in_wreg_saves_the_load_after_the_call() {
+        let callee = [Item::Label("F".into()), ins("movlw 5"), ins("movwf FR, c"), ins("return")];
+        let mut src = vec![Item::Call("F".into()), ins("movf FR, w, c"), ins("movwf Y, c"), Item::Fence, ins("return")];
+        src.extend(callee.iter().cloned());
+        let r = run_w(&src);
+        assert_eq!(&r[..3], ["call F", "movwf Y, c", "--"], "{r:?}");
+        // The flags the load set are read by the branch: it stays.
+        let mut src = vec![Item::Call("F".into()), ins("movf FR, w, c"), Item::Br(Cc::Z, "_L1".into()), ins("nop"), Item::Label("_L1".into()), Item::Fence, ins("return")];
+        src.extend(callee.iter().cloned());
+        let r = run_w(&src);
+        assert_eq!(&r[..2], ["call F", "movf FR, w, c"], "{r:?}");
+    }
+
+    #[test]
+    fn result_in_wreg_costs_a_load_at_a_return_without_it() {
+        // The value is in FR only; each such return needs `movf FR, w` first, so one call that saves one load does not pay.
+        let callee = [Item::Label("F".into()), ins("clrf FR, c"), ins("return")];
+        let mut src = vec![Item::Call("F".into()), ins("movf FR, w, c"), ins("movwf Y, c"), Item::Fence, ins("return")];
+        src.extend(callee.iter().cloned());
+        let r = run_w(&src);
+        assert_eq!(&r[..2], ["call F", "movf FR, w, c"], "{r:?}");
+        // Two calls do.
+        let mut src = vec![Item::Call("F".into()), ins("movf FR, w, c"), ins("movwf Y, c"), ins("incf Y, f, c"), Item::Fence, Item::Call("F".into()), ins("movf FR, w, c"), ins("movwf X, c"), ins("incf X, f, c"), Item::Fence, ins("return")];
+        src.extend(callee.iter().cloned());
+        let r = run_w(&src);
+        assert_eq!(&r[..2], ["call F", "movwf Y, c"], "{r:?}");
+        assert!(r.iter().any(|t| t == "movf FR, w, c"), "the return gets the load: {r:?}");
+    }
+
+    #[test]
+    fn if_chain_on_one_variable_loads_it_once() {
+        let r = run(&[
+            ins("movf X, w, c"),
+            ins("xorlw 0x01"),
+            Item::Br(Cc::Nz, "_L1".into()),
+            ins("incf Y, f, c"),
+            Item::Br(Cc::Always, "_L9".into()),
+            Item::Label("_L1".into()),
+            ins("movf X, w, c"),
+            ins("xorlw 0x02"),
+            Item::Br(Cc::Nz, "_L9".into()),
+            ins("decf Y, f, c"),
+            Item::Label("_L9".into()),
+            Item::Fence,
+        ]);
+        assert!(r.contains(&"xorlw 0x03".to_string()), "{r:?}");
+        assert_eq!(r.iter().filter(|t| t.starts_with("movf X")).count(), 1, "{r:?}");
+    }
+
 }

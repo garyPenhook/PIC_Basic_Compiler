@@ -580,21 +580,27 @@ pub fn has_jump_target(body: &[S]) -> bool {
 /// Whether the scalar `var` is certainly assigned before anything reads it: the first top-level
 /// statement that mentions it is a plain assignment of the whole variable from an expression that
 /// does not mention it, and the body has no `Goto`/label that could jump over that assignment.
-pub fn written_first(body: &[S], var: VarId) -> bool {
+///
+/// A `Return` before that assignment leaves the variable unwritten, which matters only when something
+/// reads it after the routine is left (`after_exit`: the `Result`); a local nobody can see again is
+/// never read on that path.
+pub fn written_first(body: &[S], var: VarId, after_exit: bool) -> bool {
     if has_jump_target(body) {
         return false;
     }
     let Some(at) = body.iter().position(|s| mentions(std::slice::from_ref(s), var)) else { return false };
     // A `Return` before the assignment leaves the variable unwritten.
-    if body[..at].iter().any(has_return) {
+    if after_exit && body[..at].iter().any(has_return) {
         return false;
     }
     let first = &body[at];
     match &first.st {
         // A loop that always runs its body once: the write may come first inside it, provided
         // nothing before it can leave the loop.
-        St::While(c, inner) if c.as_const().is_some_and(|v| v != 0) => !inner.iter().take_while(|s| !mentions(std::slice::from_ref(s), var)).any(has_break) && written_first(inner, var),
+        St::While(c, inner) if c.as_const().is_some_and(|v| v != 0) => !inner.iter().take_while(|s| !mentions(std::slice::from_ref(s), var)).any(has_break) && written_first(inner, var, after_exit),
         St::Assign(p, e) => matches!(p.base, Base::Var(v) if v == var) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && !e.touches(var, true),
+        // A `For` sets its variable to `from` before the first test.
+        St::For { var: p, from, limit, .. } => matches!(p.base, Base::Var(v) if v == var) && p.off == 0 && p.bit.is_none() && p.idx.is_none() && !from.touches(var, true) && !limit.touches(var, true),
         _ => false,
     }
 }

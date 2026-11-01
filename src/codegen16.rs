@@ -424,7 +424,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
                 plain.insert(name, (a, o.bytes));
             }
         }
-        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect() });
+        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![] });
         opt::drop_redundant_movlb(items)
     } else {
         items

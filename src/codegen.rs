@@ -4988,7 +4988,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
                 plain.insert(n.to_string(), (a, 1));
             }
         }
-        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect() })
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect() })
     } else {
         items
     };
