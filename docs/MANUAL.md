@@ -463,6 +463,29 @@ and anywhere a constant expression is required. `_Clock` and `_Device` are prede
 (the `Clock` value and the device name), and so are `_FlashBytes` (a `LongWord`), `_EepromBytes` and
 `_RamBytes` (`Word`s): the program flash, data EEPROM and allocatable RAM of the device, in bytes.
 
+### Computing constants at build time
+
+The compiler works out constant expressions itself, so a value that is a formula costs no code or run time.
+Besides `+ - * / Mod`, shifts, `Min`, `Max`, `Abs` and the type conversions, these functions can be used
+**in constant expressions only** (their arguments must be constants; there is no run-time version):
+`Sin(x)` and `Cos(x)` (x in radians) , `Sqr(x)`, `Pow(x, y)` and `Log2(x)` give a `Float`; `Round(x)` gives
+the nearest whole number, which then fits any integer type that can hold it.
+
+`Table` fills a constant array from a formula. `Const Name(n) As Type = Table(i, expression)` makes `n`
+elements; in element number `i` (0 to n-1) the expression is evaluated with `i` standing for the index. The table lives in
+program memory like any other `Const` array.
+
+```basic
+Const N = 16
+Const Square(8) As Byte = Table(i, i * i)                      ' 0, 1, 4, 9, 16, 25, 36, 49
+Const Wave(N) As Byte = Table(k, Byte(Round(127.5 + 127.5 * Sin(k * 6.2831853 / N))))   ' one sine cycle
+Const Pow4(4) As Word = Table(e, Round(Pow(2, e * 4)))        ' 1, 16, 256, 4096
+```
+
+Every element must be a constant that fits the element type (otherwise `E-CONST-RANGE` / `E-CONST-EXPR`, at the
+expression). The preprocessor can compute values too: `#constant Size = Width * 5` is both testable in `#if` and a
+`Const` of the program (see *Preprocessor*).
+
 ## Arrays, strings, structures
 
 ### Arrays
@@ -640,7 +663,7 @@ the routines used are linked.
   comparisons; mixed integer and Float expressions (the integer is converted); `Float(x)` and the
   integer conversions `Byte(f)`, `Integer(f)`, ... (truncating).
 * Rounding is to nearest even. Infinities and NaN propagate. Denormals are flushed to zero.
-* Not supported: `Sqr`, `Sin`, `Cos`, `Tan`, `Log`, `Exp`, `Pow`, `fRound` and the other math
+* Not supported at run time: `Sqr`, `Sin`, `Cos`, `Tan`, `Log`, `Exp`, `Pow`, `fRound` and the other math
   functions; `Print`/`Str` of a Float; a Float as a `For` variable, in `Select`, or with `Inc`/`Dec`;
   `=` and `<>` between floats are available but avoid them as for any float.
 * Cost: about 700 words for `+`, 800 for `*`, 470 for `/`, plus about 250 shared (roughly 2,500 words
@@ -1291,13 +1314,14 @@ also be called from Basic as usual.
 
 | Directive | Notes |
 |---|---|
-| `#define NAME [value]`, `#undefine NAME` | scoped to the file that defines them (only `-D` names are shared) |
+| `#define NAME [value]`, `#undefine NAME` | scoped to the file that defines them (only `-D` names are shared). A value is an expression that `#if` can use (`#define Level 3`, then `#if Level > 2`); it does not become a program constant, use `#constant` for that |
+| `#constant Name = expression` | a compile-time value: `#if` can test it, and the line becomes `Const Name = value` so the program can use it. The expression may use numbers, `True`/`False`, text in quotes, `_clock` and the other predefined names, earlier `#define` / `#constant` names, `+ - * / mod << >>` and parentheses. Defining the same name again with another value is an error. Whole numbers divide as integers (`7 / 2` is 3), shifts bind looser than `+ -`. The line becomes a `Const` declaration, so put a `#constant` after `Device`, `Clock`, `Config` and the `Include` lines |
 | `#ifdef`, `#ifndef`, `#else`, `#endif` | |
-| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; `_ram` and `_eeprom` are the part's usable data RAM and data EEPROM in bytes (`_eeprom` is 0 on the PIC16F13145 family); the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
+| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `#constant` / `#define` names, arithmetic (`+ - * / mod << >>`), `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; `_ram` and `_eeprom` are the part's usable data RAM and data EEPROM in bytes (`_eeprom` is 0 on the PIC16F13145 family); the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
 | `#error "text"`, `#warning "text"` | |
 | `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `FetchNop = true\|false` (PIC16F13145 family above 16 MHz: a NOP at 0000h and at the start of the handler for erratum 1.3.1, default true), `Warn.<id> = true\|false` | |
 
-Not supported: `#constant`, `#variable` (`E-PP-UNSUPPORTED`). Of the predefined names, only `_clock`,
+Not supported: `#variable` (`E-PP-UNSUPPORTED`). Of the predefined names, only `_clock`,
 `_device`, `_ram` and `_eeprom` exist in `#if`. Directives inside `(* *)` or `{ }` comments are ignored.
 
 ---

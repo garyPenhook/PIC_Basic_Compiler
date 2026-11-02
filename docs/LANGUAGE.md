@@ -99,6 +99,11 @@ assigned a number. A `Bit` is a numeric 0/1. Converting between them is explicit
   variable index is not checked at run time unless `#option BoundsCheck = true` (NEW, costs code).
 * `Const` arrays live in program memory: `Const T(3) As Byte = (1, 2, 3)` (the size, like `Dim`, is the element count, and must match the list). They can be read by
   index and assigned wholesale to a same-sized RAM array. (SF)
+* **Generated tables** (NEW, 0.1.108): `Const T(n) As Type = Table(i, expression)` has element `i` (0 to n-1) equal to the
+  constant expression with `i` as the index; every element must be a constant that fits the type. The expression may use
+  other constants, `Min`, `Max`, `Abs` and the constant-only `Sin`, `Cos`, `Sqr`, `Pow`, `Log2` (all `Float`) and `Round`
+  (a whole number). These five functions are worked out by the compiler and have no run-time form: a non-constant
+  argument is `E-CONST-EXPR`.
 * A RAM array may be given values when it is declared: `Dim a(3) As Byte = (1, 2, 3)` (or
   `Dim a(3) = (1, 2, 3) As Byte`). The list must have exactly as many values as the array has
   elements, each known at compile time. A global array is filled once at start-up, a local one on
@@ -410,10 +415,22 @@ are plain bit operations and are allowed. A 4-byte Float is not read atomically 
 
 ## 11. Preprocessor
 
+**`#constant`** (NEW, 0.1.108). `#constant Name = expression` evaluates the expression when the file is preprocessed
+(numbers, `True` / `False`, text in quotes, `_clock` and the other predefined names, earlier `#define` / `#constant` names,
+`+ - * / mod << >>`, parentheses) and does two things: `#if` / `#elseif` can use `Name`, and the directive's line becomes
+`Const Name = value` so the program can use it. Like `#define` it is scoped to the file. Defining a name again with
+another value is `E-PP`. `#define Name value` records a value for `#if` only (a value that is not an expression, such as
+`#define LED RB3`, simply defines the name). A name defined without a value is true in a condition. In these expressions
+shifts bind looser than `+ -` as in the language (`1 << 3 + 1` is 16), and `/` divides two whole numbers as integers
+(`7 / 2` is 3; `7.0 / 2` is too, as the preprocessor does not tell `7.0` from `7`) and anything with a fractional part exactly (`7.5 / 2` is 3.75).
+Because the directive's line is replaced by a `Const` declaration, a `#constant` must come where a declaration may: after `Device`, `Clock`,
+`Config` and the `Include` lines. (To compute a value for an `#if` earlier, use `#define Name value`.)
+
 `#define`, `#undefine`, `#constant`, `#variable`, `#ifdef/#ifndef/#else/#endif`,
 `#if/#elseif/#else/#endif`, `#error`, `#warning`, `#option`. `#if` / `#elseif` take numbers, the
 predefined `_clock` and `_device` (read from the program's `Clock` and `Device` lines, so a module can
-test them), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and parentheses; a device name such as
+test them), names given a value by `#define NAME value` or `#constant NAME = expr`, the arithmetic
+`+ - * / mod << >>`, `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and parentheses; a device name such as
 `18F27Q10` is written bare and compared with `=`, `<>` or `in`. Example:
 `#if not(_clock in (1, 2, 4))` ... `#error "..."` ... `#endif`. (SF) **Predefined constants** come from the device description:
 `_device`, `_clock`, `_core`, `_maxram`, `_maxrom`, `_ports`, `_adc`, `_adres`, `_eeprom`,
@@ -517,7 +534,7 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
   arrays and routines.
 * **`BitOf`** is reserved but not specified in 0.1; using it is an error.
 * **Preprocessor subset.** `#define`, `#undefine`, `#ifdef`, `#ifndef`, `#else`, `#endif`, `#error`,
-  `#warning`, `#option`, `#if` and `#elseif` work. `#constant` and `#variable` are reported as
+  `#warning`, `#option`, `#if`, `#elseif` and `#constant` work (0.1.108). `#variable` is reported as
   unsupported (`E-PP-UNSUPPORTED`) until a later milestone. Only `_clock` and `_device` are predefined in `#if`;
   the other predefined names in §11 are not yet available to the preprocessor.
 * **Clock limits.** `Clock` is checked to be a positive number. The upper limit for the device is

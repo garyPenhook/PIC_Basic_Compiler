@@ -1049,3 +1049,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## RAM: `rtcc` frame buffer is 7 bytes (done 2026-11-02, 0.1.107)
 - `lib/rtcc.bas` declared `Dim frame(8)` but only indexes 0..6 (the time and date registers 0x00..0x06) are ever used; it is now `frame(7)`, one byte of RAM less in every program that includes `rtcc`.
+
+## Language: compile-time constants (done 2026-11-02, 0.1.108)
+- `Const T(n) As Type = Table(i, expr)` (`sema::const_table`): one index symbol is given 0..n-1 in turn and the expression is folded by the ordinary constant folder, so earlier constants, `Min`/`Max`/`Abs` and type conversions all work. Stops at the first bad element (one error, not n). The table is an ordinary `ConstArray` in flash.
+- Constant-only `Sin`, `Cos`, `Sqr`, `Pow`, `Log2` (Float) and `Round` (whole-number literal) in `check_intrinsic`; a non-constant argument is `E-CONST-EXPR`, so nothing needs a run-time version.
+- Preprocessor (`pp.rs`): `#constant Name = expr` evaluates at preprocess time, is visible to `#if`, and the line becomes `Const Name = value` (line numbers unchanged). `#define Name value` keeps the value for `#if`. `#if` gained `+ - * / mod << >>`, names, text values. `#variable` stays unsupported.
+- Not done: user-written constant functions (would need an interpreter over routine bodies), `#variable`.
+- Checked: `tests/exec/const_tables.bas`, `tests/exec/pp_constants.bas` in the simulator; 10 new `tests/negative` cases; `pp::tests::constants_and_arithmetic_in_conditions`.
+- Review fixes before commit: `#define LED RB3` (a free-form value) is not an error (the value is only recorded when it evaluates); a bare `#define A` forgets an earlier value; shifts bind looser than `+ -` (they had been tighter, so `1 << 3 + 1` differed from the program's own meaning); `/` of two whole numbers is integer division (the preprocessor cannot tell `7.0` from `7`, documented); `1e-3` and text values holding an apostrophe tokenize; a huge whole float is emitted as `1.0e18`; a bad `Table` element no longer leaves the table undeclared (no cascade of "not declared"). Known and documented: a `#constant` becomes a `Const` line, so it must come after `Device`/`Clock`/`Config`/`Include`.

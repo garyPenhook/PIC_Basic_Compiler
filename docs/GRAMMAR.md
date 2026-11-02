@@ -66,7 +66,8 @@ symbol_decl = "Symbol" IDENT [ "=" ] expr ;       (* alias or constant, decided 
 vis         = "Public" | "Private" ;
 
 const_decl  = "Const" const_item { "," const_item } ;
-const_item  = IDENT [ "(" const_expr ")" ] [ "As" type ] "=" ( expr | "(" expr { "," expr } ")" ) ;
+const_item  = IDENT [ "(" const_expr ")" ] [ "As" type ] "=" ( expr | "(" expr { "," expr } ")" | table ) ;
+table       = "Table" "(" IDENT "," const_expr ")" ;     (* element i = const_expr with IDENT as i; needs a size and a type *)
 
 dim_decl    = { "Static" | "Volatile" } "Dim" dim_item { "," dim_item } [ "As" ( type | alias_target ) [ "=" ( expr | array_init ) ] ] ;
                                                   (* the trailing "=" needs a single scalar item *)

@@ -275,7 +275,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "left", "mid", "right", "str", "val", "pinmode", "pinset", "pinclear", "pinpullup"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "str", "val", "pinmode", "pinset", "pinclear", "pinpullup"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -828,7 +828,14 @@ impl<'p, 'd> Sema<'p, 'd> {
         match &it.init {
             ConstInit::Scalar(e) => {
                 if it.size.is_some() {
-                    self.diags.error("E-CONST", it.name.span, "a constant with a size needs a list of values: `Const T(3) As Byte = (1, 2, 3)`");
+                    if let ExprKind::Designator(d) = &e.kind
+                        && d.head.key() == "table"
+                        && let [Part::Args(args, _)] = d.parts.as_slice()
+                    {
+                        self.const_table(it, vis, declared, args, d.span);
+                        return;
+                    }
+                    self.diags.error("E-CONST", it.name.span, "a constant with a size needs a list of values `(1, 2, 3)` or `Table(i, expression)`");
                     return;
                 }
                 let Some(ei) = self.check_expr(e) else { return };
@@ -895,6 +902,62 @@ impl<'p, 'd> Sema<'p, 'd> {
                 }
             }
         }
+    }
+
+    /// `Const T(n) As Byte = Table(i, expression)`: element `i` (0 to n-1) is the value of the constant
+    /// expression with `i` standing for the index. Everything the constant folder knows can be used,
+    /// including earlier constants, `Min`, `Max`, `Abs` and the constant-only `Sin`, `Cos`, `Sqr`, `Pow`,
+    /// `Log2` and `Round`.
+    fn const_table(&mut self, it: &'p ConstItem, vis: Vis, declared: Option<Ty>, args: &'p [Expr], span: Span) {
+        let Some(elem) = declared else {
+            self.diags.error("E-CONST", it.name.span, "a constant table needs an element type: `Const T(8) As Byte = Table(i, i * i)`");
+            return;
+        };
+        let [var, body] = args else {
+            self.diags.error("E-ARGS", span, "`Table` takes the index name and the expression: `Table(i, i * 2)`");
+            return;
+        };
+        let var_name = match &var.kind {
+            ExprKind::Designator(vd) if vd.parts.is_empty() => &vd.head,
+            _ => {
+                self.diags.error("E-CONST", var.span, "the first argument of `Table` is the name of the index variable");
+                return;
+            }
+        };
+        let Some(n) = it.size.as_ref().and_then(|sz| self.const_int(sz)) else { return };
+        if !(1..=65535).contains(&n) {
+            self.diags.error("E-CONST", it.size.as_ref().map_or(span, |e| e.span), "array size must be 1 to 65535");
+            return;
+        }
+        // The index is a constant that only the expression sees; the same symbol is given each value in turn.
+        self.scopes.push(HashMap::new());
+        let sid = self.add_symbol(&var_name.name, var_name.span, Vis::Private, SymKind::Const { ty: BYTE, val: CVal::Int(0), typed: false });
+        self.scopes.last_mut().unwrap().insert(var_name.key(), sid);
+        let mut vals = Vec::new();
+        let mut failed = false;
+        for i in 0..n {
+            self.a.symbols[sid].kind = SymKind::Const { ty: narrowest(i), val: CVal::Int(i), typed: false };
+            let Some(ei) = self.check_expr(body) else {
+                failed = true;
+                break;
+            };
+            let Some(v) = ei.val.clone() else {
+                self.diags.error("E-CONST-EXPR", body.span, "a `Table` expression must be known at compile time");
+                failed = true;
+                break;
+            };
+            if !self.assign_ok(&elem, &ei, body.span, "element") {
+                failed = true;
+                break;
+            }
+            vals.push(coerce_const(&elem, v));
+        }
+        self.scopes.pop();
+        if failed {
+            // The error is reported once; the table is still declared (zeros) so its uses do not add "not declared" errors.
+            vals.resize(n as usize, coerce_const(&elem, CVal::Int(0)));
+        }
+        self.declare(&it.name, vis, SymKind::ConstArray { elem, vals });
     }
 
     fn resolve_type(&mut self, t: &'p TypeSpec) -> Option<Ty> {
@@ -3082,6 +3145,36 @@ impl<'p, 'd> Sema<'p, 'd> {
                     return Some(if a.lit && b.lit { EI::int_lit(v) } else { EI { val: Some(CVal::Int(v)), ..EI::new(ct) } });
                 }
                 Some(EI::new(ct))
+            }
+            "sin" | "cos" | "sqr" | "log2" | "round" | "pow" => {
+                // Evaluated by the compiler only: the target has no run-time version of these.
+                if !want(self, if name == "pow" { 2 } else { 1 }) {
+                    return None;
+                }
+                let mut xs = Vec::new();
+                for a in args {
+                    let v = self.check_expr(a)?;
+                    match v.val.as_ref().and_then(CVal::as_f64) {
+                        Some(f) if v.ty.is_numeric() => xs.push(f),
+                        _ => return self.err("E-CONST-EXPR", a.span, format!("`{}` is worked out by the compiler, so its argument must be a constant number", d.head.name)),
+                    }
+                }
+                let x = xs[0];
+                let r = match name {
+                    "sin" => x.sin(),
+                    "cos" => x.cos(),
+                    "sqr" if x >= 0.0 => x.sqrt(),
+                    "sqr" => return self.err("E-CONST-RANGE", args[0].span, "`Sqr` of a negative number"),
+                    "log2" if x > 0.0 => x.log2(),
+                    "log2" => return self.err("E-CONST-RANGE", args[0].span, "`Log2` needs a number above zero"),
+                    "round" => x.round(),
+                    _ => x.powf(xs[1]),
+                };
+                if !r.is_finite() || r.abs() > 1e18 {
+                    return self.err("E-CONST-RANGE", span, format!("the value of `{}` is out of range", d.head.name));
+                }
+                // `Round` gives a whole number that adapts to the type it meets, like a literal.
+                Some(if name == "round" { EI::int_lit(r as i128) } else { EI { val: Some(CVal::Float(r)), ..EI::new(Ty::Float) } })
             }
             _ => self.err("E-UNSUPPORTED", span, format!("intrinsic `{name}` is not implemented")),
         }

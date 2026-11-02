@@ -1,15 +1,16 @@
 //! Line-based preprocessor: `#define`, `#undefine`, `#ifdef`, `#ifndef`, `#else`, `#endif`,
 //! `#error`, `#warning`, `#option`, `#if` and `#elseif`. Removed lines are replaced by empty lines
-//! so that line numbers in later diagnostics stay correct. `#constant` and `#variable` are
-//! reported as unsupported for now.
+//! so that line numbers in later diagnostics stay correct. `#constant` defines a value the program
+//! can use as a `Const` and `#if` can test; `#variable` is reported as unsupported for now.
 //!
 //! `#if` / `#elseif` take a compile-time expression over numbers, the predefined `_clock` and
-//! `_device`, the comparisons `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and
+//! `_device`, names given a value by `#define NAME value` or `#constant NAME = expr`, the arithmetic
+//! `+ - * / mod << >>` (precedence as in the language), the comparisons `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and
 //! parentheses. `_clock` and `_device` come from the program's `Clock` and `Device` lines
 //! (`Predef`), so a library module can check them before it declares anything.
 
 use crate::diag::{Diagnostics, Span};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct OptionDirective {
@@ -79,7 +80,7 @@ pub fn scan_header(text: &str) -> Predef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Val {
+pub enum Val {
     Num(f64),
     Str(String),
     Bool(bool),
@@ -89,6 +90,23 @@ struct Eval<'a> {
     toks: Vec<String>,
     pos: usize,
     predef: &'a Predef,
+    /// Names given a value with `#define NAME value` or `#constant`, in lower case.
+    values: &'a HashMap<String, Val>,
+    /// Names defined with no value (`#define NAME`, `-D NAME`): true in a condition.
+    defined: &'a HashSet<String>,
+}
+
+/// The directive text up to a `'` comment; a `'` inside a quoted text value is part of the text.
+fn strip_comment(s: &str) -> &str {
+    let mut in_text = false;
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' => in_text = !in_text,
+            '\'' if !in_text => return &s[..i],
+            _ => {}
+        }
+    }
+    s
 }
 
 fn tokenize_expr(s: &str) -> Result<Vec<String>, String> {
@@ -103,13 +121,35 @@ fn tokenize_expr(s: &str) -> Result<Vec<String>, String> {
             let st = i;
             while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == '_' || b[i] == '.') {
                 i += 1;
+                // `1e-3`, `2.5E+4`: the sign belongs to the exponent of a number.
+                if i < b.len()
+                    && (b[i] == '-' || b[i] == '+')
+                    && b[st].is_ascii_digit()
+                    && (b[i - 1] == 'e' || b[i - 1] == 'E')
+                    && b[st..i - 1].iter().all(|c| c.is_ascii_digit() || *c == '.')
+                    && b.get(i + 1).is_some_and(|c| c.is_ascii_digit())
+                {
+                    i += 1;
+                }
             }
             out.push(b[st..i].iter().collect::<String>().to_ascii_lowercase());
-        } else if "(),=".contains(c) {
+        } else if c == '"' {
+            // A text value, kept as written.
+            let st = i;
+            i += 1;
+            while i < b.len() && b[i] != '"' {
+                i += 1;
+            }
+            if i >= b.len() {
+                return Err("a text value in the expression is missing its closing quote".into());
+            }
+            i += 1;
+            out.push(b[st..i].iter().collect::<String>());
+        } else if "(),=+-*/%".contains(c) {
             out.push(c.to_string());
             i += 1;
         } else if c == '<' || c == '>' {
-            if i + 1 < b.len() && (b[i + 1] == '=' || (c == '<' && b[i + 1] == '>')) {
+            if i + 1 < b.len() && (b[i + 1] == c && c != '=' || b[i + 1] == '=' || (c == '<' && b[i + 1] == '>')) {
                 out.push(format!("{c}{}", b[i + 1]));
                 i += 2;
             } else {
@@ -166,14 +206,14 @@ impl Eval<'_> {
         self.cmp()
     }
     fn cmp(&mut self) -> Result<Val, String> {
-        let l = self.atom()?;
+        let l = self.shift()?;
         if self.eat("in") {
             if !self.eat("(") {
                 return Err("`in` needs a parenthesised list".into());
             }
             let mut hit = false;
             loop {
-                let item = self.atom()?;
+                let item = self.shift()?;
                 hit |= Self::equal(&l, &item)?;
                 if self.eat(")") {
                     break;
@@ -186,7 +226,7 @@ impl Eval<'_> {
         }
         let Some(op) = self.peek().filter(|t| ["=", "<>", "<", ">", "<=", ">="].contains(t)).map(str::to_string) else { return Ok(l) };
         self.pos += 1;
-        let r = self.atom()?;
+        let r = self.shift()?;
         match (&l, &r, op.as_str()) {
             (Val::Num(a), Val::Num(b), _) => Ok(Val::Bool(match op.as_str() {
                 "=" => (a - b).abs() < 1e-9,
@@ -200,6 +240,62 @@ impl Eval<'_> {
             (_, _, "<>") => Ok(Val::Bool(!Self::equal(&l, &r)?)),
             _ => Err("device names can only be compared with `=`, `<>` or `in`".into()),
         }
+    }
+    fn number(v: Val, what: &str) -> Result<f64, String> {
+        match v {
+            Val::Num(n) => Ok(n),
+            _ => Err(format!("`{what}` works on numbers")),
+        }
+    }
+    /// `a << b >> c`: below `+ -`, as in the language, so `1 << 3 + 1` is `1 << 4`.
+    fn shift(&mut self) -> Result<Val, String> {
+        let mut v = self.sum()?;
+        while let Some(op) = self.peek().filter(|t| *t == "<<" || *t == ">>").map(str::to_string) {
+            self.pos += 1;
+            let r = self.sum()?;
+            let (a, b) = (Self::number(v, &op)?, Self::number(r, &op)?);
+            if a.fract() != 0.0 || b.fract() != 0.0 || !(0.0..=62.0).contains(&b) || a.abs() > 9e15 {
+                return Err(format!("`{op}` needs whole numbers and a shift of 0 to 62"));
+            }
+            v = Val::Num(if op == "<<" { ((a as i64) << (b as u32)) as f64 } else { ((a as i64) >> (b as u32)) as f64 });
+        }
+        Ok(v)
+    }
+    /// `a + b - c ...`
+    fn sum(&mut self) -> Result<Val, String> {
+        let mut v = self.term()?;
+        while let Some(op) = self.peek().filter(|t| *t == "+" || *t == "-").map(str::to_string) {
+            self.pos += 1;
+            let r = self.term()?;
+            let (a, b) = (Self::number(v, &op)?, Self::number(r, &op)?);
+            v = Val::Num(if op == "+" { a + b } else { a - b });
+        }
+        Ok(v)
+    }
+    /// `a * b / c mod d ...`
+    fn term(&mut self) -> Result<Val, String> {
+        let mut v = self.unary()?;
+        while let Some(op) = self.peek().filter(|t| ["*", "/", "%", "mod"].contains(t)).map(str::to_string) {
+            self.pos += 1;
+            let r = self.unary()?;
+            let (a, b) = (Self::number(v, &op)?, Self::number(r, &op)?);
+            v = Val::Num(match op.as_str() {
+                "*" => a * b,
+                "/" | "%" | "mod" if b == 0.0 => return Err("division by zero in the expression".into()),
+                // Whole numbers divide as in the language (`7 / 2` is 3); anything fractional divides exactly.
+                "/" if a.fract() == 0.0 && b.fract() == 0.0 => (a / b).trunc(),
+                "/" => a / b,
+                _ => a % b,
+            });
+        }
+        Ok(v)
+    }
+    fn unary(&mut self) -> Result<Val, String> {
+        if self.eat("-") {
+            let v = self.unary()?;
+            return Ok(Val::Num(-Self::number(v, "-")?));
+        }
+        self.atom()
     }
     fn equal(a: &Val, b: &Val) -> Result<bool, String> {
         match (a, b) {
@@ -247,6 +343,9 @@ impl Eval<'_> {
                 .as_ref()
                 .map(|d| Val::Str(d.to_ascii_lowercase()))
                 .ok_or_else(|| "_device is used but the program has no `Device = name` line".into()),
+            _ if t.starts_with('"') => Ok(Val::Str(t[1..t.len() - 1].to_string())),
+            _ if self.values.contains_key(&t) => Ok(self.values[&t].clone()),
+            _ if self.defined.contains(&t) => Ok(Val::Bool(true)),
             _ => {
                 let numeric = t.starts_with(|c: char| c.is_ascii_digit() || c == '.');
                 if let (true, Ok(n)) = (numeric, t.parse::<f64>()) {
@@ -257,7 +356,7 @@ impl Eval<'_> {
                 } else if t.starts_with("pic18") {
                     Ok(Val::Str(t[3..].to_string()))
                 } else {
-                    Err(format!("`{t}` is not a number or a predefined constant (_clock, _device, _ram, _eeprom, _has, _i2chw)"))
+                    Err(format!("`{t}` is not a number, a name given a value by #define or #constant, or a predefined constant (_clock, _device, _ram, _eeprom, _has, _i2chw)"))
                 }
             }
         }
@@ -265,17 +364,35 @@ impl Eval<'_> {
 }
 
 /// Evaluates the argument of `#if` / `#elseif`.
-fn eval_condition(arg: &str, predef: &Predef) -> Result<bool, String> {
+fn eval_condition(arg: &str, predef: &Predef, values: &HashMap<String, Val>, defined: &HashSet<String>) -> Result<bool, String> {
+    Eval::truth(&eval_value(arg, predef, values, defined)?)
+}
+
+/// Evaluates an expression to a value: the argument of `#if`, `#constant` or `#define NAME value`.
+fn eval_value(arg: &str, predef: &Predef, values: &HashMap<String, Val>, defined: &HashSet<String>) -> Result<Val, String> {
     let toks = tokenize_expr(arg)?;
     if toks.is_empty() {
-        return Err("#if needs an expression".into());
+        return Err("an expression is needed here".into());
     }
-    let mut e = Eval { toks, pos: 0, predef };
+    let mut e = Eval { toks, pos: 0, predef, values, defined };
     let v = e.or()?;
     if e.pos != e.toks.len() {
-        return Err(format!("unexpected `{}` in the #if expression", e.toks[e.pos]));
+        return Err(format!("unexpected `{}` in the expression", e.toks[e.pos]));
     }
-    Eval::truth(&v)
+    Ok(v)
+}
+
+/// The text of a value as a `Const` initialiser: a whole number, a decimal number, `True` / `False` or a quoted text.
+fn const_literal(v: &Val) -> Result<String, String> {
+    match v {
+        Val::Num(n) if n.fract() == 0.0 && n.abs() < 9e15 => Ok(format!("{}", *n as i64)),
+        // A huge whole value stays a Float: `1.0e18`, not an integer no type can hold.
+        Val::Num(n) if n.fract() == 0.0 => Ok(format!("{n:.1e}")),
+        Val::Num(n) => Ok(format!("{n}")),
+        Val::Bool(b) => Ok(if *b { "True" } else { "False" }.into()),
+        Val::Str(t) if !t.contains('"') => Ok(format!("\"{t}\"")),
+        Val::Str(_) => Err("a text value cannot contain a double quote".into()),
+    }
 }
 
 struct Cond {
@@ -341,6 +458,8 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
     let mut out = String::with_capacity(src.len());
     let mut options = Vec::new();
     let mut stack: Vec<Cond> = Vec::new();
+    // Values of `#constant NAME = expr` and `#define NAME value`, by lower-case name. File-scoped like `#define`.
+    let mut values: HashMap<String, Val> = HashMap::new();
     let mut in_asm = false;
     // Open block comments, innermost last: b'(' for `(*`, b'{' for `{`.
     let mut blocks: Vec<u8> = Vec::new();
@@ -371,7 +490,7 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
             out.push('\n');
             continue;
         };
-        let rest = rest.split('\'').next().unwrap_or("").trim_end();
+        let rest = strip_comment(rest).trim_end();
         let (name, arg) = match rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
             Some(p) => (&rest[..p], rest[p..].trim()),
             None => (rest, ""),
@@ -402,7 +521,7 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
             }
             "if" => {
                 let cond = active
-                    && eval_condition(arg, predef).unwrap_or_else(|m| {
+                    && eval_condition(arg, predef, &values, defined).unwrap_or_else(|m| {
                         diags.error("E-PP", span, m);
                         false
                     });
@@ -412,7 +531,7 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
                 Some(c) if !c.seen_else => {
                     let cond = c.parent
                         && !c.taken
-                        && eval_condition(arg, predef).unwrap_or_else(|m| {
+                        && eval_condition(arg, predef, &values, defined).unwrap_or_else(|m| {
                             diags.error("E-PP", span, m);
                             false
                         });
@@ -422,9 +541,34 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
                 Some(_) => diags.error("E-PP", span, "#elseif after #else"),
                 None => diags.error("E-PP", span, "#elseif without #if"),
             },
-            "constant" | "variable" => {
+            "variable" => {
                 if active {
-                    diags.error("E-PP-UNSUPPORTED", span, format!("#{lname} is not implemented yet (needs the compile-time expression evaluator)"));
+                    diags.error("E-PP-UNSUPPORTED", span, "#variable is not implemented; use #constant NAME = expression");
+                }
+            }
+            "constant" => {
+                // `#constant NAME = expr`: the value is known to `#if` and the line becomes `Const NAME = value`.
+                if active {
+                    let (n, expr) = arg.split_once('=').map_or((arg, ""), |(n, e)| (n.trim(), e.trim()));
+                    let valid = !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !n.starts_with(|c: char| c.is_ascii_digit());
+                    if !valid || expr.is_empty() {
+                        diags.error("E-PP", span, "#constant needs the form `#constant Name = expression`");
+                    } else {
+                        let lname = n.to_ascii_lowercase();
+                        match eval_value(expr, predef, &values, defined).and_then(|v| const_literal(&v).map(|lit| (v, lit))) {
+                            Ok((v, lit)) => {
+                                if values.get(&lname).is_some_and(|old| *old != v) {
+                                    diags.error("E-PP", span, format!("#constant `{n}` is already defined with another value"));
+                                } else {
+                                    values.insert(lname.clone(), v);
+                                    defined.insert(lname);
+                                    out.push_str(&format!("Const {n} = {lit}\n"));
+                                    continue;
+                                }
+                            }
+                            Err(m) => diags.error("E-PP", span, m),
+                        }
+                    }
                 }
             }
             _ if !active => {}
@@ -432,11 +576,21 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
                 if key.is_empty() {
                     diags.error("E-PP", span, "#define needs a name");
                 } else {
+                    // `#define NAME value`: the value is an expression `#if` can use.
+                    // Anything else (`#define LED RB3`) is not an error: the name is just defined, as before.
+                    let value = arg.trim_start().get(key.len()..).unwrap_or("").trim();
+                    values.remove(&key);
+                    if !value.is_empty()
+                        && let Ok(v) = eval_value(value, predef, &values, defined)
+                    {
+                        values.insert(key.clone(), v);
+                    }
                     defined.insert(key);
                 }
             }
             "undefine" => {
                 defined.remove(&key);
+                values.remove(&key);
             }
             "error" => diags.error("E-PP-ERROR", span, format!("#error {arg}")),
             "warning" => diags.warn("W-PP-WARNING", span, format!("#warning {arg}")),
@@ -497,5 +651,40 @@ mod tests {
         let (t, errs) = run(src, &on);
         assert_eq!(errs, 0);
         assert!(t.contains('A') && !t.contains('B') && !t.contains('C'), "{t:?}");
+    }
+
+    #[test]
+    fn constants_and_arithmetic_in_conditions() {
+        let p = Predef { clock: Some(16.0), ..Predef::default() };
+        let (t, errs) = run("#constant W = 8\n#constant S = W * 5 - 2 * (3 + 1)\n#if S = 32 and W << 1 = 16 and 17 mod 5 = 2 and -W < 0\nYES\n#else\nNO\n#endif\n", &p);
+        assert_eq!(errs, 0, "{t:?}");
+        assert!(t.starts_with("Const W = 8\nConst S = 32\n"), "{t:?}");
+        assert!(t.contains("YES") && !t.contains("NO"), "{t:?}");
+        // text and truth values, a #define value, and #undefine forgetting it
+        let (t, errs) = run("#constant Name = \"abc\"\n#constant Ok = _clock > 8\n#define K 3\n#if Name = \"abc\" and Ok and K = 3\nYES\n#endif\n#undefine K\n#if K\nBAD\n#endif\n", &p);
+        assert_eq!(errs, 1, "{t:?}");
+        assert!(t.contains("Const Name = \"abc\"") && t.contains("Const Ok = True") && t.contains("YES") && !t.contains("BAD"), "{t:?}");
+        // a constant in an inactive block is not defined
+        let (t, errs) = run("#if false\n#constant X = 1\n#endif\n#ifdef x\nBAD\n#endif\n", &p);
+        assert_eq!(errs, 0);
+        assert!(!t.contains("BAD") && !t.contains("Const"), "{t:?}");
+    }
+
+    #[test]
+    fn precedence_division_exponents_and_free_form_defines() {
+        let p = Predef::default();
+        // shifts bind looser than + - (as in the language); whole numbers divide as integers
+        let (t, errs) = run("#constant A = 1 << 3 + 1\n#constant B = 7 / 2\n#constant C = 7.5 / 2\n#constant D = 1e-3 * 1000\n#constant E = 1e17 * 10\n", &p);
+        assert_eq!(errs, 0, "{t:?}");
+        assert!(t.contains("Const A = 16") && t.contains("Const B = 3") && t.contains("Const C = 3.75") && t.contains("Const D = 1\n"), "{t:?}");
+        assert!(t.contains("Const E = 1.0e18"), "{t:?}");
+        // a text value may hold an apostrophe; a trailing comment is still removed
+        let (t, errs) = run("#constant S = \"it's\" 'comment\n", &p);
+        assert_eq!(errs, 0, "{t:?}");
+        assert!(t.contains("Const S = \"it's\""), "{t:?}");
+        // a free-form #define value is not an error, and a bare #define forgets an earlier value
+        let (t, errs) = run("#define LED RB3\n#define Msg hello world\n#define A 3\n#define A\n#if A = 3\nBAD\n#endif\n#ifdef led\nYES\n#endif\n", &p);
+        assert_eq!(errs, 1, "only the comparison of the valueless A: {t:?}");
+        assert!(t.contains("YES") && !t.contains("BAD"), "{t:?}");
     }
 }
