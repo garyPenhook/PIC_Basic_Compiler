@@ -75,7 +75,8 @@ array_init  = "(" const_expr "," const_expr { "," const_expr } ")" ;   (* one va
 alias_target= designator ;                        (* alias form: Dim LED As PORTB.0 *)
 
 struct_decl = "Structure" IDENT EOL { field EOL } "End" "Structure" ;
-field       = IDENT [ "(" const_expr ")" ] "As" ( type | designator ) ;
+field       = IDENT [ "(" const_expr ")" ] "As" ( type | designator | "Bits" "(" const_expr ")" ) ;
+                                                  (* Bits(n): an n-bit field, n = 1 to 8, packed into a shared byte *)
 
 type_decl   = "Type" IDENT "=" "Event" "(" [ event_params ] ")" ;
 event_params= event_param { "," event_param } ;

@@ -23,6 +23,10 @@ pub enum Ty {
     Array(Box<Ty>, u32),
     /// No value: the result of a subroutine call.
     Void,
+    /// A `Bits(n)` structure field seen by the lowering pass: `n` bits of a byte, starting at
+    /// bit `shift`. It reads as an unsigned byte; only the read and write paths know how to
+    /// reach it, so every other use stops at "not supported" rather than touching the whole byte.
+    BitField { shift: u8, width: u8 },
 }
 
 pub const BYTE: Ty = Ty::Int(8, false);
@@ -69,6 +73,7 @@ impl Ty {
             Ty::EventVar(_) | Ty::EventAny(_) => 1,
             Ty::Array(e, n) => e.size_bytes(struct_size) * n,
             Ty::Void => 0,
+            Ty::BitField { .. } => 1,
         }
     }
     /// Value range of an integer type.
@@ -102,6 +107,7 @@ impl fmt::Display for Ty {
             Ty::EventAny(_) => write!(f, "event handler"),
             Ty::Array(e, n) => write!(f, "array of {n} {e}"),
             Ty::Void => write!(f, "no value"),
+            Ty::BitField { width, .. } => write!(f, "{width}-bit field"),
         }
     }
 }

@@ -58,7 +58,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 ## What works today
 
 **Language**
-* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), `Float` (IEEE-754 binary32), strings, arrays (one or more dimensions, with initialisers and program-memory `Const` tables, also of strings), structures (with initialisers), overloaded and `Reentrant` routines
+* Types: Boolean, Bit, Char, 8/16/32-bit signed and unsigned integers (also spelled `SByte`, `SWord`, `Long`, `Dword` for the signed 8, signed 16, signed 32 and unsigned 32-bit types), `Float` (IEEE-754 binary32), strings, arrays (one or more dimensions, with initialisers and program-memory `Const` tables, also of strings), structures (with initialisers and `Bits(n)` bit-fields), overloaded and `Reentrant` routines
   and unions, constants.
 * Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
   short-circuit conditions.

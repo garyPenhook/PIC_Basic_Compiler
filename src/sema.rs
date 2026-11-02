@@ -40,8 +40,11 @@ impl Default for Options {
 pub struct FieldInfo {
     pub name: String,
     pub ty: Ty,
-    /// A union member that shares another field's storage.
+    /// A union member that shares another field's storage. A bit-field is also marked, as it takes
+    /// no storage of its own beyond the shared byte and cannot be given an initial value.
     pub alias: bool,
+    /// `Name As Bits(n)`: the byte offset in the structure, the shift and the width in bits.
+    pub bf: Option<(u32, u8, u8)>,
 }
 
 #[derive(Clone, Debug)]
@@ -192,11 +195,13 @@ struct EI {
     place: Place,
     call: bool,
     in_array: bool,
+    /// Width of the `Bits(n)` structure field this names (0 for anything else).
+    bits: u8,
 }
 
 impl EI {
     fn new(ty: Ty) -> EI {
-        EI { ty, val: None, lit: false, place: Place::None, call: false, in_array: false }
+        EI { ty, val: None, lit: false, place: Place::None, call: false, in_array: false, bits: 0 }
     }
     fn place(ty: Ty, place: Place) -> EI {
         EI { place, ..EI::new(ty) }
@@ -1174,10 +1179,45 @@ impl<'p, 'd> Sema<'p, 'd> {
         self.scopes.push(HashMap::new());
         let mut fields: Vec<FieldInfo> = Vec::new();
         let mut size = 0u32;
+        // The byte that bit-fields are being packed into: its offset and the bits used so far.
+        let mut bf_byte: Option<(u32, u8)> = None;
         for f in &sd.fields {
             let key = f.name.key();
             if fields.iter().any(|x| x.name.eq_ignore_ascii_case(&key)) {
                 self.diags.error("E-REDECL", f.name.span, format!("field `{}` is declared twice", f.name.name));
+                continue;
+            }
+            if let AsClause::Designator(d) = &f.as_clause
+                && d.head.key() == "bits"
+                && let [Part::Args(args, _)] = d.parts.as_slice()
+            {
+                if f.size.is_some() {
+                    self.diags.error("E-BITFIELD", f.name.span, "a bit-field cannot be an array");
+                    continue;
+                }
+                let [w] = args.as_slice() else {
+                    self.diags.error("E-BITFIELD", d.span, "`Bits(n)` takes one width");
+                    continue;
+                };
+                let Some(n) = self.const_int(w) else { continue };
+                if !(1..=8).contains(&n) {
+                    self.diags.error("E-BITFIELD", w.span, "a bit-field is 1 to 8 bits wide");
+                    continue;
+                }
+                let n = n as u8;
+                // Fields are packed from bit 0 and never straddle a byte.
+                let (off, shift) = match bf_byte {
+                    Some((off, used)) if used + n <= 8 => (off, used),
+                    _ => {
+                        size += 1;
+                        (size - 1, 0)
+                    }
+                };
+                bf_byte = Some((off, shift + n));
+                let ty = if n == 1 { Ty::Bit } else { BYTE };
+                let sid = self.add_symbol(&f.name.name, f.name.span, Vis::Private, SymKind::Var { ty: ty.clone() });
+                self.scopes.last_mut().unwrap().insert(key, sid);
+                fields.push(FieldInfo { name: f.name.name.clone(), ty, alias: true, bf: Some((off, shift, n)) });
                 continue;
             }
             let (ty, alias) = match &f.as_clause {
@@ -1215,10 +1255,11 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
             if !alias {
                 size += self.size_of(&ty);
+                bf_byte = None;
             }
             let sid = self.add_symbol(&f.name.name, f.name.span, Vis::Private, SymKind::Var { ty: ty.clone() });
             self.scopes.last_mut().unwrap().insert(key, sid);
-            fields.push(FieldInfo { name: f.name.name.clone(), ty, alias });
+            fields.push(FieldInfo { name: f.name.name.clone(), ty, alias, bf: None });
         }
         self.scopes.pop();
         if fields.is_empty() && sd.fields.is_empty() {
@@ -1693,6 +1734,14 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
         }
         self.note_modified(target);
+        if let Some(v) = &val
+            && tgt.bits > 1
+            && let Some(CVal::Int(c)) = &v.val
+            && !(0..1i128 << tgt.bits).contains(c)
+        {
+            self.diags.error("E-CONST-RANGE", value.span, format!("{c} does not fit a {}-bit field (0 to {})", tgt.bits, (1u32 << tgt.bits) - 1));
+            return;
+        }
         if let Some(v) = val
             && self.assign_ok(&tgt.ty, &v, value.span, "assignment")
         {
@@ -2389,7 +2438,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             }
         }
         Some(match sym.kind {
-            SymKind::Const { ty, val, typed } => Cur::Val(EI { ty, val: Some(val), lit: !typed, place: Place::ReadOnly, call: false, in_array: false }),
+            SymKind::Const { ty, val, typed } => Cur::Val(EI { ty, val: Some(val), lit: !typed, place: Place::ReadOnly, call: false, in_array: false, bits: 0 }),
             SymKind::ConstArray { elem, vals } => Cur::Val(EI::place(Ty::Array(Box::new(elem), vals.len() as u32), Place::ReadOnly)),
             SymKind::Var { ty } | SymKind::Alias { ty } => Cur::Val(EI::place(ty, Place::Var)),
             SymKind::Param { ty, mode } => Cur::Val(EI::place(ty, if mode == ParamMode::ByRefConst { Place::ReadOnly } else { Place::Var })),
@@ -2475,7 +2524,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                         match fields.iter().find(|f| f.name.eq_ignore_ascii_case(&n.name)) {
                             Some(f) => {
                                 let ty = f.ty.clone();
-                                Cur::Val(EI { ty, place: v.place, ..EI::new(Ty::Void) })
+                                Cur::Val(EI { ty, place: v.place, bits: f.bf.map_or(0, |b| b.2), ..EI::new(Ty::Void) })
                             }
                             None => return self.err("E-NOMEMBER", n.span, format!("the structure has no field `{}`", n.name)),
                         }

@@ -133,6 +133,30 @@ End Structure
 ```
 (SF.) `Clear(x)` zeroes a variable, array or structure.
 
+**Bit-fields** (NEW). `Name As Bits(n)`, with `n` from 1 to 8, is a field of `n` bits:
+```
+Structure TCtl
+    Mode  As Bits(3)      ' byte 0, bits 0..2
+    Run   As Bits(1)      ' byte 0, bit 3
+    Gain  As Bits(4)      ' byte 0, bits 4..7
+    Level As Bits(5)      ' byte 1, bits 0..4
+End Structure
+```
+Consecutive bit-fields are packed from bit 0 upward and never straddle a byte: one that does not fit in
+what is left of the current byte starts the next byte, and an ordinary field ends the run. So `TCtl` above
+is 2 bytes. A `Bits(1)` field is a `Bit`; wider ones read as a `Byte` (0 to 2^n - 1).
+* A bit-field can be read anywhere a `Byte` can, assigned, and used with `Inc`, `Dec` (a carry or borrow out of
+  the field is dropped, not added to the neighbour) and `Clear`. A constant that does not fit is `E-CONST-RANGE`;
+  a run-time value has its high bits dropped. `x.n` is bit `n` of the field, counted from the field's own bit 0.
+  It also works through an array index (`a(i).Mode`) and a `ByRef` structure parameter.
+* A write is a read-modify-write of the byte, so, as for the elements of a packed bit array, a program with an
+  interrupt handler runs it with the global interrupt enable off (put back only if it was set), and other
+  bit-fields of the byte can be written from a handler. A `Bits(1)` field is written with a single `bsf`/`bcf`.
+* A modifier on a bit-field (`s.Mode.Byte0`, `.AsWord`) works on the whole byte that holds it: `s.Mode.Byte0 = 0`
+  clears every field in that byte at once.
+* A bit-field takes part in no other use: it cannot be passed `ByRef`, have its address taken, be a `For` variable
+  or be given an initial value (a structure initialiser skips it; the structure starts as zero like other globals).
+
 ### 3.4 Aliases and modifiers
 `Dim Name As Existing[.modifier]` creates an **alias**: no new storage. Modifiers select a part:
 `.n` / `.Bits(n)` / `.Booleans(n)` (a bit), `.Byte0 … .Byte3` / `.Bytes(n)`, `.Word0/.Word1` /

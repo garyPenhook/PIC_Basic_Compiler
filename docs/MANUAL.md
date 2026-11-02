@@ -578,7 +578,7 @@ Clear(p)
 Fields are reached with `.`. `Clear(x)` zeroes a structure. A structure can be given initial
 values in field order, `Dim p As TPoint = (3, 4)`. The list is **flat**, as for a multi-dimensional array: one
 constant for each number, `Boolean`, `Bit`, `Char`, `Float` or `String` in the structure, so an array field takes one
-value per element and a nested structure one per field, in order. Union members (alias fields) take none.
+value per element and a nested structure one per field, in order. Union members (alias fields) and bit-fields take none.
 
 ```basic
 Structure TBox
@@ -590,6 +590,45 @@ End Structure
 Dim b As TBox = (1,  10, 20, 30,  7, 300,  "hi")     ' id, tab(0..2), at.X, at.Y, name
 Dim pts(2) As TPoint = (1, 2, 3, 4)                 ' an array of structures: pts(0) = (1, 2), pts(1) = (3, 4)
 ```
+
+### Bit-fields
+
+`Name As Bits(n)`, with `n` from 1 to 8, declares a field of `n` bits. Consecutive bit-fields are packed
+into shared bytes, from bit 0 upward, and never straddle a byte.
+
+```basic
+Structure TCtl
+    Mode  As Bits(3)             ' byte 0, bits 0..2
+    Run   As Bits(1)             ' byte 0, bit 3
+    Gain  As Bits(4)             ' byte 0, bits 4..7
+    Level As Bits(5)             ' byte 1, bits 0..4 (Gain filled byte 0, so a new byte starts)
+    Count As Byte                ' an ordinary field ends the run of bit-fields
+End Structure                    ' 3 bytes
+
+Dim c As TCtl
+Dim ctl(4) As TCtl
+c.Mode = 5
+c.Gain = c.Mode + 2
+Inc(c.Level)                     ' wraps inside the field: 31 + 1 = 0, the neighbours are untouched
+ctl(i).Run = 1
+If c.Run = 1 Then
+    c.Mode.Byte0 = 0             ' a modifier works on the whole byte: clears Mode, Run and Gain
+End If
+```
+
+* A `Bits(1)` field is a `Bit`; a wider one reads as a `Byte` holding 0 to 2^n - 1.
+* A bit-field can be read like any `Byte`, assigned, and used with `Inc`, `Dec` and `Clear`. A carry or borrow out
+  of the field is dropped, never added to the next field. `c.Mode.1` is bit 1 of the field, counted from the field's
+  own bit 0. It works on array elements (`ctl(i).Mode`) and through a `ByRef` structure parameter.
+* A constant that does not fit the field is the error `E-CONST-RANGE`; a run-time value has its high bits dropped.
+  A width outside 1 to 8, or an array of bit-fields, is `E-BITFIELD`.
+* **Cost.** Reading is a shift and a mask, and writing a read-modify-write of the byte (a `Bits(1)` field, like any
+  `Bit`, is a single `BSF`/`BCF`). Because a write reads and rewrites bits that belong to other fields, a program
+  that has an interrupt handler clears the global interrupt enable around it (and restores it only if it was set),
+  so a handler can write another field of the same byte safely.
+* A bit-field cannot be passed `ByRef`, have its address taken with `@`, be a `For` variable or be given an initial
+  value: a structure initialiser skips it and the field starts at 0. These uses are compile errors rather than
+  silently acting on the whole byte.
 
 ## Float
 
