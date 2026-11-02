@@ -2880,6 +2880,43 @@ impl<'p> Gen<'p> {
                 }
             }
         }
+        // `x > 0` and `x <= 0` (`0 < x`, `0 >= x`) on a signed multi-byte variable: the sign bit decides a negative
+        // value, and an OR of the bytes in W tells zero from positive.
+        if signed && n >= 2 && self.tgt.opt {
+            let zero = |g: &Self, e: &Ex| matches!(g.simple(e), Some(Src::Imm(0)));
+            let pos = match kind {
+                CmpKind::Gt if zero(self, r) => Some((l, true)),
+                CmpKind::Lt if zero(self, l) => Some((r, true)),
+                CmpKind::Le if zero(self, r) => Some((l, false)),
+                CmpKind::Ge if zero(self, l) => Some((r, false)),
+                _ => None,
+            };
+            if let Some((x, gt)) = pos
+                && let Some(Src::Mem(m, real)) = self.simple(x)
+                && real == n
+            {
+                if gt {
+                    let fall = self.fresh();
+                    self.fbit("btfsc", &m.at(n - 1), 7);
+                    self.br(Cc::Always, &fall);
+                    self.fop("movf", &m, "w");
+                    for i in 1..n {
+                        self.fop("iorwf", &m.at(i), "w");
+                    }
+                    self.br(Cc::Nz, target);
+                    self.label(&fall);
+                } else {
+                    self.fbit("btfsc", &m.at(n - 1), 7);
+                    self.br(Cc::Always, target);
+                    self.fop("movf", &m, "w");
+                    for i in 1..n {
+                        self.fop("iorwf", &m.at(i), "w");
+                    }
+                    self.br(Cc::Z, target);
+                }
+                return;
+            }
+        }
         // An unsigned 16-bit compare against a multiple of 256 (`x >= 256`, `x > 255`, `x < 512`, `x <= 511`) only
         // looks at the high byte.
         if !signed && n == 2 && self.tgt.opt {
