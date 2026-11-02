@@ -3293,6 +3293,45 @@ impl<'p> Gen<'p> {
                 return;
             }
         }
+        // `x = Abs(x)` and `y = Abs(x)`: negate the destination itself when its sign bit is set (no round trip through
+        // `__A`). A destination that only partly overlaps the source takes the general path.
+        if self.tgt.opt && !dst.reg && let ExK::Abs(x) = &e.k
+            && x.w == e.w
+            && !x.has_call()
+            && let Some(Src::Mem(sm, real)) = self.simple(x)
+            && real == n
+        {
+            let inplace = sm.sym == dst.sym && sm.addr == dst.addr;
+            let apart = (0..n).all(|i| (0..n).all(|j| !same_mem(&dst.at(i), &sm.at(j))));
+            if inplace || (apart && n > 1) {
+                if !inplace {
+                    for i in 0..n {
+                        self.movff(&dst.at(i), &sm.at(i));
+                    }
+                }
+                if n == 1 {
+                    self.fbit("btfsc", &dst, 7);
+                    self.fo("negf", &dst);
+                } else {
+                    let end = self.fresh();
+                    self.fbit("btfss", &dst.at(n - 1), 7);
+                    self.br(Cc::Always, &end);
+                    for i in (1..n).rev() {
+                        self.fop("comf", &dst.at(i), "f");
+                    }
+                    self.fo("negf", &dst);
+                    self.ins("movlw 0");
+                    for i in 1..n {
+                        self.fop("addwfc", &dst.at(i), "f");
+                    }
+                    self.label(&end);
+                }
+                return;
+            }
+        }
+        if self.min_max_store(&dst, e, n) {
+            return;
+        }
         self.gen_val(e);
         if n == 1 {
             self.fo("movwf", &dst);
@@ -3302,6 +3341,64 @@ impl<'p> Gen<'p> {
                 self.put_byte(&dst.at(i), &Bs::Mem(a));
             }
         }
+    }
+
+    /// `x = Max(x, o)`, `x = Min(o, x)` and `d = Max(a, b)` for operands that need no code: the winner is copied
+    /// straight into the destination (a conditional copy when it is one of the operands), not through `__A`.
+    /// Returns false, emitting nothing, when the operands do not fit that shape.
+    fn min_max_store(&mut self, dst: &Mem, e: &Ex, n: u32) -> bool {
+        let ExK::Bin(op @ (BinKind::Min | BinKind::Max), l, r) = &e.k else { return false };
+        if !self.tgt.opt || dst.reg || (n == 1 && !e.signed) || l.w != e.w || r.w != e.w || l.has_call() || r.has_call() {
+            return false;
+        }
+        let (Some(ls), Some(rs)) = (self.simple(l), self.simple(r)) else { return false };
+        let volatile = |g: &Self, s: &Src| matches!(s, Src::Mem(m, _) if m.obj.is_some_and(|o| o < g.p.vars.len() && g.p.vars[o].volatile));
+        if volatile(self, &ls) || volatile(self, &rs) {
+            return false;
+        }
+        let is_dst = |s: &Src| matches!(s, Src::Mem(m, real) if *real == n && m.sym == dst.sym && m.addr == dst.addr);
+        let apart = |s: &Src| match s {
+            Src::Mem(m, real) => (0..n).all(|i| (0..(*real).min(n)).all(|j| !same_mem(&dst.at(i), &m.at(j)))),
+            _ => true,
+        };
+        let signed = e.signed;
+        let max = *op == BinKind::Max;
+        let (dl, dr) = (is_dst(&ls), is_dst(&rs));
+        if dl && dr {
+            return false;
+        }
+        if dl || dr {
+            // `a` is the destination, `o` the other operand.
+            let o = if dl { rs } else { ls };
+            if !apart(&o) {
+                return false;
+            }
+            let a = Src::Mem(dst.clone(), n);
+            let end = self.fresh();
+            // Skip the copy when the destination already wins: `a >= o` for Max, `o >= a` for Min.
+            let (x, y) = if max { (a, o.clone()) } else { (o.clone(), a) };
+            self.ord_core(false, signed, n, x, Some(y), None, &end);
+            for i in 0..n {
+                self.put_byte(&dst.at(i), &o.byte(i));
+            }
+            self.label(&end);
+            return true;
+        }
+        if !apart(&ls) || !apart(&rs) {
+            return false;
+        }
+        // Neither operand is the destination: `d = b`, then `d = a` unless `b` wins.
+        let end = self.fresh();
+        for i in 0..n {
+            self.put_byte(&dst.at(i), &rs.byte(i));
+        }
+        let (x, y) = if max { (ls.clone(), rs) } else { (rs, ls.clone()) };
+        self.ord_core(true, signed, n, x, Some(y), None, &end);
+        for i in 0..n {
+            self.put_byte(&dst.at(i), &ls.byte(i));
+        }
+        self.label(&end);
+        true
     }
 
     /// `dst = l op r` for two simple operands, each byte routed through W (`movf l,w / addwf r,w / movwf dst`)
