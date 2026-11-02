@@ -43,7 +43,7 @@ Include "i2c"
 ' and returns 6 if it does not. The 12-hour alarm and minute/hour alarm errata (issue 2: spurious minute or hour
 ' match with a slowing trim, TRIMVAL > 0 and SIGN = 0) are not worked around: use RtccTrim only with the second
 ' or date masks, or recheck the time in the alarm handler.
-Dim frame(8) As Byte
+Dim frame(7) As Byte
 
 Function ToBcd(ByVal v As Byte) As Byte
     Result = ((v / 10) << 4) Or (v Mod 10)

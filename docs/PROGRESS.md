@@ -1046,3 +1046,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Constant out of range is `E-CONST-RANGE` in sema (`EI::bits`); a bad width or an array is `E-BITFIELD`.
 - Checked: `tests/exec/bitfield.bas` in the simulator on 18F27Q10, 18F16Q41, 16F17126, 16F13113, 16F18313, 16F15213; four `tests/negative/bitfield_*.bas`; ISR guard seen in the generated code.
 - Review fixes before commit: a call in the assigned value ran *after* the byte was loaded, so a call that changed another field of the same byte was undone (`bit_store` now holds a value containing a call in a hidden variable in every program, not only those with an interrupt handler); `Inc`/`Dec` of a field read it unmasked (the store masks, so the first `ANDLW` was wasted); a `Bits(8)` field is a plain byte store with no interrupt guard. `tests/exec/bitfield.bas` now covers all three, a local structure and a `Bits(8)` field.
+
+## RAM: `rtcc` frame buffer is 7 bytes (done 2026-11-02, 0.1.107)
+- `lib/rtcc.bas` declared `Dim frame(8)` but only indexes 0..6 (the time and date registers 0x00..0x06) are ever used; it is now `frame(7)`, one byte of RAM less in every program that includes `rtcc`.
