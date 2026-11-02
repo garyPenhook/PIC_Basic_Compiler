@@ -1071,3 +1071,12 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Checked: that test in the simulator, optimised and `-O0` (it fails when an expectation is wrong; constants would be folded, so every call has differing run-time arguments); the full `tests/exec` simulator run.
 - Known: the in-place forms leave a multi-byte variable half-changed for a few instructions, so an interrupt handler that reads it sees a mixed value; the old route also wrote it byte by byte, but from a finished copy.
 - Not done: `PLUSW` for Word elements; counted loops that read their variable; `codegen16` write-only retry; `fixmul`/`mul8` scratch bytes; frame overlay review.
+
+## Flash/RAM size: read-only counted loops, Word constant stores, PIC16 write-only retry, `clrf`/`movf` (done 2026-11-02, 0.1.111)
+- `lower::for_stmt`: a counted loop whose body only reads its Byte variable (step +-1) no longer keeps a hidden counter; it uses the compare form (`xorlw last` / `bz`), which saves the counter byte and two load words (3 words on a two-loop sample, 30 -> 24). Wider variables and other steps keep `Count`.
+- `codegen::store`: a constant (or constant/variable mix) stored to an element reached through `PLUSW0` is written straight into the temporary, not built in `__A` and copied (2 words per store).
+- `codegen16::generate` retries without write-only globals like the PIC18 back end (`opt::without_write_only`, kept only if not larger): unread `For` variables lose their RAM and zeroing (22 -> 19 words, 4 -> 2 bytes on a sample).
+- `peephole::pass_zero_load`: `clrf __R` then `movf __R,w` (flags dead) becomes `movlw 0`; `fixmul` 35 -> 34 words.
+- Reviewed, no change: frame overlay. A handler's callee frames are saved by `Save` (`save_block`), so overlay with main-line frames is covered by design. `fixmul` keeps `__A`/`__C` (the 16-bit product and its high byte); a reordered multiply that keeps the partial sum in W could save about 3 words and `__A`, not done.
+- Tests: `read_loops_word_constant_stores_and_pic16_write_only_save_space`; `frames_overlay_only_when_never_live_together` no longer lists Sum3's hidden counter. One suite run showed a `structinit` failure that did not reproduce (it passes alone and in a rerun of `exec_programs_in_simulator`); cause not found.
+- Not done: PIC16 read-loop (same compare form applies, not measured separately); Word-element `PLUSW` for `arr(i) = arr(i) + 1` (still the FSR0 path); the fixmul reorder above.

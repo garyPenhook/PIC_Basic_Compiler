@@ -293,7 +293,7 @@ fn frames_overlay_only_when_never_live_together() {
     // Siblings (neither calls the other) share storage.
     assert_eq!(a["T_DIRTY__Q"], a["T_ZA__Q"], "sibling frames should overlay");
     // A routine and the routine it calls never do: Sum3 is live while F1 runs.
-    let sum3 = ["T_SUM3__S", "T_SUM3__K", "T_SUM3__RESULT", "T_SUM3__H1"].map(|n| a[n]);
+    let sum3 = ["T_SUM3__S", "T_SUM3__K", "T_SUM3__RESULT"].map(|n| a[n]);
     let f1 = ["T_F1__X", "T_F1__RESULT", "T_F1__T"].map(|n| a[n]);
     for x in sum3 {
         assert!(!f1.contains(&x), "caller and callee frames overlap at {x:#x}");
@@ -1085,6 +1085,32 @@ fn write_only_globals_get_no_ram_and_counted_loops_share_their_variable() {
     let isr = "Dim a, k As Byte\nDim q As PORTB\nInterrupt H()\n    q = a\nEnd Interrupt\nFor a = 1 To 5\n    k = k + 1\nNext\nq = a + k\n";
     let s = asm_of(&d, "isr", isr, &[]);
     assert!(s.contains("__H"), "{s}");
+    std::fs::remove_dir_all(&d).ok();
+}
+
+/// A counted loop that reads its Byte variable compares it with the last value instead of keeping a hidden counter;
+/// a Word element stored from a constant is written into its temporary directly; the PIC16 back end drops the
+/// RAM of a write-only global as the PIC18 one does.
+#[test]
+fn read_loops_word_constant_stores_and_pic16_write_only_save_space() {
+    if !have_pic_as() {
+        return;
+    }
+    let d = scratch("ramsave2");
+    let rl = "Dim a, k As Byte\nDim q As PORTB\nFor a = 1 To 10\n    k = k + a\nNext\nq = k\n";
+    let s = asm_of(&d, "rl", rl, &[]);
+    assert!(!s.contains("__H"), "{s}");
+    assert!(s.contains("xorlw 0x0A"), "{s}");
+    assert!(!s.contains("dcfsnz"), "{s}");
+    let w = "Dim wa(20) As Word\nDim i As Byte\nDim q As PORTB\ni = PORTC\nwa(i) = 5\nq = wa(3).Byte0\n";
+    let s = asm_of(&d, "wc", w, &[]);
+    assert!(!s.contains("movwf __A0"), "{s}");
+    let src = d.join("p16.bas");
+    std::fs::write(&src, "Program T\nDevice = 16F17126\nClock = 8\nDim i, k As Byte\nFor i = 1 To 5\n    LATA = LATA + 1\nNext\nFor k = 1 To 5\n    LATC = k\nNext\n").unwrap();
+    let r = Command::new(basil()).arg("-S").arg(&src).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let s = std::fs::read_to_string(d.join("p16.S")).unwrap();
+    assert!(!s.contains("T_I equ"), "{s}");
     std::fs::remove_dir_all(&d).ok();
 }
 

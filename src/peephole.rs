@@ -682,6 +682,52 @@ fn pass_dead_stores(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// `clrf __R` followed by `movf __R, w` (nothing between them touches `__R` or leaves the straight line) loads a
+/// zero into `WREG`: `movlw 0` does that without reading the register, and the `clrf` goes when nothing else reads
+/// it (`pass_dead_stores`). Only when the flags the `movf` would set are dead.
+fn pass_zero_load(items: &mut [Item]) -> bool {
+    let keep = protected(items);
+    let mut changed = false;
+    for i in 0..items.len() {
+        if keep[i] {
+            continue;
+        }
+        let Item::Ins(t) = &items[i] else { continue };
+        let Some((m, ops)) = parse(t) else { continue };
+        if m != "clrf" || ops.is_empty() {
+            continue;
+        }
+        let Some(Loc::S(r)) = loc(ops[0]) else { continue };
+        let mut j = i + 1;
+        while j < items.len() && !keep[j] {
+            match &items[j] {
+                Item::Comment(_) => {}
+                Item::Ins(u) => {
+                    let Some(e) = effect(u) else { break };
+                    if let Some((m2, o2)) = parse(u)
+                        && m2 == "movf"
+                        && o2.len() == 3
+                        && matches!(dest(o2[1]), Some(Dest::W))
+                        && loc(o2[0]) == Some(Loc::S(r))
+                    {
+                        if !flags_live(items, j, e.flags_w) {
+                            items[j] = Item::Ins("movlw 0".to_string());
+                            changed = true;
+                        }
+                        break;
+                    }
+                    if e.reads.contains(&Loc::S(r)) || e.writes.contains(&Loc::S(r)) || e.wmem.iter().any(|m| matches!(m, Mem::Unknown)) {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+            j += 1;
+        }
+    }
+    changed
+}
+
 /// What `WREG` is known to hold.
 #[derive(Clone, PartialEq, Debug)]
 enum W {
@@ -2403,6 +2449,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_xor_chain(&mut items, env);
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_forward(&mut items, env);
+        changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);

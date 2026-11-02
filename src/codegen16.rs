@@ -22,7 +22,7 @@ use crate::asm::{Assembled, Cc, Item, assemble16};
 use crate::codegen::{Generated, Layout, Obj, Output, Target, independent};
 use crate::diag::Span;
 use crate::ir::*;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const SCRATCH: [&str; 4] = ["A", "B", "C", "D"];
 
@@ -319,7 +319,25 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
     main + isr
 }
 
+/// Generates code for `p`. A global that is only ever stored to (a `For` variable nobody reads) keeps its RAM and
+/// its start-up zeroing if the stores stay in the program, so when `opt::without_write_only` finds such globals the
+/// program is generated again without those stores (kept only if it is not larger).
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
+    let g = generate_inner(p, tgt);
+    if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars {
+        return g;
+    }
+    let names: HashSet<String> = p.vars.iter().filter(|v| v.kind == VarKind::Global).map(|v| v.asm.clone()).collect();
+    if let Some(p2) = crate::opt::without_write_only(p, &names) {
+        let g2 = generate_inner(&p2, tgt);
+        if g2.errors.is_empty() && g2.out.words <= g.out.words {
+            return g2;
+        }
+    }
+    g
+}
+
+fn generate_inner(p: &Program, tgt: &Target) -> Generated {
     let mem = tgt.pic16.as_ref().expect("the PIC16 generator needs the enhanced mid-range memory description");
     let nvars = p.vars.len();
     let nf = p.funcs.len();

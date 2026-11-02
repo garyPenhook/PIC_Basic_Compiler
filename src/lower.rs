@@ -3437,7 +3437,10 @@ impl<'a> Lowerer<'a> {
                 let n = span_len / s + 1;
                 let last = fv + (n - 1) * step_v;
                 let pure = !blocks_count_loop(&b, *vid, global, true);
-                if pure || !blocks_count_loop(&b, *vid, global, false) {
+                // A loop that reads a Byte variable stepping by one compares it with the last value (movlw / xorwf / bz,
+                // 3 words) instead of keeping a hidden counter (a byte of RAM and two words to load it).
+                let compare = !pure && w == 8 && s == 1;
+                if !compare && (pure || !blocks_count_loop(&b, *vid, global, false)) {
                     let counter = self.hidden_var(crate::types::BYTE);
                     if pure {
                         Self::push(out, St::Count { counter, count: n as u8, body: b, step: None }, span);

@@ -3150,7 +3150,16 @@ impl<'p> Gen<'p> {
                     self.put_byte(&post, &s.byte(i));
                 }
             } else {
-                let t = self.spill(e);
+                // A constant (or a mix of constants and variables) is written into the temporary directly, not
+                // built in `__A` and copied.
+                let t = match self.simple(e) {
+                    Some(s) if self.tgt.opt => {
+                        let t = self.temp(n);
+                        self.store_src(&t, n, &s);
+                        t
+                    }
+                    _ => self.spill(e),
+                };
                 if let Some(pw) = self.plusw_point(p) {
                     for i in 0..n {
                         if i > 0 {
