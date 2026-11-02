@@ -2377,9 +2377,20 @@ impl<'p> Gen<'p> {
             self.mod_signed_pow2(l, k.trailing_zeros(), n);
             return;
         }
-        self.prep_ab(l, r, n);
-        let s = if e.signed { "s" } else { "" };
-        self.call_helper(format!("{s}div{n}"));
+        // An unsigned LongWord by a byte constant: the byte-divisor helper (a 32-step loop of about a quarter of the
+        // cost, and far shorter than `__div4`). Under `Optimize = Speed` `__div4` keeps its fast path for small operands.
+        let byte_k = r.as_const().filter(|&k| n == 4 && !e.signed && !self.p.speed && self.tgt.opt && (3..=255).contains(&k) && !k.is_power_of_two());
+        if let Some(k) = byte_k {
+            self.gen_to_acc(l);
+            let b0 = self.b(0);
+            self.ins(format!("movlw {k}"));
+            self.fo("movwf", &b0);
+            self.call_helper("divk4".to_string());
+        } else {
+            self.prep_ab(l, r, n);
+            let s = if e.signed { "s" } else { "" };
+            self.call_helper(format!("{s}div{n}"));
+        }
         if op == BinKind::Mod {
             for i in 0..n {
                 let (a, c) = (self.a(i), self.c(i));
@@ -4478,6 +4489,39 @@ impl<'p> Gen<'p> {
                 self.sub_cb(n);
                 self.label(&setq);
                 let a0 = self.a(0);
+                self.fbit("bsf", &a0, 0);
+                self.label(&next);
+                self.fop("decfsz", &d0, "f");
+                self.br(Cc::Always, &lp);
+                self.ins("return");
+            }
+            "divk" => {
+                // `__A` (n bytes) / the byte in `__B0`, quotient in `__A`, remainder in `__C0` (`__C1..` zero). One bit per
+                // step: shift the dividend into the remainder, whose carry-out (a ninth bit) or comparison with the
+                // divisor decides the quotient bit. The remainder is below the divisor, so it always fits a byte.
+                for i in 0..n {
+                    let c = self.c(i);
+                    self.fo("clrf", &c);
+                }
+                let d0 = self.d(0);
+                self.ins(format!("movlw {}", 8 * n));
+                self.fo("movwf", &d0);
+                let (lp, sub, next) = (self.fresh(), self.fresh(), self.fresh());
+                self.label(&lp);
+                self.ins("bcf STATUS, 0, c");
+                for i in 0..n {
+                    let a = self.a(i);
+                    self.fop("rlcf", &a, "f");
+                }
+                let (c0, b0, a0) = (self.c(0), self.b(0), self.a(0));
+                self.fop("rlcf", &c0, "f");
+                self.br(Cc::C, &sub);
+                self.fop("movf", &b0, "w");
+                self.fop("subwf", &c0, "w");
+                self.br(Cc::Nc, &next);
+                self.label(&sub);
+                self.fop("movf", &b0, "w");
+                self.fop("subwf", &c0, "f");
                 self.fbit("bsf", &a0, 0);
                 self.label(&next);
                 self.fop("decfsz", &d0, "f");

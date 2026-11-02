@@ -2426,10 +2426,113 @@ fn protected(items: &[Item]) -> Vec<bool> {
 }
 
 /// Runs the pass to a fixed point.
+/// The width in bytes of a divide helper called as `__divN` / `__sdivN`.
+fn div_helper_width(name: &str) -> Option<u8> {
+    let r = name.strip_prefix("__")?;
+    let d = r.strip_prefix("sdiv").or_else(|| r.strip_prefix("divk")).or_else(|| r.strip_prefix("div"))?;
+    d.parse::<u8>().ok().filter(|n| (1..=4).contains(n))
+}
+
+/// The run of instructions right before the call at `c` that load the operands `__A`/`__B` (and nothing else), as
+/// `(index of first item, the instructions)`. `None` when the run does not set every operand byte, reads a scratch
+/// register or `WREG` before writing it, touches memory it does not own, or reads anything that is not a plain variable.
+fn div_prep(items: &[Item], c: usize, n: u8, bn: u8, env: &Env) -> Option<(usize, Vec<String>, Vec<String>)> {
+    let mut start = c;
+    let mut j = c;
+    while j > 0 {
+        j -= 1;
+        match &items[j] {
+            Item::Comment(_) => {}
+            Item::Ins(t) => {
+                let e = effect(t)?;
+                let ok = e.wmem.is_empty()
+                    && e.writes.iter().all(|l| matches!(l, Loc::W) || matches!(l, Loc::S(i) if *i < 8))
+                    && e.rmem.iter().all(|m| env.is_plain(m));
+                if !ok {
+                    break;
+                }
+                start = j;
+            }
+            _ => break,
+        }
+    }
+    let mut text = Vec::new();
+    let mut reads = Vec::new();
+    let mut set = [false; 8];
+    let mut w_set = false;
+    for it in &items[start..c] {
+        let Item::Ins(t) = it else { continue };
+        let e = effect(t)?;
+        if e.reads.iter().any(|l| matches!(l, Loc::S(_))) || (e.reads.contains(&Loc::W) && !w_set) {
+            return None;
+        }
+        for l in &e.writes {
+            match l {
+                Loc::W => w_set = true,
+                Loc::S(i) => set[*i as usize] = true,
+            }
+        }
+        reads.extend(e.rmem);
+        text.push(t.clone());
+    }
+    let (n, bn) = (n as usize, bn as usize);
+    ((0..n).all(|i| set[i]) && (0..bn).all(|i| set[4 + i])).then_some((start, text, reads))
+}
+
+/// `q = x / y` followed by `r = x Mod y` (or the other way round) on the same operands: the helper leaves the
+/// quotient in `__A` and the remainder in `__C`, so the second call and its copies of the operands are dropped.
+/// Only between two calls with the same helper, the same operand loading, and nothing in between but stores of the
+/// result into variables the operands do not live in (none of them touching a scratch register, so the first
+/// result is still in `__A` and `__C`). A `Mod` first copies `__C` over `__A` and so ends the chain.
+fn pass_div_share(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let calls: Vec<usize> = (0..items.len()).filter(|&i| matches!(&items[i], Item::Call(n) if div_helper_width(n).is_some())).collect();
+    let mut dead = vec![false; items.len()];
+    for w in calls.windows(2) {
+        let (c1, c2) = (w[0], w[1]);
+        let (Item::Call(n1), Item::Call(n2)) = (&items[c1], &items[c2]) else { continue };
+        if n1 != n2 || keep[c1..=c2].iter().any(|&k| k) {
+            continue;
+        }
+        let n = div_helper_width(n1).unwrap_or(0);
+        // `__divk4` takes a one-byte divisor in `__B0`.
+        let bn = if n1.starts_with("__divk") { 1 } else { n };
+        let (Some((_, t1, _)), Some((s2, t2, r2))) = (div_prep(items, c1, n, bn, env), div_prep(items, c2, n, bn, env)) else { continue };
+        if t1 != t2 || s2 <= c1 {
+            continue;
+        }
+        let bases: Vec<&str> = r2.iter().filter_map(|m| split_off(m).map(|(b, _)| b)).collect();
+        let clean = items[c1 + 1..s2].iter().all(|it| match it {
+            Item::Comment(_) | Item::Fence => true,
+            Item::Ins(t) => effect(t).is_some_and(|e| {
+                !e.writes.iter().any(|l| matches!(l, Loc::S(_)))
+                    && e.wmem.iter().all(|m| matches!(m, Mem::Sym(s) if split_off(s).is_some_and(|(b, _)| !bases.contains(&b))))
+            }),
+            _ => false,
+        });
+        if !clean {
+            continue;
+        }
+        for d in dead.iter_mut().take(c2 + 1).skip(s2) {
+            *d = true;
+        }
+    }
+    if !dead.iter().any(|&d| d) {
+        return false;
+    }
+    let mut i = 0;
+    items.retain(|_| {
+        i += 1;
+        !dead[i - 1]
+    });
+    true
+}
+
 pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     let mut prologues = true;
     for _ in 0..12 {
         let mut changed = false;
+        changed |= pass_div_share(&mut items, env);
         changed |= pass_unused_labels(&mut items);
         changed |= pass_tail_call(&mut items);
         changed |= pass_unreachable(&mut items);

@@ -303,7 +303,7 @@ Public Sub LcdWrite(ByRefConst s As String(80))
     Wend
 End Sub
 
-' Unsigned decimal, no leading zeros.
+' Unsigned decimal, no leading zeros. Each digit is found by subtracting the power of ten, so no divide routine is linked.
 Public Sub LcdWriteWord(ByVal v As Word)
     Dim started As Boolean
     Dim d As Word
@@ -311,13 +311,26 @@ Public Sub LcdWriteWord(ByVal v As Word)
     started = False
     d = 10000
     While d > 0
-        digit = Byte(v / d)
-        v = v Mod d
+        digit = 0
+        While v >= d
+            v = v - d
+            Inc(digit)
+        Wend
         If digit > 0 Or started Or d = 1 Then
             LcdWriteChar(48 + digit)
             started = True
         End If
-        d = d / 10
+        If d = 10000 Then
+            d = 1000
+        ElseIf d = 1000 Then
+            d = 100
+        ElseIf d = 100 Then
+            d = 10
+        ElseIf d = 10 Then
+            d = 1
+        Else
+            d = 0
+        End If
     Wend
 End Sub
 

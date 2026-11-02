@@ -31,16 +31,16 @@ the plan applies: one word saved is worth saving.
 | P1 | Word/Long `+ - And Or Xor` into a *different* destination | route bytes through W (`movf/addwf/movwf`) instead of `__A` copy-in/copy-out (**done, 0.1.56**) | 16-bit −6 words, 32-bit −12 words per op | 12→6, 24→12 | 0 | low |
 | P2 | Word/Long shifts, `* 2^k`, `/ 2^k` on a variable | shift in place; byte moves for k ≥ 8; a counted loop instead of nibble swaps for k = 4 (**done, 0.1.57**) | `x<<1` 11→3 words; `x<<4` 15→9 | 11→3; 33→9 | 0 | low |
 | P3 | Result forwarding (`movff __C,__A` / `movff __A,dst`) | store the producer's register straight to the destination (**done, 0.1.58**) | −4 words per multiply/array read/shift | −4 | 0 | low |
-| P4 | Division and `Mod` by a constant | reciprocal multiply, verified exhaustively at compile time (**Byte done, 0.1.59**; **Word done under `Optimize = Speed`, 0.1.60**; Long not yet) | Byte `/10`: 7 words, no helper | 120→7 (Byte), 314→41 (Word) | 0 | medium |
-| P5 | `/` and `Mod` of the same operands | one helper call serves both | −1 call | 634→315 | 0 | low |
-| P6 | `lib` decimal printing (`LcdWriteWord`, `Serial2WriteWord`, …) | table-driven repeated subtraction | −68 B (5-digit test) | 5109→439 | 0 | low |
+| P4 | Division and `Mod` by a constant | reciprocal multiply, verified exhaustively at compile time (**Byte done, 0.1.59**; **Word done under `Optimize = Speed`, 0.1.60**; **LongWord by a byte constant done, 0.1.114**, with a byte-divisor helper `__divk4` instead of a reciprocal multiply, which would be ~100 words per site; not under Speed, not signed) | Byte `/10`: 7 words, no helper | 120→7 (Byte), 314→41 (Word) | 0 | medium |
+| P5 | `/` and `Mod` of the same operands | **done, 0.1.113** (`peephole::pass_div_share`); one helper call serves both | −1 call | 634→315 | 0 | low |
+| P6 | `lib` decimal printing | table-driven repeated subtraction (**done: `SerialWriteWord` 0.1.94; `LcdWriteWord`, `Serial2WriteWord` and `OledWriteWord` 0.1.112**) | −68 B (5-digit test) | 5109→439 | 0 | low |
 | P7 | `Min`, `Max`, `Abs` | skip-instruction forms (`CPFSGT`/`CPFSLT`, sign test) (**Byte `Min`/`Max` done, 0.1.61**; **ShortInt `Abs` done, 0.1.62**; **signed Byte and 16/32-bit `Abs`, `Min`, `Max` done, 0.1.64**) | Byte Min/Max 14→4 words; Integer `Abs` 44→6 | 14→4; 44→6 | −1..2 B temp | low |
 | P8 | Byte-indexed array access | `lfsr` + `PLUSW0` (arrays ≤ 128 elements) (**done for one-byte elements, 0.1.62**) | 12→4 words | 13→5 | 0 | low |
 | P9 | Float helpers | pass operands and result in `__A`/`__B` like `__mul4` (**done, 0.1.54**; `FMul`/`FDiv` bodies 0.1.55) | PIC18 `float_basic` 1281→1111 words; 16F17146 1598→1178 | −24 per op; `FMul` −27/−8, `FDiv` −8/−8 once (PIC18/mid-range) | −61 B | medium |
-| P10 | `Float * 2^k`, `/ 2^k` | exponent add, no `FMul`/`FDiv` | −345 words when they were the only users | 218→≈20 | −12 B | medium |
+| P10 | `Float * 2^k`, `/ 2^k` | exponent add, no `FMul`/`FDiv` (**done, 0.1.71**, F3) | −345 words when they were the only users | 218→≈20 | −12 B | medium |
 | P11 | Signed compare | fold constant bias; sign-bit test against 0 (**done, 0.1.62**) | `i<0` 13→2 words; `i<K` 11→8 | 13→3 (`i<0`) | −2 B scratch | low |
-| P12 | Word `± 1`, constant compares | `infsnz/incf`, `decf/btfss`, `subfwb` | `x+1` 4→2; `x>K` 9→5 | 4→2; 11→7 | 0 | low |
-| P13 | `FDiv` | 26 quotient bits instead of 32 | 0 | 1010→≈820 | 0 | medium |
+| P12 | Word `± 1`, constant compares | `infsnz/incf`, `decf/btfss`, `subfwb` (**done, 0.1.65 / 0.1.68**, W5 and W7) | `x+1` 4→2; `x>K` 9→5 | 4→2; 11→7 | 0 | low |
+| P13 | `FDiv` | 26 quotient bits instead of 32 (**done, 0.1.72/0.1.73**, F5; now 25 steps) | 0 | 1010→≈820 | 0 | medium |
 
 Everything in the table applies to code in the Access Bank; see §3.6 for banked variables.
 
@@ -54,8 +54,8 @@ Already tight and left alone: `a + b`, `a And/Or/Xor`, `a * b` and `a * K` (`MUL
 | Finding | Now | Proposed | Measured |
 |---|---|---|---|
 | **B1** (**done, 0.1.70**) `c = a - b` is computed reversed and negated: `movf a,w; subwf b,w; sublw 0` | 4 words | `movf b,w; subwf a,w` | 4→3 cycles |
-| **B2** `Min(a,b)`/`Max(a,b)` use a branch-free mask with a hidden temp (`__main__TMP`) and a `movlw 1/0` flag | 14 words | `movf b,w; cpfsgt a; movf a,w` (Min), `cpfslt` (Max): skip-instruction select | 14→4 and 13→4 cycles; Min(5,9)=5 and Max(5,9)=9 checked |
-| **B3** `Abs(sb)` | 17 words | `movf sb,w; btfsc sb,7; negf WREG` | 17→4 cycles; −5→5, 7→7, −128→128 |
+| **B2** (**done, 0.1.61**) `Min(a,b)`/`Max(a,b)` use a branch-free mask with a hidden temp (`__main__TMP`) and a `movlw 1/0` flag | 14 words | `movf b,w; cpfsgt a; movf a,w` (Min), `cpfslt` (Max): skip-instruction select | 14→4 and 13→4 cycles; Min(5,9)=5 and Max(5,9)=9 checked |
+| **B3** (**done, 0.1.64**) `Abs(sb)` | 17 words | `movf sb,w; btfsc sb,7; negf WREG` | 17→4 cycles; −5→5, 7→7, −128→128 |
 | **B4** (**done, 0.1.70**) `a / K`, `a Mod K` through `__div1` (8-iteration loop) | 118-122 cycles | `a/10 = (a·205)>>11`: `movf a,w; mullw 205; rrncf PRODH,w; rrncf WREG,w; rrncf WREG,w; andlw 0x1F` (7 words with the store); `Mod` adds `mullw K; movf PRODL,w; subwf a,w` | /10: 120→7; Mod 10: 122→10; a=200 checked |
 | **B5** (**done, 0.1.70**) `a Mod b` result path: `movff __C0,__A0; movf __A0,w` | 3 words | `movf __C0,w` | counted |
 | **B6** (**done, 0.1.70**) `a >> 1` is `movf a,w; rrncf WREG,w; andlw 0x7F` | 3 words | `bcf STATUS,0; rrcf a,w` | 4→3 cycles; 201→100 |
@@ -77,7 +77,7 @@ constants.
 | **W1** (**done, 0.1.56**) three-address `w = x + y` copies both operands into `__A`, operates, and copies back | 12 words | `movf x,w; addwf y,w; movwf w; movf x+1,w; addwfc y+1,w; movwf w+1` (Sub: `subwf`/`subwfb` with the operand order fixed as in B1; And/Or/Xor the same, no carry) | 12→6 cycles; 1000+234=1234 |
 | **W2** (**done, 0.1.57**) `x = x << 1`, `x >> 1`, `x * 2`, `x / 2` go through `__A` | 11 words | `bcf STATUS,0; rlcf x; rlcf x+1` (`rrcf` high-to-low for right) | 11→3 cycles; 1001→2002, 500 |
 | **W3** (**done for a different destination, 0.1.66**) `x << 4` / `x >> 4` use the generic loop | 15 words, 33 cycles | nibble swap: `swapf hi,f; movlw 0xF0; andwf hi,f; swapf lo,f; movlw 0x0F; andwf lo,w; iorwf hi,f; movlw 0xF0; andwf lo,f` | 33→9; 1001<<4=16016 |
-| **W4** `x >> 8`, `x << 8`, `x And 255`, `x / 256`, `x Mod 256` stage through `__A1` | 5 words | `movff x+1,x; clrf x+1` and the like | 5→3 cycles; 1001>>8=3 |
+| **W4** (**done for `<< 8` and `>> 8`, checked 0.1.111**; `Byte(x And 255)` still emits a useless `andlw 0xFF`, 1 word) `x >> 8`, `x << 8`, `x And 255`, `x / 256`, `x Mod 256` stage through `__A1` | 5 words | `movff x+1,x; clrf x+1` and the like | 5→3 cycles; 1001>>8=3 |
 | **W5** (**done, 0.1.65**) `x = x + 1` / `x = x - 1` | 4 words | `infsnz x,f; incf x+1,f` and `decf x,f; btfss STATUS,0; decf x+1,f` | +1: 4→2 (255→256, 65535→0); −1: 4→3 (256→255, 0→65535, 5→4) |
 | **W6** (**already done**, found so in 0.1.69) `x * K` (K constant) ends with `movff __C0,__A0; movff __C1,__A1` before the store | 18 words | store `PRODL`-derived bytes straight to the destination | 18→13 cycles (`x*10`, 123→1230) |
 | **W7** (**done, 0.1.68**) `x > K`, `x >= K` stage K into `__B0:__B0+1` first | 9 words | `movf x,w; sublw lo; movlw hi; subfwb x+1,w; bc/bnc` | 11→7 cycles; 1500>1000 |
@@ -142,7 +142,7 @@ pay off (skip leading zero bytes of the dividend: a dividend that fits 16 bits f
 
 | Finding | Now | Proposed | Measured |
 |---|---|---|---|
-| **A1** `c = arr(a)`, `arr(a) = b` for a Byte index build a 16-bit address in `__A`, add the base, copy it to `FSR0` | 12 words | `lfsr 0,arr; movf a,w; movf PLUSW0,w` (`PLUSW0` offsets by the *signed* W, so valid only when the array has ≤ 128 elements; elements beyond that keep the current path) | 13→5; 77 read back |
+| **A1** (**done, 0.1.62**) `c = arr(a)`, `arr(a) = b` for a Byte index build a 16-bit address in `__A`, add the base, copy it to `FSR0` | 12 words | `lfsr 0,arr; movf a,w; movf PLUSW0,w` (`PLUSW0` offsets by the *signed* W, so valid only when the array has ≤ 128 elements; elements beyond that keep the current path) | 13→5; 77 read back |
 | **A2** (**done for `+ 1` / `- 1`, 0.1.69**) read-modify-write `arr(a) = arr(a) + 1` computes the address twice and parks the value in `__main__TMP` | 27 words | `lfsr 0,arr; movf a,w; incf PLUSW0,f` | 27→4 cycles; −1 B temp |
 | **A3** (**already done**, found so in 0.1.69) Word arrays, `x = warr(a)`: `movff POSTINC0,__A0; movff POSTINC0,__A1; movff __A0,x; movff __A1,x+1` | 8 words | `movff POSTINC0,x; movff POSTINC0,x+1` (P3) | counted |
 | **A4** (**done, 0.1.70**) Word index doubling (`rlcf` through `__A`, 16-bit add) | ≈14 words | `movf a,w; addwf WREG,w` then `PLUSW0` while `a < 64`; keep `FSR0` loaded across several accesses to the same array | counted |
@@ -210,7 +210,7 @@ Constant folding of float and integer-to-float constants is already done (`f1 = 
 | **F3** (**done, 0.1.71**) `Float * 2^k`, `/ 2^k` (constant, e.g. `* 2.0`, `/ 2.0`, `* 0.5`) call the full multiply (218 cycles) or divide (≈1010) | add *k* to the exponent: result is `x` unchanged for ±0, infinity and NaN, a signed zero when the new exponent is ≤ 0 (the library flushes denormals), infinity when it reaches 255. One shared routine, about 20 words with the three guards | Measured: `f * 2.0` and `f / 2.0` 36 cycles net of the call-site loads (was 218 and 1036); `FScale` is 53 words on PIC18. When these are the only uses, `FMul` (195 words) and `FDiv` (150 words) drop out of the image |
 | **F4** (**done, 0.1.71**) compare with zero (`If f > 0.0`, `f < 0.0`, `f = 0.0`) builds a 4-byte zero and calls `Cmp` | A new register routine `FSign` (20 words since 0.1.75, one operand, answers like `Cmp(x, 0)`: -1, 0 for a zero or a denormal, 1, 2 for NaN) is called instead of `Cmp`; `0.0 < f` is turned into `f > 0.0`. A routine rather than inline code, because the same code is needed for both cores | −4 words per site (no 4-byte zero is built); measured `If f > 0.0` 48→10 cycles net. `Cmp` drops out when nothing else compares |
 | **F5** (**done, 0.1.72**) `FDiv` ran **32** restoring iterations at ≈31 cycles; a 24-bit mantissa quotient needs a guard bit, one normalisation bit and a sticky bit: **26** | The first quotient bit is always 1 (the dividend is pre-normalised), so 25 steps give the 24 mantissa bits and the guard bit and the non-zero remainder is the sticky bit; the 25-bit quotient is aligned to bit 31 with one `rrcf` chain (9 instructions) | Measured `f / g` 984→799 cycles net (−19 %); bit-exact on `float_muldiv`, `lib_floatlib*` and 250 random pairs of `gen_float_vectors.py` on both cores |
-| **F6** `f / K` for a constant `K` is a divide at 1010 cycles; `f * (1/K)` is not bit-identical to IEEE division | offer it only behind an explicit option (e.g. `#option FastFloat`) with the documented 1-ulp difference | 1010→217 |
+| **F6** (**not done, option-gated**) `f / K` for a constant `K` is a divide at 1010 cycles; `f * (1/K)` is not bit-identical to IEEE division | offer it only behind an explicit option (e.g. `#option FastFloat`) with the documented 1-ulp difference | 1010→217 |
 | **F7** (**not done**) `Cmp` returns −1/0/1/2 in W (since P9) and the caller re-tests it (`xorlw 0xFF; bnz`) | return the outcomes in `Z`/`C`/`N` so the caller branches directly | Only the `xorlw` is left to save: 1 word and 1 cycle per site, and the flags would have to be written to STATUS by `Cmp` (3-4 more library words, and PIC16 has no `N`), so it pays back only with several comparisons |
 | **F8** (**done, 0.1.71**) `Byte`/`Word` to `Float` went through the 32-bit `FFromLong` (zero-fills the upper bytes at the call site) | `FFromByte` / `FFromWord` (about 14 and 16 words) read only `__A0` (`__A1:__A0`) and enter `FromMag` with the magnitude already moved up, so no whole-byte shifts run; unsigned sources only (`ShortInt`/`Integer` still use `FFromLong`) | Measured: `h = b` 113→66 cycles net, `h = w` 164→134; 3 `clrf` fewer at each call site |
 

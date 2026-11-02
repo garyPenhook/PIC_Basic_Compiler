@@ -702,7 +702,9 @@ Highest precedence first:
 * **Division and `Mod`** truncate toward zero; `Mod` takes the dividend's sign. Divide by zero at run
   time gives an all-ones quotient and the dividend as remainder; in a constant expression it is an
   error. A division by a power-of-two constant becomes a shift. A constant multiplier becomes shifts
-  or `MULLW` steps.
+  or `MULLW` steps. A Byte, and under `Optimize = Speed` a Word, divided by a constant uses a reciprocal
+  multiply; an unsigned `LongWord` divided by a constant from 3 to 255 uses a short byte-divisor routine. A `/`
+  and a `Mod` of the same operands in consecutive statements make one call to the divide routine.
 * **Shifts.** The count must be a constant or a `Byte`. Shifting by the width or more gives 0 (or the
   sign for a signed right shift). `>>` is arithmetic for signed types.
 * Functions may be used in expressions; subroutines may not. Parentheses are needed when calling
