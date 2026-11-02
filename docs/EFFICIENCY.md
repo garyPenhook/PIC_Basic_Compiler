@@ -277,8 +277,8 @@ words) outweigh the new routine. The same program now builds to 2604 words. The 
 
 ## 8. Open points
 
-* The simulator/silicon question about `SUBWFB` and OV (§4) is unresolved.
+* The simulator/silicon question about `SUBWFB` and OV (§4) is unresolved: no erratum for the parts here mentions it and the data sheet only says OV is affected, so it needs a real part. The signed compare stays carry-only.
 * The "operand fits a byte" divide estimate is a projection, not a measurement.
-* `Select Case` and `Boolean`/`Bit` operations were not examined here.
+* `Select` and `Boolean`/`Bit` operations were examined in 0.1.115 (PROGRESS.md). Left: `f = (x = 3)` could be `clrf f / movf / xorlw / btfsc Z / incf f` (5 words against 6) when `f` is not read in the test.
 * The measurements are PIC18F27Q10 in the simulator; the PIC18-Q41 parts have the same instruction set and the same helpers, but the
-  access bank is not at the same addresses (`__A` landed at 0x500 in one project built for a Q41 part), so the BSR rule in §3.6 needs a look there.
+  access bank is not at the same addresses (`__A` landed at 0x500 in one project built for a Q41 part), so the BSR rule in §3.6 needed a look there: checked in 0.1.115, the bank logic is driven by the device's access ranges and is correct on the Q41.

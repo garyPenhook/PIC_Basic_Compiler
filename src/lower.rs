@@ -3460,12 +3460,36 @@ impl<'a> Lowerer<'a> {
         let Some(sv) = self.expr(subject) else { return };
         let (w, sg) = (sv.w, sv.signed);
         let sty = if sg { Ty::Int(w, true) } else { Ty::Int(w, false) };
-        let h = self.hidden_var(sty);
-        Self::push(out, St::Assign(h.clone(), sv), span);
+        // The arms are lowered first: a subject that is a plain variable none of them can write is compared in place,
+        // without the hidden copy (a movff and a byte of RAM; a Word subject is also copied once less into the compare).
+        let bodies: Vec<Vec<S>> = cases.iter().map(|c| self.block(&c.body, ui)).collect();
+        let o = otherwise.map(|b| self.block(b, ui)).unwrap_or_default();
+        let in_place = match &sv.k {
+            ExK::Load(p) if p.off == 0 && p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() => match p.base {
+                Base::Var(v) => {
+                    let var = &self.vars[v];
+                    let global = var.kind == VarKind::Global;
+                    // A global could be changed by a handler between two of the tests; the copy is a snapshot.
+                    let stable = !global || !self.a.symbols.iter().any(|s| matches!(s.kind, SymKind::Interrupt { .. }));
+                    let ok = matches!(var.kind, VarKind::Global | VarKind::Local | VarKind::Param) && !var.volatile && !var.by_ref && var.bytes == u32::from(w) / 8 && stable;
+                    ok && !bodies.iter().chain(std::iter::once(&o)).any(|b| blocks_count_loop(b, v, global, false))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        let h = if in_place {
+            let ExK::Load(p) = &sv.k else { unreachable!() };
+            p.clone()
+        } else {
+            let h = self.hidden_var(sty);
+            Self::push(out, St::Assign(h.clone(), sv), span);
+            h
+        };
         let load = |h: &Place| Ex::new(ExK::Load(h.clone()), w, sg);
         let cmp = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
         let mut arms = Vec::new();
-        for c in cases {
+        for (c, body) in cases.iter().zip(bodies) {
             let mut cond: Option<Ex> = None;
             for cc in &c.conds {
                 let one = match cc {
@@ -3498,9 +3522,8 @@ impl<'a> Lowerer<'a> {
                 });
             }
             let Some(cond) = cond else { continue };
-            arms.push((cond, self.block(&c.body, ui)));
+            arms.push((cond, body));
         }
-        let o = otherwise.map(|b| self.block(b, ui)).unwrap_or_default();
         Self::push(out, St::If(arms, o), span);
     }
 }

@@ -919,6 +919,16 @@ impl<'p> Gen<'p> {
 
     // ---- operand access ---------------------------------------------------------------
 
+    /// The memory of a plain, non-volatile Boolean variable: a byte that holds only 0 or 1.
+    fn bool_var(&self, e: &Ex) -> Option<Mem> {
+        let ExK::Load(p) = &e.k else { return None };
+        let Base::Var(v) = p.base else { return None };
+        if p.bit.is_some() || p.indirect() || p.ty != crate::types::Ty::Bool || p.bytes() != 1 || v >= self.p.vars.len() || self.p.vars[v].volatile || self.p.vars[v].by_ref {
+            return None;
+        }
+        Some(self.place_mem(p, false))
+    }
+
     fn simple(&self, e: &Ex) -> Option<Src> {
         match &e.k {
             ExK::Const(v) => Some(Src::Imm(*v & mask(e.w))),
@@ -1123,14 +1133,51 @@ impl<'p> Gen<'p> {
                 }
             }
             ExK::Bin(op, l, r) => self.gen_bin(*op, l, r, e),
+            // `a And b`, `a Or b` and `Not a` of Boolean variables (always 0 or 1) as a value: bitwise, with no branches.
+            ExK::AndAlso(a, b) | ExK::OrElse(a, b) if self.tgt.opt && self.bool_var(a).is_some() && self.bool_var(b).is_some() => {
+                let (ma, mb) = (self.bool_var(a).unwrap(), self.bool_var(b).unwrap());
+                self.fop("movf", &ma, "w");
+                self.fop(if matches!(e.k, ExK::AndAlso(..)) { "andwf" } else { "iorwf" }, &mb, "w");
+            }
+            ExK::NotB(x) if self.tgt.opt && self.bool_var(x).is_some() => {
+                let m = self.bool_var(x).unwrap();
+                self.fop("movf", &m, "w");
+                self.ins("xorlw 1");
+            }
             ExK::Cmp(..) | ExK::AndAlso(..) | ExK::OrElse(..) | ExK::NotB(..) => {
                 let (lf, le) = (self.fresh(), self.fresh());
+                let start = self.items.len();
                 self.cond_jump(e, false, &lf);
-                self.ins("movlw 1");
-                self.br(Cc::Always, &le);
-                self.label(&lf);
-                self.ins("movlw 0");
-                self.label(&le);
+                // A test that ends in one flag branch (`x = 3`, `x > 4`) sets the value from the flag with a skip:
+                // `movlw 0 / btfsc STATUS, bit / movlw 1` (3 words) instead of `movlw 1 / bra / movlw 0` after the
+                // branch (4). `movlw` leaves the flags alone.
+                let refs = self.items[start..].iter().filter(|i| matches!(i, Item::Br(_, t) | Item::SkipBr(_, t) if *t == lf)).count();
+                let flag = match self.items.last() {
+                    Some(Item::Br(cc, t)) if *t == lf && refs == 1 && self.tgt.opt => match cc {
+                        Cc::Z => Some((2, "btfss")),
+                        Cc::Nz => Some((2, "btfsc")),
+                        Cc::C => Some((0, "btfss")),
+                        Cc::Nc => Some((0, "btfsc")),
+                        Cc::N => Some((4, "btfss")),
+                        Cc::Nn => Some((4, "btfsc")),
+                        Cc::Ov => Some((3, "btfss")),
+                        Cc::Nov => Some((3, "btfsc")),
+                        Cc::Always => None,
+                    },
+                    _ => None,
+                };
+                if let Some((bit, skip)) = flag {
+                    self.items.pop();
+                    self.ins("movlw 0");
+                    self.ins(format!("{skip} STATUS, {bit}, c"));
+                    self.ins("movlw 1");
+                } else {
+                    self.ins("movlw 1");
+                    self.br(Cc::Always, &le);
+                    self.label(&lf);
+                    self.ins("movlw 0");
+                    self.label(&le);
+                }
             }
             ExK::Call(f, args) => {
                 self.do_call(*f, args, true);
@@ -2992,6 +3039,18 @@ impl<'p> Gen<'p> {
             xs = ys.take().unwrap();
             ys = Some(Src::Imm(k));
             lt = !lt;
+        }
+        // The same when `y` needs code (`x - 2000 <= 1000` of a range test): it is computed into __A first and the
+        // constant folds into the compare instead of being staged in __B (4 words fewer for a Word).
+        if !signed && n >= 2 && self.tgt.opt && ys.is_none() && let Src::Imm(k) = &xs && u64::from(*k) + 1 < 1u64 << (8 * n) {
+            let k = *k + 1;
+            self.gen_val(ye);
+            let a = Src::Mem(self.a(0), n);
+            self.ord_core(!lt, false, n, a, Some(Src::Imm(k)), None, target);
+            if held > 0 {
+                self.free(held);
+            }
+            return;
         }
         self.ord_core(lt, signed, n, xs, ys, Some(ye), target);
         if held > 0 {
