@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/devdesc", "tools/devgen"]
+members = [".", "crates/devdesc", "crates/picsim", "tools/devgen", "tools/picsim", "tools/picsim-gui"]
 
 [package]
 name = "basil"

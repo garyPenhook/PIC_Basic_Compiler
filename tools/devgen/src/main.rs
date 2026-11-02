@@ -346,10 +346,27 @@ fn sfrs(root: roxmltree::Node) -> Res<Vec<Sfr>> {
             legacy.clear();
         }
         let aliases = descendants(reg, "LegacyAlias").filter_map(|a| attr(a, "cname")).map(String::from).collect();
-        let sfr = Sfr { name: name.clone(), addr: req_num(reg, "_addr")?, width, aliases, fields, legacy };
+        let text = |a: &str| attr(reg, a).unwrap_or("").to_string();
+        let module = text("_modsrc");
+        let sfr = Sfr {
+            name: name.clone(),
+            addr: req_num(reg, "_addr")?,
+            width,
+            por: text("por"),
+            mclr: text("mclr"),
+            access: text("access"),
+            implemented: attr(reg, "impl").map(num).transpose()?,
+            module: module.strip_suffix(".Module").unwrap_or(&module).to_string(),
+            aliases,
+            fields,
+            legacy,
+        };
         if let Some(prev) = by_name.get(&name) {
             if prev.addr != sfr.addr {
                 return Err(format!("SFR {name} is defined at two addresses ({:#x}, {:#x})", prev.addr, sfr.addr));
+            }
+            if (&prev.por, &prev.mclr, &prev.access, prev.implemented) != (&sfr.por, &sfr.mclr, &sfr.access, sfr.implemented) {
+                return Err(format!("SFR {name} has two different reset/access descriptions"));
             }
             continue; // same register seen again through another module
         }

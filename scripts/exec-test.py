@@ -29,10 +29,13 @@ ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../t
 ap.add_argument("--mdb", default=None)
 ap.add_argument("--keep", action="store_true")
 ap.add_argument("--device", default="18F27Q10", help="part to build for and simulate; the program's Device line is replaced")
+ap.add_argument("--engine", choices=["mdb", "sim", "both"], default=os.environ.get("BASIL_ENGINE", "mdb"),
+                help="mdb: MPLAB X simulator; sim: basil-sim (crates/picsim); both: run both, and fail on a different cycle count")
+ap.add_argument("--sim", default=os.path.join(os.path.dirname(__file__), "../target/release/basil-sim"))
 ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for the reference build")
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()
-mdb = a.mdb or sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh"))[-1]
+mdb = a.mdb or ((sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh")) or [None])[-1] if a.engine != "sim" else None)
 work = tempfile.mkdtemp(prefix="basil-exec-")
 
 jobs = []
@@ -119,6 +122,24 @@ for src in a.files:
                 dma["writes"][k] = [int(x, 0) for x in v.split(",")]
     jobs.append((name, hexf, syms, vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None, dma))
 
+def sim_run(name, hexf, syms, vars_, expect):
+    """The program in basil-sim: (list of byte blocks for the expected variables that exist, cycles, halted)."""
+    dump = ",".join(f"{k}:{vars_[k][1]}" for k in expect if k in vars_)
+    cmd = [a.sim, hexf, "--device", a.device, "--asm", os.path.join(work, name + ".S")]
+    if not os.path.exists(cmd[-1]):
+        cmd[-1] = os.path.join(work, name + "_basil.S")
+    r = subprocess.run(cmd + (["--dump", dump] if dump else []), capture_output=True, text=True, timeout=1800)
+    m = re.search(r"stop: (\w+).*cycles: (\d+)", r.stdout)
+    blocks = [l.split("(")[1].rstrip(")") for l in r.stdout.splitlines() if " = " in l and "(" in l]
+    return blocks, (m.group(2) if m else None), bool(m) and m.group(1) == "Halt"
+
+
+simres = {}
+if a.engine != "mdb":
+    for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
+        if not dma:
+            simres[name] = sim_run(name, hexf, syms, vars_, expect)
+
 script = [f"device PIC{a.device}", "hwtool SIM"]
 for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
     if dma:
@@ -134,7 +155,7 @@ for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
 script.append("quit")
 sp = os.path.join(work, "run.mdb")
 open(sp, "w").write("\n".join(script) + "\n")
-out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout if any(not j[6] for j in jobs) else ""
+out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout if a.engine != "sim" and any(not j[6] for j in jobs) else ""
 if a.keep:
     open(os.path.join(work, "mdb.log"), "w").write(out)
     print("work dir:", work)
@@ -194,6 +215,9 @@ def run_dma(name, hexf, syms, vars_, expect, dma):
 
 pos = 0
 for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
+    if dma and a.engine == "sim":
+        print(f"skip {name}  (DMA model needs MDB until S5)")
+        continue
     if dma:
         bad, cy_ = run_dma(name, hexf, syms, vars_, expect, dma)
         if bad:
@@ -202,12 +226,20 @@ for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
         else:
             print(f"ok   {name}  (DMA model)")
         continue
-    end = out.find("END_" + name, pos)
+    end = out.find("END_" + name, pos) if a.engine != "sim" else -1
     seg = out[pos:end if end >= 0 else len(out)]
     pos = end + 1 if end >= 0 else pos
     cyc = re.findall(r"Stopwatch cycle count = (\d+)", seg)
     blocks = re.findall(r"^x /\d+xb 0x[0-9A-Fa-f]+\n((?:[0-9a-f]{2}\s+)+)", seg, re.M)
     halted = "Simulator halted" in seg or "Single breakpoint" in seg
+    if a.engine != "mdb":
+        sb, sc, sh = simres[name]
+        if a.engine == "sim":
+            blocks, cyc, halted = sb, ([sc] if sc else []), sh
+        elif not sh or (cyc and sc != cyc[0]):
+            fails += 1
+            print(f"FAIL {name}: basil-sim halted={sh} cycles {sc}, MDB cycles {cyc[0] if cyc else '?'}")
+            continue
     bad = []
     bi = 0
     for k, want in expect.items():
