@@ -1035,3 +1035,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## Compile time: peephole `pass_bit_branch` and `pass_bool_thread` no longer quadratic (done 2026-11-01, 0.1.104)
 - Both passes called `protected(items)` (which parses every item) for each item they visited; it is now computed once and again only after a rewrite. Output is byte-identical (checked on a 980-word program).
 - `tests/programs/library_q41_small.bas` (5.4 K words): about 125 s -> 2.2 s; the 980-word subset 1.05 s -> 0.10 s. These two passes were about 98 % of the time. The long `tests/exec/arith_*` / `array_rmw` programs that made the simulator suite take 16 minutes should shrink the same way.
+
+## RAM report: overlaid objects counted once (done 2026-11-01, 0.1.105)
+- `driver::ram_used` summed every RAM object's size, so locals of routines that never run together (they share an address) were counted once each; the summary bar and the `--report` total overstated the use (163 bytes shown for 88 really occupied). Both now take the union of the objects' address ranges.
+- Checked: full `cargo test --release` passed. The report footer reads `total N bytes (overlaid objects share addresses)`.

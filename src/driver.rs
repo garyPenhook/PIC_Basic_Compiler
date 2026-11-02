@@ -198,8 +198,20 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, hex: &Path, map: &Pat
 }
 
 /// Data RAM bytes the program places (variables, temporaries, scratch registers).
+/// Overlaid objects (locals of routines that never run at once) share addresses, so this counts distinct
+/// addresses: the union of the objects' ranges, not the sum of their sizes.
 pub fn ram_used(g: &Generated) -> u32 {
-    g.objs.iter().enumerate().filter(|(i, _)| g.layout.addr.get(*i).copied().flatten().is_some()).map(|(_, o)| o.bytes).sum()
+    let mut r: Vec<(u32, u32)> = g.objs.iter().enumerate().filter_map(|(i, o)| g.layout.addr.get(i).copied().flatten().filter(|_| o.bytes > 0).map(|a| (a, a + o.bytes))).collect();
+    r.sort();
+    let (mut total, mut end) = (0, 0);
+    for (a, b) in r {
+        let a = a.max(end);
+        if b > a {
+            total += b - a;
+            end = b;
+        }
+    }
+    total
 }
 
 /// One bar line: `label [####....]  used / size unit (pct)`.
@@ -234,20 +246,18 @@ pub fn report(p: &Program, g: &Generated) -> String {
         s.push_str(&format!("  {:6} words  {n}\n", w));
     }
     let nv = p.vars.len();
-    let mut total = 0;
     s.push_str("Data RAM:\n");
     let mut rows: Vec<(u32, String, u32)> = Vec::new();
     for (i, o) in g.objs.iter().enumerate() {
         if let Some(a) = g.layout.addr.get(i).copied().flatten() {
             let name = if i < nv { format!("{} ({})", o.name, p.vars[i].name) } else { o.name.clone() };
             rows.push((a, name, o.bytes));
-            total += o.bytes;
         }
     }
     rows.sort();
     for (a, n, b) in rows {
         s.push_str(&format!("  0x{a:03X}  {b:3}  {n}\n"));
     }
-    s.push_str(&format!("  total {total} bytes\n"));
+    s.push_str(&format!("  total {} bytes (overlaid objects share addresses)\n", ram_used(g)));
     s
 }
