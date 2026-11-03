@@ -81,10 +81,31 @@ DS40002043F ch.29 p.503-505.
 * Auto-baud (ABDEN), break detection and the RX pin itself (RXxPPS, TRIS, ANSEL) are not modelled: the stimulus file
   drives the receiver input directly.
 
+## ADC (S4, `Adc` in `periph.rs`; Q10 only)
+
+Basic mode of the ADCC, PIC18F27/47Q10 (DS40002043F ch.33). Other parts get a note ("the ADC of this part is not modelled")
+until their timing is read from their own data sheet.
+
+* ADGO = 1 with ADON = 1 starts a conversion (33.2.1 p.551). It lasts ADPRE + ADACQ ADC clocks (0 = not included,
+  33.7.9 p.575, 33.7.10 p.576) plus **11.5 TAD** (33.1.4 p.549; the lib comments say 12). TAD = 2(ADCLK+1) Fosc periods
+  (Table 33-2 p.549), so a conversion takes ceil((ADCLK+1)(2(ADPRE+ADACQ)+23)/4) instruction cycles.
+* On completion (33.2.2 p.551): ADRES = new code (10 bits; ADFM = 1 right justified, 0 left justified, zero filled, Figure
+  33-3 p.551), ADGO cleared unless ADCONT = 1 (then the next conversion starts at once), ADIF set. Clearing ADGO or
+  ADON terminates the conversion and ADRES keeps its value (33.2.3 p.552).
+* Input: the `[[adc]]` value of the channel in ADPCH at the end of acquisition (latest entry whose `at` has passed; 0 when
+  none), clamped to the resolution.
+* `[A12]` the conversion starts in the cycle of the instruction that sets ADGO; `[A13]` ADGO written 1 with ADON = 0 reads 0
+  and starts nothing; `[A14]` an ADCONT retrigger starts in the cycle the previous conversion ended.
+* Not modelled (note or ignored): FRC clock (ADCS = 1; ADGO never clears, with a note), computation (ADPREV, ADACC,
+  filters, thresholds, ADTIF), triggers (ADACT), double sampling, ADCAP/guard/precharge polarity, the pin and ANSEL state.
+* FVRCON: FVRRDY (read only) follows FVREN. `[A15]` at once; the data sheet gives only FVR04, a typical 25 us start-up
+  (p.707), and the periph models do not know Fosc. A note is added when it is enabled.
+* Tests: `crates/picsim/tests/adc.rs`, `lib_adc` and `lib_adin` on `--engine sim`.
+
 ## Stimulus file (`crates/picsim/src/stimulus.rs`, `basil-sim --stim FILE`)
 
-TOML; today only `[[uart]]` entries (`port`, `at`, `bytes` or `data`, `bit`, `gap`, `nine`, `bad_stop`; documented at the
-top of `stimulus.rs`). Characters of one entry go out back to back; entries follow each other on the line. `at` is an
+TOML; `[[uart]]` entries (`port`, `at`, `bytes` or `data`, `bit`, `gap`, `nine`, `bad_stop`) and `[[adc]]` entries (`channel`, `value`, `at`); documented at the
+top of `stimulus.rs`. Characters of one entry go out back to back; entries follow each other on the line. `at` is an
 instruction cycle, `bit` the sender's bit time in instruction cycles (default: the receiver's own rate at the time the
 character starts). `at`, `bit` and `gap` are capped at 2^32 cycles (larger values are a parse error). The stimulus is kept
 and applied again after `Machine::reset()`. Tests: `cargo test --release -p picsim`, `tests/sim/run.sh` (a Basil program reading from it).

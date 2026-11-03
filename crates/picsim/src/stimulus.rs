@@ -9,6 +9,11 @@
 //! gap = 0             # idle cycles between characters, default 0
 //! nine = false        # 11-bit characters (the ninth data bit is bit 8 of the value)
 //! bad_stop = false    # send the Stop bit as 0 (framing error)
+//!
+//! [[adc]]             # the voltage on an ADC input, as a conversion code (0 .. 2^bits - 1)
+//! channel = 13        # ADPCH value
+//! value = 512
+//! at = 0              # from this instruction cycle on, default 0; later entries replace earlier ones
 //! ```
 
 use crate::periph::RxStream;
@@ -20,6 +25,8 @@ pub const MAX_CYCLES: u64 = 1 << 32;
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Stimulus {
     pub uart: Vec<(u8, RxStream)>,
+    /// (channel, from cycle, code)
+    pub adc: Vec<(u8, u64, u16)>,
 }
 
 impl Stimulus {
@@ -27,6 +34,27 @@ impl Stimulus {
         let doc: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
         let mut st = Stimulus::default();
         for (k, v) in &doc {
+            if k == "adc" {
+                for e in v.as_array().ok_or("adc must be [[adc]] entries")? {
+                    let t = e.as_table().ok_or("adc entry must be a table")?;
+                    for k in t.keys() {
+                        if !["channel", "value", "at"].contains(&k.as_str()) {
+                            return Err(format!("adc: unknown key {k}"));
+                        }
+                    }
+                    let int = |n: &str, max: u64| -> Result<Option<u64>, String> {
+                        t.get(n).map_or(Ok(None), |x| {
+                            x.as_integer().and_then(|i| u64::try_from(i).ok()).filter(|i| *i <= max).map(Some).ok_or(format!("adc.{n} must be an integer 0..{max}"))
+                        })
+                    };
+                    st.adc.push((
+                        int("channel", 63)?.ok_or("adc needs channel")? as u8,
+                        int("at", MAX_CYCLES)?.unwrap_or(0),
+                        int("value", 0xFFFF)?.ok_or("adc needs value")? as u16,
+                    ));
+                }
+                continue;
+            }
             if k != "uart" {
                 return Err(format!("unknown section [{k}]"));
             }
@@ -86,6 +114,9 @@ impl Stimulus {
             if !p.rx_send(port, s) {
                 return Err(format!("{}: no EUSART{port} receiver in the simulator", dev.device.name));
             }
+        }
+        if !self.adc.is_empty() && !self.adc.iter().all(|(c, at, v)| p.adc_feed(*c, *at, *v)) {
+            return Err(format!("{}: no ADC model in the simulator", dev.device.name));
         }
         Ok(())
     }

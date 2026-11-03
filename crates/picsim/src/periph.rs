@@ -74,8 +74,13 @@ const T2P: u8 = 10;
 const T2C: u8 = 11;
 const T2HLT: u8 = 12;
 const T2CLK: u8 = 13;
+/// ADCON0 of the ADCC (basic mode).
+const ADC0: u8 = 14;
 /// EUSART n (0-based) uses hook codes UART0 + 5n + {TXREG 0, TXSTA 1, BAUDCON 2, RCREG 3, RCSTA 4}.
-const UART0: u8 = 14;
+/// FVRCON: FVRRDY (read only) follows FVREN. `[A15]` at once; the data sheet gives only a typical start-up time of
+/// 25 us (FVR04, DS40002043F p.707) and the models do not know Fosc. A note is added when it is first enabled.
+const FVR0: u8 = 15;
+const UART0: u8 = 16;
 const UART_HOOKS: u8 = 5;
 
 /// EUSART1 transmitter of the Q10 style (TX1REG, TX1STA, BAUD1CON, SP1BRGL/H; DS40002043F ch.29 p.503-505).
@@ -122,6 +127,33 @@ pub struct RxStream {
     pub bad_stop: bool,
 }
 
+/// ADC with computation (ADCC) of the PIC18F27/47Q10, basic mode (DS40002043F ch.33 p.546-553, 566-576).
+/// * ADGO = 1 with ADON = 1 starts a conversion; it takes ADPRE + ADACQ ADC clocks (0 = not included) and then
+///   11.5 TAD (33.1.4 p.549); TAD = 2(ADCLK+1) Fosc periods (Table 33-2). It then loads ADRES (right or left
+///   justified by ADFM, 10 bits), clears ADGO unless ADCONT = 1, and sets ADIF (33.2.2). Clearing ADGO or ADON
+///   terminates it, ADRES keeps its value (33.2.3).
+/// * The input is the stimulus value of the channel in ADPCH at the end of acquisition (0 without one).
+/// * Not modelled, with a note: the FRC clock (ADCS = 1), computation (filter, threshold, ADPREV/ADACC), triggers
+///   (ADACT) and double sampling.
+/// * `[A12]` The conversion starts in the cycle of the instruction that sets ADGO. `[A13]` ADGO written 1 while
+///   ADON = 0 reads back 0 and starts nothing. `[A14]` With ADCONT = 1 the next conversion starts in the cycle the
+///   previous one ended.
+struct Adc {
+    con: usize,
+    clk: usize,
+    pre: usize,
+    acq: usize,
+    pch: usize,
+    resl: usize,
+    resh: usize,
+    flag: Flag,
+    bits: u32,
+    /// Cycle the running conversion ends, and the value it will load.
+    end: Option<(u64, u16)>,
+    /// Stimulus: (channel, from cycle, code), in the order given.
+    feed: Vec<(u8, u64, u16)>,
+}
+
 struct Timer0 {
     l: usize,
     h: usize,
@@ -165,6 +197,8 @@ pub struct Periph {
     t1: Option<Timer1>,
     t2: Option<Timer2>,
     uarts: Vec<Uart>,
+    adc: Option<Adc>,
+    fvr: Option<usize>,
     /// Bytes the transmitters started to send: (EUSART number 1-based, cycle it started, byte).
     pub tx: Vec<(u8, u64, u8)>,
     pub notes: BTreeSet<String>,
@@ -199,7 +233,7 @@ impl Periph {
 
     /// Find the timers the part has and mark their registers as hooked in `m`.
     pub fn bind(dev: &Device, m: &mut DataMem) -> Periph {
-        let mut p = Periph { t0: None, t1: None, t2: None, uarts: Vec::new(), tx: Vec::new(), notes: BTreeSet::new(), event: None };
+        let mut p = Periph { t0: None, t1: None, t2: None, uarts: Vec::new(), adc: None, fvr: None, tx: Vec::new(), notes: BTreeSet::new(), event: None };
         let mut hook = |a: usize, k: u8| m.special[a] = Special::Hook(k);
         if let (Some(l), Some(h), Some(c0), Some(c1), Some(flag)) =
             (addr(dev, "TMR0L"), addr(dev, "TMR0H"), addr(dev, "T0CON0"), addr(dev, "T0CON1"), Flag::find(dev, "TMR0IF"))
@@ -234,6 +268,28 @@ impl Periph {
                 hook(a, k);
             }
             p.t2 = Some(Timer2 { tmr, pr, con, hlt, clk, flag, cnt: 0, pre: 0, post: 0, last: 0 });
+        }
+        if let (Some(con), Some(clk), Some(pre), Some(acq), Some(pch), Some(resl), Some(resh), Some(flag)) = (
+            addr(dev, "ADCON0"),
+            addr(dev, "ADCLK"),
+            addr(dev, "ADPRE"),
+            addr(dev, "ADACQ"),
+            addr(dev, "ADPCH"),
+            addr(dev, "ADRESL"),
+            addr(dev, "ADRESH"),
+            Flag::find(dev, "ADIF"),
+        ) {
+            // Only the Q10 ADC is sourced so far; the Q41 and PIC16 converters differ in resolution and timing.
+            if addr(dev, "ADCPCON").is_none() && addr(dev, "PRODL").is_some() {
+                hook(con, ADC0);
+                p.adc = Some(Adc { con, clk, pre, acq, pch, resl, resh, flag, bits: 10, end: None, feed: Vec::new() });
+            } else {
+                p.notes.insert("the ADC of this part is not modelled; ADGO never clears".into());
+            }
+        }
+        if let Some(a) = addr(dev, "FVRCON") {
+            hook(a, FVR0);
+            p.fvr = Some(a);
         }
         for n in 1..=2u8 {
             if let (Some(reg), Some(sta), Some(baud), Some(brgl), Some(brgh), Some(flag), Some(rcreg), Some(rcsta), Some(rcflag)) = (
@@ -480,6 +536,21 @@ impl Periph {
             }
             m.mem[t.tmr] = t.cnt;
         }
+        if let Some(a) = &mut self.adc {
+            while let Some((e, v)) = a.end.filter(|(e, _)| *e <= now) {
+                a.end = None;
+                let word = if m.mem[a.con] & 4 != 0 { v } else { v << (16 - a.bits) };
+                m.mem[a.resl] = word as u8;
+                m.mem[a.resh] = (word >> 8) as u8;
+                a.flag.set(m);
+                ev.push(e);
+                if m.mem[a.con] & 0x40 != 0 {
+                    Self::adc_start(a, m, e); // [A14]
+                } else {
+                    m.mem[a.con] &= !1;
+                }
+            }
+        }
         for u in &mut self.uarts {
             if m.mem[u.sta] & 0x10 != 0 {
                 self.notes.insert(format!("EUSART{} synchronous mode is not modelled; nothing is sent", u.num));
@@ -543,6 +614,30 @@ impl Periph {
     pub fn write(&mut self, k: u8, v: u8, now: u64, m: &mut DataMem) {
         match k {
             UART0.. => self.uart_write(k, v, now, m),
+            FVR0 => {
+                let a = self.fvr.unwrap();
+                if v & 0x80 != 0 {
+                    self.notes.insert("FVR start-up time (25 us typ.) is not modelled; FVRRDY is set at once".into());
+                }
+                m.mem[a] = v & !0x40 | (v >> 1) & 0x40;
+            }
+            ADC0 => {
+                let a = self.adc.as_mut().unwrap();
+                let (on, go) = (v & 0x80 != 0, v & 1 != 0);
+                let mut new = v & !1;
+                if !(on && go) {
+                    a.end = None;
+                } else {
+                    new |= 1;
+                    if v & 0x10 != 0 {
+                        self.notes.insert("the ADC FRC clock (ADCS = 1) is not modelled; ADGO never clears".into());
+                    } else if a.end.is_none() {
+                        m.mem[a.con] = new;
+                        Self::adc_start(a, m, now);
+                    }
+                }
+                m.mem[a.con] = new;
+            }
             T0L => {
                 let t = self.t0.as_mut().unwrap();
                 t.pre = 0;
@@ -664,6 +759,29 @@ impl Periph {
             }
         }
         Self::uart_bits(u, m);
+    }
+
+    /// Start a conversion at cycle `t`: end cycle and the code it will load.
+    fn adc_start(a: &mut Adc, m: &DataMem, t: u64) {
+        let n = u64::from(m.mem[a.clk] & 0x3F) + 1; // TAD = 2n Fosc periods
+        let lead = u64::from(m.mem[a.pre]) + u64::from(m.mem[a.acq]);
+        let sample = t + (2 * n * lead).div_ceil(4);
+        let end = t + (n * (2 * lead + 23)).div_ceil(4);
+        let ch = m.mem[a.pch] & 0x3F;
+        let code = a.feed.iter().filter(|(c, at, _)| *c == ch && *at <= sample).last().map_or(0, |f| f.2);
+        a.end = Some((end, code.min((1u16 << a.bits) - 1)));
+    }
+
+    /// Stimulus: the input of ADC channel `ch` is code `v` (full scale = the part's resolution) from cycle `at` on.
+    pub fn adc_feed(&mut self, ch: u8, at: u64, v: u16) -> bool {
+        match &mut self.adc {
+            Some(a) => {
+                a.feed.push((ch, at, v));
+                a.feed.sort_by_key(|f| f.1); // stable: same cycle keeps file order
+                true
+            }
+            None => false,
+        }
     }
 
     fn addr_of(&self, k: u8) -> usize {

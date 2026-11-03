@@ -1115,3 +1115,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Tests: `crates/picsim/tests/uart_rx.rs` (`cargo test --release -p picsim`), `tests/sim/run.sh` (Serial library reading and echoing, with a framing error).
 - 0.1.118: the stimulus is re-applied after `Machine::reset()` (it was dropped); `at`/`bit`/`gap` are capped at 2^32 cycles in the parser and the receiver's cycle sums saturate (no u64 overflow). Tests `stimulus_survives_reset`, `huge_timing_values_are_rejected`.
 - Open: Q41 UART, ports/PPS, ADC, more stimulus kinds.
+
+## Simulator S4: ADC (done 2026-11-02, 0.1.119)
+- `periph.rs`: ADCC basic mode of the Q10: ADGO starts a conversion of (ADPRE + ADACQ) ADC clocks + 11.5 TAD (TAD = 2(ADCLK+1) Fosc periods), ADRES loaded (ADFM justification), ADGO cleared unless ADCONT, ADIF set; ADGO/ADON clear terminates. FVRCON.FVRRDY follows FVREN at once (`[A15]`, note). Other parts' ADCs are not modelled and say so. Sources and assumptions `[A12]`-`[A15]` in `docs/FACTS-SIM.md`.
+- Stimulus: `[[adc]]` (`channel`, `value`, `at`) sets the code a channel reads from a cycle on.
+- Tests: `crates/picsim/tests/adc.rs` (timing to the cycle, justification, stimulus timeline, ADON off, ADCONT, FVR, bad stimulus); `lib_adc` and `lib_adin` pass on `--engine sim`.
+- Note: `cargo build --release` at the root does not rebuild `basil-sim`; use `-p picsim-cli`.
+- Open: Q41 ADC (12 bits, timing to read from DS40002214G), ports/PPS pin stimulus, NVM (S5).
+
