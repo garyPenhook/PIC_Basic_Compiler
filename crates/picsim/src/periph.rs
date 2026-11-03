@@ -22,7 +22,7 @@
 
 use crate::mem::{DataMem, Special};
 use devdesc::Device;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 /// A flag bit in a PIRx register.
 #[derive(Clone, Copy, Debug)]
@@ -74,8 +74,9 @@ const T2P: u8 = 10;
 const T2C: u8 = 11;
 const T2HLT: u8 = 12;
 const T2CLK: u8 = 13;
-/// EUSART n (0-based) uses hook codes UART0 + 3n + {REG 0, STA 1, BAUD 2}.
+/// EUSART n (0-based) uses hook codes UART0 + 5n + {TXREG 0, TXSTA 1, BAUDCON 2, RCREG 3, RCSTA 4}.
 const UART0: u8 = 14;
+const UART_HOOKS: u8 = 5;
 
 /// EUSART1 transmitter of the Q10 style (TX1REG, TX1STA, BAUD1CON, SP1BRGL/H; DS40002043F ch.29 p.503-505).
 /// * TXREG moves to the shift register at once when that is idle, otherwise it is held and moves in the cycle
@@ -94,6 +95,31 @@ struct Uart {
     flag: Flag,
     tsr_end: Option<u64>,
     pending: Option<u8>,
+    rcreg: usize,
+    rcsta: usize,
+    rcflag: Flag,
+    /// Characters the outside world sends, in order; the head is the one being sent.
+    rx_in: VecDeque<RxStream>,
+    /// Cycle the line is free again (end of the last character that started).
+    rx_free: u64,
+    /// The character being received: (cycle it reaches the FIFO, word, framing error).
+    rx_cur: Option<(u64, u16, bool)>,
+    /// Receive FIFO, two deep: (word with the ninth bit at bit 8, framing error).
+    fifo: VecDeque<(u16, bool)>,
+}
+
+/// Characters sent to a receiver: the first start bit falls at cycle `at`, then back to back plus `gap` idle cycles.
+/// `bit` is the sender's bit time in instruction cycles; without it the receiver's own rate is used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RxStream {
+    pub at: u64,
+    pub words: VecDeque<u16>,
+    pub bit: Option<u64>,
+    pub gap: u64,
+    /// Nine data bits (11 bits per character) instead of eight.
+    pub nine: bool,
+    /// The Stop bit is sent as 0.
+    pub bad_stop: bool,
 }
 
 struct Timer0 {
@@ -210,35 +236,61 @@ impl Periph {
             p.t2 = Some(Timer2 { tmr, pr, con, hlt, clk, flag, cnt: 0, pre: 0, post: 0, last: 0 });
         }
         for n in 1..=2u8 {
-            if let (Some(reg), Some(sta), Some(baud), Some(brgl), Some(brgh), Some(flag)) = (
+            if let (Some(reg), Some(sta), Some(baud), Some(brgl), Some(brgh), Some(flag), Some(rcreg), Some(rcsta), Some(rcflag)) = (
                 addr(dev, &format!("TX{n}REG")),
                 addr(dev, &format!("TX{n}STA")),
                 addr(dev, &format!("BAUD{n}CON")),
                 addr(dev, &format!("SP{n}BRGL")),
                 addr(dev, &format!("SP{n}BRGH")),
                 Flag::find(dev, &format!("TX{n}IF")),
+                addr(dev, &format!("RC{n}REG")),
+                addr(dev, &format!("RC{n}STA")),
+                Flag::find(dev, &format!("RC{n}IF")),
             ) {
-                let k = UART0 + 3 * p.uarts.len() as u8;
-                for (a, o) in [(reg, 0), (sta, 1), (baud, 2)] {
+                let k = UART0 + UART_HOOKS * p.uarts.len() as u8;
+                for (a, o) in [(reg, 0), (sta, 1), (baud, 2), (rcreg, 3), (rcsta, 4)] {
                     hook(a, k + o);
                 }
-                p.uarts.push(Uart { num: n, reg, sta, baud, brgl, brgh, flag, tsr_end: None, pending: None });
+                p.uarts.push(Uart {
+                    num: n, reg, sta, baud, brgl, brgh, flag, tsr_end: None, pending: None, rcreg, rcsta, rcflag,
+                    rx_in: VecDeque::new(), rx_free: 0, rx_cur: None, fifo: VecDeque::new(),
+                });
             }
         }
         p
     }
 
-    /// Instruction cycles one character takes at the current baud settings.
-    fn uart_char_cycles(u: &Uart, m: &DataMem) -> u64 {
+    /// Queue characters for the receiver of EUSART `num` (1-based). False when the part has no such EUSART.
+    pub fn rx_send(&mut self, num: u8, s: RxStream) -> bool {
+        match self.uarts.iter_mut().find(|u| u.num == num) {
+            Some(u) => {
+                u.rx_in.push_back(s);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Instruction cycles one bit takes at the current baud settings.
+    fn uart_bit_cycles(u: &Uart, m: &DataMem) -> u64 {
         let sta = m.mem[u.sta];
         let brg16 = m.mem[u.baud] & 8 != 0;
         let n = if brg16 { u64::from(m.mem[u.brgh]) << 8 | u64::from(m.mem[u.brgl]) } else { u64::from(m.mem[u.brgl]) };
-        let per_bit = match (brg16, sta & 4 != 0) {
+        match (brg16, sta & 4 != 0) {
             (true, true) => n + 1,
             (false, false) => 16 * (n + 1),
             _ => 4 * (n + 1),
-        };
-        per_bit * (if sta & 0x40 != 0 { 11 } else { 10 })
+        }
+    }
+
+    /// Instruction cycles one transmitted character takes at the current baud settings.
+    fn uart_char_cycles(u: &Uart, m: &DataMem) -> u64 {
+        Self::uart_bit_cycles(u, m) * (if m.mem[u.sta] & 0x40 != 0 { 11 } else { 10 })
+    }
+
+    /// The receiver listens: serial port and receiver enabled, asynchronous, no overrun pending.
+    fn uart_rx_on(u: &Uart, m: &DataMem) -> bool {
+        m.mem[u.rcsta] & 0x92 == 0x90 && m.mem[u.sta] & 0x10 == 0
     }
 
     /// TXIF and TRMT follow the transmitter state.
@@ -246,6 +298,58 @@ impl Periph {
         let txen = m.mem[u.sta] & 0x20 != 0;
         if txen && u.pending.is_none() { u.flag.set(m) } else { u.flag.clear(m) }
         if u.tsr_end.is_none() { m.mem[u.sta] |= 2 } else { m.mem[u.sta] &= !2 }
+        // RCIF: receiver enabled and an unread character in the FIFO (29.1.2.3). FERR and RX9D describe the top one.
+        let (w, fe) = u.fifo.front().copied().unwrap_or((0, false));
+        if m.mem[u.rcsta] & 0x90 == 0x90 && !u.fifo.is_empty() { u.rcflag.set(m) } else { u.rcflag.clear(m) }
+        m.mem[u.rcsta] = m.mem[u.rcsta] & !5 | u8::from(fe) << 2 | (w >> 8) as u8 & 1;
+        if u.rx_cur.is_none() { m.mem[u.baud] |= 0x40 } else { m.mem[u.baud] &= !0x40 }
+    }
+
+    /// Receiver: start the next queued character when the line is free, finish the one in flight.
+    /// `[A9]` a character is taken into the FIFO when its Stop bit has been sampled, half a bit time into the Stop bit
+    /// (29.1.2.2); a character whose Start bit falls while the receiver is off is lost, as the hardware waits for
+    /// the next falling edge. Returns the cycles at which RCIF rose.
+    fn uart_rx(u: &mut Uart, m: &mut DataMem, now: u64, ev: &mut Vec<u64>) {
+        loop {
+            if let Some((end, word, fe)) = u.rx_cur {
+                if end > now {
+                    return;
+                }
+                u.rx_cur = None;
+                let skip = m.mem[u.rcsta] & 0x48 == 0x48 && word & 0x100 == 0; // ADDEN with RX9: only address bytes
+                if skip {
+                    continue;
+                }
+                if u.fifo.len() < 2 {
+                    u.fifo.push_back((word, fe));
+                    ev.push(end);
+                } else {
+                    m.mem[u.rcsta] |= 2; // third character complete before the FIFO was read: OERR
+                }
+                continue;
+            }
+            let Some(st) = u.rx_in.front_mut() else { return };
+            let start = st.at.max(u.rx_free);
+            if start > now {
+                return;
+            }
+            let Some(word) = st.words.pop_front() else {
+                u.rx_in.pop_front();
+                continue;
+            };
+            let bit = st.bit.unwrap_or_else(|| Self::uart_bit_cycles(u, m));
+            let st = u.rx_in.front_mut().unwrap();
+            let n = if st.nine { 11 } else { 10 };
+            u.rx_free = start + bit * n + st.gap;
+            st.at = u.rx_free;
+            let (bad, nine) = (st.bad_stop, st.nine);
+            if Self::uart_rx_on(u, m) {
+                // The receiver's own width decides how many bits it takes in; the sender's decides the timing.
+                let nr = if m.mem[u.rcsta] & 0x40 != 0 { 11 } else { 10 };
+                let word = if nine && nr == 11 { word & 0x1FF } else { word & 0xFF };
+                u.rx_cur = Some((start + bit * (2 * nr - 1) / 2, word, bad));
+            }
+        }
     }
 
     /// Bring every running timer to cycle `now`.
@@ -388,6 +492,7 @@ impl Periph {
                     ev.push(e);
                 }
             }
+            Self::uart_rx(u, m, now, &mut ev);
             Self::uart_bits(u, m);
         }
         for e in ev {
@@ -416,13 +521,22 @@ impl Periph {
                 if m.mem[t.con] & 2 != 0 { m.mem[t.h] } else { (t.cnt >> 8) as u8 }
             }
             T2T => self.t2.as_ref().unwrap().cnt,
+            UART0.. => {
+                let u = &mut self.uarts[usize::from(k - UART0) / usize::from(UART_HOOKS)];
+                // `[A10]` An empty FIFO reads the last character again (the data sheet does not say).
+                if let Some((w, _)) = u.fifo.pop_front() {
+                    m.mem[u.rcreg] = w as u8;
+                }
+                Self::uart_bits(u, m);
+                m.mem[u.rcreg]
+            }
             _ => unreachable!("read of hook {k} has no model"),
         }
     }
 
     /// Plain registers (TMR0H, T0CON0/1, T1CON, ...) read the stored byte.
     pub fn is_stored(k: u8) -> bool {
-        !matches!(k, T0L | T1L | T1H | T2T)
+        !(matches!(k, T0L | T1L | T1H | T2T) || k >= UART0 && (k - UART0) % UART_HOOKS == 3)
     }
 
     /// A write: `v` is already masked to the implemented bits. The caller has synced to the writing cycle.
@@ -511,7 +625,7 @@ impl Periph {
     }
 
     fn uart_write(&mut self, k: u8, v: u8, now: u64, m: &mut DataMem) {
-        let (i, sub) = (usize::from(k - UART0) / 3, (k - UART0) % 3);
+        let (i, sub) = (usize::from(k - UART0) / usize::from(UART_HOOKS), (k - UART0) % UART_HOOKS);
         let u = &mut self.uarts[i];
         match sub {
             0 => {
@@ -532,7 +646,22 @@ impl Periph {
                     u.pending = None;
                 }
             }
-            _ => m.mem[u.baud] = v & !0xC0 | m.mem[u.baud] & 0xC0, // ABDOVF and RCIDL are read only
+            2 => m.mem[u.baud] = v & !0xC0 | m.mem[u.baud] & 0xC0, // ABDOVF and RCIDL are read only
+            3 => {} // RCREG is read only
+            _ => {
+                // OERR, FERR and RX9D belong to the hardware. `[A11]` Clearing CREN clears OERR and abandons the
+                // character in flight (the FIFO keeps its characters); clearing SPEN resets the receiver.
+                let mut new = v & !7 | m.mem[u.rcsta] & 7;
+                if v & 0x80 == 0 {
+                    u.fifo.clear();
+                    u.rx_cur = None;
+                    new &= !7;
+                } else if v & 0x10 == 0 {
+                    u.rx_cur = None;
+                    new &= !2;
+                }
+                m.mem[u.rcsta] = new;
+            }
         }
         Self::uart_bits(u, m);
     }

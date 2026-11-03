@@ -41,6 +41,11 @@ impl Machine {
         Ok(())
     }
 
+    /// Drive the part as a stimulus file says (see `stimulus.rs`).
+    pub fn load_stimulus(&mut self, text: &str) -> Result<(), String> {
+        crate::stimulus::Stimulus::parse(text)?.apply(&self.dev, &mut self.cpu.p)
+    }
+
     /// Power-on reset: the core and memory return to their reset state and the program is loaded again.
     pub fn reset(&mut self) {
         if let Ok(mut c) = Pic18::new(&self.dev) {

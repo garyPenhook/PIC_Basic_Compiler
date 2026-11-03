@@ -60,8 +60,33 @@ DS40002043F ch.29 p.503-505.
   neither: 16(n+1); 10 bits, 11 with TX9. `[A6]` the held byte starts in the cycle the Stop bit ends.
   `[A7]` clearing TXEN abandons the shift register and a held byte; a TXREG write with TXEN = 0 is dropped.
   `[A8]` TXIF does not dip for a cycle after a write that goes straight to the shift register.
-* Synchronous mode and the receiver are not modelled (a note is logged / RCREG stays a latch).
+* Synchronous mode is not modelled (a note is logged; nothing is sent or received).
 * `basil-sim` prints the transmitted bytes as `tx1: ...` / `tx2: ...`; `Periph::tx` holds (EUSART, start cycle, byte).
+
+### Receiver (DS40002043F 29.1.2 p.507-510, RCxSTA 29.6.4 p.529)
+
+* Two-character FIFO. RCIF = SPEN and CREN and an unread character (read only, follows the FIFO). FERR and RX9D describe
+  the top character, so they change when RCREG is read. A third complete character with the FIFO full sets OERR and is
+  lost; while OERR is set nothing more is received. Clearing CREN clears OERR; clearing SPEN also empties the FIFO.
+* RX9 + ADDEN: characters with the ninth bit 0 are dropped without RCIF. RCIDL (BAUDnCON bit 6) is 0 while a character
+  is in flight. A character whose Start bit falls while the receiver is off is lost (the hardware waits for the next
+  falling edge).
+* `[A9]` A character enters the FIFO when the Stop bit has been sampled, half a bit time into it: Start + data bits +
+  half a bit time after the falling edge (9.5 bit times for 8 data bits). Not measured on hardware.
+* `[A10]` Reading RCREG with an empty FIFO returns the last character read again (data sheet silent).
+* `[A11]` Clearing CREN keeps the characters already in the FIFO (29.1.2.5 says they can still be read) and abandons the
+  one in flight.
+* RCREG is read by the instruction against the state after the previous instruction (peripherals sync once per
+  instruction), so a character that completes inside the reading instruction shows up one instruction later.
+* Auto-baud (ABDEN), break detection and the RX pin itself (RXxPPS, TRIS, ANSEL) are not modelled: the stimulus file
+  drives the receiver input directly.
+
+## Stimulus file (`crates/picsim/src/stimulus.rs`, `basil-sim --stim FILE`)
+
+TOML; today only `[[uart]]` entries (`port`, `at`, `bytes` or `data`, `bit`, `gap`, `nine`, `bad_stop`; documented at the
+top of `stimulus.rs`). Characters of one entry go out back to back; entries follow each other on the line. `at` is an
+instruction cycle, `bit` the sender's bit time in instruction cycles (default: the receiver's own rate at the time the
+character starts). Tests: `cargo test --release -p picsim`, `tests/sim/run.sh` (a Basil program reading from it).
 
 ## Configuration words (S3)
 

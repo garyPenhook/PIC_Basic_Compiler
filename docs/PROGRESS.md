@@ -1108,3 +1108,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `gen_val` of `a And b`, `a Or b`, `Not a` on plain Boolean variables (always 0 or 1): `movf a,w / andwf|iorwf b,w`, `movf a,w / xorlw 1` (3 words against 9 and 7).
 - Test: `tests/exec/select_bool_values.bas` (18F27Q10, 18F16Q41, and `-O0` agree).
 - Checked, no change: PIC18-Q41 banking. The bank rules use the device's access ranges, not fixed addresses; 140 bytes of Word variables on an 18F06Q41 (`__A` at 0x500) gave 442 operands with no wrong access bit and one correct `movlb 5`.
+
+## Simulator S4: EUSART receiver and stimulus file (done 2026-11-02, 0.1.117)
+- `periph.rs`: Q10-style EUSART1/2 receiver: two-character FIFO, RCIF, OERR (cleared by CREN or SPEN), FERR/RX9D of the top character, RX9 with ADDEN, RCIDL; a character starting while the receiver is off is lost. Assumptions `[A9]`-`[A11]` in `docs/FACTS-SIM.md`.
+- `stimulus.rs` + `basil-sim --stim FILE`: TOML `[[uart]]` entries (`port`, `at`, `bytes`/`data`, `bit`, `gap`, `nine`, `bad_stop`) feed the receiver.
+- Tests: `crates/picsim/tests/uart_rx.rs` (`cargo test --release -p picsim`), `tests/sim/run.sh` (Serial library reading and echoing, with a framing error).
+- Open: Q41 UART, ports/PPS, ADC, more stimulus kinds.
