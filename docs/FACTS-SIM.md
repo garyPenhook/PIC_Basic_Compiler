@@ -86,7 +86,8 @@ DS40002043F ch.29 p.503-505.
 TOML; today only `[[uart]]` entries (`port`, `at`, `bytes` or `data`, `bit`, `gap`, `nine`, `bad_stop`; documented at the
 top of `stimulus.rs`). Characters of one entry go out back to back; entries follow each other on the line. `at` is an
 instruction cycle, `bit` the sender's bit time in instruction cycles (default: the receiver's own rate at the time the
-character starts). Tests: `cargo test --release -p picsim`, `tests/sim/run.sh` (a Basil program reading from it).
+character starts). `at`, `bit` and `gap` are capped at 2^32 cycles (larger values are a parse error). The stimulus is kept
+and applied again after `Machine::reset()`. Tests: `cargo test --release -p picsim`, `tests/sim/run.sh` (a Basil program reading from it).
 
 ## Configuration words (S3)
 

@@ -110,3 +110,23 @@ fn stimulus_errors() {
         assert!(m.load_stimulus(bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn stimulus_survives_reset() {
+    let mut m = machine("[[uart]]\nat = 100\nbytes = \"A\"\n");
+    m.reset();
+    let (_, (pa, pm)) = setup(&mut m, 0x90);
+    run_to(&mut m, 100 + 4 * 19 / 2 + 2);
+    assert_ne!(m.cpu.m.mem[pa as usize] & pm, 0, "RCIF after reset");
+    assert_eq!(m.cpu.read(addr(&m, "RC1REG")), b'A');
+}
+
+#[test]
+fn huge_timing_values_are_rejected() {
+    let dev = Device::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../devices/18F27Q10.toml")).unwrap();
+    let mut m = Machine::new(dev).unwrap();
+    for k in ["at", "bit", "gap"] {
+        assert!(m.load_stimulus(&format!("[[uart]]\n{k} = 9000000000\nbytes = \"a\"\n")).is_err(), "{k}");
+    }
+    assert!(m.load_stimulus("[[uart]]\nat = 4294967296\nbit = 4294967296\ngap = 4294967296\nbytes = \"abc\"\n").is_ok());
+}

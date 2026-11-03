@@ -1113,4 +1113,5 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `periph.rs`: Q10-style EUSART1/2 receiver: two-character FIFO, RCIF, OERR (cleared by CREN or SPEN), FERR/RX9D of the top character, RX9 with ADDEN, RCIDL; a character starting while the receiver is off is lost. Assumptions `[A9]`-`[A11]` in `docs/FACTS-SIM.md`.
 - `stimulus.rs` + `basil-sim --stim FILE`: TOML `[[uart]]` entries (`port`, `at`, `bytes`/`data`, `bit`, `gap`, `nine`, `bad_stop`) feed the receiver.
 - Tests: `crates/picsim/tests/uart_rx.rs` (`cargo test --release -p picsim`), `tests/sim/run.sh` (Serial library reading and echoing, with a framing error).
+- 0.1.118: the stimulus is re-applied after `Machine::reset()` (it was dropped); `at`/`bit`/`gap` are capped at 2^32 cycles in the parser and the receiver's cycle sums saturate (no u64 overflow). Tests `stimulus_survives_reset`, `huge_timing_values_are_rejected`.
 - Open: Q41 UART, ports/PPS, ADC, more stimulus kinds.

@@ -340,14 +340,14 @@ impl Periph {
             let bit = st.bit.unwrap_or_else(|| Self::uart_bit_cycles(u, m));
             let st = u.rx_in.front_mut().unwrap();
             let n = if st.nine { 11 } else { 10 };
-            u.rx_free = start + bit * n + st.gap;
+            u.rx_free = bit.saturating_mul(n).saturating_add(start).saturating_add(st.gap);
             st.at = u.rx_free;
             let (bad, nine) = (st.bad_stop, st.nine);
             if Self::uart_rx_on(u, m) {
                 // The receiver's own width decides how many bits it takes in; the sender's decides the timing.
                 let nr = if m.mem[u.rcsta] & 0x40 != 0 { 11 } else { 10 };
                 let word = if nine && nr == 11 { word & 0x1FF } else { word & 0xFF };
-                u.rx_cur = Some((start + bit * (2 * nr - 1) / 2, word, bad));
+                u.rx_cur = Some((start.saturating_add(bit.saturating_mul(2 * nr - 1) / 2), word, bad));
             }
         }
     }

@@ -14,6 +14,9 @@
 use crate::periph::RxStream;
 use devdesc::Device;
 
+/// Largest `at`, `bit` and `gap`: 2^32 instruction cycles. Keeps the receiver's cycle arithmetic far from u64 overflow.
+pub const MAX_CYCLES: u64 = 1 << 32;
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Stimulus {
     pub uart: Vec<(u8, RxStream)>,
@@ -32,7 +35,13 @@ impl Stimulus {
                 let int = |n: &str| -> Result<Option<u64>, String> {
                     match t.get(n) {
                         None => Ok(None),
-                        Some(x) => x.as_integer().and_then(|i| u64::try_from(i).ok()).map(Some).ok_or(format!("uart.{n} must be a non-negative integer")),
+                        Some(x) => {
+                            let v = x.as_integer().and_then(|i| u64::try_from(i).ok()).ok_or(format!("uart.{n} must be a non-negative integer"))?;
+                            if n != "port" && v > MAX_CYCLES {
+                                return Err(format!("uart.{n} must be at most {MAX_CYCLES}"));
+                            }
+                            Ok(Some(v))
+                        }
                     }
                 };
                 let flag = |n: &str| t.get(n).map_or(Ok(false), |x| x.as_bool().ok_or(format!("uart.{n} must be true or false")));
