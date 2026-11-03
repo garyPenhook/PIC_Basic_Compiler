@@ -5,17 +5,25 @@ set -e
 cd "$(dirname "$0")/../.."
 w=$(mktemp -d)
 trap 'rm -rf "$w"' EXIT
-cp tests/sim/serial_rx.bas "$w/"
-./target/release/basil --keep-vars "$w/serial_rx.bas" >/dev/null
-out=$(./target/release/basil-sim "$w/serial_rx.hex" --device 18F27Q10 --stim tests/sim/serial_rx.stim.toml \
-    --dump SRX_B0,SRX_B1,SRX_B2,SRX_B3,SRX_FERR 2>/dev/null)
 want="SRX_B0 = 72
 SRX_B1 = 105
 SRX_B2 = 33
 SRX_B3 = 63
-SRX_FERR = 4
+SRX_FERR = %s
 tx1: Hi!"
-for l in $(printf '%s\n' "$want" | tr ' ' '_'); do
-    echo "$out" | tr ' ' '_' | grep -q "^$l" || { echo "FAIL serial_rx: missing '$l'"; echo "$out"; exit 1; }
+for t in "serial_rx 18F27Q10 4" "serial_rx_q41 18F16Q41 8"; do
+    set -- $t
+    cp tests/sim/$1.bas "$w/"
+    ./target/release/basil --keep-vars "$w/$1.bas" >/dev/null
+    out=$(./target/release/basil-sim "$w/$1.hex" --device $2 --stim tests/sim/serial_rx.stim.toml \
+        --dump SRX_B0,SRX_B1,SRX_B2,SRX_B3,SRX_FERR 2>/dev/null)
+    for l in $(printf "$want\n" "$3" | tr ' ' '_'); do
+        echo "$out" | tr ' ' '_' | grep -q "^$l" || { echo "FAIL $1: missing '$l'"; echo "$out"; exit 1; }
+    done
+    echo "PASS $1"
 done
-echo "PASS serial_rx"
+cp tests/sim/serial_tx_q41.bas "$w/"
+./target/release/basil "$w/serial_tx_q41.bas" >/dev/null
+out=$(./target/release/basil-sim "$w/serial_tx_q41.hex" --device 18F16Q41 2>/dev/null)
+echo "$out" | grep -q "^tx1: AB$" || { echo "FAIL serial_tx_q41: want 'tx1: AB'"; echo "$out"; exit 1; }
+echo "PASS serial_tx_q41"

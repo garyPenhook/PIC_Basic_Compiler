@@ -24,6 +24,9 @@ use crate::mem::{DataMem, Special};
 use devdesc::Device;
 use std::collections::{BTreeSet, VecDeque};
 
+mod quart;
+use quart::QUart;
+
 /// A flag bit in a PIRx register.
 #[derive(Clone, Copy, Debug)]
 struct Flag {
@@ -82,6 +85,9 @@ const ADC0: u8 = 14;
 const FVR0: u8 = 15;
 const UART0: u8 = 16;
 const UART_HOOKS: u8 = 5;
+/// Q41 UART n (0-based) uses hook codes QUART0 + quart::HOOKS * n + sub-code (see `quart.rs`); at most 5 UARTs.
+const QUART0: u8 = 112;
+const QUART_END: u8 = QUART0 + 5 * quart::HOOKS;
 /// T1GCON: GVAL (bit 2) is read only and follows the gate source.
 const T1G: u8 = 40;
 /// PORTx (index into `ports`) uses hook code PORT0 + index: a read gives the pin levels, a write goes to LATx.
@@ -216,6 +222,7 @@ pub struct Periph {
     t1: Option<Timer1>,
     t2: Option<Timer2>,
     uarts: Vec<Uart>,
+    quarts: Vec<QUart>,
     adc: Option<Adc>,
     fvr: Option<usize>,
     /// Bytes the transmitters started to send: (EUSART number 1-based, cycle it started, byte).
@@ -252,7 +259,7 @@ impl Periph {
 
     /// Find the timers the part has and mark their registers as hooked in `m`.
     pub fn bind(dev: &Device, m: &mut DataMem) -> Periph {
-        let mut p = Periph { ports: Vec::new(), drive: Vec::new(), t0: None, t1: None, t2: None, uarts: Vec::new(), adc: None, fvr: None, tx: Vec::new(), notes: BTreeSet::new(), event: None };
+        let mut p = Periph { ports: Vec::new(), drive: Vec::new(), t0: None, t1: None, t2: None, uarts: Vec::new(), quarts: Vec::new(), adc: None, fvr: None, tx: Vec::new(), notes: BTreeSet::new(), event: None };
         let mut hook = |a: usize, k: u8| m.special[a] = Special::Hook(k);
         if let (Some(l), Some(h), Some(c0), Some(c1), Some(flag)) =
             (addr(dev, "TMR0L"), addr(dev, "TMR0H"), addr(dev, "T0CON0"), addr(dev, "T0CON1"), Flag::find(dev, "TMR0IF"))
@@ -339,11 +346,24 @@ impl Periph {
                 });
             }
         }
+        for n in 1..=5u8 {
+            if let Some((q, regs)) = QUart::find(dev, n) {
+                let k = QUART0 + quart::HOOKS * p.quarts.len() as u8;
+                for (i, a) in regs.into_iter().enumerate() {
+                    hook(a, k + i as u8);
+                }
+                p.quarts.push(q);
+            }
+        }
         p
     }
 
     /// Queue characters for the receiver of EUSART `num` (1-based). False when the part has no such EUSART.
     pub fn rx_send(&mut self, num: u8, s: RxStream) -> bool {
+        if let Some(q) = self.quarts.iter_mut().find(|q| q.num == num) {
+            q.rx_send(s);
+            return true;
+        }
         match self.uarts.iter_mut().find(|u| u.num == num) {
             Some(u) => {
                 u.rx_in.push_back(s);
@@ -592,6 +612,9 @@ impl Periph {
             Self::uart_rx(u, m, now, &mut ev);
             Self::uart_bits(u, m);
         }
+        for q in &mut self.quarts {
+            q.sync(m, now, &mut ev, &mut self.tx, &mut self.notes);
+        }
         for e in ev {
             self.raised(e);
         }
@@ -628,6 +651,10 @@ impl Periph {
                 if m.mem[t.con] & 2 != 0 { m.mem[t.h] } else { (t.cnt >> 8) as u8 }
             }
             T2T => self.t2.as_ref().unwrap().cnt,
+            QUART0..QUART_END => {
+                let i = usize::from(k - QUART0) / usize::from(quart::HOOKS);
+                self.quarts[i].read_rxb(m)
+            }
             UART0..=39 => {
                 let u = &mut self.uarts[usize::from(k - UART0) / usize::from(UART_HOOKS)];
                 // `[A10]` An empty FIFO reads the last character again (the data sheet does not say).
@@ -643,13 +670,18 @@ impl Periph {
 
     /// Plain registers (TMR0H, T0CON0/1, T1CON, ...) read the stored byte.
     pub fn is_stored(k: u8) -> bool {
-        !(matches!(k, T0L | T1L | T1H | T2T | T1G | PORT0..=0x6F) || (UART0..40).contains(&k) && (k - UART0) % UART_HOOKS == 3)
+        !(matches!(k, T0L | T1L | T1H | T2T | T1G | PORT0..=0x6F) || (UART0..40).contains(&k) && (k - UART0) % UART_HOOKS == 3
+            || (QUART0..QUART_END).contains(&k) && (k - QUART0) % quart::HOOKS == quart::RXB)
     }
 
     /// A write: `v` is already masked to the implemented bits. The caller has synced to the writing cycle.
     pub fn write(&mut self, k: u8, v: u8, now: u64, m: &mut DataMem) {
         match k {
             UART0..=39 => self.uart_write(k, v, now, m),
+            QUART0..QUART_END => {
+                let i = usize::from(k - QUART0) / usize::from(quart::HOOKS);
+                self.quarts[i].write((k - QUART0) % quart::HOOKS, v, now, m, &mut self.tx);
+            }
             T1G => {
                 let a = self.t1.as_ref().unwrap().gcon;
                 m.mem[a] = v & !4 | m.mem[a] & 4; // GVAL is read only

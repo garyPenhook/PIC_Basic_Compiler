@@ -18,7 +18,7 @@ Each rule the simulator relies on, with its source. Rules marked `[A#]` are assu
 * The pack's `access` letters (`n r w c s -`) are **not decoded yet**: their meaning is not recorded in a data sheet
   here. Only the `implemented` mask is applied (unimplemented bits read 0 and ignore writes).
 * Not modelled yet (milestone): reset values after MCLR/WDT, configuration words (S3 remainder), TBLWT / flash and
-  EEPROM writes (S5), Q41 UART/ADC (S4). SFRs without a model act as latches and are listed at the end of a run.
+  EEPROM writes (S5), Q41 ADC (S4). SFRs without a model act as latches and are listed at the end of a run.
 
 ## Interrupts and timers (S3)
 
@@ -50,7 +50,7 @@ Code: `crates/picsim/src/pic18.rs` (`irq_check`, `retfie`), `periph.rs` (Timer0/
 
 ## EUSART transmitter (S4, Q10 style)
 
-Code: `periph.rs` (`Uart`), EUSART1 and EUSART2 (TXn/SPn/BAUDn names; the Q41 UART1 `U1*` registers are not modelled yet).
+Code: `periph.rs` (`Uart`), EUSART1 and EUSART2 (TXn/SPn/BAUDn names; the Q41 `Un*` UARTs are the next section).
 DS40002043F ch.29 p.503-505.
 
 * TXREG goes to the shift register at once when that is idle, else it is held until the Stop bit ends (29.1.1.2).
@@ -80,6 +80,47 @@ DS40002043F ch.29 p.503-505.
   instruction), so a character that completes inside the reading instruction shows up one instruction later.
 * Auto-baud (ABDEN), break detection and the RX pin itself (RXxPPS, TRIS, ANSEL) are not modelled: the stimulus file
   drives the receiver input directly.
+
+## UART of the PIC18-Q41 (S4, `periph/quart.rs`)
+
+DS40002214G ch.34 p.519-566 (module `DOS-03076_uart_protocol_0_v1`), UART1..UART3 by register name (`U1CON0`, ...);
+register layouts from 34.20 p.547-565. Asynchronous modes only (MODE 0 8-bit, 1 7-bit, 2 odd and 3 even parity in the
+9th bit, 4 address). LIN, DMX, DALI (MODE > 4), auto-baud, break, wake-up, flow control and checksum are not modelled; a
+note is logged when a program turns one on.
+
+* Bit time in instruction cycles (Table 34-2 p.540, Fosc/4 per cycle): BRGS = 1: `UxBRG + 1`; BRGS = 0: `4(UxBRG + 1)`.
+  `UxBRG` takes a write only while ON = 0 (34.20.8 note 2). A character is Start + 7/8/9 data bits + Stop (STP: 1, 1.5,
+  2, 2 bit times, Table 34-1 p.536).
+* Transmitter (34.2.1 p.519-520, 34.10 p.536): a `UxTXB` write goes to the shift register at once when that is free, else
+  waits in `UxTXB` and moves at the beginning of the previous character's Stop bit; the next Start bit follows the last
+  Stop bit. TXBE = buffer empty, TXBF = full, TXWRE (sticky, software clears) = write into a full buffer. TXIF = ON and
+  TXEN and buffer empty. TXMTIF = shift register empty and idle, read only. Data written with TXEN = 0 waits in the
+  shift register. TXBE = 1 written flushes the buffer (and an inactive shift register); a character being shifted
+  finishes. ON = 0 discards everything. Address mode: a write to `UxP1L` sends the byte with the 9th bit set.
+* Receiver (34.2.2 p.522-524, 34.8.1, 34.9 p.536): two-character FIFO. The character is stored in the middle of the first
+  Stop bit (second with STP = 10); STPMD = 1 stores it at the end of the last Stop bit. RXIF = FIFO not empty and not
+  suppressed by FERIF with FERIE or PERIF with PERIE. FERIF/PERIF describe the top character (PERIF = parity error in
+  MODE 2/3, the 9th bit in MODE 4). A character completing with the FIFO full is lost and sets RXFOIF, which stays until
+  software clears it. RXBE = 1 written flushes the FIFO. UxEIF = any `UxERRIR` flag with its `UxERRIE` bit.
+* The stimulus file feeds it like the EUSART: `[[uart]]` with `port` = the UART number; `nine = true` sends the 9th bit
+  (bit 8 of each `data` value) for the parity and address modes. Transmitted bytes print as `tx1:` ... as before.
+* `[A18]` UxTXIF follows a write at once. Figure 34-3 p.521 marks "1 TCY" on it, which may be a one-cycle dip (a dip
+  would matter only to code polling TXIF straight after a write; `lib/serial` polls TXBF).
+* `[A19]` Clearing TXEN lets the character being shifted finish and starts no further one; a held character is sent when
+  TXEN is set again. A `UxTXB` write with ON = 0 is stored and ignored.
+* `[A20]` ON = 0 resets TXMTIF to 1, the error flags and TXWRE to 0 and empties both buffers.
+* `[A21]` A character whose Start bit falls while the receiver is off (ON, RXEN, unsupported MODE) is lost. With RXFOIF
+  set: RUNOVF = 0 stops the receiver (the character is lost), RUNOVF = 1 receives it and discards it. RXIDL is low from
+  the Start bit until the character is stored.
+* `[A22]` An empty FIFO reads the last character again. Address mode stores every character (address matching is not
+  modelled; errata DS80000901H 1.5.2 says not to use the mode).
+* `[A23]` A `UxTXB` write into a full buffer is dropped. In MODE 1 the top bit is not sent.
+* Hardware-owned bits: TXMTIF, FERIF and PERIF of `UxERRIR` ignore writes (they follow the state); the other flags take
+  the written value (R/W/S), so software clears RXFOIF with a write of 0. A `bsf`/`bcf` on `UxFIFO` writes TXBE and RXBE
+  back as read, so on an empty buffer it flushes (the data sheet's note on `UxFIFO` says the same).
+* `lib_serial` (Q41) passes on `--engine sim` as before; `tests/sim/run.sh` adds the library receiving three bytes and a
+  framing error (`serial_rx_q41`) and sending two bytes with `SerialFlush` (`serial_tx_q41`, sim only: MDB never
+  drains the Q41 transmit buffer).
 
 ## ADC (S4, `Adc` in `periph.rs`; Q10 only)
 

@@ -1127,3 +1127,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `periph.rs`: `PORTx` hooks (read = pin levels, write = `LATx`), `T1GCON` hook (GVAL), `Periph::pin_feed`. Stimulus `[[pin]]` and `[[port]]` (`stimulus.rs`). Rules and assumptions `[A16]` (undriven input reads 0, no pull-ups) and `[A17]` (MDB: GVAL reads 0 while GE = 0, against the data sheet) in `docs/FACTS-SIM.md`.
 - `lib_timer_hw` now passes on `--engine sim` and on MDB with the same cycle count (2787). Tests: `crates/picsim/tests/pins.rs`.
 - Not done: the Timer1 gate stopping the counter, Timer2 hardware-limit modes driven by a pin (still run as software mode with a note), pull-ups.
+
+## Simulator S4: Q41 UART (done 2026-11-02, 0.1.121)
+- `periph/quart.rs` (child module of `periph.rs`): UART1..3 of the PIC18-Q41, asynchronous modes 0-4. Transmitter with `UxTXB` buffer, shift register, back-to-back timing (next character moved at the previous Stop bit, Start bit after the last Stop bit), TXBE/TXBF/TXWRE, TXMTIF, TXIF, flush by TXBE = 1, ON = 0 reset, `UxBRG` write lock while ON. Receiver with two-character FIFO, STP/STPMD sample points, FERIF/PERIF of the top character, RXIF suppression by FERIE/PERIE, RXFOIF with RUNOVF, RXBE flush, `UxEIF` summary. Sources and assumptions `[A18]`-`[A23]` in `docs/FACTS-SIM.md`.
+- The stimulus `[[uart]]` entries drive it (`port` = UART number).
+- Tests: `crates/picsim/tests/quart.rs` (8 tests, timing to the cycle); `tests/sim/run.sh` now runs `serial_rx_q41` and `serial_tx_q41` (library receive with a framing error; two bytes and `SerialFlush`).
+- Not modelled, with a note: LIN/DMX/DALI, auto-baud, break (`SENDB`, `RXBKIF`), wake-up, flow control, checksum.
+- Open: Q41 ADC, NVM (S5).
