@@ -34,7 +34,7 @@ struct Flag {
 impl Flag {
     fn find(dev: &Device, bit: &str) -> Option<Flag> {
         for s in dev.sfr.iter().filter(|s| s.name.starts_with("PIR")) {
-            if let Some(f) = s.fields.iter().find(|f| f.name == bit) {
+            if let Some(f) = s.fields.iter().chain(s.legacy.iter()).find(|f| f.name == bit) {
                 return Some(Flag { addr: s.addr as usize, mask: 1 << f.pos });
             }
         }
@@ -42,6 +42,9 @@ impl Flag {
     }
     fn set(self, m: &mut DataMem) {
         m.mem[self.addr] |= self.mask;
+    }
+    fn clear(self, m: &mut DataMem) {
+        m.mem[self.addr] &= !self.mask;
     }
 }
 
@@ -71,6 +74,27 @@ const T2P: u8 = 10;
 const T2C: u8 = 11;
 const T2HLT: u8 = 12;
 const T2CLK: u8 = 13;
+/// EUSART n (0-based) uses hook codes UART0 + 3n + {REG 0, STA 1, BAUD 2}.
+const UART0: u8 = 14;
+
+/// EUSART1 transmitter of the Q10 style (TX1REG, TX1STA, BAUD1CON, SP1BRGL/H; DS40002043F ch.29 p.503-505).
+/// * TXREG moves to the shift register at once when that is idle, otherwise it is held and moves in the cycle
+///   the Stop bit ends `[A6]`; TXIF = TXEN and nothing held (29.1.1.4); TRMT = shift register idle (29.1.1.5).
+/// * Bit time in instruction cycles (Table 29-1, Fosc/4 per cycle): BRG16=1,BRGH=1 -> n+1; exactly one of them
+///   -> 4(n+1); neither -> 16(n+1). A character is start + 8 (9 with TX9) + stop bits.
+/// * `[A7]` clearing TXEN abandons the shift register and a held byte. A write to TXREG while TXEN = 0 is dropped.
+/// * `[A8]` TXIF does not dip for the instruction cycle after a write that goes straight to the shift register.
+struct Uart {
+    num: u8,
+    reg: usize,
+    sta: usize,
+    baud: usize,
+    brgl: usize,
+    brgh: usize,
+    flag: Flag,
+    tsr_end: Option<u64>,
+    pending: Option<u8>,
+}
 
 struct Timer0 {
     l: usize,
@@ -114,6 +138,9 @@ pub struct Periph {
     t0: Option<Timer0>,
     t1: Option<Timer1>,
     t2: Option<Timer2>,
+    uarts: Vec<Uart>,
+    /// Bytes the transmitters started to send: (EUSART number 1-based, cycle it started, byte).
+    pub tx: Vec<(u8, u64, u8)>,
     pub notes: BTreeSet<String>,
     /// Cycle of the latest flag set by `sync` since the core last looked (`take_event`).
     event: Option<u64>,
@@ -146,7 +173,7 @@ impl Periph {
 
     /// Find the timers the part has and mark their registers as hooked in `m`.
     pub fn bind(dev: &Device, m: &mut DataMem) -> Periph {
-        let mut p = Periph { t0: None, t1: None, t2: None, notes: BTreeSet::new(), event: None };
+        let mut p = Periph { t0: None, t1: None, t2: None, uarts: Vec::new(), tx: Vec::new(), notes: BTreeSet::new(), event: None };
         let mut hook = |a: usize, k: u8| m.special[a] = Special::Hook(k);
         if let (Some(l), Some(h), Some(c0), Some(c1), Some(flag)) =
             (addr(dev, "TMR0L"), addr(dev, "TMR0H"), addr(dev, "T0CON0"), addr(dev, "T0CON1"), Flag::find(dev, "TMR0IF"))
@@ -182,7 +209,43 @@ impl Periph {
             }
             p.t2 = Some(Timer2 { tmr, pr, con, hlt, clk, flag, cnt: 0, pre: 0, post: 0, last: 0 });
         }
+        for n in 1..=2u8 {
+            if let (Some(reg), Some(sta), Some(baud), Some(brgl), Some(brgh), Some(flag)) = (
+                addr(dev, &format!("TX{n}REG")),
+                addr(dev, &format!("TX{n}STA")),
+                addr(dev, &format!("BAUD{n}CON")),
+                addr(dev, &format!("SP{n}BRGL")),
+                addr(dev, &format!("SP{n}BRGH")),
+                Flag::find(dev, &format!("TX{n}IF")),
+            ) {
+                let k = UART0 + 3 * p.uarts.len() as u8;
+                for (a, o) in [(reg, 0), (sta, 1), (baud, 2)] {
+                    hook(a, k + o);
+                }
+                p.uarts.push(Uart { num: n, reg, sta, baud, brgl, brgh, flag, tsr_end: None, pending: None });
+            }
+        }
         p
+    }
+
+    /// Instruction cycles one character takes at the current baud settings.
+    fn uart_char_cycles(u: &Uart, m: &DataMem) -> u64 {
+        let sta = m.mem[u.sta];
+        let brg16 = m.mem[u.baud] & 8 != 0;
+        let n = if brg16 { u64::from(m.mem[u.brgh]) << 8 | u64::from(m.mem[u.brgl]) } else { u64::from(m.mem[u.brgl]) };
+        let per_bit = match (brg16, sta & 4 != 0) {
+            (true, true) => n + 1,
+            (false, false) => 16 * (n + 1),
+            _ => 4 * (n + 1),
+        };
+        per_bit * (if sta & 0x40 != 0 { 11 } else { 10 })
+    }
+
+    /// TXIF and TRMT follow the transmitter state.
+    fn uart_bits(u: &Uart, m: &mut DataMem) {
+        let txen = m.mem[u.sta] & 0x20 != 0;
+        if txen && u.pending.is_none() { u.flag.set(m) } else { u.flag.clear(m) }
+        if u.tsr_end.is_none() { m.mem[u.sta] |= 2 } else { m.mem[u.sta] &= !2 }
     }
 
     /// Bring every running timer to cycle `now`.
@@ -313,6 +376,20 @@ impl Periph {
             }
             m.mem[t.tmr] = t.cnt;
         }
+        for u in &mut self.uarts {
+            if m.mem[u.sta] & 0x10 != 0 {
+                self.notes.insert(format!("EUSART{} synchronous mode is not modelled; nothing is sent", u.num));
+            }
+            while let Some(e) = u.tsr_end.filter(|e| *e <= now) {
+                u.tsr_end = None;
+                if let Some(b) = u.pending.take() {
+                    self.tx.push((u.num, e, b));
+                    u.tsr_end = Some(e + Self::uart_char_cycles(u, m));
+                    ev.push(e);
+                }
+            }
+            Self::uart_bits(u, m);
+        }
         for e in ev {
             self.raised(e);
         }
@@ -349,8 +426,9 @@ impl Periph {
     }
 
     /// A write: `v` is already masked to the implemented bits. The caller has synced to the writing cycle.
-    pub fn write(&mut self, k: u8, v: u8, m: &mut DataMem) {
+    pub fn write(&mut self, k: u8, v: u8, now: u64, m: &mut DataMem) {
         match k {
+            UART0.. => self.uart_write(k, v, now, m),
             T0L => {
                 let t = self.t0.as_mut().unwrap();
                 t.pre = 0;
@@ -430,6 +508,33 @@ impl Periph {
             }
             _ => unreachable!("write of hook {k} has no model"),
         }
+    }
+
+    fn uart_write(&mut self, k: u8, v: u8, now: u64, m: &mut DataMem) {
+        let (i, sub) = (usize::from(k - UART0) / 3, (k - UART0) % 3);
+        let u = &mut self.uarts[i];
+        match sub {
+            0 => {
+                m.mem[u.reg] = v;
+                if m.mem[u.sta] & 0x20 != 0 {
+                    if u.tsr_end.is_none() {
+                        self.tx.push((u.num, now, v));
+                        u.tsr_end = Some(now + Self::uart_char_cycles(u, m));
+                    } else {
+                        u.pending = Some(v);
+                    }
+                }
+            }
+            1 => {
+                m.mem[u.sta] = v & !2 | m.mem[u.sta] & 2; // TRMT is read only
+                if v & 0x20 == 0 {
+                    u.tsr_end = None;
+                    u.pending = None;
+                }
+            }
+            _ => m.mem[u.baud] = v & !0xC0 | m.mem[u.baud] & 0xC0, // ABDOVF and RCIDL are read only
+        }
+        Self::uart_bits(u, m);
     }
 
     fn addr_of(&self, k: u8) -> usize {

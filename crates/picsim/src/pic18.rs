@@ -306,7 +306,7 @@ impl Pic18 {
             Special::Hook(k) => {
                 let now = self.cycles;
                 self.p.sync(&mut self.m, now);
-                self.p.write(k, v & self.m.implemented[i], &mut self.m);
+                self.p.write(k, v & self.m.implemented[i], now, &mut self.m);
             }
             Special::Pcl => {
                 self.m.mem[self.m.regs.pcl as usize] = v;

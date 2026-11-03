@@ -48,6 +48,21 @@ Code: `crates/picsim/src/pic18.rs` (`irq_check`, `retfie`), `periph.rs` (Timer0/
   (`bit_packed_isr` +4, `isr_dual` +2 total); MDB defers some requests the sim takes. Not yet understood.
 * TMR0L read right after a TMR0H change in 8-bit mode differs by 1-2 counts.
 
+## EUSART transmitter (S4, Q10 style)
+
+Code: `periph.rs` (`Uart`), EUSART1 and EUSART2 (TXn/SPn/BAUDn names; the Q41 UART1 `U1*` registers are not modelled yet).
+DS40002043F ch.29 p.503-505.
+
+* TXREG goes to the shift register at once when that is idle, else it is held until the Stop bit ends (29.1.1.2).
+  TXIF = TXEN and nothing held (29.1.1.4); TRMT = shift register idle, read only (29.1.1.5). `RCIDL`/`ABDOVF` of
+  BAUDnCON are read only and keep their value on writes.
+* Character time in instruction cycles (Table 29-1): BRG16 = 1 and BRGH = 1: n+1 per bit; exactly one of them: 4(n+1);
+  neither: 16(n+1); 10 bits, 11 with TX9. `[A6]` the held byte starts in the cycle the Stop bit ends.
+  `[A7]` clearing TXEN abandons the shift register and a held byte; a TXREG write with TXEN = 0 is dropped.
+  `[A8]` TXIF does not dip for a cycle after a write that goes straight to the shift register.
+* Synchronous mode and the receiver are not modelled (a note is logged / RCREG stays a latch).
+* `basil-sim` prints the transmitted bytes as `tx1: ...` / `tx2: ...`; `Periph::tx` holds (EUSART, start cycle, byte).
+
 ## Configuration words (S3)
 
 Decoded by `crates/picsim/src/config.rs` from the bytes the hex puts at the `[[config]]` addresses; a byte the image
