@@ -139,7 +139,8 @@ in terms of the BASIC source:
   global, and each routine's parameters and locals, with their types and fixed RAM addresses
   (`Byte`, `ShortInt`, `Word`, `Integer`, `LongWord`, `LongInt`, `Float`, `Char`, `Boolean`, strings and
   arrays; structures appear as their bytes). Interrupt handlers and routines that were not inlined
-  appear as functions, so the call stack shows names and parameter values. The locals of a routine
+  appear as functions, so the call stack shows names and parameter values. `__halt`, where the program
+  ends, is recorded as a function with an empty range, so a debugger can stop there. The locals of a routine
   the compiler inlined into its one caller are not listed. Several routines may share RAM
   addresses, so only the variables of the routine being stopped in are meaningful.
 * **Symbols.** Each variable is also a real ELF symbol (`BLINK_TICKS`, the assembly name), and a global is
@@ -148,6 +149,10 @@ in terms of the BASIC source:
 `-g` changes nothing in the generated code: the hex file is byte-identical with and without it (checked
 over the whole `tests/exec` suite). A build without `-g` carries none of this information.
 `prog.hex` and `prog.elf` are written next to the source (or beside `-o`).
+
+The Basil simulator (`basil-sim`, `basil-sim-gui`) reads `prog.elf` beside `prog.hex` (or one folder up when the
+hex is in `dist/`): it needs no `prog.S`, shows the BASIC source with the executing line, steps by line, lists
+variables by name and type, and stops at `__halt`.
 
 ### Debugging with the MPLAB X simulator (`mdb`)
 

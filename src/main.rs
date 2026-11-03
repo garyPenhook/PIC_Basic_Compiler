@@ -28,6 +28,9 @@ options:
   --report        also print words per routine and every RAM object
   -O0             no optimisation (-O1, -O2 and -Os mean the default, optimise)
   -g              debug build: line, variable and routine information in <program>.elf
+  --dual          two builds in one run: the optimised release (<program>.hex, .elf, .S, .map)
+                  and an unoptimised debug build that keeps every variable
+                  (<program>_debug.hex, _debug.elf with all symbols, _debug.S, _debug.map)
   --keep-vars     keep stores to variables nothing reads (for simulator tests)
   -D NAME         define a preprocessor name (repeatable)
   -L DIR          add a library folder (repeatable)
@@ -57,6 +60,7 @@ fn main() -> ExitCode {
     let mut optimise = true;
     let mut keep_vars = false;
     let mut debug = false;
+    let mut dual = false;
     let mut out_hex: Option<PathBuf> = None;
     let mut pic_as: Option<PathBuf> = None;
     let mut defines = Vec::new();
@@ -78,6 +82,7 @@ fn main() -> ExitCode {
             "-O0" => optimise = false,
             "--keep-vars" => keep_vars = true,
             "-g" => debug = true,
+            "--dual" => dual = true,
             "-O1" | "-O2" | "-Os" => optimise = true,
             "-o" => match args.next() {
                 Some(v) => out_hex = Some(PathBuf::from(v)),
@@ -108,6 +113,9 @@ fn main() -> ExitCode {
         }
     }
     let Some(file) = file else { return usage() };
+    if dual {
+        return build_dual(&file, out_hex.as_deref());
+    }
 
     let start = file.canonicalize().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
     lib_dirs.extend(nearest_with(&start, "lib"));
@@ -274,4 +282,44 @@ fn main() -> ExitCode {
 fn usage() -> ExitCode {
     eprintln!("{USAGE}");
     ExitCode::from(2)
+}
+
+/// `--dual`: run this compiler twice with the other options as given: once as the optimised release and once as an
+/// unoptimised `-g --keep-vars` build written beside it as `<stem>_debug.*`.
+fn build_dual(file: &Path, out_hex: Option<&Path>) -> ExitCode {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("basil: cannot find myself to run the two builds: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let release = out_hex.map(Path::to_path_buf).unwrap_or_else(|| file.with_extension("hex"));
+    let stem = release.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
+    let debug_hex = release.with_file_name(format!("{stem}_debug.hex"));
+    // Everything the user passed except --dual, -g, -O*, --keep-vars and -o, which each build sets itself.
+    let mut common = Vec::new();
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--dual" | "-g" | "-O0" | "-O1" | "-O2" | "-Os" | "--keep-vars" => {}
+            "-o" => {
+                args.next();
+            }
+            _ => common.push(a),
+        }
+    }
+    let runs: [(&str, Vec<String>, &Path); 2] = [
+        ("release", vec!["-O2".into()], &release),
+        ("debug", vec!["-O0".into(), "-g".into(), "--keep-vars".into()], &debug_hex),
+    ];
+    for (name, extra, out) in runs {
+        eprintln!("basil: {name} build -> {}", out.display());
+        let ok = std::process::Command::new(&exe).args(&common).args(&extra).arg("-o").arg(out).status().map(|s| s.success()).unwrap_or(false);
+        if !ok {
+            eprintln!("basil: the {name} build failed");
+            return ExitCode::from(1);
+        }
+    }
+    ExitCode::SUCCESS
 }

@@ -5465,6 +5465,10 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
                 debug.funcs.push(crate::dwarf::DFunc { name: func.name.clone(), low: low * 2, high: high * 2 });
             }
         }
+        // Where the program ends: an empty range, so a debugger can stop there (`__halt`).
+        if let Some(&h) = asmd.labels.get("__halt") {
+            debug.funcs.push(crate::dwarf::DFunc { name: "__halt".into(), low: h * 2, high: h * 2 });
+        }
         for (i, v) in p.vars.iter().enumerate() {
             let Some(addr) = layout.addr[i] else { continue };
             if v.bytes == 0 || matches!(v.kind, VarKind::Hidden) || objs[i].bytes == 0 {
