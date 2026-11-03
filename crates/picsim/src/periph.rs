@@ -82,6 +82,10 @@ const ADC0: u8 = 14;
 const FVR0: u8 = 15;
 const UART0: u8 = 16;
 const UART_HOOKS: u8 = 5;
+/// T1GCON: GVAL (bit 2) is read only and follows the gate source.
+const T1G: u8 = 40;
+/// PORTx (index into `ports`) uses hook code PORT0 + index: a read gives the pin levels, a write goes to LATx.
+const PORT0: u8 = 48;
 
 /// EUSART1 transmitter of the Q10 style (TX1REG, TX1STA, BAUD1CON, SP1BRGL/H; DS40002043F ch.29 p.503-505).
 /// * TXREG moves to the shift register at once when that is idle, otherwise it is held and moves in the cycle
@@ -168,6 +172,8 @@ struct Timer0 {
 }
 
 struct Timer1 {
+    gate: Option<usize>,
+    gpps: Option<usize>,
     l: usize,
     h: usize,
     con: usize,
@@ -192,7 +198,20 @@ struct Timer2 {
     last: u64,
 }
 
+/// A port with pins: PORTx reads the pins, a write goes to LATx (DS40002043F 17.1: the pin level is read, the
+/// latch is written). Input pins with their ANSELx bit set read 0 (the digital input buffer is off, 17.2).
+struct Port {
+    letter: u8,
+    port: usize,
+    lat: usize,
+    tris: usize,
+    ansel: Option<usize>,
+}
+
 pub struct Periph {
+    ports: Vec<Port>,
+    /// What the outside world drives on the input pins: (from cycle, port index, pin mask, levels), stable-sorted by cycle.
+    drive: Vec<(u64, usize, u8, u8)>,
     t0: Option<Timer0>,
     t1: Option<Timer1>,
     t2: Option<Timer2>,
@@ -233,7 +252,7 @@ impl Periph {
 
     /// Find the timers the part has and mark their registers as hooked in `m`.
     pub fn bind(dev: &Device, m: &mut DataMem) -> Periph {
-        let mut p = Periph { t0: None, t1: None, t2: None, uarts: Vec::new(), adc: None, fvr: None, tx: Vec::new(), notes: BTreeSet::new(), event: None };
+        let mut p = Periph { ports: Vec::new(), drive: Vec::new(), t0: None, t1: None, t2: None, uarts: Vec::new(), adc: None, fvr: None, tx: Vec::new(), notes: BTreeSet::new(), event: None };
         let mut hook = |a: usize, k: u8| m.special[a] = Special::Hook(k);
         if let (Some(l), Some(h), Some(c0), Some(c1), Some(flag)) =
             (addr(dev, "TMR0L"), addr(dev, "TMR0H"), addr(dev, "T0CON0"), addr(dev, "T0CON1"), Flag::find(dev, "TMR0IF"))
@@ -251,10 +270,10 @@ impl Periph {
             addr(dev, "T1GCON"),
             Flag::find(dev, "TMR1IF"),
         ) {
-            for (a, k) in [(l, T1L), (h, T1H), (con, T1C), (clk, T1CLK)] {
+            for (a, k) in [(l, T1L), (h, T1H), (con, T1C), (clk, T1CLK), (gcon, T1G)] {
                 hook(a, k);
             }
-            p.t1 = Some(Timer1 { l, h, con, clk, gcon, flag, cnt: 0, pre: 0, last: 0 });
+            p.t1 = Some(Timer1 { gate: addr(dev, "T1GATE"), gpps: addr(dev, "T1GPPS"), l, h, con, clk, gcon, flag, cnt: 0, pre: 0, last: 0 });
         }
         if let (Some(tmr), Some(pr), Some(con), Some(hlt), Some(clk), Some(flag)) = (
             addr(dev, "T2TMR"),
@@ -285,6 +304,13 @@ impl Periph {
                 p.adc = Some(Adc { con, clk, pre, acq, pch, resl, resh, flag, bits: 10, end: None, feed: Vec::new() });
             } else {
                 p.notes.insert("the ADC of this part is not modelled; ADGO never clears".into());
+            }
+        }
+        for letter in b'A'..=b'H' {
+            let l = letter as char;
+            if let (Some(port), Some(lat), Some(tris)) = (addr(dev, &format!("PORT{l}")), addr(dev, &format!("LAT{l}")), addr(dev, &format!("TRIS{l}"))) {
+                hook(port, PORT0 + p.ports.len() as u8);
+                p.ports.push(Port { letter, port, lat, tris, ansel: addr(dev, &format!("ANSEL{l}")) });
             }
         }
         if let Some(a) = addr(dev, "FVRCON") {
@@ -571,8 +597,18 @@ impl Periph {
         }
     }
 
-    pub fn read(&mut self, k: u8, m: &mut DataMem) -> u8 {
+    pub fn read(&mut self, k: u8, m: &mut DataMem, now: u64) -> u8 {
         match k {
+            PORT0..=0x6F => {
+                let v = self.port_levels(usize::from(k - PORT0), m, now);
+                m.mem[self.ports[usize::from(k - PORT0)].port] = v;
+                v
+            }
+            T1G => {
+                let t = self.t1.as_ref().unwrap();
+                let g = m.mem[t.gcon] & !4;
+                g | if self.gate_value(m, now) { 4 } else { 0 }
+            }
             T0L => {
                 let t = self.t0.as_ref().unwrap();
                 if m.mem[t.c0] & 0x10 != 0 {
@@ -592,7 +628,7 @@ impl Periph {
                 if m.mem[t.con] & 2 != 0 { m.mem[t.h] } else { (t.cnt >> 8) as u8 }
             }
             T2T => self.t2.as_ref().unwrap().cnt,
-            UART0.. => {
+            UART0..=39 => {
                 let u = &mut self.uarts[usize::from(k - UART0) / usize::from(UART_HOOKS)];
                 // `[A10]` An empty FIFO reads the last character again (the data sheet does not say).
                 if let Some((w, _)) = u.fifo.pop_front() {
@@ -607,13 +643,22 @@ impl Periph {
 
     /// Plain registers (TMR0H, T0CON0/1, T1CON, ...) read the stored byte.
     pub fn is_stored(k: u8) -> bool {
-        !(matches!(k, T0L | T1L | T1H | T2T) || k >= UART0 && (k - UART0) % UART_HOOKS == 3)
+        !(matches!(k, T0L | T1L | T1H | T2T | T1G | PORT0..=0x6F) || (UART0..40).contains(&k) && (k - UART0) % UART_HOOKS == 3)
     }
 
     /// A write: `v` is already masked to the implemented bits. The caller has synced to the writing cycle.
     pub fn write(&mut self, k: u8, v: u8, now: u64, m: &mut DataMem) {
         match k {
-            UART0.. => self.uart_write(k, v, now, m),
+            UART0..=39 => self.uart_write(k, v, now, m),
+            T1G => {
+                let a = self.t1.as_ref().unwrap().gcon;
+                m.mem[a] = v & !4 | m.mem[a] & 4; // GVAL is read only
+            }
+            PORT0..=0x6F => {
+                let p = &self.ports[usize::from(k - PORT0)];
+                m.mem[p.lat] = v;
+                m.mem[p.port] = v;
+            }
             FVR0 => {
                 let a = self.fvr.unwrap();
                 if v & 0x80 != 0 {
@@ -770,6 +815,60 @@ impl Periph {
         let ch = m.mem[a.pch] & 0x3F;
         let code = a.feed.iter().filter(|(c, at, _)| *c == ch && *at <= sample).last().map_or(0, |f| f.2);
         a.end = Some((end, code.min((1u16 << a.bits) - 1)));
+    }
+
+    /// Levels of the pins of port `i` at cycle `now`. An output pin shows its latch, an input pin what the outside world
+    /// drives (0 until a stimulus says otherwise `[A16]`: no pull-up is modelled), and 0 when ANSELx makes it analog.
+    fn port_levels(&self, i: usize, m: &DataMem, now: u64) -> u8 {
+        let p = &self.ports[i];
+        let mut ext = 0u8;
+        for &(at, pi, mask, val) in &self.drive {
+            if at <= now && pi == i {
+                ext = ext & !mask | val & mask;
+            }
+        }
+        let tris = m.mem[p.tris];
+        let ana = p.ansel.map_or(0, |a| m.mem[a]);
+        (m.mem[p.lat] & !tris | ext & tris & !ana) & m.implemented[p.port]
+    }
+
+    /// Level of the pin a PPS input register selects (PORT field at bits 5:3, PIN at 2:0).
+    fn pps_pin(&self, m: &DataMem, reg: usize, now: u64) -> bool {
+        let v = m.mem[reg];
+        let letter = b'A' + (v >> 3 & 7);
+        self.ports.iter().position(|p| p.letter == letter).is_some_and(|i| self.port_levels(i, m, now) >> (v & 7) & 1 != 0)
+    }
+
+    /// Timer1 gate value (GVAL): the gate source after the polarity bit. `[A17]` MDB (probed with every GE/GPOL/GTM/GSPM
+    /// combination on a low pin) reads GVAL = 0 while GE = 0, although the data sheet says GVAL is unaffected by GE
+    /// (DS40002043F 20.14.2 p.318); the model follows MDB. Single-pulse and toggle mode do not change it either.
+    /// Only the pin source (GSS = 0, T1GPPS) is modelled; others read as a low signal.
+    fn gate_value(&mut self, m: &DataMem, now: u64) -> bool {
+        let t = self.t1.as_ref().unwrap();
+        let (gate, gpps, gcon) = (t.gate, t.gpps, t.gcon);
+        if m.mem[gcon] & 0x80 == 0 {
+            return false;
+        }
+        let src = match (gate.map(|g| m.mem[g] & 31), gpps) {
+            (Some(0), Some(r)) => self.pps_pin(m, r, now),
+            _ => {
+                self.notes.insert("Timer1 gate source other than the T1GPPS pin is not modelled; GVAL sees it low".into());
+                false
+            }
+        };
+        src == (m.mem[gcon] & 0x40 != 0)
+    }
+
+    /// Stimulus: the pins `mask` of port `letter` are driven to `val` from cycle `at` on.
+    pub fn pin_feed(&mut self, letter: u8, at: u64, mask: u8, val: u8) -> bool {
+        match self.ports.iter().position(|p| p.letter == letter) {
+            Some(i) => {
+                self.drive.push((at, i, mask, val));
+                self.drive.sort_by_key(|d| d.0);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Stimulus: the input of ADC channel `ch` is code `v` (full scale = the part's resolution) from cycle `at` on.

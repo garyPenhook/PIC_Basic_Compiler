@@ -18,7 +18,7 @@ Each rule the simulator relies on, with its source. Rules marked `[A#]` are assu
 * The pack's `access` letters (`n r w c s -`) are **not decoded yet**: their meaning is not recorded in a data sheet
   here. Only the `implemented` mask is applied (unimplemented bits read 0 and ignore writes).
 * Not modelled yet (milestone): reset values after MCLR/WDT, configuration words (S3 remainder), TBLWT / flash and
-  EEPROM writes (S5), ports/UART/ADC (S4). SFRs without a model act as latches and are listed at the end of a run.
+  EEPROM writes (S5), Q41 UART/ADC (S4). SFRs without a model act as latches and are listed at the end of a run.
 
 ## Interrupts and timers (S3)
 
@@ -102,9 +102,22 @@ until their timing is read from their own data sheet.
   (p.707), and the periph models do not know Fosc. A note is added when it is enabled.
 * Tests: `crates/picsim/tests/adc.rs`, `lib_adc` and `lib_adin` on `--engine sim`.
 
+## Ports and pins (S4)
+
+* `PORTx` read gives the pin levels, a write goes to `LATx` (DS40002043F ch.17: the pin is read, the latch written). An
+  output pin (TRISx = 0) shows its latch; an input pin shows what the stimulus drives, 0 when its ANSELx bit is set
+  (digital input buffer off). A read-modify-write on PORTx therefore reads the pins and writes the latch, as on the part.
+  `[A16]` An input nobody drives reads 0; weak pull-ups (WPUx), open-drain (ODCONx) and the input level thresholds are
+  not modelled; a pin driven by a peripheral output (RxyPPS) is not either.
+* Timer1 GVAL (T1GCON bit 2): the gate source after GPOL, for the pin source (T1GATE = 0, pin chosen by T1GPPS, reset
+  RB5 on the Q10). `[A17]` MDB reads GVAL = 0 while GE = 0 and the polarity-adjusted pin level while GE = 1, whatever
+  GTM, GSPM, GGO and ON are (probed on all combinations on a low pin); the data sheet says GVAL is unaffected by GE
+  (DS40002043F 20.14.2 p.318). The model follows MDB. Other gate sources read as low, with a note. The gate does not
+  yet stop the counter.
+
 ## Stimulus file (`crates/picsim/src/stimulus.rs`, `basil-sim --stim FILE`)
 
-TOML; `[[uart]]` entries (`port`, `at`, `bytes` or `data`, `bit`, `gap`, `nine`, `bad_stop`) and `[[adc]]` entries (`channel`, `value`, `at`); documented at the
+TOML; `[[uart]]` entries (`port`, `at`, `bytes` or `data`, `bit`, `gap`, `nine`, `bad_stop`), `[[adc]]` entries (`channel`, `value`, `at`), `[[pin]]` entries (`port` letter, `bit`, `level`, `at`) and `[[port]]` entries (`port`, `value`, `mask`, `at`); documented at the
 top of `stimulus.rs`. Characters of one entry go out back to back; entries follow each other on the line. `at` is an
 instruction cycle, `bit` the sender's bit time in instruction cycles (default: the receiver's own rate at the time the
 character starts). `at`, `bit` and `gap` are capped at 2^32 cycles (larger values are a parse error). The stimulus is kept
@@ -133,6 +146,5 @@ lacks keeps the register's unprogrammed default (0xFF). `basil-sim --config` pri
 
 `scripts/exec-test.py --engine sim` (no MDB involved; the `' expect:` lines are the oracle):
 
-* After S3, excluding the ADC/EEPROM/flash/serial/DMA programs (S4/S5): 130 pass, 1 fails (`lib_timer_hw`, Timer1
-  gate value bit GVAL, needs the pin model of S4).
+* `lib_timer_hw` passes since the pin model (GVAL), with MDB's cycle count.
 * Not yet run: `--engine both` (cycle counts against MDB), PIC16 parts (S2).

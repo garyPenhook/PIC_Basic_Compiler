@@ -377,7 +377,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - The data sheet does not say that TMR2IF is set when a one-shot clears ON, and the MDB simulator does
   not set it: a one-shot end is detected with `Timer2Running`, and the flag is not tested.
 - Test: `tests/exec/lib_timer_hw.bas` (simulator, optimised and `-O0`) checks the register values
-  written and that a one-shot Timer2 clears ON after its period. The simulator has no pin stimulus, so
+  written and that a one-shot Timer2 clears ON after its period. The simulator's pin stimulus (0.1.120) drives GVAL only, so
   counting on real external edges and gate pulses is not exercised; not checked on hardware (D6).
 - `clock` is a reserved word, so library parameters use `clk`.
 
@@ -1121,5 +1121,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Stimulus: `[[adc]]` (`channel`, `value`, `at`) sets the code a channel reads from a cycle on.
 - Tests: `crates/picsim/tests/adc.rs` (timing to the cycle, justification, stimulus timeline, ADON off, ADCONT, FVR, bad stimulus); `lib_adc` and `lib_adin` pass on `--engine sim`.
 - Note: `cargo build --release` at the root does not rebuild `basil-sim`; use `-p picsim-cli`.
-- Open: Q41 ADC (12 bits, timing to read from DS40002214G), ports/PPS pin stimulus, NVM (S5).
+- Open: Q41 ADC (12 bits, timing to read from DS40002214G), NVM (S5). (Pins: next section.)
 
+## Simulator S4: ports, pins and Timer1 GVAL (done 2026-11-02, 0.1.120)
+- `periph.rs`: `PORTx` hooks (read = pin levels, write = `LATx`), `T1GCON` hook (GVAL), `Periph::pin_feed`. Stimulus `[[pin]]` and `[[port]]` (`stimulus.rs`). Rules and assumptions `[A16]` (undriven input reads 0, no pull-ups) and `[A17]` (MDB: GVAL reads 0 while GE = 0, against the data sheet) in `docs/FACTS-SIM.md`.
+- `lib_timer_hw` now passes on `--engine sim` and on MDB with the same cycle count (2787). Tests: `crates/picsim/tests/pins.rs`.
+- Not done: the Timer1 gate stopping the counter, Timer2 hardware-limit modes driven by a pin (still run as software mode with a note), pull-ups.

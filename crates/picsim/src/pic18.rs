@@ -263,7 +263,7 @@ impl Pic18 {
         match self.m.special[i] {
             Special::None | Special::Core => self.m.mem[i],
             Special::Hook(k) => {
-                if Periph::is_stored(k) { self.m.mem[i] } else { self.p.read(k, &mut self.m) }
+                if Periph::is_stored(k) { self.m.mem[i] } else { self.p.read(k, &mut self.m, self.cycles) }
             }
             Special::Pcl => {
                 let pc = self.pc;

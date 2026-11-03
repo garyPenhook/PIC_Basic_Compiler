@@ -3,7 +3,7 @@ members = [".", "crates/devdesc", "crates/picsim", "tools/devgen", "tools/picsim
 
 [package]
 name = "basil"
-version = "0.1.119"
+version = "0.1.120"
 edition = "2024"
 
 [dependencies]

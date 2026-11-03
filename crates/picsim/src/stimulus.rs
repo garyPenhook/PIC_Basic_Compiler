@@ -14,7 +14,20 @@
 //! channel = 13        # ADPCH value
 //! value = 512
 //! at = 0              # from this instruction cycle on, default 0; later entries replace earlier ones
+//!
+//! [[pin]]             # one input pin of a port
+//! port = "B"          # port letter
+//! bit = 5             # 0-7
+//! level = 1           # 0 or 1 (also true/false); from `at` on, later entries replace earlier ones
+//! at = 0
+//!
+//! [[port]]            # several pins at once
+//! port = "B"
+//! value = 0x21        # levels of the pins in `mask`
+//! mask = 0xFF         # default 0xFF
+//! at = 0
 //! ```
+//! Pins read 0 until driven. Only input pins (TRISx = 1) with ANSELx = 0 show the level; an output pin shows its latch.
 
 use crate::periph::RxStream;
 use devdesc::Device;
@@ -27,6 +40,8 @@ pub struct Stimulus {
     pub uart: Vec<(u8, RxStream)>,
     /// (channel, from cycle, code)
     pub adc: Vec<(u8, u64, u16)>,
+    /// (port letter, from cycle, pin mask, levels)
+    pub pins: Vec<(u8, u64, u8, u8)>,
 }
 
 impl Stimulus {
@@ -34,6 +49,40 @@ impl Stimulus {
         let doc: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
         let mut st = Stimulus::default();
         for (k, v) in &doc {
+            if k == "pin" || k == "port" {
+                for e in v.as_array().ok_or(format!("{k} must be [[{k}]] entries"))? {
+                    let t = e.as_table().ok_or(format!("{k} entry must be a table"))?;
+                    let keys: &[&str] = if k == "pin" { &["port", "bit", "level", "at"] } else { &["port", "value", "mask", "at"] };
+                    for key in t.keys() {
+                        if !keys.contains(&key.as_str()) {
+                            return Err(format!("{k}: unknown key {key}"));
+                        }
+                    }
+                    let letter = match t.get("port").and_then(|x| x.as_str()).map(str::as_bytes) {
+                        Some([c @ b'A'..=b'H']) => *c,
+                        _ => return Err(format!("{k}.port must be a letter A to H")),
+                    };
+                    let int = |n: &str, max: u64| -> Result<Option<u64>, String> {
+                        t.get(n).map_or(Ok(None), |x| {
+                            x.as_integer().and_then(|i| u64::try_from(i).ok()).filter(|i| *i <= max).map(Some).ok_or(format!("{k}.{n} must be an integer 0..{max}"))
+                        })
+                    };
+                    let at = int("at", MAX_CYCLES)?.unwrap_or(0);
+                    if k == "pin" {
+                        let bit = int("bit", 7)?.ok_or("pin needs bit")? as u8;
+                        let level = match t.get("level") {
+                            Some(toml::Value::Boolean(b)) => u8::from(*b),
+                            Some(x) if matches!(x.as_integer(), Some(0 | 1)) => x.as_integer().unwrap() as u8,
+                            _ => return Err("pin.level must be 0, 1, true or false".into()),
+                        };
+                        st.pins.push((letter, at, 1 << bit, level << bit));
+                    } else {
+                        let mask = int("mask", 0xFF)?.unwrap_or(0xFF) as u8;
+                        st.pins.push((letter, at, mask, int("value", 0xFF)?.ok_or("port needs value")? as u8));
+                    }
+                }
+                continue;
+            }
             if k == "adc" {
                 for e in v.as_array().ok_or("adc must be [[adc]] entries")? {
                     let t = e.as_table().ok_or("adc entry must be a table")?;
@@ -113,6 +162,11 @@ impl Stimulus {
         for (port, s) in self.uart {
             if !p.rx_send(port, s) {
                 return Err(format!("{}: no EUSART{port} receiver in the simulator", dev.device.name));
+            }
+        }
+        for (letter, at, mask, val) in self.pins {
+            if !p.pin_feed(letter, at, mask, val) {
+                return Err(format!("{}: no PORT{} in the simulator", dev.device.name, letter as char));
             }
         }
         if !self.adc.is_empty() && !self.adc.iter().all(|(c, at, v)| p.adc_feed(*c, *at, *v)) {
