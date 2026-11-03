@@ -1133,4 +1133,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - The stimulus `[[uart]]` entries drive it (`port` = UART number).
 - Tests: `crates/picsim/tests/quart.rs` (8 tests, timing to the cycle); `tests/sim/run.sh` now runs `serial_rx_q41` and `serial_tx_q41` (library receive with a framing error; two bytes and `SerialFlush`).
 - Not modelled, with a note: LIN/DMX/DALI, auto-baud, break (`SENDB`, `RXBKIF`), wake-up, flow control, checksum.
-- Open: Q41 ADC, NVM (S5).
+- Open: NVM (S5).
+
+## Simulator S4: Q41 ADC (done 2026-11-03, 0.1.122)
+- `Adc` in `periph.rs` now serves the PIC18-Q41 too (`q41` = ADPREH/ADACQH present): 12-bit result, 13-bit ADPRE/ADACQ counted in Fosc clocks (ACQ = 0 with PRE != 0 is 8192), conversion 14 TAD + 2 TCY, 8-bit ADPCH. Rules and assumptions `[A18]`, `[A19]` in `docs/FACTS-SIM.md`.
+- Tests: `q41_*` in `crates/picsim/tests/adc.rs`; `tests/exec_q41/lib_adc.bas` now halts on the sim; `tests/sim/run.sh` runs `adc_q41` (library reads with a stimulus that changes over time).
+- Found: the data sheet counts ADPRE/ADACQ in Fosc clocks (DS40002214G p.744-745) but `lib/adc.bas` writes ADACQ = 8 as "8 ADC clocks" (8 us). Library not changed; to be checked against MDB or the part.
+- Open: NVM (S5).

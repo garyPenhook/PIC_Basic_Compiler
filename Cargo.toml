@@ -1,9 +1,9 @@
 [workspace]
-members = [".", "crates/devdesc", "crates/picsim", "tools/devgen", "tools/picsim", "tools/picsim-gui"]
+members = [".", "crates/devdesc", "tools/devgen"]
 
 [package]
 name = "basil"
-version = "0.1.121"
+version = "0.1.123"
 edition = "2024"
 
 [dependencies]

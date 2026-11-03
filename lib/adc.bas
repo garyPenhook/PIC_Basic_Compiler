@@ -17,7 +17,7 @@ Module Adc
 '
 ' Conversion clock [33.1.4, ADCLK, Table 39-14 AD20]: TAD = 2 * (n + 1) / FOSC and must lie in
 ' 1..9 us (Q41: 0.5..9 us, AD20 [DS40002214G 48.4.8], so the same choice is inside its range). AdcInit picks the smallest TAD >= 1 us. Acquisition is done by the hardware: ADACQ
-' counts ADC clocks [33.7.10] and is set to cover 5 us, the 10 kohm worked example of Equation
+' counts ADC clocks on the Q10 [33.7.10] and FOSC clocks on the other ADCC parts [DS40002214G 40.7.10] and is set to cover AcqUs, the 10 kohm worked example of Equation
 ' 33-1 (4.62 us). A higher source impedance needs a longer time: write ADACQ after AdcInit.
 '
 ' PIC16F13145 family (DS40002519D, chapter 32, 10 bits; chosen with `#if _has(CLBCON)`): the same registers; channels RA0..RA2, RA4, RA5 = 0..2, 4, 5,
@@ -155,14 +155,25 @@ Sub SetClock()
     ADCON1 = (ADCON1 And 143) Or (code << 4)
 End Sub
 #else
-' ADCS = m - 1 with m = ceil(FOSC * TAD / 2e9), 1..64, and ADACQ = ceil(AcqUs / TAD) with TAD = 2 * m / FOSC, at most 255.
+' ADCS = m - 1 with m = ceil(FOSC * TAD / 2e9), 1..64, and ADACQ = ceil(AcqUs / TAD) with TAD = 2 * m / FOSC, at most 255
+' on the Q10, where ADACQ counts ADC clocks [DS40002043F 33.7.10]. The ADCC of the Q41 and the PIC16F171xx has a 13-bit ADACQ
+' counted in FOSC clocks (or ADCRC clocks with CS = 1) [DS40002214G 40.7.10, DS40002343F 33.5.11, DS40002519D 32.5.10]:
+' ADACQ = ceil(FOSC * AcqUs / 1e6), at most 8191.
 Const AdcM As LongWord = Min(Max((FoscHz / 1000 * MinTadNs + 1999999) / 2000000, 1), 64)
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
 Const AdcAcq As LongWord = Min((FoscHz * AcqUs + AdcM * 2000000 - 1) / (AdcM * 2000000), 255)
+#else
+Const AdcAcq As LongWord = Min((FoscHz / 1000 * AcqUs + 999) / 1000, 8191)
+#endif
 
 ' Sets the conversion clock for at least MinTadNs nanoseconds per TAD and the acquisition time to AcqUs.
 Sub SetClock()
     ADCLK = Byte(AdcM - 1)
+#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
     ADACQ = Byte(AdcAcq)
+#else
+    ADACQ = Word(AdcAcq)
+#endif
 End Sub
 
 #if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)

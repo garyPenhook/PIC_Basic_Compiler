@@ -31,7 +31,7 @@ ap.add_argument("--keep", action="store_true")
 ap.add_argument("--device", default="18F27Q10", help="part to build for and simulate; the program's Device line is replaced")
 ap.add_argument("--engine", choices=["mdb", "sim", "both"], default=os.environ.get("BASIL_ENGINE", "mdb"),
                 help="mdb: MPLAB X simulator; sim: basil-sim (crates/picsim); both: run both, and fail on a different cycle count")
-ap.add_argument("--sim", default=os.path.join(os.path.dirname(__file__), "../target/release/basil-sim"))
+ap.add_argument("--sim", default=os.path.join(os.path.dirname(__file__), "../../picsim/target/release/basil-sim"))
 ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for the reference build")
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()

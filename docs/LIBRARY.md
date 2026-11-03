@@ -199,7 +199,7 @@ The PIC16F152xx parts have one EUSART as well: `serial2` stops with `#error`.
 ## adc (ADCC, basic mode, right-justified results: 10 bits on the Q10, 12 bits on the PIC16F17126/46 and PIC18-Q41)
 | Routine | Effect |
 |---|---|
-| `AdcInit()` | ADC on, VDD/VSS reference, FOSC clock with the smallest TAD >= 1 us (ADCLK), hardware acquisition (`ADACQ`) of 5 us; runs a 32-bit calculation once from `Clock` |
+| `AdcInit()` | ADC on, VDD/VSS reference, FOSC clock with the smallest TAD >= 1 us (ADCLK), hardware acquisition (`ADACQ`) of 5 us (counted in ADC clocks on the Q10, in FOSC clocks, 13 bits, on the Q41 and PIC16F171xx); runs a 32-bit calculation once from `Clock` |
 | `AdcPin(ch)` | `TRISx`/`ANSELx` bit of channel 0..23 (RA0-7 = 0..7, RB = 8..15, RC = 16..23) |
 | `AdcRead(ch)` | one conversion, 0..1023 (`AdcMax`: 4095 on the 12-bit parts). Channels `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63 are internal (PIC16F17126/46: 58, 59, 60, 62; `AdcChDac2` 61; its pins are RA0..RA5, RB4..RB7, RC0..RC7 and there is no first-conversion workaround; PIC18-Q41: `AdcChDac2` 58, `AdcChVss` 59, `AdcChTemp` 60, `AdcChDac` 61, `AdcChFvr` 62, `AdcChFvr2` 63, the same pins and no workaround, the charge pump `ADCP.CPON` is switched on by `AdcInit`, and the acquisition is 8 us) |
 | `ADin(ch)` | one-call read: first call runs `AdcInit`, a channel change runs `AdcPin`, then `AdcRead` |
