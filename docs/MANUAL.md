@@ -540,6 +540,8 @@ Clear(s)
 Left(t, s, 3)                          ' first 3 characters of s into t
 Right(t, s, 3)                         ' last 3 characters
 Mid(t, s, 2, 3)                        ' 3 characters from position 2 (zero-based, like s(2)); Mid(t, s, 2) takes the rest
+ToUpper(s)                             ' letters a..z of s changed to capitals, in place
+ToLower(s)                             ' letters A..Z changed to lower case, in place
 Str(t, n)                              ' the decimal text of a whole number
 n = Val(s)                             ' the whole number a String starts with (a LongInt)
 ```
@@ -551,6 +553,10 @@ it, gives what is there (possibly the empty string); counts and positions can be
 counts as too large. Destination and source can be the same string. They are ordinary names that a program's own
 declaration of `Left`, `Mid` or `Right` replaces. They are written out as loops, so a call costs 30 to 55 words on
 the PIC18; put repeated uses in a routine.
+
+`ToUpper(s)` and `ToLower(s)` change the letters of a `String` variable (an element of an array of strings is fine) or a
+`Char` variable in place; other characters are left alone. They are loops (about 20 words on the PIC18 for a `String`, 8 for a `Char`). A `ByRefConst`
+parameter cannot be changed (`E-ARGS`). A program's own `ToUpper` or `ToLower` replaces them.
 
 `Str(dst, n)` is a statement too: it writes the decimal text of the whole number `n` (any integer type; a
 negative one starts with `-`) into the `String` variable `dst`, cut off at its size and ended with `Null`.
@@ -581,7 +587,7 @@ bounds check on `s(i)`. String literals live in program memory and are read with
 A `String` parameter is `ByRef` (size must match the callee's `String(n)` exactly), `ByRefConst`
 (any size, also accepts a literal, a concatenation or a function result) or `ByVal` (any size, cut off at the parameter's size).
 
-`Len(s)` is in the `strings` module (`Include "strings"`; see its section). `Left`, `Mid`, `Right`, `Str` and `Val` are built in (below). Not supported: `Print`. Output of text is done by the library routines
+`Len(s)` is in the `strings` module (`Include "strings"`; see its section). `Left`, `Mid`, `Right`, `ToUpper`, `ToLower`, `Str` and `Val` are built in (below). Not supported: `Print`. Output of text is done by the library routines
 (`SerialWrite`, `LcdWrite`, `OledWrite`).
 
 ### Structures and unions

@@ -1155,3 +1155,8 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - New `lib/bits.bas`, counterparts of the Positron8 bit/maths commands: `SetBit ClearBit LoadBit GetBit` (Byte/Word/LongWord overloads), `Rol Ror` (Byte/Word), `SwapNibbles SwapBytes`, `Dcd Ncd Dig ISqr`, `Seed Random` (16-bit xorshift). They return the new value rather than changing the argument. Test: `tests/exec/lib_bits.bas` (MDB, 18F27Q10).
 - `docs/MANUAL.md` sections 2 and 3 regrouped into categories, alphabetical within each (no text removed); contents and Appendix A updated.
 - Still missing from the Positron8 list: `Len`-family string commands beyond `Len` (`ToUpper ToLower`), `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.
+
+## ToUpper, ToLower (done 2026-11-04, 0.1.129)
+- Built-in statements (`PREDEFINED_INTRINSICS`, so a program's own name wins) that change a `String` or `Char` variable in place: `lower::case_change` writes a loop over the string elements, each letter found by `c - 'a' < 26`. A library routine cannot do it: a `ByRef` String must match the callee's size and `ByRefConst` is read-only.
+- Tests: `tests/exec/str_case.bas` (18F27Q10, 16F17126, 18F16Q41), `tests/negative/case_const.bas`.
+- Still missing from the Positron8 list: `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.

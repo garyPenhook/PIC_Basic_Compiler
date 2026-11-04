@@ -2822,6 +2822,40 @@ impl<'a> Lowerer<'a> {
         Self::push(out, St::Assign(elem(&dst, &k), Ex::konst(0, 8, false)), span);
     }
 
+    /// `ToUpper` / `ToLower`: change the letters of a String (or a Char) in place.
+    fn case_change(&mut self, upper: bool, args: &'a [Expr], span: Span, out: &mut Vec<S>) {
+        let ExprKind::Designator(dd) = &args[0].kind else {
+            self.unsupported(span, "this argument");
+            return;
+        };
+        let Some(mut p) = self.place_idx_of(dd) else { return };
+        if p.is_bit() {
+            self.unsupported(span, "this argument");
+            return;
+        }
+        self.hoist_idx(&mut p, span, out);
+        let byte = |p: &Place| Ex::new(ExK::Load(p.clone()), 8, false);
+        let cmp = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
+        // One character: a letter of the other case is within 26 of its first letter.
+        let (first, op) = if upper { (b'a', BinKind::Sub) } else { (b'A', BinKind::Add) };
+        let fix = |c: Place| {
+            let off = Ex::new(ExK::Bin(BinKind::Sub, Box::new(byte(&c)), Box::new(Ex::konst(u32::from(first), 8, false))), 8, false);
+            let moved = Ex::new(ExK::Bin(op, Box::new(byte(&c)), Box::new(Ex::konst(32, 8, false))), 8, false);
+            let body = vec![S { st: St::Assign(c, moved), span }];
+            St::If(vec![(cmp(CmpKind::Lt, off, Ex::konst(26, 8, false)), body)], Vec::new())
+        };
+        if let Ty::Str(_) = p.ty {
+            let i = self.hidden_var(BYTE);
+            Self::push(out, St::Assign(i.clone(), Ex::konst(0, 8, false)), span);
+            let ch = Self::str_elem(&p, &i);
+            let cond = cmp(CmpKind::Ne, byte(&ch), Ex::konst(0, 8, false));
+            let body = vec![S { st: fix(ch), span }, S { st: St::Add(i.clone(), 1), span }];
+            Self::push(out, St::While(cond, body), span);
+        } else {
+            Self::push(out, fix(p), span);
+        }
+    }
+
     fn str_compare(&mut self, op: BinOp, l: &'a Expr, r: &'a Expr, e: &Expr) -> Option<Ex> {
         let (mut lp, mut rp) = (Vec::new(), Vec::new());
         let mut pre = Vec::new();
@@ -3243,6 +3277,7 @@ impl<'a> Lowerer<'a> {
             }
             "terminate" => Self::push(out, St::Halt, span),
             "left" | "mid" | "right" => self.str_slice(&name, args, span, out),
+            "toupper" | "tolower" => self.case_change(name == "toupper", args, span, out),
             "str" => self.str_of_num(args, span, out),
             n => self.unsupported(span, &format!("the intrinsic `{n}`")),
         }

@@ -275,7 +275,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "str", "val", "pinmode", "pinset", "pinclear", "pinpullup"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "toupper", "tolower", "str", "val", "pinmode", "pinset", "pinclear", "pinpullup"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -2998,6 +2998,17 @@ impl<'p, 'd> Sema<'p, 'd> {
                     if !v.ty.is_numeric_int() {
                         return self.err("E-TYPE", a.span, format!("`{}` needs a whole number for a position or count, found {}", d.head.name, v.ty));
                     }
+                }
+                call(Ty::Void)
+            }
+            "toupper" | "tolower" => {
+                // `ToUpper(s)`, `ToLower(s)`: the letters of a String (or a Char) variable changed in place.
+                if !want(self, 1) {
+                    return None;
+                }
+                let v = self.lvalue_arg(&args[0], d.head.name.as_str())?;
+                if !matches!(v.ty, Ty::Str(_) | Ty::Char) {
+                    return self.err("E-TYPE", args[0].span, format!("`{}` needs a String or Char variable, found {}", d.head.name, v.ty));
                 }
                 call(Ty::Void)
             }
