@@ -1,6 +1,6 @@
 # Library efficiency options
 
-Status: proposal. Nothing here is implemented yet.
+Status: proposal, with a first measurement pass (below). No library code has changed.
 
 ## Current state
 
@@ -19,7 +19,7 @@ Status: proposal. Nothing here is implemented yet.
 
 Candidates, in order of expected payoff:
 
-1. `floatlib.bas` (about 2000 lines): multiply, divide, normalise and shift loops.
+1. ~~`floatlib.bas`~~: already hand asm on PIC18 (`#if _has(PRODL)`); the Basic code is only the fallback for parts without a hardware multiply. No gain.
 2. Bit-bang and byte-serial loops in `i2c`, `spi`, `shift`, `lcd`, `oled`, `x10`.
 3. `pulse.bas` and `irremote.bas`, where cycle-exact timing matters for correctness as well as size.
 4. Multi-byte shift and divide helpers in the code generator, which benefit every program.
@@ -38,3 +38,21 @@ Fix the codegen/peephole gaps that make hand asm necessary, so the library stays
 1. Build each module for a reference part and record words used and cycles (harness: `bench/kernels`, results in `BENCHMARKS.md`).
 2. Hand-write the top candidates and compare against the compiled version.
 3. Adopt asm only where the saving is clear, with a benchmark entry and a Basil fallback.
+
+## Measurement pass (every `tests/exec/lib_*.bas` built with `basil --report`)
+
+- The largest routines are one-time init code (`AHT30FETCH` 388 words, `PwmInit` 225, `LcdInit` 220, `SpiInit` 201,
+  `I2cInit` 195, `FAdd` 176, `FMul` 158, `FDiv` 141). Asm there saves little and costs portability.
+- The compiled loop code is already close to hand asm. `ShiftOut` (69 words) has the same shifts, `decfsz` delay loops and
+  counted loop that hand code would have.
+- The real cost is `Pinio.PinSet` (44 words), called three times per bit by `shift`, and used the same way by `lcd`, `oled`
+  and `pulse`. Every call recomputes the port and mask from the runtime pin number (`1 << (pin And 7)` plus a LATA/LATB/LATC
+  compare chain).
+
+## Recommended next step
+
+1. Resolve the pin to its LAT address and mask once per call, outside the bit loop (FSR-based `bsf`/`bcf`), first in Basic.
+2. If the compiler cannot produce that, write an `Asm` fast path for `PinSet`/`PinGet` and `ShiftOut`, with the Basic version as fallback.
+3. Compare words used (`--report`) and cycles (picsim) before and after; keep the change only if the saving is real.
+
+Cycle counts have not been taken yet; the simulator now lives in the separate picsim repo.
