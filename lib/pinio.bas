@@ -314,3 +314,61 @@ Public Function DataRead() As Boolean
     Result = PinGet(dPin)
 End Function
 #endif
+
+' ---- Whole-port byte access, for 8-bit parallel buses (`glcd`) ----
+' `base` is the first pin of the port: 0 = port A, 8 = port B, 16 = port C (any other value, or a port the part lacks, is ignored
+' and reads as 0). All eight bits of the port are used, so the part must have all eight pins.
+
+' Writes `v` to the port's latch.
+Public Sub PortWrite(ByVal base As Byte, ByVal v As Byte)
+    If base = 0 Then
+        LATA = v
+#if _has(LATB)
+    ElseIf base = 8 Then
+        LATB = v
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        LATC = v
+#endif
+    End If
+End Sub
+
+' Reads the port's pins.
+Public Function PortRead(ByVal base As Byte) As Byte
+    Result = 0
+    If base = 0 Then
+        Result = PORTA
+#if _has(LATB)
+    ElseIf base = 8 Then
+        Result = PORTB
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        Result = PORTC
+#endif
+    End If
+End Function
+
+' Makes the eight pins of the port digital inputs (`isInput` True) or outputs.
+Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
+    Dim t As Byte
+    t = 0
+    If isInput Then
+        t = 255
+    End If
+    If base = 0 Then
+        ANSELA = 0
+        TRISA = t
+#if _has(LATB)
+    ElseIf base = 8 Then
+        ANSELB = 0
+        TRISB = t
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        ANSELC = 0
+        TRISC = t
+#endif
+    End If
+End Sub

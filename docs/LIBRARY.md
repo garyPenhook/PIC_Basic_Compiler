@@ -416,7 +416,8 @@ PIC16F152xx: `Clock` = 32, 16, 8, 4, 2 or 1 writes `OSCFRQ.FRQ`; there is no div
 | `SysClockHz()` | system clock in Hz from `OSCCON2` and `OSCFRQ`: HFINTOSC (1, 2, 4, 8, 12, 16, 32, 48 or 64 MHz) divided by 1..512; 0 for any other source or a reserved code. Nominal frequency (`OSCTUNE` ignored) |
 | `SysClockFrom(cosc, cdiv, hffrq)` | the same conversion from given field values |
 | `SysClockOk()` | True when `SysClockHz()` equals `Clock` |
-| `Sleep()` | the `sleep` instruction and two NOPs; returns on a wake-up (no timed Sleep or Snooze) |
+| `Sleep()` | the `sleep` instruction and two NOPs; returns on a wake-up |
+| `Sleep(seconds)`, `Snooze(period)` | timed sleeps, the watchdog as timer (WDTCON or WDTCON0, PS bits 5:1, enable bit 0; Config `WDTE = SWDTEN` or `ON`) |
 
 A flag left from an earlier Reset is reported until it is cleared; after a power-on Reset the brown-out flag is
 unknown, so power-on is tested first. The module does not change the clock (that is `intosc`, `docs/CLOCK.md`): `DelayUs`/`DelayMs`, `Serial`,
@@ -443,6 +444,23 @@ Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "I
 | `LcdCustomRow(slot, row, bits)` | one row of user character 0..7; follow with `LcdGoto` before writing text |
 
 Uses read-modify-write on `LATA/B/C`: not for use from a handler and the main program together.
+
+## glcd (graphic LCD: KS0108, T6963C, ST7920 on an 8-bit parallel bus)
+Source: Samsung S6B0108 Ver. 0.0 (the KS0108's driver), Toshiba T6963C 2002-01-07, Sitronix ST7920 V4.0 (all in `docs/`, git-ignored). Tests: `tests/exec_glcd_ks`, `tests/exec_glcd_t69`, `tests/exec_glcd_st79` run the real module against a software model of each controller in the simulator (`glcd_models_in_simulator`); **nothing has run on a real display.** The 8 data lines take a whole port (`data` = 0, 8 or 16 for port A, B or C; use B or C, RA3 is input only on most parts); the control lines are pins 0..23 as in `lcd`. All three backends are linked into a program that calls the drawing routines (about 6 KB on the PIC18, 4 K words on a PIC16), so a part with 2 K words of flash (PIC16F152xx 2 K parts) does not fit.
+
+| Routine | Effect |
+|---|---|
+| `GlcdInitKs0108(data, rs, rw, en, cs1, cs2, rst, csHigh)` | 128 x 64 from two KS0108 chips; `csHigh` True for active-high chip selects. Returns 1, or 0 for a bad pin / bus |
+| `GlcdInitT6963(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)` | any size (columns xres / fontWidth at most 64, `fontWidth` 6 or 8 as the module's FS and MD pins). Sets graphic home 0, text area after it, CG RAM after that, OR mode, text and graphics on |
+| `GlcdInitSt7920(data, rs, rw, en, rst, folded)` | `folded` True: the usual 128 x 64 module (rows 32..63 in words 8..15; **not stated in the data sheet**); False: Table 7 as is, 256 x 64. 8-bit parallel only |
+| `GlcdClear()` | clear graphics (and the T6963C text layer), text position home |
+| `GlcdPlot(x, y)` / `GlcdUnplot(x, y)` / `GlcdSetPixel(x, y, on)` / `GlcdPixel(x, y)` | set / clear / either / read (1 or 0); outside the display is ignored |
+| `GlcdLine(on, x0, y0, x1, y1)` / `GlcdLineTo(on, x, y)` | Bresenham line; LineTo starts at the end of the last line |
+| `GlcdBox(on, x, y, size)` / `GlcdCircle(on, x, y, r)` | outline of a square / circle centred on (x, y) |
+| `GlcdWriteByte(row, col, v)` / `GlcdReadByte(row, col)` | Positron8 LCDwrite / LCDread: KS0108 page 0..7 and x 0..127 (bit 0 on top); T6963C pixel row and byte column; ST7920 pixel row and byte column |
+| `GlcdTextAt(col, row)` / `GlcdWriteChar(ch)` / `GlcdWrite(s)` / `GlcdWriteWord(v)` | text in the 5 x 7 font on a 6 x 8 cell grid (T6963C: its own text layer and CG ROM) |
+| `GlcdCommand(c)` / `GlcdCommand(c, d1)` / `GlcdCommand(c, d1, d2)` | Positron8 Toshiba_Command: any T6963C command (data first); ignored on the other controllers |
+| `GlcdUdg(code, img)` / `GlcdWriteCode(code)` | Positron8 Toshiba_UDG: user character 128..255 from 8 row bytes, and a raw text code (T6963C) |
 
 ## oled (SSD1309 128 x 64 OLED, I2C or 4-wire SPI)
 Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tables 9-1..9-5, I2C format 8.1.5, 4-wire SPI 8.1.3, power-on 8.8, timing 13-4/13-6. The caller sets up the bus first (`I2cInit` at no more than 400 kHz, or `SpiInit` in mode 0 at no more than 10 MHz). The panel supply VCC is external. No frame buffer (the interfaces are write-only): the display is written in 8-pixel pages, byte = one column, bit 0 on top.

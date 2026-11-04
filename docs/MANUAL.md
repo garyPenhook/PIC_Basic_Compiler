@@ -2534,8 +2534,7 @@ EndIf
 System.Sleep()
 ```
 **Overview** Puts the part to sleep with the `sleep` instruction (followed by two NOPs, which the PIC16F13xxx needs after a wake-up). It returns when an interrupt
-wakes the part, or the watchdog if the `Config` enables it; with interrupts enabled the handler runs first. This is the plain instruction: there is no timed `Sleep`
-or `Snooze`, because the watchdog period registers differ between the families. Set up the wake-up source before the call.
+wakes the part, or the watchdog if the `Config` enables it; with interrupts enabled the handler runs first. This is the plain instruction; for timed sleeps see `Snooze` and `Sleep(seconds)` below. Set up the wake-up source before the call.
 
 **Example**
 ```basic
@@ -2548,6 +2547,34 @@ Do
     System.Sleep()          ' asleep until the watchdog time-out (a wake-up, not a reset, as the part was asleep)
 Loop
 ```
+
+### Snooze
+
+**Syntax**
+```basic
+System.Snooze(period)
+```
+**Overview** Sleeps for a short time, timed by the watchdog (so independent of the oscillator). `period` 0..7 gives about 2^period x 16 ms (16, 32, 64, 128, 256, 512 ms, 1 s, 2 s); a larger value counts as 7. Positron8 uses 18 ms units; here the unit is the nearest watchdog period (16 ms nominal). The time is approximate (the 31 kHz LFINTOSC varies with temperature and voltage), and an interrupt that wakes the part sooner ends the snooze sooner. The watchdog register is saved and restored, and it works the same on every supported family (WDTCON or WDTCON0, period in bits 5:1, enable in bit 0).
+
+**Requirements** The `Config` needs `WDTE = SWDTEN` (the call turns the watchdog on for the sleep and off again) or `WDTE = ON`. With `WDTE` off, or on-except-in-Sleep, nothing wakes the part but an interrupt. On the PIC16F13xxx, PIC16F171xx and PIC18 Q10/Q41 parts the period bits are read-only unless the `Config` has `WDTCPS = 11111`; the snooze then uses the `Config` period.
+
+**Example**
+```basic
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = SWDTEN, LVP = ON
+Include "system"
+Do
+    Toggle(PORTB.0)
+    System.Snooze(6)        ' about 1 second asleep
+Loop
+```
+
+### Sleep (timed)
+
+**Syntax**
+```basic
+System.Sleep(seconds)
+```
+**Overview** Sleeps for about `seconds` seconds (a Word; 0 returns at once), one watchdog second (period code 10) at a time. Same requirements and accuracy as `Snooze`; an interrupt that wakes the part ends only the second it arrived in.
 
 ---
 
@@ -4327,6 +4354,45 @@ LcdWriteChar(0)
 **Notes** The write leaves the address counter in CGRAM: call `LcdGoto`, `LcdClear` or `LcdHome` before
 writing text.
 
+## glcd  (`Include "glcd"`, graphic LCDs: KS0108, T6963C, ST7920)
+
+Graphic LCDs on an 8-bit parallel bus, three controllers behind one drawing interface. Choose by the init call: `GlcdInitKs0108` (128 x 64 from two KS0108 chips), `GlcdInitT6963` (Toshiba T6963C, any size) or `GlcdInitSt7920` (Sitronix ST7920 in parallel mode, PSB high). `data` is 0, 8 or 16: the port whose eight pins carry DB0..DB7 (port B or C; all eight bits are used); the other lines are pins 0..23 as in the `lcd` module, 255 for `rst` meaning not controlled. Each init returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a port the part lacks). Coordinates are x right and y down from (0, 0) at the top left; anything outside the display is ignored. **Nothing has run on a real display:** the tests run the module against software models of the three controllers.
+
+Compared with Positron8: `Plot`, `UnPlot` and `Pixel` take `(x, y)`, not `(y, x)`; `Print` / `Cls` are `GlcdWrite` / `GlcdClear`; `Box` and `Circle` are centred as there; `LCDwrite` / `LCDread` are `GlcdWriteByte` / `GlcdReadByte`; `Toshiba_Command` and `Toshiba_UDG` are `GlcdCommand` and `GlcdUdg`. The pins are arguments of the init call, not `Declare` lines.
+
+| Routine | Effect |
+|---|---|
+| `GlcdInitKs0108(data, rs, rw, en, cs1, cs2, rst, csHigh)` | `csHigh` True when the module's chip selects are active high. Busy flag polled (200 tries at most) |
+| `GlcdInitT6963(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)` | `fontWidth` 6 or 8 must match the module's FS pin and MD2 / MD3; columns are xres / fontWidth (at most 64). Graphic area at address 0, text area after it, CG RAM above that |
+| `GlcdInitSt7920(data, rs, rw, en, rst, folded)` | `folded` True: 128 x 64 with rows 32..63 held in words 8..15 (the usual module wiring; **the data sheet does not state it, check it on your module**); False: graphic RAM as Table 7, 256 x 64 |
+| `GlcdClear()` | clears graphics (and the T6963C text layer) |
+| `GlcdPlot(x, y)`, `GlcdUnplot(x, y)`, `GlcdSetPixel(x, y, on)`, `GlcdPixel(x, y)` | one pixel; `GlcdPixel` returns 1 or 0 |
+| `GlcdLine(on, x0, y0, x1, y1)`, `GlcdLineTo(on, x, y)` | line, ends included; `on` False erases |
+| `GlcdBox(on, x, y, size)`, `GlcdCircle(on, x, y, r)` | square outline of side `size` / circle outline of radius `r`, centred on (x, y) |
+| `GlcdWriteByte(row, col, v)`, `GlcdReadByte(row, col)` | one byte of display memory: KS0108 `row` page 0..7, `col` x 0..127, bit 0 on top; T6963C and ST7920 `row` pixel row, `col` byte column, leftmost pixel the highest bit |
+| `GlcdTextAt(col, row)`, `GlcdWriteChar(ch)`, `GlcdWrite(s)`, `GlcdWriteWord(v)` | text, 5 x 7 font in 6 x 8 cells; the T6963C uses its own text layer (cell `fontWidth` wide) |
+| `GlcdCommand(c [, d1 [, d2]])` | T6963C command with 0, 1 or 2 data bytes (sent first); ignored on the others |
+| `GlcdUdg(code, img)`, `GlcdWriteCode(code)` | T6963C user character 128..255 from eight row bytes; raw text code |
+
+**Example**
+```basic
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+Include "glcd"
+Dim ok As Byte
+' Data on port C (RC0..RC7); RS = RA0, R/W = RA1, E = RA2, CS1 = RA3, CS2 = RA4, reset = RA5.
+ok = Glcd.GlcdInitKs0108(16, 0, 1, 2, 3, 4, 5, True)
+Glcd.GlcdCircle(True, 63, 32, 20)
+Glcd.GlcdLine(True, 0, 0, 127, 63)
+Glcd.GlcdTextAt(0, 7)
+Glcd.GlcdWrite("Hello")
+```
+
+The routines are not reentrant: do not use them from a handler and the main program. A failed init turns the module off until the next successful one. The drawing routines link all three controller back ends (about 6 KB of flash on the PIC18); the PIC16F152xx parts with 2 K words do not have room.
+
+---
+
 ## oled  (`Include "oled"`, SSD1309, 128 x 64, I2C or 4-wire SPI)
 
 Set up the bus first: `I2cInit` at no more than 400 kHz, or `SpiInit` in mode 0 at no more than 10 MHz.
@@ -5308,12 +5374,13 @@ reports these rather than miscompiling them.
 | `Declare` switches (LCD pins, baud, pin routing) | only `Declare Xtal`; peripherals take arguments in `...Init(...)` calls |
 | `PinHigh`, `PinLow`, `PinGet`, pin numbers in `High` | use register bits / aliases; `PinMode`, `PinSet`, `PinClear` and `PinPullup` are available (see *PinMode*, *PinSet / PinClear*, *PinPullup*) |
 | `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
-| `Print`, `Cls`, `Cursor`, `Plot`, `Line`, graphic LCD commands | `lcd` module routines; no graphics |
+| `Print`, `Cls`, `Cursor` on a character LCD | `lcd` module routines |
+| `Plot`, `UnPlot`, `Pixel`, `Line`, `LineTo`, `Box`, `Circle`, `LCDwrite`, `LCDread`, `Toshiba_Command`, `Toshiba_UDG`, graphic `Print` / `Cls` | `glcd` module (`GlcdPlot`, `GlcdUnplot`, `GlcdPixel`, `GlcdLine`, `GlcdLineTo`, `GlcdBox`, `GlcdCircle`, `GlcdWriteByte`, `GlcdReadByte`, `GlcdCommand`, `GlcdUdg`, `GlcdWrite`, `GlcdClear`); KS0108, T6963C and ST7920, `(x, y)` order |
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `SerialWriteWord`, `SerialWriteHex` only |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
-| `Sleep` | `System.Sleep()` (the plain instruction); `Snooze` and a timed `Sleep` are not available |
+| `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
 | `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2` | `pulse` module (see *pulse, irremote and x10*) |
 | `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
 | `HPWM`, `Freqout` | `pwm` module (hardware PWM; no `Freqout`) |

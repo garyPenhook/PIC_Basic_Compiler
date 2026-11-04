@@ -365,6 +365,33 @@ fn rtcc_models_in_simulator() {
     }
 }
 
+/// The graphic LCD module `glcd` against software models of the three controllers (KS0108, T6963C, ST7920): each folder holds a
+/// `pinio.bas` test double that carries the chip model, and a symlink to `lib/glcd.bas`, so the programs run the real driver logic
+/// (pixels, lines, boxes, circles, bytes, text, the controller initialisation). Optimised, and as the `-O0` reference build.
+#[test]
+fn glcd_models_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    for dir in ["tests/exec_glcd_ks", "tests/exec_glcd_t69", "tests/exec_glcd_st79"] {
+        let files: Vec<PathBuf> = bas_files(&root().join(dir)).into_iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("lib_")).collect();
+        assert_eq!(files.len(), 1, "{dir}");
+        for flags in ["", "-O0"] {
+            let r = Command::new("python3")
+                .arg(root().join("scripts/exec-test.py"))
+                .arg("--basil")
+                .arg(basil())
+                .arg(format!("--flags={flags}"))
+                .args(&files)
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+            assert!(r.status.success(), "{dir}, flags `{flags}`:\n{text}");
+        }
+    }
+}
+
 /// The `pulse`, `irremote` and `x10` routines against a model of the pins: `tests/exec_pins/pinio.bas` replaces `Pinio` (a poll of the
 /// pin steps a waveform, X-10 bursts are recorded and played back), and the modules under test are symlinked next to the program.
 /// Optimised, and as the `-O0` reference build.

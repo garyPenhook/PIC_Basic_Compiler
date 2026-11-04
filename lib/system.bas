@@ -176,8 +176,7 @@ End Function
 ' Puts the part to sleep: the `sleep` instruction. It returns when an interrupt (a peripheral that runs in Sleep with its
 ' interrupt enabled, or the watchdog if the Config enables it) wakes the part; with interrupts disabled the program goes on at the next
 ' statement, with them enabled the handler runs first. On the PIC16F13xxx parts only, two NOPs after it keep the instruction that follows a wake-up from being
-' fetched too early on the parts that need that (PIC16F13xxx, erratum 1.3.1). This is the plain instruction: there is no timed
-' Sleep or Snooze, because the watchdog period registers differ between the families.
+' fetched too early on the parts that need that (PIC16F13xxx, erratum 1.3.1). This is the plain instruction; Snooze and the timed Sleep(seconds) below use the watchdog as the wake-up timer.
 Public Sub Sleep()
 #if _device = 16F13113 or _device = 16F13114 or _device = 16F13115 or _device = 16F13123 or _device = 16F13124 or _device = 16F13125 or _device = 16F13143 or _device = 16F13144 or _device = 16F13145
     Asm
@@ -190,4 +189,49 @@ Public Sub Sleep()
         sleep
     End Asm
 #endif
+End Sub
+
+' Runs the watchdog as a timer for one sleep: sets the period code `ps` (WDTPS/PS, bits 5:1) and the enable bit (bit 0),
+' sleeps, and puts the register back as it was. The layout is the same on every family: WDTCON
+' (PIC16F183xx: WDTPS and SWDTEN, DS40001839E Register 10-1; PIC16F152xx: CS, PS and SEN, DS40002195E 14.6.1) or
+' WDTCON0 (PIC16F13xxx, PIC16F171xx, PIC18 Q10/Q41: PS and SEN, DS40002519D 14.7.1, DS40002343F 14.7.1, DS40002043F 10.8.1,
+' DS40002242F 15.7.1). Period code n is 2^(n+5) cycles of the 31 kHz LFINTOSC: 0 = 1 ms, 4 = 16 ms, 10 = 1 s, 11 = 2 s.
+' SEN/SWDTEN counts only when the Config has WDTE = SWDTEN (01); with WDTE = ON (11) the watchdog always runs and the bit is
+' ignored; with WDTE = 10 (on except in Sleep) or OFF it does not run in Sleep and the part sleeps until another interrupt. On the newer parts PS is read-only
+' unless the Config has WDTCPS = 11111 (software control), and then the period stays at the Config one.
+Private Sub SysWdtSleep(ByVal ps As Byte)
+    Dim old As Byte
+#if _has(WDTCON0.SEN)
+    old = WDTCON0
+    WDTCON0 = (old And 192) Or (ps << 1) Or 1
+#else
+    old = WDTCON
+    WDTCON = (old And 192) Or (ps << 1) Or 1
+#endif
+    Sleep()
+#if _has(WDTCON0.SEN)
+    WDTCON0 = old
+#else
+    WDTCON = old
+#endif
+End Sub
+
+' A short sleep, as in Positron8: the part sleeps for about 2^period x 16 ms (period 0..7: 16, 32, 64, 128, 256, 512 ms, 1 s,
+' 2 s; a larger value counts as 7). The time comes from the watchdog, so it is independent of the oscillator and is
+' approximate (the LFINTOSC varies with temperature and voltage). An interrupt that wakes the part sooner ends the
+' sleep sooner. Needs the watchdog Config described at SysWdtSleep (WDTE = SWDTEN or ON).
+Public Sub Snooze(ByVal period As Byte)
+    If period > 7 Then
+        period = 7
+    End If
+    SysWdtSleep(period + 4)
+End Sub
+
+' A timed sleep: the part sleeps for about `seconds` seconds (0 returns at once), one watchdog second at a time. The
+' same limits as Snooze; an interrupt that wakes the part ends one of the seconds early, not the whole sleep.
+Public Sub Sleep(ByVal seconds As Word)
+    Do While seconds <> 0
+        SysWdtSleep(10)
+        seconds = seconds - 1
+    Loop
 End Sub
