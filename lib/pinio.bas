@@ -26,6 +26,47 @@ Public Function PinOk(ByVal pin As Byte) As Boolean
 End Function
 
 ' Output level of pin (True = high).
+#if _has(PRODL)
+' PIC18: the LATx registers are consecutive (LATA, LATB, LATC) on every supported part [18F27Q10 LATA..LATC 0xF82..0xF84,
+' PIC18-Q41 0x4BE..0x4C0, from the device files; the 18F0xQ41 parts have no LATB but keep LATC at LATA + 2], so the port is
+' LATA + (pin >> 3), reached through FSR0 (compiler-owned, nothing is live in it across a call), and the mask is built by a
+' shift loop. A pin 24 and above, or on a port the part lacks, is ignored.
+Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
+#if Not _has(LATB)
+    If pin >= 8 And pin < 16 Then
+        Exit
+    End If
+#endif
+    Asm
+        movf PINIO_PINSET__PIN, w, c
+        sublw 23
+        bnc PINIO_PINSET_END
+        lfsr 0, LATA
+        rrncf PINIO_PINSET__PIN, w, c
+        rrncf WREG, w, c
+        rrncf WREG, w, c
+        andlw 3
+        addwf FSR0L, f, c
+        movlw 7
+        andwf PINIO_PINSET__PIN, f, c
+        movlw 1
+PINIO_PINSET_SHL:
+        decf PINIO_PINSET__PIN, f, c
+        bnc PINIO_PINSET_GOT
+        rlncf WREG, w, c
+        bra PINIO_PINSET_SHL
+PINIO_PINSET_GOT:
+        tstfsz PINIO_PINSET__LEVEL, c
+        bra PINIO_PINSET_HI
+        comf WREG, w, c
+        andwf INDF0, f, c
+        bra PINIO_PINSET_END
+PINIO_PINSET_HI:
+        iorwf INDF0, f, c
+PINIO_PINSET_END:
+    End Asm
+End Sub
+#else
 Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
     Dim m As Byte
     m = 1 << (pin And 7)
@@ -53,8 +94,45 @@ Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
 #endif
     End If
 End Sub
+#endif
 
 ' Level read from pin (True = high).
+#if _has(PRODL)
+' PIC18: PORTA, PORTB, PORTC are consecutive too (see PinSet); the same FSR0 scheme. False for a pin that is not OK.
+Public Function PinGet(ByVal pin As Byte) As Boolean
+#if Not _has(LATB)
+    If pin >= 8 And pin < 16 Then
+        Result = False
+        Exit
+    End If
+#endif
+    Asm
+        clrf PINIO_PINGET__RESULT, c
+        movf PINIO_PINGET__PIN, w, c
+        sublw 23
+        bnc PINIO_PINGET_END
+        lfsr 0, PORTA
+        rrncf PINIO_PINGET__PIN, w, c
+        rrncf WREG, w, c
+        rrncf WREG, w, c
+        andlw 3
+        addwf FSR0L, f, c
+        movlw 7
+        andwf PINIO_PINGET__PIN, f, c
+        movlw 1
+PINIO_PINGET_SHL:
+        decf PINIO_PINGET__PIN, f, c
+        bnc PINIO_PINGET_GOT
+        rlncf WREG, w, c
+        bra PINIO_PINGET_SHL
+PINIO_PINGET_GOT:
+        andwf INDF0, w, c
+        bz PINIO_PINGET_END
+        incf PINIO_PINGET__RESULT, f, c
+PINIO_PINGET_END:
+    End Asm
+End Function
+#else
 Public Function PinGet(ByVal pin As Byte) As Boolean
     Dim m As Byte
     m = 1 << (pin And 7)
@@ -71,6 +149,7 @@ Public Function PinGet(ByVal pin As Byte) As Boolean
 #endif
     End If
 End Function
+#endif
 
 ' Pin as a digital output.
 Public Sub PinOutput(ByVal pin As Byte)
@@ -124,3 +203,114 @@ End Sub
 Public Sub PinRelease(ByVal pin As Byte)
     PinInput(pin)
 End Sub
+
+' Bound pins, for a loop that drives or reads two pins many times (`shift`): BindData / BindClk resolve a pin once (use only a pin
+' PinOk accepted), then DataPut / DataRead act on the data pin and ClkPut on the clock pin without the per-call port search and
+' mask loop. On PIC18 each is a few instructions through FSR0; on the other cores they call PinSet / PinGet on the bound pin.
+' Not reentrant: one data pin and one clock pin at a time.
+#if _has(PRODL)
+Dim dAddr As Word
+Dim dMask As Byte
+Dim cAddr As Word
+Dim cMask As Byte
+
+' LATx address of pin 0..23 (0 otherwise).
+Function PinAddr(ByVal pin As Byte) As Word
+    Asm
+        clrf PINIO_PINADDR__RESULT, c
+        clrf PINIO_PINADDR__RESULT+1, c
+        movf PINIO_PINADDR__PIN, w, c
+        sublw 23
+        bnc PINIO_PINADDR_END
+        rrncf PINIO_PINADDR__PIN, w, c
+        rrncf WREG, w, c
+        rrncf WREG, w, c
+        andlw 3
+        addlw low LATA
+        movwf PINIO_PINADDR__RESULT, c
+        movlw high LATA
+        movwf PINIO_PINADDR__RESULT+1, c
+PINIO_PINADDR_END:
+    End Asm
+End Function
+
+Public Sub BindData(ByVal pin As Byte)
+    dAddr = PinAddr(pin)
+    dMask = 1 << (pin And 7)
+End Sub
+
+Public Sub BindClk(ByVal pin As Byte)
+    cAddr = PinAddr(pin)
+    cMask = 1 << (pin And 7)
+End Sub
+
+Public Sub DataPut(ByVal level As Boolean)
+    Asm
+        movff PINIO_DADDR, FSR0L
+        movff PINIO_DADDR+1, FSR0H
+        movf PINIO_DMASK, w, c
+        tstfsz PINIO_DATAPUT__LEVEL, c
+        bra PINIO_DATAPUT_HI
+        comf WREG, w, c
+        andwf INDF0, f, c
+        bra PINIO_DATAPUT_END
+PINIO_DATAPUT_HI:
+        iorwf INDF0, f, c
+PINIO_DATAPUT_END:
+    End Asm
+End Sub
+
+Public Sub ClkPut(ByVal level As Boolean)
+    Asm
+        movff PINIO_CADDR, FSR0L
+        movff PINIO_CADDR+1, FSR0H
+        movf PINIO_CMASK, w, c
+        tstfsz PINIO_CLKPUT__LEVEL, c
+        bra PINIO_CLKPUT_HI
+        comf WREG, w, c
+        andwf INDF0, f, c
+        bra PINIO_CLKPUT_END
+PINIO_CLKPUT_HI:
+        iorwf INDF0, f, c
+PINIO_CLKPUT_END:
+    End Asm
+End Sub
+
+Public Function DataRead() As Boolean
+    Asm
+        clrf PINIO_DATAREAD__RESULT, c
+        movlw PORTA - LATA
+        addwf PINIO_DADDR, w, c
+        movwf FSR0L, c
+        movff PINIO_DADDR+1, FSR0H
+        movf PINIO_DMASK, w, c
+        andwf INDF0, w, c
+        bz PINIO_DATAREAD_END
+        incf PINIO_DATAREAD__RESULT, f, c
+PINIO_DATAREAD_END:
+    End Asm
+End Function
+#else
+Dim dPin As Byte
+Dim cPin As Byte
+
+Public Sub BindData(ByVal pin As Byte)
+    dPin = pin
+End Sub
+
+Public Sub BindClk(ByVal pin As Byte)
+    cPin = pin
+End Sub
+
+Public Sub DataPut(ByVal level As Boolean)
+    PinSet(dPin, level)
+End Sub
+
+Public Sub ClkPut(ByVal level As Boolean)
+    PinSet(cPin, level)
+End Sub
+
+Public Function DataRead() As Boolean
+    Result = PinGet(dPin)
+End Function
+#endif

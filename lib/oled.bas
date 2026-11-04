@@ -1,4 +1,5 @@
 Module Oled
+Include "pinio"
 Include "i2c"
 Include "spi"
 ' Monochrome OLED with an SSD1309 driver, 128 x 64 pixels (Solomon Systech SSD1309 Rev 1.1, Jul 2011;
@@ -75,51 +76,6 @@ Dim pCs As Byte
 Dim err As Byte
 
 
-' Output level of pin 0..23.
-Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    If pin < 8 Then
-        If level Then
-            LATA = LATA Or m
-        Else
-            LATA = LATA And (m Xor 255)
-        End If
-    ElseIf pin < 16 Then
-#if _has(LATB)
-        If level Then
-            LATB = LATB Or m
-        Else
-            LATB = LATB And (m Xor 255)
-        End If
-#endif
-    Else
-        If level Then
-            LATC = LATC Or m
-        Else
-            LATC = LATC And (m Xor 255)
-        End If
-    End If
-End Sub
-
-' Pin 0..23 as a digital output.
-Sub PinOutput(ByVal pin As Byte)
-    Dim n As Byte
-    n = (1 << (pin And 7)) Xor 255
-    If pin < 8 Then
-        ANSELA = ANSELA And n
-        TRISA = TRISA And n
-    ElseIf pin < 16 Then
-#if _has(LATB)
-        ANSELB = ANSELB And n
-        TRISB = TRISB And n
-#endif
-    Else
-        ANSELC = ANSELC And n
-        TRISC = TRISC And n
-    End If
-End Sub
-
 ' Opens a transfer: data bytes follow (isData) or command bytes. I2C: Start, address + W, control
 ' byte with Co = 0 and D/C# = isData, so every following byte is of that kind until the Stop [8.1.5.2].
 ' SPI: D/C# set, CS# low.
@@ -145,9 +101,9 @@ Sub Begin(ByVal isData As Boolean)
         End If
     ElseIf mode = 2 Then
 #endif
-        PinSet(pDc, isData)
+        Pinio.PinSet(pDc, isData)
         If pCs <> 255 Then
-            PinSet(pCs, False)
+            Pinio.PinSet(pCs, False)
         End If
     End If
 End Sub
@@ -183,7 +139,7 @@ Sub Finish()
     ElseIf mode = 2 Then
 #endif
         If pCs <> 255 Then
-            PinSet(pCs, True)
+            Pinio.PinSet(pCs, True)
         End If
     End If
 End Sub
@@ -207,10 +163,10 @@ End Sub
 ' Optional reset pulse on RES#: low for 10 us (at least 3 us [Table 13-1]), then high.
 Sub Reset(ByVal res As Byte)
     If res <> 255 Then
-        PinSet(res, False)
-        PinOutput(res)
+        Pinio.PinSet(res, False)
+        Pinio.PinOutput(res)
         DelayUS(10)
-        PinSet(res, True)
+        Pinio.PinSet(res, True)
         DelayMS(5)
     End If
 End Sub
@@ -312,10 +268,10 @@ Public Function OledInitSpi(ByVal dc As Byte, ByVal cs As Byte, ByVal res As Byt
     pDc = dc
     pCs = cs
     mode = 2
-    PinOutput(dc)
+    Pinio.PinOutput(dc)
     If cs <> 255 Then
-        PinSet(cs, True)
-        PinOutput(cs)
+        Pinio.PinSet(cs, True)
+        Pinio.PinOutput(cs)
     End If
     Reset(res)
     Setup()

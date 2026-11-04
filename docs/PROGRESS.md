@@ -1140,3 +1140,18 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Tests: `q41_*` in `crates/picsim/tests/adc.rs`; `tests/exec_q41/lib_adc.bas` now halts on the sim; `tests/sim/run.sh` runs `adc_q41` (library reads with a stimulus that changes over time).
 - Found: the data sheet counts ADPRE/ADACQ in Fosc clocks (DS40002214G p.744-745) but `lib/adc.bas` writes ADACQ = 8 as "8 ADC clocks" (8 us). Library not changed; to be checked against MDB or the part.
 - Open: NVM (S5).
+
+## Pinio PinSet/PinGet in asm (done 2026-11-03, 0.1.125)
+- PIC18 `Pinio.PinSet`/`PinGet` are `Asm` through FSR0 (LAT/PORT consecutive); Basic fallback for other cores. PinSet 44 -> 24 words, PinGet 39 -> 23; one `ShiftOut`+`ShiftIn` costs ~60 more cycles (shift-loop mask). Details in `docs/LIBRARY-EFFICIENCY-OPTIONS.md`.
+- Test: `tests/exec/lib_pinio.bas`. Open: hoist pin resolution out of the shift/lcd/oled/pulse bit loops.
+
+## shift uses bound pins (done 2026-11-03, 0.1.126)
+- `Pinio.BindData/BindClk/DataPut/ClkPut/DataRead` (PIC18 asm, Basic fallback); `shift` binds its pins once per call. ShiftOut+ShiftIn 2831 -> 1933 cycles, +21 words. Open: lcd, oled, pulse.
+
+## pulse, lcd, oled use the fast pin routines (done 2026-11-03, 0.1.127)
+- `pulse`: bound pins (`BindData`/`BindClk`, `DataPut`/`DataRead`/`ClkPut`). `lcd`, `oled`: private Basic `PinSet`/`PinOutput` removed in favour of `Pinio`'s. lib_lcd 741 -> 727 words, lib_oled 1902 -> 1887, lib_pulse 766 -> 774 (bind routines).
+
+## bits module; manual in categories (done 2026-11-04, 0.1.128)
+- New `lib/bits.bas`, counterparts of the Positron8 bit/maths commands: `SetBit ClearBit LoadBit GetBit` (Byte/Word/LongWord overloads), `Rol Ror` (Byte/Word), `SwapNibbles SwapBytes`, `Dcd Ncd Dig ISqr`, `Seed Random` (16-bit xorshift). They return the new value rather than changing the argument. Test: `tests/exec/lib_bits.bas` (MDB, 18F27Q10).
+- `docs/MANUAL.md` sections 2 and 3 regrouped into categories, alphabetical within each (no text removed); contents and Appendix A updated.
+- Still missing from the Positron8 list: `Len`-family string commands beyond `Len` (`ToUpper ToLower`), `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.

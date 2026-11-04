@@ -8,7 +8,8 @@ Include "pinio"
 ' RCin is one poll of 10 us plus the time of the pin read and the loop (a few us at 64 MHz, more on a slow clock),
 ' so a unit is 10 to 14 us at 16 MHz and above and the results are not exact: calibrate against a known pulse
 ' when the number matters, or use a hardware timer (`Timer1StartGated`, `Timer1StartPulse`). Interrupts
-' lengthen every time here.
+' lengthen every time here. Each routine binds its pin(s) once (`Pinio.BindData` / `BindClk`), so the bound state is shared
+' with `shift` and the module is not reentrant.
 
 ' Delay of us microseconds, in steps of 100, 10 and 1 us so the loop overhead is small against the total.
 Public Sub WaitUs(ByVal us As Word)
@@ -31,13 +32,14 @@ Public Sub PulseOut(ByVal pin As Byte, ByVal period As Word, ByVal level As Bool
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
-    Pinio.PinSet(pin, level)
+    Pinio.BindData(pin)
+    Pinio.DataPut(level)
     Pinio.PinOutput(pin)
     While period > 0
         DelayUS(10)
         period = period - 1
     Wend
-    Pinio.PinSet(pin, Not level)
+    Pinio.DataPut(Not level)
 End Sub
 
 ' Pulse of `period` units that is the opposite of the level the pin has now (two toggles).
@@ -45,7 +47,8 @@ Public Sub PulseOut(ByVal pin As Byte, ByVal period As Word)
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
-    PulseOut(pin, period, Not Pinio.PinGet(pin))
+    Pinio.BindData(pin)
+    PulseOut(pin, period, Not Pinio.DataRead())
 End Sub
 
 ' Width, in units, of the next pulse at `level` on pin. The pin is made an input. The clock starts at the edge into
@@ -57,9 +60,10 @@ Public Function PulseIn(ByVal pin As Byte, ByVal level As Boolean) As Word
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
+    Pinio.BindData(pin)
     Pinio.PinInput(pin)
     n = 0
-    While Pinio.PinGet(pin) = level
+    While Pinio.DataRead() = level
         DelayUS(10)
         n = n + 1
         If n = 0 Then
@@ -67,7 +71,7 @@ Public Function PulseIn(ByVal pin As Byte, ByVal level As Boolean) As Word
         End If
     Wend
     n = 0
-    While Pinio.PinGet(pin) <> level
+    While Pinio.DataRead() <> level
         DelayUS(10)
         n = n + 1
         If n = 0 Then
@@ -75,7 +79,7 @@ Public Function PulseIn(ByVal pin As Byte, ByVal level As Boolean) As Word
         End If
     Wend
     n = 0
-    While Pinio.PinGet(pin) = level
+    While Pinio.DataRead() = level
         DelayUS(10)
         n = n + 1
         If n = 0 Then
@@ -93,9 +97,10 @@ Public Function RCin(ByVal pin As Byte, ByVal level As Boolean) As Word
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
+    Pinio.BindData(pin)
     Pinio.PinInput(pin)
     n = 1
-    While Pinio.PinGet(pin) = level
+    While Pinio.DataRead() = level
         DelayUS(10)
         n = n + 1
         If n = 0 Then
@@ -114,7 +119,8 @@ Public Function Pot(ByVal pin As Byte, ByVal scale As Byte) As Byte
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
-    Pinio.PinSet(pin, False)
+    Pinio.BindData(pin)
+    Pinio.DataPut(False)
     Pinio.PinOutput(pin)
     DelayMS(1)
     t = RCin(pin, False)
@@ -131,11 +137,12 @@ Public Sub Servo(ByVal pin As Byte, ByVal width As Word)
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
-    Pinio.PinSet(pin, False)
+    Pinio.BindData(pin)
+    Pinio.DataPut(False)
     Pinio.PinOutput(pin)
-    Pinio.PinSet(pin, True)
+    Pinio.DataPut(True)
     WaitUs(width)
-    Pinio.PinSet(pin, False)
+    Pinio.DataPut(False)
 End Sub
 
 ' Pulse-width modulation by software, for an R-C filter: `cycles` periods of 256 steps of 10 us, high for `duty`
@@ -147,16 +154,17 @@ Public Sub PwmPin(ByVal pin As Byte, ByVal duty As Byte, ByVal cycles As Byte)
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
+    Pinio.BindData(pin)
     Pinio.PinOutput(pin)
     For c = 1 To cycles
         If duty > 0 Then
-            Pinio.PinSet(pin, True)
+            Pinio.DataPut(True)
             For i = 1 To duty
                 DelayUS(10)
             Next
         End If
         If duty < 255 Then
-            Pinio.PinSet(pin, False)
+            Pinio.DataPut(False)
             For i = duty To 254
                 DelayUS(10)
             Next
@@ -176,7 +184,8 @@ Public Sub Sound(ByVal pin As Byte, ByVal note As Byte, ByVal duration As Byte)
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
-    Pinio.PinSet(pin, False)
+    Pinio.BindData(pin)
+    Pinio.DataPut(False)
     Pinio.PinOutput(pin)
     If note = 0 Then
         For n = 1 To duration
@@ -205,11 +214,11 @@ Public Sub Sound(ByVal pin As Byte, ByVal note As Byte, ByVal duration As Byte)
         Else
             level = Not level
         End If
-        Pinio.PinSet(pin, level)
+        Pinio.DataPut(level)
         WaitUs(half)
         count = count - 1
     Wend
-    Pinio.PinSet(pin, False)
+    Pinio.DataPut(False)
 End Sub
 
 ' Two tones at once, f1 on pin1 and f2 on pin2, for `ms` milliseconds (frequencies 0..16000 Hz, 0 is silent).
@@ -226,8 +235,10 @@ Public Sub Sound2(ByVal pin1 As Byte, ByVal pin2 As Byte, ByVal f1 As Word, ByVa
     If Not (Pinio.PinOk(pin1) And Pinio.PinOk(pin2)) Or pin1 = pin2 Then
         Exit
     End If
-    Pinio.PinSet(pin1, False)
-    Pinio.PinSet(pin2, False)
+    Pinio.BindData(pin1)
+    Pinio.BindClk(pin2)
+    Pinio.DataPut(False)
+    Pinio.ClkPut(False)
     Pinio.PinOutput(pin1)
     Pinio.PinOutput(pin2)
     ' half period in 10 us ticks: 50000 / f, at most 255 (about 196 Hz and up)
@@ -258,7 +269,7 @@ Public Sub Sound2(ByVal pin1 As Byte, ByVal pin2 As Byte, ByVal f1 As Word, ByVa
             If c1 >= h1 Then
                 c1 = 0
                 l1 = Not l1
-                Pinio.PinSet(pin1, l1)
+                Pinio.DataPut(l1)
             End If
         End If
         If h2 > 0 Then
@@ -266,11 +277,11 @@ Public Sub Sound2(ByVal pin1 As Byte, ByVal pin2 As Byte, ByVal f1 As Word, ByVa
             If c2 >= h2 Then
                 c2 = 0
                 l2 = Not l2
-                Pinio.PinSet(pin2, l2)
+                Pinio.ClkPut(l2)
             End If
         End If
         ticks = ticks - 1
     Wend
-    Pinio.PinSet(pin1, False)
-    Pinio.PinSet(pin2, False)
+    Pinio.DataPut(False)
+    Pinio.ClkPut(False)
 End Sub

@@ -1,4 +1,5 @@
 Module Lcd
+Include "pinio"
 ' Character LCD with an HD44780U controller, 4-bit interface (HD44780U data sheet, Hitachi
 ' ADE-207-272(Z) Rev 0.0; page numbers are not given because the copy is unnumbered, tables and
 ' figures are). Six port pins are used: RS, E and DB4..DB7. R/W is not used: tie it to ground. The
@@ -31,57 +32,6 @@ Dim twoLines As Boolean
 Dim ready As Boolean
 Dim shown As Byte
 
-' Output level of pin 0..23.
-Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    If pin < 8 Then
-        If level Then
-            LATA = LATA Or m
-        Else
-            LATA = LATA And (m Xor 255)
-        End If
-    ElseIf pin < 16 Then
-#if _has(LATB)
-        If level Then
-            LATB = LATB Or m
-        Else
-            LATB = LATB And (m Xor 255)
-        End If
-#endif
-#if _has(LATC)
-    Else
-        If level Then
-            LATC = LATC Or m
-        Else
-            LATC = LATC And (m Xor 255)
-        End If
-#endif
-    End If
-End Sub
-
-' Pin 0..23 as a digital output.
-Sub PinOutput(ByVal pin As Byte)
-    Dim m As Byte
-    Dim n As Byte
-    m = 1 << (pin And 7)
-    n = m Xor 255
-    If pin < 8 Then
-        ANSELA = ANSELA And n
-        TRISA = TRISA And n
-    ElseIf pin < 16 Then
-#if _has(LATB)
-        ANSELB = ANSELB And n
-        TRISB = TRISB And n
-#endif
-#if _has(LATC)
-    Else
-        ANSELC = ANSELC And n
-        TRISC = TRISC And n
-#endif
-    End If
-End Sub
-
 ' True when `pin` is 0..23 and no other pin has claimed it yet.
 Function Claim(ByVal pin As Byte) As Boolean
     Dim mask As LongWord
@@ -110,25 +60,25 @@ End Function
 
 ' One enable pulse with the data nibble already on DB4..DB7.
 Sub Pulse()
-    PinSet(pEn, True)
+    Pinio.PinSet(pEn, True)
     DelayUS(1)
-    PinSet(pEn, False)
+    Pinio.PinSet(pEn, False)
     DelayUS(1)
 End Sub
 
 ' Puts the low four bits of `nib` on DB4..DB7 (bit 0 on DB4) and pulses E.
 Sub Nibble(ByVal nib As Byte)
-    PinSet(pD4, (nib And 1) <> 0)
-    PinSet(pD5, (nib And 2) <> 0)
-    PinSet(pD6, (nib And 4) <> 0)
-    PinSet(pD7, (nib And 8) <> 0)
+    Pinio.PinSet(pD4, (nib And 1) <> 0)
+    Pinio.PinSet(pD5, (nib And 2) <> 0)
+    Pinio.PinSet(pD6, (nib And 4) <> 0)
+    Pinio.PinSet(pD7, (nib And 8) <> 0)
     Pulse()
 End Sub
 
 ' A whole byte, high nibble first [4-bit interface, "data must be sent or received twice"]; rs = True
 ' for data (RS = 1), False for an instruction.
 Sub Send(ByVal b As Byte, ByVal rs As Boolean)
-    PinSet(pRs, rs)
+    Pinio.PinSet(pRs, rs)
     Nibble(b >> 4)
     Nibble(b And 15)
     DelayUS(50)
@@ -170,18 +120,18 @@ Public Function LcdInit(ByVal rs As Byte, ByVal en As Byte, ByVal d4 As Byte, By
     pD6 = d6
     pD7 = d7
     twoLines = (lines = 2)
-    PinSet(rs, False)
-    PinSet(en, False)
-    PinSet(d4, False)
-    PinSet(d5, False)
-    PinSet(d6, False)
-    PinSet(d7, False)
-    PinOutput(rs)
-    PinOutput(en)
-    PinOutput(d4)
-    PinOutput(d5)
-    PinOutput(d6)
-    PinOutput(d7)
+    Pinio.PinSet(rs, False)
+    Pinio.PinSet(en, False)
+    Pinio.PinSet(d4, False)
+    Pinio.PinSet(d5, False)
+    Pinio.PinSet(d6, False)
+    Pinio.PinSet(d7, False)
+    Pinio.PinOutput(rs)
+    Pinio.PinOutput(en)
+    Pinio.PinOutput(d4)
+    Pinio.PinOutput(d5)
+    Pinio.PinOutput(d6)
+    Pinio.PinOutput(d7)
     DelayMS(50)
     ' Function set (8-bit interface) three times, the waits are those of Figure 24.
     Nibble(3)

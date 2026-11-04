@@ -20,7 +20,9 @@ Public Sub ShiftOut(ByVal data As Byte, ByVal dataPin As Byte, ByVal clkPin As B
     If Not PinsOk(dataPin, clkPin, bits, 8) Then
         Exit
     End If
-    Pinio.PinSet(clkPin, False)
+    Pinio.BindData(dataPin)
+    Pinio.BindClk(clkPin)
+    Pinio.ClkPut(False)
     Pinio.PinOutput(clkPin)
     Pinio.PinOutput(dataPin)
     If Not lsbFirst Then
@@ -28,16 +30,16 @@ Public Sub ShiftOut(ByVal data As Byte, ByVal dataPin As Byte, ByVal clkPin As B
     End If
     For i = 1 To bits
         If lsbFirst Then
-            Pinio.PinSet(dataPin, (data And 1) <> 0)
+            Pinio.DataPut((data And 1) <> 0)
             data = data >> 1
         Else
-            Pinio.PinSet(dataPin, (data And 128) <> 0)
+            Pinio.DataPut((data And 128) <> 0)
             data = data << 1
         End If
         DelayUS(1)
-        Pinio.PinSet(clkPin, True)
+        Pinio.ClkPut(True)
         DelayUS(1)
-        Pinio.PinSet(clkPin, False)
+        Pinio.ClkPut(False)
     Next
 End Sub
 
@@ -47,24 +49,26 @@ Public Function ShiftIn(ByVal dataPin As Byte, ByVal clkPin As Byte, ByVal lsbFi
     If Not PinsOk(dataPin, clkPin, bits, 8) Then
         Exit
     End If
-    Pinio.PinSet(clkPin, False)
+    Pinio.BindData(dataPin)
+    Pinio.BindClk(clkPin)
+    Pinio.ClkPut(False)
     Pinio.PinOutput(clkPin)
     Pinio.PinInput(dataPin)
     For i = 1 To bits
-        Pinio.PinSet(clkPin, True)
+        Pinio.ClkPut(True)
         DelayUS(1)
         If lsbFirst Then
             Result = Result >> 1
-            If Pinio.PinGet(dataPin) Then
+            If Pinio.DataRead() Then
                 Result = Result Or (1 << (bits - 1))
             End If
         Else
             Result = Result << 1
-            If Pinio.PinGet(dataPin) Then
+            If Pinio.DataRead() Then
                 Result = Result Or 1
             End If
         End If
-        Pinio.PinSet(clkPin, False)
+        Pinio.ClkPut(False)
         DelayUS(1)
     Next
 End Function
@@ -74,7 +78,9 @@ Public Sub ShiftOut16(ByVal data As Word, ByVal dataPin As Byte, ByVal clkPin As
     If Not PinsOk(dataPin, clkPin, bits, 16) Then
         Exit
     End If
-    Pinio.PinSet(clkPin, False)
+    Pinio.BindData(dataPin)
+    Pinio.BindClk(clkPin)
+    Pinio.ClkPut(False)
     Pinio.PinOutput(clkPin)
     Pinio.PinOutput(dataPin)
     If Not lsbFirst Then
@@ -82,16 +88,16 @@ Public Sub ShiftOut16(ByVal data As Word, ByVal dataPin As Byte, ByVal clkPin As
     End If
     For i = 1 To bits
         If lsbFirst Then
-            Pinio.PinSet(dataPin, (data And 1) <> 0)
+            Pinio.DataPut((data And 1) <> 0)
             data = data >> 1
         Else
-            Pinio.PinSet(dataPin, (data And 32768) <> 0)
+            Pinio.DataPut((data And 32768) <> 0)
             data = data << 1
         End If
         DelayUS(1)
-        Pinio.PinSet(clkPin, True)
+        Pinio.ClkPut(True)
         DelayUS(1)
-        Pinio.PinSet(clkPin, False)
+        Pinio.ClkPut(False)
     Next
 End Sub
 
@@ -101,24 +107,26 @@ Public Function ShiftIn16(ByVal dataPin As Byte, ByVal clkPin As Byte, ByVal lsb
     If Not PinsOk(dataPin, clkPin, bits, 16) Then
         Exit
     End If
-    Pinio.PinSet(clkPin, False)
+    Pinio.BindData(dataPin)
+    Pinio.BindClk(clkPin)
+    Pinio.ClkPut(False)
     Pinio.PinOutput(clkPin)
     Pinio.PinInput(dataPin)
     For i = 1 To bits
-        Pinio.PinSet(clkPin, True)
+        Pinio.ClkPut(True)
         DelayUS(1)
         If lsbFirst Then
             Result = Result >> 1
-            If Pinio.PinGet(dataPin) Then
+            If Pinio.DataRead() Then
                 Result = Result Or (Word(1) << (bits - 1))
             End If
         Else
             Result = Result << 1
-            If Pinio.PinGet(dataPin) Then
+            If Pinio.DataRead() Then
                 Result = Result Or 1
             End If
         End If
-        Pinio.PinSet(clkPin, False)
+        Pinio.ClkPut(False)
         DelayUS(1)
     Next
 End Function

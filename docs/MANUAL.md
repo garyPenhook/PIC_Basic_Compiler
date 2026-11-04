@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.37**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.128**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -42,8 +42,10 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
    - Device, Clock, Config
    - Calling C
    - Preprocessor
-2. Language commands (alphabetical)
-3. Library modules
+2. Language commands (in categories, alphabetical within each)
+   - Branching and loops; Compiler and assembler; Delays; General; Math; Pin input and output
+3. Library modules (in categories, alphabetical within each)
+   - System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths and strings
 4. Diagnostics
 5. Appendix A: Alternative spellings and unsupported forms
 6. Appendix B: Test checklist
@@ -1351,125 +1353,11 @@ followed by the lines shown. `Dim` lines come first, as the language requires.
 
 ---
 
-## Abs
+The commands are in categories, each alphabetical: Branching and loops; Compiler and assembler; Delays; General; Math; Pin input and output. (The categories follow the original compiler's manual where a command has a counterpart.) Commands that need a library module are in section 3.
 
-**Syntax**
-```basic
-result = Abs(value)
-```
-**Overview** Absolute value of a number.
+---
 
-**Parameters** `value` is any numeric expression: a signed or unsigned integer, or a `Float`. The result
-has the type of `value`. An unsigned value is returned unchanged.
-
-**Example 1** An integer variable.
-```basic
-Dim a As Integer
-Dim b As Integer
-a = -1234
-b = Abs(a)                ' 1234
-```
-**Example 2** A `Float`: the sign bit is cleared.
-```basic
-Dim f As Float
-Dim g As Float
-f = -2.5
-g = Abs(f)                ' 2.5
-```
-**Notes** A constant argument is folded at compile time. `Abs(-32768)` of an `Integer` (and the most
-negative value of any signed type) overflows and stays negative, as in any two's-complement system. The
-argument is evaluated more than once, so it must not contain a function call (a back-end error
-otherwise); assign the call to a variable first.
-
-**See also** `Min`, `Max`.
-
-## AddressOf  (and `@`)
-
-**Syntax**
-```basic
-p = AddressOf(item)
-p = @item
-```
-**Overview** The address of a variable, register, array, array element, structure field, constant array
-or routine.
-
-**Parameters** `item` is the thing whose address is wanted. For RAM objects and registers the result
-is a `Word` holding the data-memory address (an array element with a run-time index gives the address of
-that element). For a `Const` array or a routine the result is a `LongWord` holding the 24-bit
-program-memory address (for a `Const` array, of its first byte). Anything else is `E-ADDR`.
-
-**Example 1** The address of a variable and of an array element.
-```basic
-Dim x As Byte
-Dim a(4) As Byte
-Dim k As Byte
-Dim px As Word
-Dim pe As Word
-k = 2
-px = AddressOf(x)
-pe = @a(k)
-```
-**Example 2** A routine and a constant table, as program-memory addresses.
-```basic
-Const Tbl(3) As Byte = (1, 2, 3)
-Dim pr As LongWord
-Dim pt As LongWord
-Sub Blink()
-    Inc(PORTB)
-End Sub
-pr = AddressOf(Blink)
-pt = @Tbl
-```
-**Notes** The address of a routine keeps it in the program even if nothing calls it. The address of a
-bit, a `Const` array element chosen at run time, or an expression is not supported. An index in the
-operand must not contain a call. The address of a `ByRef` parameter is the address of the caller's
-variable.
-
-**See also** `Asm`, `Bound`.
-
-## Asm ... End Asm
-
-**Syntax**
-```basic
-Asm [Preserves(W, STATUS, BSR)]
-    instruction ...
-End Asm
-```
-**Overview** Raw `pic-as` source, passed through unchanged. The compiler assumes the block changes
-`WREG`, `STATUS` and `BSR` unless `Preserves(...)` says otherwise, and will not move its own code across
-it. A variable used only inside `Asm` still gets storage. Variables are referred to by their emitted
-symbol names (see `docs/ABI.md`; the names are in the `.S` and `.map` files).
-
-**Parameters** `Preserves(...)` is optional and lists the registers the block leaves unchanged.
-
-**Example**
-```basic
-Asm Preserves(W, STATUS, BSR)
-    nop
-    nop
-End Asm
-```
-**Notes** Comments inside the block are assembler comments (`;`). The block ends at a line holding
-`End Asm`. Stack use of `call` in raw `Asm` is counted by the `E-STACK` check.
-
-## Bound
-
-**Syntax**
-```basic
-n = Bound(array)
-```
-**Overview** Highest valid index of an array. For a declared array it is a constant (`Dim a(5)` gives
-4, because an array of 5 has indexes 0..4). For an array **parameter** it is a run-time `Word`.
-
-**Example**
-```basic
-Dim a(5) As Byte
-Dim i As Byte
-For i = 0 To Bound(a)
-    a(i) = i
-Next
-```
-**See also** `For ... Next`, `Clear`.
+## Category: Branching and loops
 
 ## Break
 
@@ -1492,60 +1380,6 @@ Wend
 ```
 **See also** `Continue`, `Exit`.
 
-## CFile, Extern
-
-**Syntax**
-```basic
-CFile "file.c"
-Extern Function name(param As Type, ...) As Type
-Extern Sub name(param As Type, ...)
-```
-**Overview** `CFile` names a C source file, XC8 object or library that is linked into the program. `Extern` declares a
-function of that code, with no body. The C name is the name written in the `Extern` line, case included. A program that
-calls an `Extern` routine is linked by `xc8-cc` (see *Calling C* in chapter 1 for the whole picture and the full example).
-
-**Parameters** `file.c` is relative to the folder of the main program. `CFile` goes with the `Device`, `Clock` and
-`Config` lines, before the first `Include`, and can be given more than once. Each `Extern` parameter is `ByVal` and
-`Byte`, `Char`, `Boolean`, `ShortInt`, `Word`, `Integer`, `LongWord`, `LongInt` or `Float`, with no default value, or
-`ByRef`/`ByRefConst` (a variable, array, `String` or structure, passed as a pointer); the result is one of the
-by-value types, or none for a `Sub`. `Export` (below) is the same declaration with a body, for a routine C calls.
-
-**Example**
-```basic
-CFile "checksum.c"
-Extern Function crc8(crc As Byte, data As Byte) As Byte    ' unsigned char crc8(unsigned char, unsigned char)
-Extern Sub total_add(v As Byte)                            ' void total_add(unsigned char)
-
-Dim c As Byte
-c = crc8(c, 0x31)
-total_add(c)
-```
-**Notes**
-* Errors: `E-EXTERN` for an unsupported type, a default value, `Reentrant`/`Inline`, a name that is `main` or
-  starts with `basil_`, two `Extern`s of one name with different types, or a call to an `Extern` routine from an
-  `Interrupt` handler. `E-EXPORT` for a name exported twice or also declared `Extern`; `E-RECURSION` for a call cycle
-  through C. An `Export` array parameter is `E-EXTERN`.
-* The generated assembly is `<name>_basil.S`; the stub is `<name>_cstub.c`.
-* Not yet run on hardware.
-
-**See also** `Asm`, *Calling C* (chapter 1), `docs/ABI.md` section 7.
-
-## Clear
-
-**Syntax**
-```basic
-Clear(variable)
-```
-**Overview** Sets a variable, array, string or structure to zero.
-
-**Example**
-```basic
-Dim a(4) As Byte
-Dim w As Word
-Clear(a)
-Clear(w)
-```
-
 ## Continue
 
 **Syntax**
@@ -1567,97 +1401,6 @@ For i = 0 To 9
 Next
 ```
 **See also** `Break`.
-
-## Dec
-
-**Syntax**
-```basic
-Dec(variable [, amount])
-```
-**Overview** Subtract one from an integer variable, array element or structure field, or subtract
-`amount`. Not for `Float`.
-
-**Parameters** `variable` is the item to decrement. `amount` is an optional integer constant, variable
-or expression; it is converted to the type of `variable`.
-
-**Example 1**
-```basic
-Dim n As Byte
-n = 10
-Repeat
-    Dec(n)
-Until n = 0
-```
-**Example 2** Subtracting an amount.
-```basic
-Dim level As Word
-Dim amt As Byte
-level = 1000
-amt = 25
-Dec(level, amt)          ' 975
-Dec(level, 75)            ' 900
-```
-**Notes** On an array element with a run-time index the index is evaluated twice, so it must not
-contain a call. The result wraps like any assignment. A bit cannot take an amount.
-**See also** `Inc`.
-
-## DelayMS / DelayUS
-
-**Syntax**
-```basic
-DelayMS(milliseconds)
-DelayUS(microseconds)
-```
-**Overview** Cycle-counted delays computed from `Clock`. The compiler works out the loop counts at
-compile time. With a constant argument the achieved error is reported.
-
-**Parameters** A constant, or a variable of any integer type. A negative constant is an error. A
-**variable** delay needs an integral number of instruction cycles per unit at the given `Clock`;
-otherwise the build fails rather than rounding silently.
-
-**Example**
-```basic
-Dim led As PORTB.0
-ANSELB = 0
-Output(led)
-While True
-    Toggle(led)
-    DelayMS(500)
-Wend
-```
-**Notes** Interrupts lengthen a delay. The simulator suite checks exact cycle counts (for example
-1,600, 16,000 and 8,000,000 cycles for the test delays). `DelaySeconds` is in the `delay` module.
-
-**See also** `Clock` (section 1), `delay` module.
-
-## Disable / Enable
-
-**Syntax**
-```basic
-Enable(HandlerName)
-Disable(HandlerName)
-```
-**Overview** `Enable` assigns the handler to its vector and sets the global interrupt bits (`GIE/GIEH`,
-`PEIE/GIEL`); `Disable` clears them. They do not enable a particular source: set its `PIEx` bit
-yourself. Enabling two handlers of the same priority is an error (`E-ENABLE`).
-
-**Example**
-```basic
-Dim ticks As Byte
-Sub Count()
-    Inc(ticks)
-End Sub
-Interrupt Tick()
-    Save(0, Count)
-        Count()
-    Restore
-    ' clear the flag of your interrupt source here
-End Interrupt
-' set up the source and its PIEx enable bit first (the timer module has TimerNEnableInterrupt)
-Enable(Tick)
-Disable(Tick)
-```
-**See also** *Interrupts, events and context saving* (section 1), `Save`.
 
 ## Do ... Loop
 
@@ -1761,131 +1504,6 @@ If x < 5 GoTo Again
 ```
 **Notes** `GoTo` and labels are not allowed inside a `Save` block.
 
-## High / Low / Toggle / Input / Output
-
-**Syntax**
-```basic
-High(bit)         ' drive 1
-Low(bit)          ' drive 0
-Toggle(bit)       ' invert
-Input(bit)        ' make an input (TRIS = 1)
-Output(bit)       ' make an output (TRIS = 0)
-```
-**Overview** `bit` is a `Bit`/`Boolean` variable or alias, or a register bit such as `PORTB.4`. `High`,
-`Low` and `Toggle` act on the **latch** (`LATx`), and `Input`/`Output` on `TRISx`, so a pin set high is
-not disturbed by read-modify-write of other pins (`High(led)` on `PORTB.0` generates `bsf LATB,0`).
-To set a whole port direction or value, write the register: `TRISB = 0`, `LATB = $FF`.
-
-**Example**
-```basic
-Dim led As PORTB.0
-GpioAllDigital()          ' needs Include "gpio"; or write ANSELB = 0
-Output(led)
-High(led)
-Toggle(led)
-If led = 1 Then           ' a bit alias is compared, not used bare
-    Low(led)
-EndIf
-```
-**Notes** Parentheses are required: `High LED` and `High 1` (pin numbers) are **not** accepted. Pins
-reset to analog, so make them digital first. Pin numbers for the library routines are 0..23 (`RA0` = 0,
-`RB0` = 8, `RC0` = 16).
-
-**See also** `gpio` module, `PinMode`.
-
-## PinMode
-
-**Syntax**
-```basic
-PinMode(pin, Mode)
-```
-**Overview** Makes a pin an input or an output, or turns on its internal pull-up resistor.
-
-**Parameters** `pin` is a port bit (`PORTB.0`, or a `Bit` alias of one), a whole port (`PORTB`), or a
-pin number: `RA0` = 0 … `RA7` = 7, `RB0` = 8, `RC0` = 16 and so on, 8 numbers to a port. A pin number may be a
-constant or any `Byte` expression. `Mode` is a word, not an expression:
-
-| Mode | Effect |
-|---|---|
-| `Input` | `TRISx` bit = 1 (same as `Input(pin)`) |
-| `Output` | `TRISx` bit = 0 (same as `Output(pin)`) |
-| `PullUp` | `WPUx` bit = 1; the pin should already be an input |
-| `Input_PullUp` | `Input`, then `PullUp` |
-
-**Example**
-```basic
-PinMode(PORTB.0, Input)            ' RB0 an input
-PinMode(0, Output)                 ' RA0 an output
-PinMode(8, Input_PullUp)           ' RB0 an input with its pull-up on
-For p = 0 To 15                    ' p is a Byte: flash every pin of ports A and B
-    PinMode(p, Output)
-    DelayMs(500)
-    PinMode(p, Input)
-Next
-```
-**Notes**
-* `PinMode(PORTB, PullUp)` writes `WPUB = 0xFF`: every pin of the port gets its pull-up, whatever its direction. A run-time pin number must fit a Byte.
-* A port bit or a constant pin number compiles to one `bsf`/`bcf` (PIC18) per register, as `Input(pin)` does. A pin number in a variable
-  compiles to a short run-time sequence that picks the port by `pin >> 3`; it changes `TRISx`/`WPUx` by read-modify-write, so do not use it on a
-  port that an interrupt handler also changes. A run-time pin number the device has no port for changes nothing; a constant one is the error `E-PIN`.
-* Like `Input`/`Output`, `PinMode` does not clear `ANSELx`: a pin that resets to analog must be made digital first.
-* A device with no `WPUx` register for the port has no individual pull-ups: the pull-up part of `PullUp` and `Input_PullUp` is skipped with the warning `W-NOPULLUP`.
-* Parentheses are required (`PinMode PORTB.0, Input` is not accepted), and `Pin_A0` style names do not exist: use the number or `PORTA.0`.
-
-## PinSet / PinClear
-
-**Syntax**
-```basic
-PinSet(pin)
-PinClear(pin)
-```
-**Overview** Sets (`PinSet`) or clears (`PinClear`) the output latch of a pin without changing its direction, so a pin that is an input
-takes the level when it is later made an output. `pin` is as for `PinMode`: a port bit, a whole port, or a pin number (constant, or any `Byte`
-expression, `RA0` = 0, `RB0` = 8 ...).
-
-**Example**
-```basic
-Dim p As Byte
-Output(PORTB)
-PinSet(PORTB.0)        ' RB0 high
-PinClear(9)            ' RB1 low
-For p = 8 To 15
-    PinClear(p)        ' each pin of port B in turn
-    DelayMS(100)
-    PinSet(p)
-Next
-```
-**Notes**
-* `PinSet(PORTB.0)` is the same code as `High(PORTB.0)`; `PinSet(PORTB)` writes `LATB = 0xFF`, `PinClear(PORTB)` writes `LATB = 0`.
-* A run-time pin number changes `LATx` by read-modify-write (see `PinMode`); do not use it on a port that an interrupt handler also changes.
-  A pin number the device has no port for changes nothing; a constant one is the error `E-PIN`.
-* The `pinio` module has a routine `PinSet(pin, level)` of its own; it is called as `Pinio.PinSet(pin, level)`, and a bare `PinSet(pin)` is this command.
-
-**See also** `PinMode`, `PinPullup`, `High`, `Low`.
-
-## PinPullup
-
-**Syntax**
-```basic
-PinPullup(pin)
-PinPullup(Enable, pin)        ' also On
-PinPullup(Disable, pin)       ' also Off
-```
-**Overview** Turns the internal pull-up resistor of a pin, or of every pin of a port, on or off by writing its `WPUx` bit. With no mode it turns it on.
-The mode is a word (`Enable`, `On`, `Disable` or `Off`), not an expression.
-
-**Example**
-```basic
-PinPullup(PORTB.0)             ' RB0 pull-up on
-PinPullup(Enable, PORTB)       ' every pull-up of port B on
-PinPullup(Disable, 9)          ' RB1 off
-PinPullup(Off, p)              ' the pin number in the Byte p
-```
-**Notes** A device with no `WPUx` register for the port has no individual pull-ups: the request is skipped with the warning `W-NOPULLUP`.
-There are no `Pin_A0` style names: use `PORTA.0` or the number. The pull-up works only while the pin is an input.
-
-**See also** `PinMode`, `PinSet`, `PinClear`.
-
 ## If ... Then ... ElseIf ... Else ... EndIf
 
 **Syntax**
@@ -1918,71 +1536,6 @@ EndIf
 **Notes** The single-line form `If x Then y = 2` is rejected with a message; use a block or
 `If c GoTo label`.
 
-## Inc
-
-**Syntax**
-```basic
-Inc(variable [, amount])
-```
-**Overview** Add one to an integer variable, array element or structure field, or add `amount`. Not for
-`Float`.
-
-**Parameters** `variable` is the item to increment. `amount` is an optional integer constant, variable
-or expression; it is converted to the type of `variable`.
-
-**Example 1**
-```basic
-Dim n As Byte
-Repeat
-    Inc(n)
-Until n > 10
-```
-The loop above is the equivalent of `For n = 1 To 10`.
-
-**Example 2** Adding an amount.
-```basic
-Dim w As Word
-Dim amt As Byte
-w = 1
-amt = 10
-Repeat
-    Inc(w, amt)
-Until w > 100
-```
-**Notes** On an array element with a run-time index the index is evaluated twice, so it must not
-contain a call. The result wraps like any assignment. A bit cannot take an amount.
-
-**See also** `Dec`.
-
-## Min / Max
-
-**Syntax**
-```basic
-r = Min(a, b)
-r = Max(a, b)
-```
-**Overview** Smaller / larger of two integers (`E-TYPE` for `Float`). The result has the common type of
-the two arguments, and mixed signedness compares in that common type.
-
-**Example 1**
-```basic
-Dim a As Word
-Dim hi As Word
-a = 500
-hi = Max(a, 1000)         ' 1000
-```
-**Example 2** Limiting a value to a range.
-```basic
-Dim v As Integer
-v = -40
-v = Max(v, -10)           ' lower limit
-v = Min(v, 10)            ' upper limit
-```
-**Notes** Constant arguments are folded at compile time. Both arguments are evaluated more than once,
-so they must not contain a function call; assign the call to a variable first.
-
-**See also** `Abs`.
-
 ## Repeat ... Until
 
 **Syntax**
@@ -2001,37 +1554,6 @@ Repeat
 Until x = 3
 ```
 **See also** `While`, `Do`.
-
-## Save ... Restore
-
-**Syntax**
-```basic
-Save(item {, item})
-    ...
-Restore
-```
-**Overview** Preserves the named variables, routines' storage (including what those routines call)
-and, with `0`, the compiler's working registers around the block. Required around any call to a routine made
-from an interrupt handler (otherwise `E-ISR-CALL`); a call through an event variable adds its own.
-
-**Parameters** Each `item` is a variable, a routine, or `0`.
-
-**Example**
-```basic
-Dim count As Byte
-Sub Bump()
-    Inc(count)
-End Sub
-Interrupt Tick()
-    Save(0, Bump)
-        Bump()
-    Restore
-End Interrupt
-```
-**Notes** `Exit`, `Break` and `Continue` inside a `Save` block restore first; `GoTo` and labels inside
-it are not supported.
-
-**See also** *Interrupts, events and context saving* (section 1).
 
 ## Select ... Case ... EndSelect
 
@@ -2113,6 +1635,512 @@ Wend
 
 ---
 
+## Category: Compiler and assembler
+
+## Asm ... End Asm
+
+**Syntax**
+```basic
+Asm [Preserves(W, STATUS, BSR)]
+    instruction ...
+End Asm
+```
+**Overview** Raw `pic-as` source, passed through unchanged. The compiler assumes the block changes
+`WREG`, `STATUS` and `BSR` unless `Preserves(...)` says otherwise, and will not move its own code across
+it. A variable used only inside `Asm` still gets storage. Variables are referred to by their emitted
+symbol names (see `docs/ABI.md`; the names are in the `.S` and `.map` files).
+
+**Parameters** `Preserves(...)` is optional and lists the registers the block leaves unchanged.
+
+**Example**
+```basic
+Asm Preserves(W, STATUS, BSR)
+    nop
+    nop
+End Asm
+```
+**Notes** Comments inside the block are assembler comments (`;`). The block ends at a line holding
+`End Asm`. Stack use of `call` in raw `Asm` is counted by the `E-STACK` check.
+
+## CFile, Extern
+
+**Syntax**
+```basic
+CFile "file.c"
+Extern Function name(param As Type, ...) As Type
+Extern Sub name(param As Type, ...)
+```
+**Overview** `CFile` names a C source file, XC8 object or library that is linked into the program. `Extern` declares a
+function of that code, with no body. The C name is the name written in the `Extern` line, case included. A program that
+calls an `Extern` routine is linked by `xc8-cc` (see *Calling C* in chapter 1 for the whole picture and the full example).
+
+**Parameters** `file.c` is relative to the folder of the main program. `CFile` goes with the `Device`, `Clock` and
+`Config` lines, before the first `Include`, and can be given more than once. Each `Extern` parameter is `ByVal` and
+`Byte`, `Char`, `Boolean`, `ShortInt`, `Word`, `Integer`, `LongWord`, `LongInt` or `Float`, with no default value, or
+`ByRef`/`ByRefConst` (a variable, array, `String` or structure, passed as a pointer); the result is one of the
+by-value types, or none for a `Sub`. `Export` (below) is the same declaration with a body, for a routine C calls.
+
+**Example**
+```basic
+CFile "checksum.c"
+Extern Function crc8(crc As Byte, data As Byte) As Byte    ' unsigned char crc8(unsigned char, unsigned char)
+Extern Sub total_add(v As Byte)                            ' void total_add(unsigned char)
+
+Dim c As Byte
+c = crc8(c, 0x31)
+total_add(c)
+```
+**Notes**
+* Errors: `E-EXTERN` for an unsupported type, a default value, `Reentrant`/`Inline`, a name that is `main` or
+  starts with `basil_`, two `Extern`s of one name with different types, or a call to an `Extern` routine from an
+  `Interrupt` handler. `E-EXPORT` for a name exported twice or also declared `Extern`; `E-RECURSION` for a call cycle
+  through C. An `Export` array parameter is `E-EXTERN`.
+* The generated assembly is `<name>_basil.S`; the stub is `<name>_cstub.c`.
+* Not yet run on hardware.
+
+**See also** `Asm`, *Calling C* (chapter 1), `docs/ABI.md` section 7.
+
+---
+
+## Category: Delays
+
+## DelayMS / DelayUS
+
+**Syntax**
+```basic
+DelayMS(milliseconds)
+DelayUS(microseconds)
+```
+**Overview** Cycle-counted delays computed from `Clock`. The compiler works out the loop counts at
+compile time. With a constant argument the achieved error is reported.
+
+**Parameters** A constant, or a variable of any integer type. A negative constant is an error. A
+**variable** delay needs an integral number of instruction cycles per unit at the given `Clock`;
+otherwise the build fails rather than rounding silently.
+
+**Example**
+```basic
+Dim led As PORTB.0
+ANSELB = 0
+Output(led)
+While True
+    Toggle(led)
+    DelayMS(500)
+Wend
+```
+**Notes** Interrupts lengthen a delay. The simulator suite checks exact cycle counts (for example
+1,600, 16,000 and 8,000,000 cycles for the test delays). `DelaySeconds` is in the `delay` module.
+
+**See also** `Clock` (section 1), `delay` module.
+
+---
+
+## Category: General
+
+## AddressOf  (and `@`)
+
+**Syntax**
+```basic
+p = AddressOf(item)
+p = @item
+```
+**Overview** The address of a variable, register, array, array element, structure field, constant array
+or routine.
+
+**Parameters** `item` is the thing whose address is wanted. For RAM objects and registers the result
+is a `Word` holding the data-memory address (an array element with a run-time index gives the address of
+that element). For a `Const` array or a routine the result is a `LongWord` holding the 24-bit
+program-memory address (for a `Const` array, of its first byte). Anything else is `E-ADDR`.
+
+**Example 1** The address of a variable and of an array element.
+```basic
+Dim x As Byte
+Dim a(4) As Byte
+Dim k As Byte
+Dim px As Word
+Dim pe As Word
+k = 2
+px = AddressOf(x)
+pe = @a(k)
+```
+**Example 2** A routine and a constant table, as program-memory addresses.
+```basic
+Const Tbl(3) As Byte = (1, 2, 3)
+Dim pr As LongWord
+Dim pt As LongWord
+Sub Blink()
+    Inc(PORTB)
+End Sub
+pr = AddressOf(Blink)
+pt = @Tbl
+```
+**Notes** The address of a routine keeps it in the program even if nothing calls it. The address of a
+bit, a `Const` array element chosen at run time, or an expression is not supported. An index in the
+operand must not contain a call. The address of a `ByRef` parameter is the address of the caller's
+variable.
+
+**See also** `Asm`, `Bound`.
+
+## Bound
+
+**Syntax**
+```basic
+n = Bound(array)
+```
+**Overview** Highest valid index of an array. For a declared array it is a constant (`Dim a(5)` gives
+4, because an array of 5 has indexes 0..4). For an array **parameter** it is a run-time `Word`.
+
+**Example**
+```basic
+Dim a(5) As Byte
+Dim i As Byte
+For i = 0 To Bound(a)
+    a(i) = i
+Next
+```
+**See also** `For ... Next`, `Clear`.
+
+## Clear
+
+**Syntax**
+```basic
+Clear(variable)
+```
+**Overview** Sets a variable, array, string or structure to zero.
+
+**Example**
+```basic
+Dim a(4) As Byte
+Dim w As Word
+Clear(a)
+Clear(w)
+```
+
+## Dec
+
+**Syntax**
+```basic
+Dec(variable [, amount])
+```
+**Overview** Subtract one from an integer variable, array element or structure field, or subtract
+`amount`. Not for `Float`.
+
+**Parameters** `variable` is the item to decrement. `amount` is an optional integer constant, variable
+or expression; it is converted to the type of `variable`.
+
+**Example 1**
+```basic
+Dim n As Byte
+n = 10
+Repeat
+    Dec(n)
+Until n = 0
+```
+**Example 2** Subtracting an amount.
+```basic
+Dim level As Word
+Dim amt As Byte
+level = 1000
+amt = 25
+Dec(level, amt)          ' 975
+Dec(level, 75)            ' 900
+```
+**Notes** On an array element with a run-time index the index is evaluated twice, so it must not
+contain a call. The result wraps like any assignment. A bit cannot take an amount.
+**See also** `Inc`.
+
+## Disable / Enable
+
+**Syntax**
+```basic
+Enable(HandlerName)
+Disable(HandlerName)
+```
+**Overview** `Enable` assigns the handler to its vector and sets the global interrupt bits (`GIE/GIEH`,
+`PEIE/GIEL`); `Disable` clears them. They do not enable a particular source: set its `PIEx` bit
+yourself. Enabling two handlers of the same priority is an error (`E-ENABLE`).
+
+**Example**
+```basic
+Dim ticks As Byte
+Sub Count()
+    Inc(ticks)
+End Sub
+Interrupt Tick()
+    Save(0, Count)
+        Count()
+    Restore
+    ' clear the flag of your interrupt source here
+End Interrupt
+' set up the source and its PIEx enable bit first (the timer module has TimerNEnableInterrupt)
+Enable(Tick)
+Disable(Tick)
+```
+**See also** *Interrupts, events and context saving* (section 1), `Save`.
+
+## Inc
+
+**Syntax**
+```basic
+Inc(variable [, amount])
+```
+**Overview** Add one to an integer variable, array element or structure field, or add `amount`. Not for
+`Float`.
+
+**Parameters** `variable` is the item to increment. `amount` is an optional integer constant, variable
+or expression; it is converted to the type of `variable`.
+
+**Example 1**
+```basic
+Dim n As Byte
+Repeat
+    Inc(n)
+Until n > 10
+```
+The loop above is the equivalent of `For n = 1 To 10`.
+
+**Example 2** Adding an amount.
+```basic
+Dim w As Word
+Dim amt As Byte
+w = 1
+amt = 10
+Repeat
+    Inc(w, amt)
+Until w > 100
+```
+**Notes** On an array element with a run-time index the index is evaluated twice, so it must not
+contain a call. The result wraps like any assignment. A bit cannot take an amount.
+
+**See also** `Dec`.
+
+## Save ... Restore
+
+**Syntax**
+```basic
+Save(item {, item})
+    ...
+Restore
+```
+**Overview** Preserves the named variables, routines' storage (including what those routines call)
+and, with `0`, the compiler's working registers around the block. Required around any call to a routine made
+from an interrupt handler (otherwise `E-ISR-CALL`); a call through an event variable adds its own.
+
+**Parameters** Each `item` is a variable, a routine, or `0`.
+
+**Example**
+```basic
+Dim count As Byte
+Sub Bump()
+    Inc(count)
+End Sub
+Interrupt Tick()
+    Save(0, Bump)
+        Bump()
+    Restore
+End Interrupt
+```
+**Notes** `Exit`, `Break` and `Continue` inside a `Save` block restore first; `GoTo` and labels inside
+it are not supported.
+
+**See also** *Interrupts, events and context saving* (section 1).
+
+---
+
+## Category: Math
+
+## Abs
+
+**Syntax**
+```basic
+result = Abs(value)
+```
+**Overview** Absolute value of a number.
+
+**Parameters** `value` is any numeric expression: a signed or unsigned integer, or a `Float`. The result
+has the type of `value`. An unsigned value is returned unchanged.
+
+**Example 1** An integer variable.
+```basic
+Dim a As Integer
+Dim b As Integer
+a = -1234
+b = Abs(a)                ' 1234
+```
+**Example 2** A `Float`: the sign bit is cleared.
+```basic
+Dim f As Float
+Dim g As Float
+f = -2.5
+g = Abs(f)                ' 2.5
+```
+**Notes** A constant argument is folded at compile time. `Abs(-32768)` of an `Integer` (and the most
+negative value of any signed type) overflows and stays negative, as in any two's-complement system. The
+argument is evaluated more than once, so it must not contain a function call (a back-end error
+otherwise); assign the call to a variable first.
+
+**See also** `Min`, `Max`.
+
+## Min / Max
+
+**Syntax**
+```basic
+r = Min(a, b)
+r = Max(a, b)
+```
+**Overview** Smaller / larger of two integers (`E-TYPE` for `Float`). The result has the common type of
+the two arguments, and mixed signedness compares in that common type.
+
+**Example 1**
+```basic
+Dim a As Word
+Dim hi As Word
+a = 500
+hi = Max(a, 1000)         ' 1000
+```
+**Example 2** Limiting a value to a range.
+```basic
+Dim v As Integer
+v = -40
+v = Max(v, -10)           ' lower limit
+v = Min(v, 10)            ' upper limit
+```
+**Notes** Constant arguments are folded at compile time. Both arguments are evaluated more than once,
+so they must not contain a function call; assign the call to a variable first.
+
+**See also** `Abs`.
+
+---
+
+## Category: Pin input and output
+
+## High / Low / Toggle / Input / Output
+
+**Syntax**
+```basic
+High(bit)         ' drive 1
+Low(bit)          ' drive 0
+Toggle(bit)       ' invert
+Input(bit)        ' make an input (TRIS = 1)
+Output(bit)       ' make an output (TRIS = 0)
+```
+**Overview** `bit` is a `Bit`/`Boolean` variable or alias, or a register bit such as `PORTB.4`. `High`,
+`Low` and `Toggle` act on the **latch** (`LATx`), and `Input`/`Output` on `TRISx`, so a pin set high is
+not disturbed by read-modify-write of other pins (`High(led)` on `PORTB.0` generates `bsf LATB,0`).
+To set a whole port direction or value, write the register: `TRISB = 0`, `LATB = $FF`.
+
+**Example**
+```basic
+Dim led As PORTB.0
+GpioAllDigital()          ' needs Include "gpio"; or write ANSELB = 0
+Output(led)
+High(led)
+Toggle(led)
+If led = 1 Then           ' a bit alias is compared, not used bare
+    Low(led)
+EndIf
+```
+**Notes** Parentheses are required: `High LED` and `High 1` (pin numbers) are **not** accepted. Pins
+reset to analog, so make them digital first. Pin numbers for the library routines are 0..23 (`RA0` = 0,
+`RB0` = 8, `RC0` = 16).
+
+**See also** `gpio` module, `PinMode`.
+
+## PinMode
+
+**Syntax**
+```basic
+PinMode(pin, Mode)
+```
+**Overview** Makes a pin an input or an output, or turns on its internal pull-up resistor.
+
+**Parameters** `pin` is a port bit (`PORTB.0`, or a `Bit` alias of one), a whole port (`PORTB`), or a
+pin number: `RA0` = 0 … `RA7` = 7, `RB0` = 8, `RC0` = 16 and so on, 8 numbers to a port. A pin number may be a
+constant or any `Byte` expression. `Mode` is a word, not an expression:
+
+| Mode | Effect |
+|---|---|
+| `Input` | `TRISx` bit = 1 (same as `Input(pin)`) |
+| `Output` | `TRISx` bit = 0 (same as `Output(pin)`) |
+| `PullUp` | `WPUx` bit = 1; the pin should already be an input |
+| `Input_PullUp` | `Input`, then `PullUp` |
+
+**Example**
+```basic
+PinMode(PORTB.0, Input)            ' RB0 an input
+PinMode(0, Output)                 ' RA0 an output
+PinMode(8, Input_PullUp)           ' RB0 an input with its pull-up on
+For p = 0 To 15                    ' p is a Byte: flash every pin of ports A and B
+    PinMode(p, Output)
+    DelayMs(500)
+    PinMode(p, Input)
+Next
+```
+**Notes**
+* `PinMode(PORTB, PullUp)` writes `WPUB = 0xFF`: every pin of the port gets its pull-up, whatever its direction. A run-time pin number must fit a Byte.
+* A port bit or a constant pin number compiles to one `bsf`/`bcf` (PIC18) per register, as `Input(pin)` does. A pin number in a variable
+  compiles to a short run-time sequence that picks the port by `pin >> 3`; it changes `TRISx`/`WPUx` by read-modify-write, so do not use it on a
+  port that an interrupt handler also changes. A run-time pin number the device has no port for changes nothing; a constant one is the error `E-PIN`.
+* Like `Input`/`Output`, `PinMode` does not clear `ANSELx`: a pin that resets to analog must be made digital first.
+* A device with no `WPUx` register for the port has no individual pull-ups: the pull-up part of `PullUp` and `Input_PullUp` is skipped with the warning `W-NOPULLUP`.
+* Parentheses are required (`PinMode PORTB.0, Input` is not accepted), and `Pin_A0` style names do not exist: use the number or `PORTA.0`.
+
+## PinPullup
+
+**Syntax**
+```basic
+PinPullup(pin)
+PinPullup(Enable, pin)        ' also On
+PinPullup(Disable, pin)       ' also Off
+```
+**Overview** Turns the internal pull-up resistor of a pin, or of every pin of a port, on or off by writing its `WPUx` bit. With no mode it turns it on.
+The mode is a word (`Enable`, `On`, `Disable` or `Off`), not an expression.
+
+**Example**
+```basic
+PinPullup(PORTB.0)             ' RB0 pull-up on
+PinPullup(Enable, PORTB)       ' every pull-up of port B on
+PinPullup(Disable, 9)          ' RB1 off
+PinPullup(Off, p)              ' the pin number in the Byte p
+```
+**Notes** A device with no `WPUx` register for the port has no individual pull-ups: the request is skipped with the warning `W-NOPULLUP`.
+There are no `Pin_A0` style names: use `PORTA.0` or the number. The pull-up works only while the pin is an input.
+
+**See also** `PinMode`, `PinSet`, `PinClear`.
+
+## PinSet / PinClear
+
+**Syntax**
+```basic
+PinSet(pin)
+PinClear(pin)
+```
+**Overview** Sets (`PinSet`) or clears (`PinClear`) the output latch of a pin without changing its direction, so a pin that is an input
+takes the level when it is later made an output. `pin` is as for `PinMode`: a port bit, a whole port, or a pin number (constant, or any `Byte`
+expression, `RA0` = 0, `RB0` = 8 ...).
+
+**Example**
+```basic
+Dim p As Byte
+Output(PORTB)
+PinSet(PORTB.0)        ' RB0 high
+PinClear(9)            ' RB1 low
+For p = 8 To 15
+    PinClear(p)        ' each pin of port B in turn
+    DelayMS(100)
+    PinSet(p)
+Next
+```
+**Notes**
+* `PinSet(PORTB.0)` is the same code as `High(PORTB.0)`; `PinSet(PORTB)` writes `LATB = 0xFF`, `PinClear(PORTB)` writes `LATB = 0`.
+* A run-time pin number changes `LATx` by read-modify-write (see `PinMode`); do not use it on a port that an interrupt handler also changes.
+  A pin number the device has no port for changes nothing; a constant one is the error `E-PIN`.
+* The `pinio` module has a routine `PinSet(pin, level)` of its own; it is called as `Pinio.PinSet(pin, level)`, and a bare `PinSet(pin)` is this command.
+
+**See also** `PinMode`, `PinPullup`, `High`, `Low`.
+
+---
+
 # 3. Library modules
 
 Modules are in `lib/` and loaded with `Include "name"`. Call as `Module.Routine(...)` or by the bare
@@ -2149,6 +2177,47 @@ first, as the language requires.
 * **Not yet checked on hardware** for any module.
 
 ---
+
+Modules are grouped in categories, each alphabetical: System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths and strings.
+
+---
+
+## Category: System and clock
+
+## delay  (`Include "delay"`)
+
+`DelayMS` and `DelayUS` are language commands (section 2). The module adds:
+
+### DelaySeconds
+
+**Syntax**
+```basic
+DelaySeconds(s)
+```
+**Overview** Waits `s` seconds, as `s` calls of `DelayMS(1000)`.
+
+**Parameters** `s` is a `Byte` (0..255).
+
+**Example**
+```basic
+DelaySeconds(5)
+```
+**Notes** Interrupts lengthen the delay.
+
+### DelayNop
+
+**Syntax**
+```basic
+DelayNop()
+```
+**Overview** Waits exactly one instruction cycle.
+
+**Example**
+```basic
+Dim p As PORTB.0
+Output(p)
+High(p) : DelayNop() : Low(p)
+```
 
 ## gpio  (`Include "gpio"`)
 
@@ -2205,45 +2274,6 @@ GpioOpenDrain(maskA, maskB, maskC)
 ```basic
 GpioOpenDrain(0, %00000010, 0)    ' RB1 open drain
 ```
-
----
-
-## delay  (`Include "delay"`)
-
-`DelayMS` and `DelayUS` are language commands (section 2). The module adds:
-
-### DelaySeconds
-
-**Syntax**
-```basic
-DelaySeconds(s)
-```
-**Overview** Waits `s` seconds, as `s` calls of `DelayMS(1000)`.
-
-**Parameters** `s` is a `Byte` (0..255).
-
-**Example**
-```basic
-DelaySeconds(5)
-```
-**Notes** Interrupts lengthen the delay.
-
-### DelayNop
-
-**Syntax**
-```basic
-DelayNop()
-```
-**Overview** Waits exactly one instruction cycle.
-
-**Example**
-```basic
-Dim p As PORTB.0
-Output(p)
-High(p) : DelayNop() : Low(p)
-```
-
----
 
 ## intosc  (`Include "intosc"`, internal oscillator set-up)
 
@@ -2304,8 +2334,6 @@ ok = SetClockDiv(mhz, shift)
 Dim ok As Boolean
 ok = SetClockDiv(16, 2)           ' 16 MHz / 4 = 4 MHz
 ```
-
----
 
 ## system  (`Include "system"`, reset cause and clock check)
 
@@ -2413,6 +2441,157 @@ EndIf
 ```
 
 ---
+
+## Category: Timers and PWM
+
+## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
+
+Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
+Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a channel
+runs, so do not use `Timer2` routines at the same time. CCP1/CCP2 can output on ports B and C
+(pins 8..23); PWM3/PWM4 on ports A and C. The duty is a number of steps out of `PwmSteps()`.
+
+### PwmInit
+
+**Syntax**
+```basic
+ok = PwmInit(hz)
+```
+**Overview** Chooses the Timer2 prescale (1..128) and period for `hz`. Timer2 is started by `PwmStart`.
+
+**Parameters** `hz` is a `LongWord`, 1..1000000.
+
+**Returns** `Byte`: 1, or 0 when no prescale reaches `hz` or a channel is running (the period is shared).
+
+**Example**
+```basic
+Dim ok As Byte
+ok = PwmInit(1000)
+```
+
+### PwmFrequency
+
+**Syntax**
+```basic
+hz = PwmFrequency()
+```
+**Overview** The achieved frequency.
+
+**Returns** `LongWord`; 0 before a successful `PwmInit`.
+
+**Example**
+```basic
+Dim f As LongWord
+PwmInit(1000)
+f = PwmFrequency()
+```
+
+### PwmSteps
+
+**Syntax**
+```basic
+n = PwmSteps()
+```
+**Overview** Number of duty steps in one period: `4 * (T2PR + 1)`, at most 1024. The 10-bit resolution is
+reached only when `T2PR` = 255; a higher frequency gives fewer steps.
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim n As Word
+PwmInit(1000)
+n = PwmSteps()
+```
+
+### PwmStart
+
+**Syntax**
+```basic
+ok = PwmStart(ch, pin, duty)
+```
+**Overview** Starts a channel on a pin, following the data sheet set-up order (driver off, routing,
+duty, Timer2 on, wait for its first overflow, then driver on) so the first period is complete.
+
+**Parameters** `ch` 1..4; `pin` 0..23 (see the heading for valid pins); `duty` in steps, 0..`PwmSteps()`.
+
+**Returns** `Byte`: 0 (and nothing done) without a successful `PwmInit`, for a channel or pin that cannot
+be used, or for a pin another running channel uses. A running channel is restarted.
+
+**Example**
+```basic
+Dim ok As Byte
+PwmInit(1000)
+ok = PwmStart(1, 18, 512)         ' CCP1 on RC2, half duty at 1024 steps
+```
+
+### PwmDuty
+
+**Syntax**
+```basic
+PwmDuty(ch, duty)
+```
+**Overview** Sets the duty in steps. No effect on a stopped channel.
+
+**Parameters** `ch` 1..4; `duty` 0..`PwmSteps()` (at most 1023 is representable).
+
+**Example**
+```basic
+PwmDuty(1, 256)
+```
+**Notes** Duty registers are double buffered and copied at the period match; if the match falls between
+the two byte writes, one period can use a mixed value.
+
+### PwmPercent
+
+**Syntax**
+```basic
+PwmPercent(ch, pct)
+```
+**Overview** Sets the duty as a percentage, rounded down to a step.
+
+**Parameters** `ch` 1..4; `pct` 0..100. 100 gives the highest representable duty, which with 1024
+steps is 1023/1024: the output cannot reach a true 100 %.
+
+**Example**
+```basic
+PwmPercent(1, 25)
+```
+
+### PwmInvert
+
+**Syntax**
+```basic
+ok = PwmInvert(ch, inverted)
+```
+**Overview** Sets the output polarity of PWM3 or PWM4 (`PWMxCON.POL`); on a running channel it applies at
+once.
+
+**Parameters** `ch` 3 or 4; `inverted` a `Boolean`.
+
+**Returns** `Byte`: 0 for channels 1 and 2, which have no polarity bit.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = PwmInvert(3, True)
+```
+
+### PwmStop
+
+**Syntax**
+```basic
+PwmStop(ch)
+```
+**Overview** Stops a channel: the pin becomes an input again and returns to its `LATxy` bit and the module
+is disabled. Timer2 is stopped when the last channel stops.
+
+**Parameters** `ch` 1..4.
+
+**Example**
+```basic
+PwmStop(1)
+```
 
 ## timer  (`Include "timer"`, Timer0, Timer1, Timer2)
 
@@ -2832,822 +3011,7 @@ Timer2EnableInterrupt()
 
 ---
 
-## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
-
-`Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a
-crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
-below (for a signed number or a `Float`, convert in your own code).
-
-### SerialInit
-
-**Syntax**
-```basic
-SerialInit(baud)
-```
-**Overview** Routes EUSART1 through PPS (TX on RC6, RX on RC7), sets the pin directions and
-`BRG16 = BRGH = 1`, computes the baud divisor from `Clock` (one 32-bit divide at run time, rounded to
-the nearest value) and enables TX and RX.
-
-**Parameters** `baud` is a `LongWord`, for example 9600 or 115200.
-
-**Example**
-```basic
-SerialInit(115200)
-```
-
-### SerialWriteByte
-
-**Syntax**
-```basic
-SerialWriteByte(b)
-```
-**Overview** Sends one byte, waiting until the transmit register is free.
-
-**Example**
-```basic
-SerialWriteByte(65)               ' "A"
-```
-
-### SerialWrite
-
-**Syntax**
-```basic
-SerialWrite(text)
-```
-**Overview** Sends a string or literal, up to 80 characters.
-
-**Example**
-```basic
-SerialWrite("hello")
-```
-
-### SerialNewLine
-
-**Syntax**
-```basic
-SerialNewLine()
-```
-**Overview** Sends CR + LF.
-
-**Example**
-```basic
-SerialWrite("done")
-SerialNewLine()
-```
-
-### SerialWriteWord
-
-**Syntax**
-```basic
-SerialWriteWord(v)
-```
-**Overview** Sends a `Word` as unsigned decimal, without leading zeros.
-
-**Example**
-```basic
-SerialWriteWord(1234)
-```
-
-### SerialWriteHex
-
-**Syntax**
-```basic
-SerialWriteHex(v)
-```
-**Overview** Sends a `Byte` as two hexadecimal digits.
-
-**Example**
-```basic
-SerialWriteHex($A5)               ' "A5"
-```
-
-### SerialAvailable
-
-**Syntax**
-```basic
-flag = SerialAvailable()
-```
-**Overview** True when a received byte is waiting.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Dim b As Byte
-If SerialAvailable() Then
-    b = SerialRead()
-EndIf
-```
-
-### SerialRead
-
-**Syntax**
-```basic
-b = SerialRead()
-```
-**Overview** Waits for a byte and returns it. An overrun stops the receiver until `CREN` is cycled; this
-routine cycles it.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-Dim b As Byte
-b = SerialRead()
-SerialWriteByte(b)                ' echo
-```
-
-### SerialOnRx / SerialRxService
-
-**Syntax**
-```basic
-SerialOnRx = Handler              ' Type TRxEvent = Event(ByVal c As Byte)
-SerialRxService()
-```
-**Overview** `SerialOnRx` is an event variable whose handler receives each byte. `SerialRxService`
-clears an overrun (as `SerialRead` does) and, if a byte has arrived, reads it (which clears `RCIF`)
-and calls the handler with it. With no handler assigned the byte is read and dropped. Call it from
-the main loop, or from your own interrupt wrapped in `Save(0, SerialRxService)`.
-
-**Example**
-```basic
-Dim last As Byte
-Event OnByte(ByVal c As Byte)
-    last = c
-End Event
-SerialInit(115200)
-SerialOnRx = OnByte
-While True
-    SerialRxService()
-Wend
-```
-**See also** *Events* (section 1), `SerialAvailable`, `SerialRead`.
-
-### SerialFlush
-
-**Syntax**
-```basic
-SerialFlush()
-```
-**Overview** Waits until the last byte has left the shift register (`TRMT`).
-
-**Example**
-```basic
-SerialWrite("bye")
-SerialFlush()
-```
-
----
-
-## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
-
-The same nine routines with the prefix `Serial2`: `Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
-`Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`,
-`Serial2Flush`. Syntax, parameters and returns are as in `serial`.
-
-**Example**
-```basic
-Serial2Init(9600)
-Serial2Write("hi")
-Serial2NewLine()
-```
-**Notes** RB6/RB7 are the ICSP pins: disconnect the programmer while using them. Both serial modules can
-be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
-unproven.
-
----
-
-## adc  (`Include "adc"`, ADCC, 10-bit, right-justified)
-
-Software-started conversions with the clock derived from FOSC (`Clock` must be FOSC in MHz). Channel
-numbers 0..23 are pins (`RA0..RA7` = 0..7, `RB0..RB7` = 8..15, `RC0..RC7` = 16..23). Internal
-channels: `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63.
-
-Errata handling: (1.4.4) the first conversion after a channel change is run and dropped; code that
-writes `ADPCH` itself bypasses this. (1.4.1) `AdcRefFvr` needs TAD of at least 8 us, which `ADCS`
-allows only up to `Clock` = 16 MHz; above that use the VDD reference.
-
-### AdcInit
-
-**Syntax**
-```basic
-AdcInit()
-```
-**Overview** Turns the ADC on with VDD/VSS references and the FOSC clock chosen so TAD is at least
-1 us (and at most 9 us). Hardware acquisition is set to 5 us, which suits a source impedance up to
-10 kohm.
-
-**Example**
-```basic
-AdcInit()
-```
-**Notes** A higher source impedance needs a longer time: write `ADACQ` after `AdcInit`.
-
-### AdcPin
-
-**Syntax**
-```basic
-AdcPin(ch)
-```
-**Overview** Makes the pin of channel `ch` an analog input (`TRISx = 1`, `ANSELx = 1`).
-
-**Parameters** `ch` 0..23. Other channel numbers are internal and need no pin.
-
-**Example**
-```basic
-AdcPin(0)                         ' RA0
-```
-
-### AdcRead
-
-**Syntax**
-```basic
-raw = AdcRead(ch)
-```
-**Overview** Converts channel `ch` once.
-
-**Parameters** `ch` 0..63.
-
-**Returns** `Word`, 0..1023.
-
-**Example**
-```basic
-Dim v As Word
-AdcInit()
-AdcPin(0)
-v = AdcRead(0)
-```
-
-### ADin
-
-**Syntax**
-```basic
-raw = ADin(ch)
-```
-**Overview** One-call analog read: the first call runs `AdcInit`, a change of channel makes the pin an analog input (`AdcPin`), then one conversion as `AdcRead`.
-
-**Parameters** `ch` 0..63 (pins 0..23, internal channels as `AdcRead`).
-
-**Returns** `Word`, 0..`AdcMax`.
-
-**Example**
-```basic
-Include "adc"
-Dim v As Word
-v = Adc.ADin(0)
-```
-**Notes** Right-justified result, so there is no `ADCON0.ADFM` to set. For a source impedance above 10 kohm, or the FVR reference, use `AdcInit` / `AdcRefFvr` and write `ADACQ` yourself, then call `AdcRead`.
-
-**See also** `AdcRead`, `Pot`
-
-### AdcReadAvg
-
-**Syntax**
-```basic
-raw = AdcReadAvg(ch, count)
-```
-**Overview** Mean of `count` conversions, rounded down.
-
-**Parameters** `ch` as `AdcRead`; `count` 1..64.
-
-**Returns** `Word`; 0 for a `count` of 0.
-
-**Example**
-```basic
-Dim v As Word
-AdcInit()
-AdcPin(1)
-v = AdcReadAvg(1, 16)
-```
-
-### AdcMillivolts
-
-**Syntax**
-```basic
-mv = AdcMillivolts(raw, vrefMv)
-```
-**Overview** Converts a result to millivolts: `raw * vrefMv / 1023`.
-
-**Parameters** `raw` a `Word` from `AdcRead`; `vrefMv` the reference in millivolts.
-
-**Returns** `Word`.
-
-**Example**
-```basic
-Dim v As Word
-Dim mv As Word
-AdcInit()
-AdcPin(0)
-v = AdcRead(0)
-mv = AdcMillivolts(v, 3300)
-```
-
-### AdcRefVdd
-
-**Syntax**
-```basic
-AdcRefVdd()
-```
-**Overview** Positive reference = VDD, negative = VSS (the reset state).
-
-**Example**
-```basic
-AdcRefVdd()
-```
-
-### AdcRefFvr
-
-**Syntax**
-```basic
-AdcRefFvr(gain)
-```
-**Overview** Positive reference = the fixed voltage reference; waits for `FVRRDY`.
-
-**Parameters** `gain` 1, 2 or 4 (1.024, 2.048 or 4.096 V; the output cannot exceed VDD). 4 or more is
-taken as 4, 0 as 1.
-
-**Example**
-```basic
-AdcRefFvr(2)                      ' 2.048 V
-```
-**Notes** Slows the conversion clock to TAD of at least 8 us (errata 1.4.1); not possible above
-`Clock` = 16 MHz. The temperature indicator needs `FVRCON.TSEN`, which the module does not set.
-
----
-
-## eeprom  (`Include "eeprom"`, data EEPROM, 1024 bytes)
-
-Global interrupts are held off for the unlock sequence and their previous state is restored. Success
-is judged by read-back (errata 1.6.1), not `NVMERR`. Reading stored values is **not verifiable in the
-simulator** (it does not model DFM reads); test on hardware.
-
-### EepromSize
-
-**Syntax**
-```basic
-EepromSize
-```
-**Overview** Constant, 1024: the number of bytes.
-
-**Example**
-```basic
-Dim last As Word
-last = EepromSize - 1
-```
-
-### EepromRead
-
-**Syntax**
-```basic
-b = EepromRead(addr)
-```
-**Overview** Reads one byte.
-
-**Parameters** `addr` is a `Word`, 0..1023.
-
-**Returns** `Byte`; 255 for an address above 1023.
-
-**Example**
-```basic
-Dim b As Byte
-b = EepromRead(0)
-```
-
-### EepromWrite
-
-**Syntax**
-```basic
-ok = EepromWrite(addr, value)
-```
-**Overview** Skips the write if the byte already holds `value` (saves a cycle); otherwise erases and
-programs it with the unlock sequence and waits.
-
-**Parameters** `addr` 0..1023; `value` a `Byte`.
-
-**Returns** `Byte`: 1 when the byte reads back as `value`, 0 for a bad address or a failed write.
-
-**Example**
-```basic
-Dim ok As Byte
-ok = EepromWrite(0, 42)
-```
-
-### EepromReadWord / EepromWriteWord
-
-**Syntax**
-```basic
-w  = EepromReadWord(addr)
-ok = EepromWriteWord(addr, value)
-```
-**Overview** 16-bit forms, low byte first at `addr` and `addr + 1`.
-
-**Parameters** `addr` 0..1022; `value` a `Word`.
-
-**Returns** `EepromReadWord` a `Word`; `EepromWriteWord` a `Byte`, 1 when both bytes were stored.
-
-**Example**
-```basic
-Dim w As Word
-Dim ok As Byte
-ok = EepromWriteWord(10, 1234)
-w = EepromReadWord(10)
-```
-
----
-
-## flashwrite  (`Include "flashwrite"`, program flash self-write)
-
-Addresses are program flash **word** addresses, 0..65535 (byte address / 2). A sector is 128 words (256
-bytes); there are 512 sectors. The compiler fills flash from address 0, so keep data in the last sector
-(`FlashLastSector`) unless `basil --report` shows the code ends well below it: erasing a sector that holds
-code destroys that code. Global interrupts are held off for each operation and restored; the CPU stalls
-while a sector erases (10 ms typical) or writes, so interrupts are served late. Errata 1.9.1: the module
-puts two all-zero `NOP`s straight after every self-write instruction. Errata 1.6.2: do not write flash
-above 85 degrees C. Endurance is 10k erase/write cycles per sector. Reading stored values is **not
-verifiable in the simulator** (it does not model flash reads); test on hardware.
-
-### FlashReadWord
-
-**Syntax**
-```basic
-w = FlashReadWord(addr)
-```
-**Overview** Reads one 16-bit word; needs no unlock sequence.
-
-**Parameters** `addr` a `Word`, 0..65535.
-
-**Returns** `Word`; 65535 when the word is erased.
-
-### FlashEraseSector
-
-**Syntax**
-```basic
-ok = FlashEraseSector(sector)
-```
-**Parameters** `sector` a `Word`, 0..511.
-
-**Returns** `Byte`: 1; 0 for a sector above 511 (nothing is erased) or when `NVMERR` was set (write-protected sector).
-
-### FlashWriteWord
-
-**Syntax**
-```basic
-ok = FlashWriteWord(addr, value)
-```
-**Overview** Programs one word that is still erased, about 50 us. A word that was not erased fails the
-read-back.
-
-**Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
-
-### FlashUpdateWord
-
-**Syntax**
-```basic
-ok = FlashUpdateWord(addr, value)
-```
-**Overview** Replaces one word and keeps the rest of its sector, about 20 ms. Does nothing if the word
-already holds `value`; uses the quick word write if it is erased; otherwise reads the sector into the
-holding registers, erases it, writes the two bytes with `TBLWT` and writes the sector back. If it fails
-part way the sector may be left erased.
-
-**Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
-
-### FlashSectorAddr / FlashSectorWords / FlashLastSector
-
-`FlashSectorAddr(sector)` is the word address of the sector's first word; `FlashSectorWords` is 128 and
-`FlashLastSector` is 511.
-
-**Example**
-```basic
-Include "flashwrite"
-Dim ok As Byte
-Dim a As Word
-a = FlashSectorAddr(FlashLastSector)
-ok = FlashEraseSector(FlashLastSector)
-ok = FlashWriteWord(a, 1234)
-ok = FlashUpdateWord(a + 1, 99)
-```
-
----
-
-## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
-
-Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
-Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a channel
-runs, so do not use `Timer2` routines at the same time. CCP1/CCP2 can output on ports B and C
-(pins 8..23); PWM3/PWM4 on ports A and C. The duty is a number of steps out of `PwmSteps()`.
-
-### PwmInit
-
-**Syntax**
-```basic
-ok = PwmInit(hz)
-```
-**Overview** Chooses the Timer2 prescale (1..128) and period for `hz`. Timer2 is started by `PwmStart`.
-
-**Parameters** `hz` is a `LongWord`, 1..1000000.
-
-**Returns** `Byte`: 1, or 0 when no prescale reaches `hz` or a channel is running (the period is shared).
-
-**Example**
-```basic
-Dim ok As Byte
-ok = PwmInit(1000)
-```
-
-### PwmFrequency
-
-**Syntax**
-```basic
-hz = PwmFrequency()
-```
-**Overview** The achieved frequency.
-
-**Returns** `LongWord`; 0 before a successful `PwmInit`.
-
-**Example**
-```basic
-Dim f As LongWord
-PwmInit(1000)
-f = PwmFrequency()
-```
-
-### PwmSteps
-
-**Syntax**
-```basic
-n = PwmSteps()
-```
-**Overview** Number of duty steps in one period: `4 * (T2PR + 1)`, at most 1024. The 10-bit resolution is
-reached only when `T2PR` = 255; a higher frequency gives fewer steps.
-
-**Returns** `Word`.
-
-**Example**
-```basic
-Dim n As Word
-PwmInit(1000)
-n = PwmSteps()
-```
-
-### PwmStart
-
-**Syntax**
-```basic
-ok = PwmStart(ch, pin, duty)
-```
-**Overview** Starts a channel on a pin, following the data sheet set-up order (driver off, routing,
-duty, Timer2 on, wait for its first overflow, then driver on) so the first period is complete.
-
-**Parameters** `ch` 1..4; `pin` 0..23 (see the heading for valid pins); `duty` in steps, 0..`PwmSteps()`.
-
-**Returns** `Byte`: 0 (and nothing done) without a successful `PwmInit`, for a channel or pin that cannot
-be used, or for a pin another running channel uses. A running channel is restarted.
-
-**Example**
-```basic
-Dim ok As Byte
-PwmInit(1000)
-ok = PwmStart(1, 18, 512)         ' CCP1 on RC2, half duty at 1024 steps
-```
-
-### PwmDuty
-
-**Syntax**
-```basic
-PwmDuty(ch, duty)
-```
-**Overview** Sets the duty in steps. No effect on a stopped channel.
-
-**Parameters** `ch` 1..4; `duty` 0..`PwmSteps()` (at most 1023 is representable).
-
-**Example**
-```basic
-PwmDuty(1, 256)
-```
-**Notes** Duty registers are double buffered and copied at the period match; if the match falls between
-the two byte writes, one period can use a mixed value.
-
-### PwmPercent
-
-**Syntax**
-```basic
-PwmPercent(ch, pct)
-```
-**Overview** Sets the duty as a percentage, rounded down to a step.
-
-**Parameters** `ch` 1..4; `pct` 0..100. 100 gives the highest representable duty, which with 1024
-steps is 1023/1024: the output cannot reach a true 100 %.
-
-**Example**
-```basic
-PwmPercent(1, 25)
-```
-
-### PwmInvert
-
-**Syntax**
-```basic
-ok = PwmInvert(ch, inverted)
-```
-**Overview** Sets the output polarity of PWM3 or PWM4 (`PWMxCON.POL`); on a running channel it applies at
-once.
-
-**Parameters** `ch` 3 or 4; `inverted` a `Boolean`.
-
-**Returns** `Byte`: 0 for channels 1 and 2, which have no polarity bit.
-
-**Example**
-```basic
-Dim ok As Byte
-ok = PwmInvert(3, True)
-```
-
-### PwmStop
-
-**Syntax**
-```basic
-PwmStop(ch)
-```
-**Overview** Stops a channel: the pin becomes an input again and returns to its `LATxy` bit and the module
-is disabled. Timer2 is stopped when the last channel stops.
-
-**Parameters** `ch` 1..4.
-
-**Example**
-```basic
-PwmStop(1)
-```
-
----
-
----
-
-## dma  (`Include "dma"`, PIC18-Q41 DMA: copies, trigger-started feeds, abort triggers)
-
-Four channels move bytes between SFR/GPR addresses while the program keeps running (DS40002214G chapter 16).
-All channels share one register set selected by `DMASELECT`, so do not call the module from a handler and from
-the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
-priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
-(the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: MPLAB X's simulator does not model DMA, so the tests run it with a DMA model
-written from the data sheet (`scripts/dma_sim.py`): they check the registers `DmaCopy`, `DmaCopyFlash`, `DmaCopyEeprom`, `DmaOnTrigger` and `DmaAbortOn` leave behind
-and that the bytes arrive, but that is the model's reading of the data sheet, not a result from a part.
-
-### Testing DMA code in the simulator
-
-MPLAB X's simulator (MDB) has no DMA model for the Q41 parts and keeps a single DMA register set instead of one per channel. The repository adds both in `scripts/dma_sim.py`, a
-four-channel DMA engine written from the data sheet (DS40002214G chapter 16). `scripts/exec-test.py` uses it for any test program whose header has a `' dma:` line. The simulator stops
-on every write to `DMASELECT` and `DMAnCON0`, the engine acts on it (starts or stops a message, moves the bytes, updates counters, pointers, `DMAnCON0` and the interrupt flags) and the
-results are written back into the simulator.
-
-| Header line | Meaning |
-|---|---|
-| `' dma: mailbox=SYMBOL` | A variable the program writes to raise a peripheral request or an abort. Bits 7:6 are the command (0 start requests, 1 abort after n transactions, 2 run n transactions, 3 level request), bits 5:4 the channel minus 1, bits 3:0 the count. |
-| `' dma: slow` | A started message waits for the step commands instead of completing at once. |
-| `' dma: sfr=U1RXB:9,8,7` | The bytes a DMA read of that SFR returns. |
-| `' dma: ee=16:1,2,3,4` | Data put in the EEPROM before the run (offset, bytes). |
-| `' dma-writes: U1TXB=1,2,3` | The bytes the DMA must have written to that SFR, in order. |
-
-`' expect:` lines may name SFRs of the part as well as program variables. Examples: `tests/exec_q41/lib_dma_move.bas`, `lib_dma_trigmove.bas`, `lib_dma_srcmove.bas`, `lib_dma_abortmove.bas`.
-Run them with `BASIL_MDB=1 cargo test q41`; each takes one to three minutes. `python3 scripts/test_dma_sim.py` checks the engine alone and runs with plain `cargo test`.
-
-The same header lines carry per-part expectations for programs that run on more than one part (`exec-test.py --device PART` replaces the program's `Device` line):
-
-| Header line | Meaning |
-|---|---|
-| `' expect-18F16Q41: T_P1=1292` | For that part, each name given overrides the same name in the `' expect:` lines; names not given keep their value (RAM addresses differ between families). |
-| `' devices: 18F27Q10 18F16Q41` | Run the program only on the listed parts (separated by spaces or commas), for a program that tests `_device` or uses a pin the other part lacks. Skipped programs are counted, and a run in which every program is skipped fails. |
-
-**Limits.** The engine is the data sheet as read here, not silicon. It does not model bus timing (a message completes at once), the one-cycle stop latency, `XIP` or `DMAnBUF` in flight,
-the trigger sources (the test decides when a request arrives), interrupt vectors or channel priorities. The EEPROM source address is taken as a byte offset (see `DmaCopyEeprom`).
-A pass in the simulator is not a hardware result.
-
-### DmaCopy
-
-**Syntax**
-```basic
-ok = DmaCopy(channel, src, dst, count)
-```
-**Overview** Sets `channel` up to copy `count` bytes from address `src` to address `dst`, both incrementing, and starts it.
-Returns at once.
-
-**Parameters** `channel` 1..4 (`DmaChannels`); `src`, `dst` `Word` addresses (`@x`); `count` 1..4095 (`DmaMaxBytes`).
-
-**Returns** `Byte`: 1 when started; 0 for a channel outside 1..4, a bad count, a channel still copying or armed for a hardware trigger, or a priority lock that did not take.
-
-**Example**
-```basic
-Dim a(8) As Byte
-Dim b(8) As Byte
-Dim ok As Byte
-ok = DmaCopy(1, @a, @b, 8)
-If ok = 1 Then
-    While DmaDone(1) = 0
-    Wend
-End If
-```
-**Notes** Nothing checks that `count` fits the destination: too large a count overwrites the variables after it. Do not read the destination or change the source until `DmaDone`. The source and destination should not overlap.
-
-### DmaOnTrigger
-
-**Syntax**
-```basic
-ok = DmaOnTrigger(channel, trigger, src, dst, count, options)
-```
-**Overview** Arms `channel` so that each request from the peripheral `trigger` starts a message, and returns at once. The side that is a buffer has `count` bytes and its pointer increments; a fixed side (one register) has size 1, so each request moves one byte and the buffer pointer carries on from request to request.
-
-**Parameters** `trigger` 1..93: the number of Table 16-6 of the data sheet, `DmaTrigU1Tx`, `DmaTrigU1Rx`, `DmaTrigU2Tx`, `DmaTrigU2Rx`, `DmaTrigSpi1Tx`, `DmaTrigSpi1Rx`, `DmaTrigI2c1Tx`, `DmaTrigI2c1Rx`, `DmaTrigAdc`, `DmaTrigTmr0`, `DmaTrigTmr1`, `DmaTrigTmr2`, `DmaTrigIoc` (a reserved number is not checked; the part must have the peripheral). `options` is the sum of `DmaFixedSrc` (the source is one register, e.g. a receive buffer), `DmaFixedDst` (the destination is one register, e.g. a transmit buffer) and `DmaOnce` (stop after `count` bytes). Other parameters as `DmaCopy`.
-
-**Returns** `Byte`: 1 when armed; 0 for the refusals of `DmaCopy` or a trigger outside 1..93.
-
-**Example**
-```basic
-Dim msg(8) As Byte
-Dim ok As Byte
-ok = DmaOnTrigger(1, DmaTrigU1Tx, @msg, @U1TXB, 8, DmaFixedDst + DmaOnce)
-While DmaDone(1) = 0
-Wend
-```
-**Notes** With both sides fixed `count` is ignored. Without `DmaOnce` the channel goes on round the buffer for as long as requests come. A UART, SPI or I2C request is a level: it stays up while the peripheral wants data, so use `DmaOnce` or the channel runs past the end of the buffer. The abort trigger (`DMAnAIRQ`) and the DMA interrupt flags are not used by the module (the flags are in `PIR`). The peripheral itself must be set up by the program.
-
-### DmaAbortOn
-
-**Syntax**
-```basic
-ok = DmaAbortOn(channel, trigger)
-```
-**Overview** Makes requests from `trigger` (the numbers of `DmaOnTrigger`) abort `channel`. The channel soft-stops: `DGO`, `SIRQEN` and `AIRQEN` are cleared and a message in progress is cut after the access under way. Call it after `DmaOnTrigger` or `DmaCopy`.
-
-**Returns** `Byte`: 1 when set; 0 for a channel outside 1..4, a trigger outside 1..93, or a channel that is not enabled.
-
-**Notes** The abort fires once; call `DmaAbortOn` again to re-arm it. After an abort `DmaDone` returns 1; use `DmaAborted` to tell an abort from a normal end. The channel keeps its set-up, but the module re-arms it with `DmaStop` and `DmaOnTrigger`.
-
-### DmaAborted
-
-**Syntax**
-```basic
-a = DmaAborted(channel)
-```
-**Overview** Returns 1 if `channel` has been aborted since the last call (its `DMAxAIF` flag was set) and clears the flag.
-
-**Returns** `Byte`: 1 or 0; 0 for a channel outside 1..4.
-
-### DmaCopyFlash
-
-**Syntax**
-```basic
-ok = DmaCopyFlash(channel, src, dst, count)
-```
-**Overview** As `DmaCopy`, but `src` is a program-flash byte address (`@table` of a `Const` array gives one) and `dst` a SFR/GPR address. The flash pointer increments, as does the destination.
-
-**Parameters** `src` `LongWord`; the others as `DmaCopy`.
-
-**Returns** `Byte`, as `DmaCopy`.
-
-**Example**
-```basic
-Const msg(5) As Byte = (1, 2, 3, 4, 5)
-Dim buf(5) As Byte
-ok = DmaCopyFlash(1, @msg, @buf, 5)
-```
-**Notes** `DmaDone` and `DmaStop` apply as for `DmaCopy`. For the data EEPROM see `DmaCopyEeprom`.
-
-### DmaCopyEeprom
-
-**Syntax**
-```basic
-ok = DmaCopyEeprom(channel, src, dst, count)
-```
-**Overview** As `DmaCopy`, but the source is the data EEPROM: `src` is a byte offset into it (0 is the first byte) and `dst` a SFR/GPR address.
-
-**Returns** `Byte`, as `DmaCopy`; also 0 when `src + count` runs past the end of the EEPROM (`_EepromBytes`).
-
-**Example**
-```basic
-Dim buf(16) As Byte
-ok = DmaCopyEeprom(1, 0, @buf, 16)
-```
-**Notes** **Not confirmed for the Q41.** The data sheet (DS40002214G) gives the source-region bits (`SMR = 1x` is the EEPROM) but not the value of `DMAnSSA` that addresses it. The module uses the offset form of Microchip's example in the technical brief TB3164 (section 7.1: `DMA1SSA = 0`, `DMA1CON1 = 0x7A` with `SMR = 11`, 512 bytes of EEPROM to RAM), which covers 8-bit PIC DMA in general. The simulator does not model the engine, so only the registers are checked. If the bytes read are wrong on a real part, try the NVM address (`380000h`) in `DMAnSSA` and report it.
-
-### DmaDone
-
-**Syntax**
-```basic
-d = DmaDone(channel)
-```
-**Overview** Tells whether `channel` is idle (`DGO` and `SIRQEN` clear).
-
-**Returns** `Byte`: 1 when idle or the channel is outside 1..4, 0 while a copy is in progress or the channel is armed for triggers.
-
-### DmaStop
-
-**Syntax**
-```basic
-DmaStop(channel)
-```
-**Overview** Clears `EN`: stops the channel and returns its registers to their reset values. A copy in progress is cut short.
-
----
+## Category: Serial and buses
 
 ## i2c  (`Include "i2c"`, MSSP1 host)
 
@@ -3896,7 +3260,186 @@ s = I2cProbe(addr)
 
 An exported `Byte` array of 8 that holds the data of `I2cReadRegs` and `I2cWriteRegs`: `I2cBuf(i)`.
 
----
+## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
+
+`Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a
+crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
+below (for a signed number or a `Float`, convert in your own code).
+
+### SerialInit
+
+**Syntax**
+```basic
+SerialInit(baud)
+```
+**Overview** Routes EUSART1 through PPS (TX on RC6, RX on RC7), sets the pin directions and
+`BRG16 = BRGH = 1`, computes the baud divisor from `Clock` (one 32-bit divide at run time, rounded to
+the nearest value) and enables TX and RX.
+
+**Parameters** `baud` is a `LongWord`, for example 9600 or 115200.
+
+**Example**
+```basic
+SerialInit(115200)
+```
+
+### SerialWriteByte
+
+**Syntax**
+```basic
+SerialWriteByte(b)
+```
+**Overview** Sends one byte, waiting until the transmit register is free.
+
+**Example**
+```basic
+SerialWriteByte(65)               ' "A"
+```
+
+### SerialWrite
+
+**Syntax**
+```basic
+SerialWrite(text)
+```
+**Overview** Sends a string or literal, up to 80 characters.
+
+**Example**
+```basic
+SerialWrite("hello")
+```
+
+### SerialNewLine
+
+**Syntax**
+```basic
+SerialNewLine()
+```
+**Overview** Sends CR + LF.
+
+**Example**
+```basic
+SerialWrite("done")
+SerialNewLine()
+```
+
+### SerialWriteWord
+
+**Syntax**
+```basic
+SerialWriteWord(v)
+```
+**Overview** Sends a `Word` as unsigned decimal, without leading zeros.
+
+**Example**
+```basic
+SerialWriteWord(1234)
+```
+
+### SerialWriteHex
+
+**Syntax**
+```basic
+SerialWriteHex(v)
+```
+**Overview** Sends a `Byte` as two hexadecimal digits.
+
+**Example**
+```basic
+SerialWriteHex($A5)               ' "A5"
+```
+
+### SerialAvailable
+
+**Syntax**
+```basic
+flag = SerialAvailable()
+```
+**Overview** True when a received byte is waiting.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim b As Byte
+If SerialAvailable() Then
+    b = SerialRead()
+EndIf
+```
+
+### SerialRead
+
+**Syntax**
+```basic
+b = SerialRead()
+```
+**Overview** Waits for a byte and returns it. An overrun stops the receiver until `CREN` is cycled; this
+routine cycles it.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim b As Byte
+b = SerialRead()
+SerialWriteByte(b)                ' echo
+```
+
+### SerialOnRx / SerialRxService
+
+**Syntax**
+```basic
+SerialOnRx = Handler              ' Type TRxEvent = Event(ByVal c As Byte)
+SerialRxService()
+```
+**Overview** `SerialOnRx` is an event variable whose handler receives each byte. `SerialRxService`
+clears an overrun (as `SerialRead` does) and, if a byte has arrived, reads it (which clears `RCIF`)
+and calls the handler with it. With no handler assigned the byte is read and dropped. Call it from
+the main loop, or from your own interrupt wrapped in `Save(0, SerialRxService)`.
+
+**Example**
+```basic
+Dim last As Byte
+Event OnByte(ByVal c As Byte)
+    last = c
+End Event
+SerialInit(115200)
+SerialOnRx = OnByte
+While True
+    SerialRxService()
+Wend
+```
+**See also** *Events* (section 1), `SerialAvailable`, `SerialRead`.
+
+### SerialFlush
+
+**Syntax**
+```basic
+SerialFlush()
+```
+**Overview** Waits until the last byte has left the shift register (`TRMT`).
+
+**Example**
+```basic
+SerialWrite("bye")
+SerialFlush()
+```
+
+## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
+
+The same nine routines with the prefix `Serial2`: `Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
+`Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`,
+`Serial2Flush`. Syntax, parameters and returns are as in `serial`.
+
+**Example**
+```basic
+Serial2Init(9600)
+Serial2Write("hi")
+Serial2NewLine()
+```
+**Notes** RB6/RB7 are the ICSP pins: disconnect the programmer while using them. Both serial modules can
+be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
+unproven.
 
 ## spi  (`Include "spi"`, MSSP1 host)
 
@@ -4004,6 +3547,483 @@ r = SpiRead()
 ```
 
 ---
+
+## Category: Analog and memory
+
+## adc  (`Include "adc"`, ADCC, 10-bit, right-justified)
+
+Software-started conversions with the clock derived from FOSC (`Clock` must be FOSC in MHz). Channel
+numbers 0..23 are pins (`RA0..RA7` = 0..7, `RB0..RB7` = 8..15, `RC0..RC7` = 16..23). Internal
+channels: `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63.
+
+Errata handling: (1.4.4) the first conversion after a channel change is run and dropped; code that
+writes `ADPCH` itself bypasses this. (1.4.1) `AdcRefFvr` needs TAD of at least 8 us, which `ADCS`
+allows only up to `Clock` = 16 MHz; above that use the VDD reference.
+
+### AdcInit
+
+**Syntax**
+```basic
+AdcInit()
+```
+**Overview** Turns the ADC on with VDD/VSS references and the FOSC clock chosen so TAD is at least
+1 us (and at most 9 us). Hardware acquisition is set to 5 us, which suits a source impedance up to
+10 kohm.
+
+**Example**
+```basic
+AdcInit()
+```
+**Notes** A higher source impedance needs a longer time: write `ADACQ` after `AdcInit`.
+
+### AdcPin
+
+**Syntax**
+```basic
+AdcPin(ch)
+```
+**Overview** Makes the pin of channel `ch` an analog input (`TRISx = 1`, `ANSELx = 1`).
+
+**Parameters** `ch` 0..23. Other channel numbers are internal and need no pin.
+
+**Example**
+```basic
+AdcPin(0)                         ' RA0
+```
+
+### AdcRead
+
+**Syntax**
+```basic
+raw = AdcRead(ch)
+```
+**Overview** Converts channel `ch` once.
+
+**Parameters** `ch` 0..63.
+
+**Returns** `Word`, 0..1023.
+
+**Example**
+```basic
+Dim v As Word
+AdcInit()
+AdcPin(0)
+v = AdcRead(0)
+```
+
+### ADin
+
+**Syntax**
+```basic
+raw = ADin(ch)
+```
+**Overview** One-call analog read: the first call runs `AdcInit`, a change of channel makes the pin an analog input (`AdcPin`), then one conversion as `AdcRead`.
+
+**Parameters** `ch` 0..63 (pins 0..23, internal channels as `AdcRead`).
+
+**Returns** `Word`, 0..`AdcMax`.
+
+**Example**
+```basic
+Include "adc"
+Dim v As Word
+v = Adc.ADin(0)
+```
+**Notes** Right-justified result, so there is no `ADCON0.ADFM` to set. For a source impedance above 10 kohm, or the FVR reference, use `AdcInit` / `AdcRefFvr` and write `ADACQ` yourself, then call `AdcRead`.
+
+**See also** `AdcRead`, `Pot`
+
+### AdcReadAvg
+
+**Syntax**
+```basic
+raw = AdcReadAvg(ch, count)
+```
+**Overview** Mean of `count` conversions, rounded down.
+
+**Parameters** `ch` as `AdcRead`; `count` 1..64.
+
+**Returns** `Word`; 0 for a `count` of 0.
+
+**Example**
+```basic
+Dim v As Word
+AdcInit()
+AdcPin(1)
+v = AdcReadAvg(1, 16)
+```
+
+### AdcMillivolts
+
+**Syntax**
+```basic
+mv = AdcMillivolts(raw, vrefMv)
+```
+**Overview** Converts a result to millivolts: `raw * vrefMv / 1023`.
+
+**Parameters** `raw` a `Word` from `AdcRead`; `vrefMv` the reference in millivolts.
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim v As Word
+Dim mv As Word
+AdcInit()
+AdcPin(0)
+v = AdcRead(0)
+mv = AdcMillivolts(v, 3300)
+```
+
+### AdcRefVdd
+
+**Syntax**
+```basic
+AdcRefVdd()
+```
+**Overview** Positive reference = VDD, negative = VSS (the reset state).
+
+**Example**
+```basic
+AdcRefVdd()
+```
+
+### AdcRefFvr
+
+**Syntax**
+```basic
+AdcRefFvr(gain)
+```
+**Overview** Positive reference = the fixed voltage reference; waits for `FVRRDY`.
+
+**Parameters** `gain` 1, 2 or 4 (1.024, 2.048 or 4.096 V; the output cannot exceed VDD). 4 or more is
+taken as 4, 0 as 1.
+
+**Example**
+```basic
+AdcRefFvr(2)                      ' 2.048 V
+```
+**Notes** Slows the conversion clock to TAD of at least 8 us (errata 1.4.1); not possible above
+`Clock` = 16 MHz. The temperature indicator needs `FVRCON.TSEN`, which the module does not set.
+
+## dma  (`Include "dma"`, PIC18-Q41 DMA: copies, trigger-started feeds, abort triggers)
+
+Four channels move bytes between SFR/GPR addresses while the program keeps running (DS40002214G chapter 16).
+All channels share one register set selected by `DMASELECT`, so do not call the module from a handler and from
+the main program at once. The module sets `PRLOCKED` (the arbiter grants the DMA memory access only then) and leaves the
+priorities at their reset value, so the DMA uses cycles the CPU does not need. A part without DMA registers
+(the PIC18F27Q10) stops with `#error`. **Not checked on hardware**: MPLAB X's simulator does not model DMA, so the tests run it with a DMA model
+written from the data sheet (`scripts/dma_sim.py`): they check the registers `DmaCopy`, `DmaCopyFlash`, `DmaCopyEeprom`, `DmaOnTrigger` and `DmaAbortOn` leave behind
+and that the bytes arrive, but that is the model's reading of the data sheet, not a result from a part.
+
+### Testing DMA code in the simulator
+
+MPLAB X's simulator (MDB) has no DMA model for the Q41 parts and keeps a single DMA register set instead of one per channel. The repository adds both in `scripts/dma_sim.py`, a
+four-channel DMA engine written from the data sheet (DS40002214G chapter 16). `scripts/exec-test.py` uses it for any test program whose header has a `' dma:` line. The simulator stops
+on every write to `DMASELECT` and `DMAnCON0`, the engine acts on it (starts or stops a message, moves the bytes, updates counters, pointers, `DMAnCON0` and the interrupt flags) and the
+results are written back into the simulator.
+
+| Header line | Meaning |
+|---|---|
+| `' dma: mailbox=SYMBOL` | A variable the program writes to raise a peripheral request or an abort. Bits 7:6 are the command (0 start requests, 1 abort after n transactions, 2 run n transactions, 3 level request), bits 5:4 the channel minus 1, bits 3:0 the count. |
+| `' dma: slow` | A started message waits for the step commands instead of completing at once. |
+| `' dma: sfr=U1RXB:9,8,7` | The bytes a DMA read of that SFR returns. |
+| `' dma: ee=16:1,2,3,4` | Data put in the EEPROM before the run (offset, bytes). |
+| `' dma-writes: U1TXB=1,2,3` | The bytes the DMA must have written to that SFR, in order. |
+
+`' expect:` lines may name SFRs of the part as well as program variables. Examples: `tests/exec_q41/lib_dma_move.bas`, `lib_dma_trigmove.bas`, `lib_dma_srcmove.bas`, `lib_dma_abortmove.bas`.
+Run them with `BASIL_MDB=1 cargo test q41`; each takes one to three minutes. `python3 scripts/test_dma_sim.py` checks the engine alone and runs with plain `cargo test`.
+
+The same header lines carry per-part expectations for programs that run on more than one part (`exec-test.py --device PART` replaces the program's `Device` line):
+
+| Header line | Meaning |
+|---|---|
+| `' expect-18F16Q41: T_P1=1292` | For that part, each name given overrides the same name in the `' expect:` lines; names not given keep their value (RAM addresses differ between families). |
+| `' devices: 18F27Q10 18F16Q41` | Run the program only on the listed parts (separated by spaces or commas), for a program that tests `_device` or uses a pin the other part lacks. Skipped programs are counted, and a run in which every program is skipped fails. |
+
+**Limits.** The engine is the data sheet as read here, not silicon. It does not model bus timing (a message completes at once), the one-cycle stop latency, `XIP` or `DMAnBUF` in flight,
+the trigger sources (the test decides when a request arrives), interrupt vectors or channel priorities. The EEPROM source address is taken as a byte offset (see `DmaCopyEeprom`).
+A pass in the simulator is not a hardware result.
+
+### DmaCopy
+
+**Syntax**
+```basic
+ok = DmaCopy(channel, src, dst, count)
+```
+**Overview** Sets `channel` up to copy `count` bytes from address `src` to address `dst`, both incrementing, and starts it.
+Returns at once.
+
+**Parameters** `channel` 1..4 (`DmaChannels`); `src`, `dst` `Word` addresses (`@x`); `count` 1..4095 (`DmaMaxBytes`).
+
+**Returns** `Byte`: 1 when started; 0 for a channel outside 1..4, a bad count, a channel still copying or armed for a hardware trigger, or a priority lock that did not take.
+
+**Example**
+```basic
+Dim a(8) As Byte
+Dim b(8) As Byte
+Dim ok As Byte
+ok = DmaCopy(1, @a, @b, 8)
+If ok = 1 Then
+    While DmaDone(1) = 0
+    Wend
+End If
+```
+**Notes** Nothing checks that `count` fits the destination: too large a count overwrites the variables after it. Do not read the destination or change the source until `DmaDone`. The source and destination should not overlap.
+
+### DmaOnTrigger
+
+**Syntax**
+```basic
+ok = DmaOnTrigger(channel, trigger, src, dst, count, options)
+```
+**Overview** Arms `channel` so that each request from the peripheral `trigger` starts a message, and returns at once. The side that is a buffer has `count` bytes and its pointer increments; a fixed side (one register) has size 1, so each request moves one byte and the buffer pointer carries on from request to request.
+
+**Parameters** `trigger` 1..93: the number of Table 16-6 of the data sheet, `DmaTrigU1Tx`, `DmaTrigU1Rx`, `DmaTrigU2Tx`, `DmaTrigU2Rx`, `DmaTrigSpi1Tx`, `DmaTrigSpi1Rx`, `DmaTrigI2c1Tx`, `DmaTrigI2c1Rx`, `DmaTrigAdc`, `DmaTrigTmr0`, `DmaTrigTmr1`, `DmaTrigTmr2`, `DmaTrigIoc` (a reserved number is not checked; the part must have the peripheral). `options` is the sum of `DmaFixedSrc` (the source is one register, e.g. a receive buffer), `DmaFixedDst` (the destination is one register, e.g. a transmit buffer) and `DmaOnce` (stop after `count` bytes). Other parameters as `DmaCopy`.
+
+**Returns** `Byte`: 1 when armed; 0 for the refusals of `DmaCopy` or a trigger outside 1..93.
+
+**Example**
+```basic
+Dim msg(8) As Byte
+Dim ok As Byte
+ok = DmaOnTrigger(1, DmaTrigU1Tx, @msg, @U1TXB, 8, DmaFixedDst + DmaOnce)
+While DmaDone(1) = 0
+Wend
+```
+**Notes** With both sides fixed `count` is ignored. Without `DmaOnce` the channel goes on round the buffer for as long as requests come. A UART, SPI or I2C request is a level: it stays up while the peripheral wants data, so use `DmaOnce` or the channel runs past the end of the buffer. The abort trigger (`DMAnAIRQ`) and the DMA interrupt flags are not used by the module (the flags are in `PIR`). The peripheral itself must be set up by the program.
+
+### DmaAbortOn
+
+**Syntax**
+```basic
+ok = DmaAbortOn(channel, trigger)
+```
+**Overview** Makes requests from `trigger` (the numbers of `DmaOnTrigger`) abort `channel`. The channel soft-stops: `DGO`, `SIRQEN` and `AIRQEN` are cleared and a message in progress is cut after the access under way. Call it after `DmaOnTrigger` or `DmaCopy`.
+
+**Returns** `Byte`: 1 when set; 0 for a channel outside 1..4, a trigger outside 1..93, or a channel that is not enabled.
+
+**Notes** The abort fires once; call `DmaAbortOn` again to re-arm it. After an abort `DmaDone` returns 1; use `DmaAborted` to tell an abort from a normal end. The channel keeps its set-up, but the module re-arms it with `DmaStop` and `DmaOnTrigger`.
+
+### DmaAborted
+
+**Syntax**
+```basic
+a = DmaAborted(channel)
+```
+**Overview** Returns 1 if `channel` has been aborted since the last call (its `DMAxAIF` flag was set) and clears the flag.
+
+**Returns** `Byte`: 1 or 0; 0 for a channel outside 1..4.
+
+### DmaCopyFlash
+
+**Syntax**
+```basic
+ok = DmaCopyFlash(channel, src, dst, count)
+```
+**Overview** As `DmaCopy`, but `src` is a program-flash byte address (`@table` of a `Const` array gives one) and `dst` a SFR/GPR address. The flash pointer increments, as does the destination.
+
+**Parameters** `src` `LongWord`; the others as `DmaCopy`.
+
+**Returns** `Byte`, as `DmaCopy`.
+
+**Example**
+```basic
+Const msg(5) As Byte = (1, 2, 3, 4, 5)
+Dim buf(5) As Byte
+ok = DmaCopyFlash(1, @msg, @buf, 5)
+```
+**Notes** `DmaDone` and `DmaStop` apply as for `DmaCopy`. For the data EEPROM see `DmaCopyEeprom`.
+
+### DmaCopyEeprom
+
+**Syntax**
+```basic
+ok = DmaCopyEeprom(channel, src, dst, count)
+```
+**Overview** As `DmaCopy`, but the source is the data EEPROM: `src` is a byte offset into it (0 is the first byte) and `dst` a SFR/GPR address.
+
+**Returns** `Byte`, as `DmaCopy`; also 0 when `src + count` runs past the end of the EEPROM (`_EepromBytes`).
+
+**Example**
+```basic
+Dim buf(16) As Byte
+ok = DmaCopyEeprom(1, 0, @buf, 16)
+```
+**Notes** **Not confirmed for the Q41.** The data sheet (DS40002214G) gives the source-region bits (`SMR = 1x` is the EEPROM) but not the value of `DMAnSSA` that addresses it. The module uses the offset form of Microchip's example in the technical brief TB3164 (section 7.1: `DMA1SSA = 0`, `DMA1CON1 = 0x7A` with `SMR = 11`, 512 bytes of EEPROM to RAM), which covers 8-bit PIC DMA in general. The simulator does not model the engine, so only the registers are checked. If the bytes read are wrong on a real part, try the NVM address (`380000h`) in `DMAnSSA` and report it.
+
+### DmaDone
+
+**Syntax**
+```basic
+d = DmaDone(channel)
+```
+**Overview** Tells whether `channel` is idle (`DGO` and `SIRQEN` clear).
+
+**Returns** `Byte`: 1 when idle or the channel is outside 1..4, 0 while a copy is in progress or the channel is armed for triggers.
+
+### DmaStop
+
+**Syntax**
+```basic
+DmaStop(channel)
+```
+**Overview** Clears `EN`: stops the channel and returns its registers to their reset values. A copy in progress is cut short.
+
+## eeprom  (`Include "eeprom"`, data EEPROM, 1024 bytes)
+
+Global interrupts are held off for the unlock sequence and their previous state is restored. Success
+is judged by read-back (errata 1.6.1), not `NVMERR`. Reading stored values is **not verifiable in the
+simulator** (it does not model DFM reads); test on hardware.
+
+### EepromSize
+
+**Syntax**
+```basic
+EepromSize
+```
+**Overview** Constant, 1024: the number of bytes.
+
+**Example**
+```basic
+Dim last As Word
+last = EepromSize - 1
+```
+
+### EepromRead
+
+**Syntax**
+```basic
+b = EepromRead(addr)
+```
+**Overview** Reads one byte.
+
+**Parameters** `addr` is a `Word`, 0..1023.
+
+**Returns** `Byte`; 255 for an address above 1023.
+
+**Example**
+```basic
+Dim b As Byte
+b = EepromRead(0)
+```
+
+### EepromWrite
+
+**Syntax**
+```basic
+ok = EepromWrite(addr, value)
+```
+**Overview** Skips the write if the byte already holds `value` (saves a cycle); otherwise erases and
+programs it with the unlock sequence and waits.
+
+**Parameters** `addr` 0..1023; `value` a `Byte`.
+
+**Returns** `Byte`: 1 when the byte reads back as `value`, 0 for a bad address or a failed write.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = EepromWrite(0, 42)
+```
+
+### EepromReadWord / EepromWriteWord
+
+**Syntax**
+```basic
+w  = EepromReadWord(addr)
+ok = EepromWriteWord(addr, value)
+```
+**Overview** 16-bit forms, low byte first at `addr` and `addr + 1`.
+
+**Parameters** `addr` 0..1022; `value` a `Word`.
+
+**Returns** `EepromReadWord` a `Word`; `EepromWriteWord` a `Byte`, 1 when both bytes were stored.
+
+**Example**
+```basic
+Dim w As Word
+Dim ok As Byte
+ok = EepromWriteWord(10, 1234)
+w = EepromReadWord(10)
+```
+
+## flashwrite  (`Include "flashwrite"`, program flash self-write)
+
+Addresses are program flash **word** addresses, 0..65535 (byte address / 2). A sector is 128 words (256
+bytes); there are 512 sectors. The compiler fills flash from address 0, so keep data in the last sector
+(`FlashLastSector`) unless `basil --report` shows the code ends well below it: erasing a sector that holds
+code destroys that code. Global interrupts are held off for each operation and restored; the CPU stalls
+while a sector erases (10 ms typical) or writes, so interrupts are served late. Errata 1.9.1: the module
+puts two all-zero `NOP`s straight after every self-write instruction. Errata 1.6.2: do not write flash
+above 85 degrees C. Endurance is 10k erase/write cycles per sector. Reading stored values is **not
+verifiable in the simulator** (it does not model flash reads); test on hardware.
+
+### FlashReadWord
+
+**Syntax**
+```basic
+w = FlashReadWord(addr)
+```
+**Overview** Reads one 16-bit word; needs no unlock sequence.
+
+**Parameters** `addr` a `Word`, 0..65535.
+
+**Returns** `Word`; 65535 when the word is erased.
+
+### FlashEraseSector
+
+**Syntax**
+```basic
+ok = FlashEraseSector(sector)
+```
+**Parameters** `sector` a `Word`, 0..511.
+
+**Returns** `Byte`: 1; 0 for a sector above 511 (nothing is erased) or when `NVMERR` was set (write-protected sector).
+
+### FlashWriteWord
+
+**Syntax**
+```basic
+ok = FlashWriteWord(addr, value)
+```
+**Overview** Programs one word that is still erased, about 50 us. A word that was not erased fails the
+read-back.
+
+**Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
+
+### FlashUpdateWord
+
+**Syntax**
+```basic
+ok = FlashUpdateWord(addr, value)
+```
+**Overview** Replaces one word and keeps the rest of its sector, about 20 ms. Does nothing if the word
+already holds `value`; uses the quick word write if it is erased; otherwise reads the sector into the
+holding registers, erases it, writes the two bytes with `TBLWT` and writes the sector back. If it fails
+part way the sector may be left erased.
+
+**Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
+
+### FlashSectorAddr / FlashSectorWords / FlashLastSector
+
+`FlashSectorAddr(sector)` is the word address of the sector's first word; `FlashSectorWords` is 128 and
+`FlashLastSector` is 511.
+
+**Example**
+```basic
+Include "flashwrite"
+Dim ok As Byte
+Dim a As Word
+a = FlashSectorAddr(FlashLastSector)
+ok = FlashEraseSector(FlashLastSector)
+ok = FlashWriteWord(a, 1234)
+ok = FlashUpdateWord(a + 1, 99)
+```
+
+---
+
+## Category: Displays
 
 ## lcd  (`Include "lcd"`, HD44780 character LCD, 4-bit)
 
@@ -4197,8 +4217,6 @@ LcdWriteChar(0)
 ```
 **Notes** The write leaves the address counter in CGRAM: call `LcdGoto`, `LcdClear` or `LcdHome` before
 writing text.
-
----
 
 ## oled  (`Include "oled"`, SSD1309, 128 x 64, I2C or 4-wire SPI)
 
@@ -4564,19 +4582,7 @@ b = FontByte(0)
 
 ---
 
-## strings  (`Include "strings"`)
-
-`Len(s)` returns a `Byte`: the number of characters before the `Null` (0 for `Null` or an empty string, at most 255).
-`s` can be a `String` of any size or a literal.
-
-```basic
-Include "strings"
-Dim name As String(20) = "basil"
-n = Len(name)        ' 5
-n = Len("abc")       ' 3
-```
-
----
+## Category: Sensors, clocks and remote control
 
 ## aht30  (`Include "aht30"`, AHT30 temperature and humidity sensor, I2C)
 
@@ -4599,28 +4605,6 @@ Aht30Init()
 st = Aht30Measure(t, rh)
 If st = 0 Then
     ' t = 2512 and rh = 4560 mean 25.12 C and 45.60 %RH
-End If
-```
-
-## rtcc and rtccspi  (`Include "rtcc"`, `Include "rtccspi"`, Microchip real-time clock/calendar chips)
-
-`rtcc` drives the I2C parts MCP7940M, MCP7940N, MCP79400/1/2 and MCP79410/1/2 over the `I2c` module (set it up
-first); `rtccspi` drives the SPI parts MCP7951x/7952x and MCP795W1x/2x over the `Spi` module (mode 0; the parts
-run at 1.8 to 3.6 V) and takes the chip select pin in `RtccspiInit`. Times are plain numbers (year 0..99 for
-2000..2099, hours 0..23). Set the clock once with `RtccSet`, then `RtccRead` takes a snapshot that the accessors
-(`RtccHour()`, `RtccMinute()` ...) decode. `RtccSet` blocks until the crystal runs (up to 2 s). Every routine
-returns a status: 0 ok, 1..4 as the bus module, 5 argument out of range, 6 a wait ran out. See `docs/LIBRARY.md`
-for the routines, the parts each block exists on and the errata the code handles.
-
-```basic
-Dim st As Byte
-st = I2cInit(100000, 19, 20)
-st = RtccSet(26, 3, 14, 6, 9, 30, 0)     ' 2026-03-14, weekday 6, 09:30:00
-st = RtccAlarm(0, 1, 1, 1, 1, 0, 31, 0)  ' alarm 0 when minutes = 31
-st = RtccAlarmEnable(0, True)
-st = RtccRead()
-If st = 0 Then
-    ' RtccHour(), RtccMinute(), RtccSecond() ...
 End If
 ```
 
@@ -4858,11 +4842,258 @@ ok = X10.Xin(8, 9, 120, w)
 
 The module routines `WaitUs(us)` (in `pulse`) and `CodeOf` / `NumberOf` (in `x10`) are also public. Tests: `tests/exec/lib_pulse.bas` and `tests/exec_pins/lib_pins_model.bas` against a pin model. See `docs/LIBRARY.md`.
 
+## rtcc and rtccspi  (`Include "rtcc"`, `Include "rtccspi"`, Microchip real-time clock/calendar chips)
+
+`rtcc` drives the I2C parts MCP7940M, MCP7940N, MCP79400/1/2 and MCP79410/1/2 over the `I2c` module (set it up
+first); `rtccspi` drives the SPI parts MCP7951x/7952x and MCP795W1x/2x over the `Spi` module (mode 0; the parts
+run at 1.8 to 3.6 V) and takes the chip select pin in `RtccspiInit`. Times are plain numbers (year 0..99 for
+2000..2099, hours 0..23). Set the clock once with `RtccSet`, then `RtccRead` takes a snapshot that the accessors
+(`RtccHour()`, `RtccMinute()` ...) decode. `RtccSet` blocks until the crystal runs (up to 2 s). Every routine
+returns a status: 0 ok, 1..4 as the bus module, 5 argument out of range, 6 a wait ran out. See `docs/LIBRARY.md`
+for the routines, the parts each block exists on and the errata the code handles.
+
+```basic
+Dim st As Byte
+st = I2cInit(100000, 19, 20)
+st = RtccSet(26, 3, 14, 6, 9, 30, 0)     ' 2026-03-14, weekday 6, 09:30:00
+st = RtccAlarm(0, 1, 1, 1, 1, 0, 31, 0)  ' alarm 0 when minutes = 31
+st = RtccAlarmEnable(0, True)
+st = RtccRead()
+If st = 0 Then
+    ' RtccHour(), RtccMinute(), RtccSecond() ...
+End If
+```
+
+---
+
+## Category: Bits, maths and strings
+
+## bits  (`Include "bits"`, bit tests, rotates, decoding, integer square root, random numbers)
+
+Counterparts of the Positron8 `ClearBit`, `Dcd`, `Dig`, `GetBit`, `ISqr`, `LoadBit`, `Ncd`, `Random`,
+`Rol`, `Ror`, `Seed`, `SetBit` and `Swap` commands. Spelling differs where the original does not
+fit: the original changes its argument in place, basil's routines **return the new value**
+(`x = SetBit(x, 3)`), and `Swap` is split into `SwapNibbles` and `SwapBytes`. `Byte`, `Word` and
+`LongWord` forms are overloads of one name: the argument's type picks the form, so write
+`SetBit(Byte(0), 5)` when the argument is a bare constant. A bit number past the top of the type
+changes nothing and reads as 0.
+
+### ClearBit
+
+**Syntax**
+```basic
+v = ClearBit(v, n)
+```
+**Overview** Returns `v` with bit `n` set to 0.
+
+**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is a `Byte`, 0 for the least significant bit.
+
+**Returns** The new value, of the type of `v`.
+
+**Example**
+```basic
+Dim x As Byte
+x = $FF
+x = ClearBit(x, 7)        ' $7F
+```
+**See also** `SetBit`, `LoadBit`, `GetBit`.
+
+### Dcd
+
+**Syntax**
+```basic
+p = Dcd(n)
+```
+**Overview** Two to the power `n`: a single 1 bit at position `n`.
+
+**Parameters** `n` is a `Byte`. 32 or more gives 0.
+
+**Returns** A `LongWord`.
+
+**Example**
+```basic
+Dim m As Byte
+m = Byte(Dcd(3))          ' 8
+```
+**See also** `Ncd`.
+
+### Dig
+
+**Syntax**
+```basic
+d = Dig(v, n)
+```
+**Overview** Decimal digit `n` of `v`, counting 0 for the units digit.
+
+**Parameters** `v` is a `LongWord` (any integer type converts); `n` is a `Byte`.
+
+**Returns** A `Byte` 0..9; 0 for a digit beyond the top of `v`.
+
+**Example**
+```basic
+d = Dig(1234, 1)          ' 3
+```
+**Notes** Costs one 32-bit division by 10 for each digit counted, so it is for display code, not for
+tight loops.
+
+### GetBit
+
+**Syntax**
+```basic
+b = GetBit(v, n)
+```
+**Overview** Tests bit `n` of `v`.
+
+**Parameters** `v` is any integer type (read as `LongWord`); `n` is a `Byte`.
+
+**Returns** A `Boolean`: `True` when the bit is 1.
+
+**Example**
+```basic
+If GetBit(flags, 2) Then
+    Toggle(led)
+EndIf
+```
+**See also** `SetBit`, `ClearBit`.
+
+### ISqr
+
+**Syntax**
+```basic
+r = ISqr(v)
+```
+**Overview** The integer square root: the largest `r` with `r * r <= v`.
+
+**Parameters** `v` is a `LongWord` (any unsigned type converts).
+
+**Returns** A `Word`.
+
+**Example**
+```basic
+r = ISqr(1000000)         ' 1000
+```
+**Notes** About 16 shift-and-subtract rounds of 32-bit arithmetic. Use `Sqr` (floating point) only when a fraction is needed.
+
+### LoadBit
+
+**Syntax**
+```basic
+v = LoadBit(v, n, b)
+```
+**Overview** Returns `v` with bit `n` made equal to `b`.
+
+**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is the bit number; `b` is a `Byte`: 0 clears the
+bit, any other value sets it.
+
+**Example**
+```basic
+x = LoadBit(x, 4, flag)
+```
+**See also** `SetBit`, `ClearBit`.
+
+### Ncd
+
+**Syntax**
+```basic
+k = Ncd(v)
+```
+**Overview** The number of bits needed to hold `v`: the position of its highest 1 bit plus one.
+
+**Parameters** `v` is a `LongWord` (any unsigned type converts).
+
+**Returns** A `Byte`, 0 when `v` is 0: `Ncd(1)` = 1, `Ncd(%1000)` = 4, `Ncd($FFFF)` = 16.
+
+**See also** `Dcd`.
+
+### Random / Seed
+
+**Syntax**
+```basic
+Seed(s)
+r = Random()
+```
+**Overview** `Random` returns the next number of a 16-bit xorshift sequence (period 65535, never 0).
+`Seed` starts the sequence at `s`; a seed of 0 is replaced by 1.
+
+**Parameters** `s` is a `Word`.
+
+**Returns** `Random` returns a `Word`.
+
+**Example**
+```basic
+Seed(AdcRead(0))          ' an unconnected analog input is a cheap noise source
+dice = Byte(Random() Mod 6) + 1
+```
+**Notes** Without a `Seed` call the sequence is the same on every run. The generator state is one
+`Word` shared by the whole program; the routines are not reentrant.
+
+### Rol / Ror
+
+**Syntax**
+```basic
+v = Rol(v)
+v = Ror(v)
+```
+**Overview** Rotates `v` left or right by one bit; the bit shifted out comes back in at the other end.
+
+**Parameters** `v` is a `Byte` or a `Word`.
+
+**Returns** The rotated value, of the type of `v`.
+
+**Example**
+```basic
+x = Ror(Byte(%10010000))  ' %01001000
+```
+
+### SetBit
+
+**Syntax**
+```basic
+v = SetBit(v, n)
+```
+**Overview** Returns `v` with bit `n` set to 1.
+
+**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is a `Byte`.
+
+**Example**
+```basic
+x = SetBit(x, 3)
+```
+**See also** `ClearBit`, `LoadBit`, `GetBit`.
+
+### SwapNibbles / SwapBytes
+
+**Syntax**
+```basic
+b = SwapNibbles(b)
+w = SwapBytes(w)
+```
+**Overview** `SwapNibbles` exchanges the two nibbles of a `Byte` (`$3C` becomes `$C3`). `SwapBytes`
+exchanges the two bytes of a `Word` (`$AB34` becomes `$34AB`).
+
+**Example**
+```basic
+packed = SwapNibbles(packed)
+```
+Tests: `tests/exec/lib_bits.bas`.
+
 ## floatlib  (automatic)
 
 Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong
 FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does when a program
 uses `Float`.
+
+## strings  (`Include "strings"`)
+
+`Len(s)` returns a `Byte`: the number of characters before the `Null` (0 for `Null` or an empty string, at most 255).
+`s` can be a `String` of any size or a literal.
+
+```basic
+Include "strings"
+Dim name As String(20) = "basil"
+n = Len(name)        ' 5
+n = Len("abc")       ' 3
+```
 
 ---
 
@@ -4910,7 +5141,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.37 |
+| Feature of other BASIC compilers | basil 0.1.128 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -4929,7 +5160,9 @@ reports these rather than miscompiling them.
 | `Branch`, `On GoTo`, `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
-| `Sin`, `Cos`, `Sqr`, `Log`, `Exp`, `Pow`, `ISqr`, `Div32`, `Dcd`, `Ncd`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
+| `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
+| `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*) |
+| `Tan`, `Log`, `Log10`, `Exp`, `Div32`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
 | `Len`, `Left$`, `Mid$`, `Right$` | not available; string arrays are `Dim s(3) As String(8)` |
 | `Tern`, `SizeOf` | not available |
 | `$config`, `Config` directive | `Config NAME = VALUE` with pack names |
