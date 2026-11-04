@@ -416,6 +416,7 @@ PIC16F152xx: `Clock` = 32, 16, 8, 4, 2 or 1 writes `OSCFRQ.FRQ`; there is no div
 | `SysClockHz()` | system clock in Hz from `OSCCON2` and `OSCFRQ`: HFINTOSC (1, 2, 4, 8, 12, 16, 32, 48 or 64 MHz) divided by 1..512; 0 for any other source or a reserved code. Nominal frequency (`OSCTUNE` ignored) |
 | `SysClockFrom(cosc, cdiv, hffrq)` | the same conversion from given field values |
 | `SysClockOk()` | True when `SysClockHz()` equals `Clock` |
+| `Sleep()` | the `sleep` instruction and two NOPs; returns on a wake-up (no timed Sleep or Snooze) |
 
 A flag left from an earlier Reset is reported until it is cleared; after a power-on Reset the brown-out flag is
 unknown, so power-on is tested first. The module does not change the clock (that is `intosc`, `docs/CLOCK.md`): `DelayUs`/`DelayMs`, `Serial`,
@@ -485,6 +486,10 @@ Bit-banged shift for 74HC595/74HC165, DACs, ADCs: `ShiftOut(data, dataPin, clkPi
 `ShiftIn(dataPin, clkPin, lsbFirst, bits)` (1..8 bits) and `ShiftOut16` / `ShiftIn16` (1..16 bits). Clock idles
 low, data changes while low and is valid on the rising edge (SPI mode 0). Bad pins or bit counts do nothing.
 Test `tests/exec/lib_shift.bas` (set-up only; the simulator has no pin model); built for every family.
+
+## buttons (Counter, Button)
+
+Polled, on any pin 0..23 as in `pinio`. `Counter(pin, ms)` counts rising edges in about `ms` ms (10 to 40 per cent long; edges faster than about 40 kHz missed). `Button(pin, down, delay, rate, ByRef state)` is a debounced push button with auto-repeat: True for a press to act on, `state` a caller's Byte (0 at start). Test `tests/exec/lib_buttons.bas`. Include as `Include "buttons"`; calls are `Buttons.Button(...)`.
 
 ## pulse (PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound, Sound2)
 

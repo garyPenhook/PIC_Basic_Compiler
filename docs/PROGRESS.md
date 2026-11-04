@@ -1160,3 +1160,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Built-in statements (`PREDEFINED_INTRINSICS`, so a program's own name wins) that change a `String` or `Char` variable in place: `lower::case_change` writes a loop over the string elements, each letter found by `c - 'a' < 26`. A library routine cannot do it: a `ByRef` String must match the callee's size and `ByRefConst` is read-only.
 - Tests: `tests/exec/str_case.bas` (18F27Q10, 16F17126, 18F16Q41), `tests/negative/case_const.bas`.
 - Still missing from the Positron8 list: `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.
+
+## Stop, SizeOf, Tern, Branch/On GoTo, Counter, Button, Sleep (done 2026-11-04, 0.1.130)
+- `Stop` is `Terminate()` (a `PREDEFINED_INTRINSICS` name, so a program's own `Stop` wins; bare `Stop` is accepted). The exec harness cannot see a halt that is not at `__halt`, so `tests/exec/stop_cmd.bas` compiles two Stops that are not taken.
+- `SizeOf(x)`: sema folds it to a constant from `size_of(type)`; an array parameter is `E-TYPE`. Tests `sizeof_cmd.bas`, `negative/sizeof_param.bas`.
+- `Tern(c, a, b)`: integers, Booleans or Chars; lowered to an `If` into a hidden variable through `self.pre`, so only the chosen branch's calls run (as `And`/`Or` do). Tests `tern_cmd.bas`, `negative/tern_mixed.bas`.
+- `On n GoTo a, b, c` and `Branch n, a, b, c`: parsed to a `Select` with one `GoTo` case per label (no new IR); `On` and `Branch` stay identifiers (statement start, next token not punctuation). Test `on_goto.bas`.
+- `lib/buttons.bas` (`Buttons.Counter`, `Buttons.Button`) and `System.Sleep()`. Counter ran 16 per cent long at 64 MHz (412645 cycles for 25 ms of delays and a 5 ms count). Tests `lib_buttons.bas`, `lib_sleep.bas`.
+- Still missing from the Positron8 list: timed `Sleep`/`Snooze` (the WDT registers differ per family and need a data sheet pass for each), the graphic LCD commands (a controller has to be chosen first; `oled` covers the SSD1309).

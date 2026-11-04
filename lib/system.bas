@@ -172,3 +172,22 @@ End Function
 Public Function SysClockOk() As Boolean
     Result = SysClockHz() = LongWord(_Clock * 1000000)
 End Function
+
+' Puts the part to sleep: the `sleep` instruction. It returns when an interrupt (a peripheral that runs in Sleep with its
+' interrupt enabled, or the watchdog if the Config enables it) wakes the part; with interrupts disabled the program goes on at the next
+' statement, with them enabled the handler runs first. On the PIC16F13xxx parts only, two NOPs after it keep the instruction that follows a wake-up from being
+' fetched too early on the parts that need that (PIC16F13xxx, erratum 1.3.1). This is the plain instruction: there is no timed
+' Sleep or Snooze, because the watchdog period registers differ between the families.
+Public Sub Sleep()
+#if _device = 16F13113 or _device = 16F13114 or _device = 16F13115 or _device = 16F13123 or _device = 16F13124 or _device = 16F13125 or _device = 16F13143 or _device = 16F13144 or _device = 16F13145
+    Asm
+        sleep
+        nop
+        nop
+    End Asm
+#else
+    Asm
+        sleep
+    End Asm
+#endif
+End Sub

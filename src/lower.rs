@@ -2363,6 +2363,25 @@ impl<'a> Lowerer<'a> {
                 let max = name == "max";
                 Some(Ex::new(ExK::Bin(if max { BinKind::Max } else { BinKind::Min }, Box::new(a), Box::new(b)), w, s))
             }
+            // The branches are statements run under an `If` (they may contain calls), and the value is a hidden variable.
+            "tern" => {
+                let (w, s) = nat(&ty)?;
+                let c = self.expr(&args[0])?;
+                let before = self.pre.len();
+                let a = conv(self.expr(&args[1])?, w, s);
+                let a_pre = self.pre.split_off(before);
+                let b = conv(self.expr(&args[2])?, w, s);
+                let b_pre = self.pre.split_off(before);
+                let h = self.hidden_var(ty.clone());
+                let (mut then, mut other) = (a_pre, b_pre);
+                Self::push(&mut then, St::Assign(h.clone(), a), e.span);
+                Self::push(&mut other, St::Assign(h.clone(), b), e.span);
+                Self::push(&mut self.pre, St::If(vec![(c, then)], other), e.span);
+                if ty == Ty::Bool {
+                    return Some(Ex::boolean(ExK::Load(h)));
+                }
+                Some(Ex::new(ExK::Load(h), w, s))
+            }
             n => {
                 self.unsupported(e.span, &format!("the intrinsic `{n}`"));
                 None
@@ -3275,7 +3294,7 @@ impl<'a> Lowerer<'a> {
                 let Some(x) = self.expr(&args[0]) else { return };
                 Self::push(out, if name == "delayms" { St::DelayMs(x) } else { St::DelayUs(x) }, span);
             }
-            "terminate" => Self::push(out, St::Halt, span),
+            "terminate" | "stop" => Self::push(out, St::Halt, span),
             "left" | "mid" | "right" => self.str_slice(&name, args, span, out),
             "toupper" | "tolower" => self.case_change(name == "toupper", args, span, out),
             "str" => self.str_of_num(args, span, out),

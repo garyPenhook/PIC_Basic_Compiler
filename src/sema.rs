@@ -275,7 +275,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "toupper", "tolower", "str", "val", "pinmode", "pinset", "pinclear", "pinpullup"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "toupper", "tolower", "str", "val", "stop", "sizeof", "tern", "pinmode", "pinset", "pinclear", "pinpullup"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -2703,7 +2703,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             Cur::Reg(r) => Some((EI::place(r.ty, Place::Var), false)),
             Cur::Handler(h) => Some((EI::new(Ty::EventAny(h)), false)),
             Cur::Intrinsic(name) => {
-                if name == "terminate" {
+                if name == "terminate" || name == "stop" {
                     Some((self.check_intrinsic(&name, &[], d.span, d)?, false))
                 } else {
                     self.err("E-CALL", d.span, format!("`{}` needs its arguments in parentheses", d.head.name))
@@ -3041,7 +3041,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                     _ => EI::new(LONGINT),
                 })
             }
-            "terminate" => {
+            "terminate" | "stop" => {
                 if !want(self, 0) {
                     return None;
                 }
@@ -3060,6 +3060,47 @@ impl<'p, 'd> Sema<'p, 'd> {
                     Ty::Array(_, n) => Some(EI::int_lit(n as i128 - 1)),
                     ref t => self.err("E-TYPE", args[0].span, format!("`Bound` needs an array, found {t}")),
                 }
+            }
+            "tern" => {
+                // `Tern(cond, a, b)`: `a` when `cond` is true, else `b`. Only the chosen one is evaluated.
+                if !want(self, 3) {
+                    return None;
+                }
+                let c = self.check_expr(&args[0]);
+                let a = self.check_expr(&args[1]);
+                let b = self.check_expr(&args[2]);
+                let (c, a, b) = (c?, a?, b?);
+                if !matches!(c.ty, Ty::Bool | Ty::Bit) {
+                    return self.err("E-TYPE", args[0].span, format!("`Tern` needs a Boolean condition, found {}", c.ty));
+                }
+                let ct = if a.ty.is_numeric_int() && b.ty.is_numeric_int() {
+                    self.common(&a, &b, span)?
+                } else if a.ty == b.ty && matches!(a.ty, Ty::Bool | Ty::Char) {
+                    a.ty.clone()
+                } else {
+                    return self.err("E-TYPE", span, format!("`Tern` needs two integers, two Booleans or two Chars, found {} and {}", a.ty, b.ty));
+                };
+                if let Some(CVal::Bool(t)) = c.val {
+                    let pick = if t { &a } else { &b };
+                    if let (Some(CVal::Int(i)), true) = (&pick.val, ct.is_numeric_int()) {
+                        return Some(if a.lit && b.lit { EI::int_lit(*i) } else { EI { val: Some(CVal::Int(*i)), ..EI::new(ct) } });
+                    }
+                }
+                Some(EI::new(ct))
+            }
+            "sizeof" => {
+                // `SizeOf(x)`: the bytes a variable (or any expression's type) occupies, known at build time.
+                if !want(self, 1) {
+                    return None;
+                }
+                let outer = std::mem::replace(&mut self.in_bound, true);
+                let v = self.check_expr(&args[0]);
+                self.in_bound = outer;
+                let v = v?;
+                if matches!(v.ty, Ty::Array(_, 0) | Ty::Void) {
+                    return self.err("E-TYPE", args[0].span, format!("`SizeOf` cannot size {}", v.ty));
+                }
+                Some(EI::int_lit(i128::from(self.size_of(&v.ty))))
             }
             "addressof" => {
                 if !want(self, 1) {

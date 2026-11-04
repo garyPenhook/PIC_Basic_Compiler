@@ -951,6 +951,29 @@ impl<'a> Parser<'a> {
                 self.end_stmt()?;
                 StmtKind::Asm { preserves, lines }
             }
+            // `On n GoTo a, b, c` and `Branch n, a, b, c`: a jump to the n-th label (counting from 0); other values fall through.
+            Tok::Ident(w) if (w.eq_ignore_ascii_case("on") && !matches!(self.peek_at(1), Tok::Punct("=" | ".")) && self.goto_on_line()) || (w.eq_ignore_ascii_case("branch") && !matches!(self.peek_at(1), Tok::Punct(_) | Tok::Colon | Tok::Newline | Tok::Eof)) => {
+                let on = w.eq_ignore_ascii_case("on");
+                self.bump();
+                let subject = self.expr()?;
+                if on {
+                    self.expect_kw("goto")?;
+                } else {
+                    self.expect_punct(",")?;
+                }
+                let mut cases = Vec::new();
+                loop {
+                    let sp = self.span();
+                    let l = self.ident()?;
+                    let value = Expr { id: self.id(), span: sp, kind: ExprKind::Int(cases.len() as u64) };
+                    cases.push(Case { conds: vec![CaseCond::Value(value)], body: vec![Stmt { span: sp, kind: StmtKind::GoTo(l) }], span: sp });
+                    if !self.eat_punct(",") {
+                        break;
+                    }
+                }
+                self.end_stmt()?;
+                StmtKind::Select { subject, cases, otherwise: None }
+            }
             Tok::Ident(_) if self.at_line_start() && matches!(self.peek_at(1), Tok::Colon) && matches!(self.peek_at(2), Tok::Newline | Tok::Eof) => {
                 let l = self.ident()?;
                 self.bump(); // the colon
@@ -978,6 +1001,21 @@ impl<'a> Parser<'a> {
             _ => return self.expected("a statement"),
         };
         Ok(Stmt { span, kind })
+    }
+
+    /// Whether a `GoTo` comes before the end of the line (`On n GoTo ...`, where `On` may be followed by a parenthesis).
+    fn goto_on_line(&self) -> bool {
+        let mut n = 1;
+        loop {
+            match self.peek_at(n) {
+                Tok::Kw("goto") => return true,
+                Tok::Newline | Tok::Eof | Tok::Colon => return false,
+                _ => n += 1,
+            }
+            if self.pos + n >= self.toks.len() {
+                return false;
+            }
+        }
     }
 
     fn starts_designator(&self) -> bool {

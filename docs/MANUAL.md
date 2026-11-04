@@ -1499,7 +1499,7 @@ GoTo label
 If condition GoTo label
 ```
 **Overview** Jump to a label in the same routine. A label is a name followed by a colon at the start
-of a line. `GoSub`/`Return`, `Call` and computed `On GoTo` are not supported.
+of a line. `GoSub`/`Return` and `Call` are not supported; the computed jump is `On ... GoTo` (below).
 
 **Example**
 ```basic
@@ -1509,6 +1509,26 @@ Inc(x)
 If x < 5 GoTo Again
 ```
 **Notes** `GoTo` and labels are not allowed inside a `Save` block.
+**See also** `On ... GoTo`, `Branch`.
+
+## On ... GoTo, Branch
+
+**Syntax**
+```basic
+On index GoTo label0, label1, label2
+Branch index, label0, label1, label2
+```
+**Overview** Jumps to the label whose position in the list equals `index` (the first is 0). An `index` past the end of the list
+jumps nowhere: execution continues with the next statement. `Branch` is the same statement with a comma instead of `GoTo`. The labels are in the same
+routine, as for `GoTo`. Both are written as a `Select` on the index, so the cost is that of the `Select`. `On` and `Branch` are not reserved words: a variable
+named `On` still works in an assignment or a call.
+
+**Example**
+```basic
+On mode GoTo Idle, Run, Fault
+GoTo Unknown                        ' mode was 3 or more
+Idle:
+```
 
 ## If ... Then ... ElseIf ... Else ... EndIf
 
@@ -1608,7 +1628,8 @@ EndSelect
 ```basic
 Terminate()
 ```
-**Overview** Stops the program: it falls into the halt loop (a self-branch).
+**Overview** Stops the program: it falls into the halt loop (a self-branch). `Stop` (with or without parentheses)
+is the same statement, as in Positron8; a program's own `Stop` replaces it.
 
 **Example**
 ```basic
@@ -1616,6 +1637,27 @@ Dim x As Byte
 x = 1
 Terminate()
 ```
+
+## Stop
+
+**Syntax**
+```basic
+Stop
+Stop()
+```
+**Overview** Halts the program for ever, exactly as `Terminate()` does (the Positron8 name): the code falls into a one-instruction loop that branches to itself.
+Interrupts that are enabled still run; the program never gets past the `Stop`. Use it to end a program that has no main loop, or to freeze after a fatal error so that the
+state can be read with a debugger. A program's own `Stop` (a routine, variable or constant of that name) replaces it, and a label called `Stop` is not affected.
+
+**Example**
+```basic
+Dim errors As Byte
+If errors > 3 Then
+    High(PORTB.0)          ' show the fault
+    Stop                   ' and freeze
+End If
+```
+**See also** `Terminate`, `System.Sleep`.
 
 ## While ... Wend
 
@@ -1804,7 +1846,46 @@ For i = 0 To Bound(a)
     a(i) = i
 Next
 ```
-**See also** `For ... Next`, `Clear`.
+**See also** `For ... Next`, `Clear`, `SizeOf`.
+
+## Tern
+
+**Syntax**
+```basic
+x = Tern(condition, ifTrue, ifFalse)
+```
+**Overview** A value chosen by a condition: `ifTrue` when the `Boolean` condition holds, otherwise `ifFalse`. Only
+the chosen one is worked out, so it may hold a function call whose side effects must not happen otherwise. The
+two values are integers (the result has the wider type), or two `Boolean`s, or two `Char`s (a `String` literal is
+not a `Char`; use `Char` variables). It is compiled as an `If` that sets a hidden variable, so the cost is that of the
+`If`. It can be used in any expression except the condition of an `ElseIf` (`E-BACKEND`, as for a call whose result needs statements before it): compute it into a variable first. A program's own `Tern` replaces it.
+
+**Example**
+```basic
+Dim x As Byte = 5
+Dim m As Byte
+m = Tern(x > 3, 10, 20)                ' 10
+```
+**See also** `If ... Then`, `Min`, `Max`.
+
+## SizeOf
+
+**Syntax**
+```basic
+n = SizeOf(variable)
+```
+**Overview** The number of RAM bytes a variable occupies, known when the program is built: 1 for a `Byte`,
+2 for a `Word`, 4 for a `LongInt`, the size plus one for a `String`, the whole array for an array (`Dim big(150) As Word`
+gives 300), the sum of the fields for a structure. It is a constant, so it costs no code. An array parameter
+has no size known to the compiler (`E-TYPE`); use `Bound`. A program's own `SizeOf` replaces it.
+
+**Example**
+```basic
+Dim buf(32) As Word
+Dim n As Byte
+n = SizeOf(buf) / SizeOf(buf(0))       ' 32
+```
+**See also** `Bound`.
 
 ## Clear
 
@@ -2444,6 +2525,28 @@ ok = SysClockOk()
 If SysClockOk() = False Then
     Terminate()
 EndIf
+```
+
+### Sleep
+
+**Syntax**
+```basic
+System.Sleep()
+```
+**Overview** Puts the part to sleep with the `sleep` instruction (followed by two NOPs, which the PIC16F13xxx needs after a wake-up). It returns when an interrupt
+wakes the part, or the watchdog if the `Config` enables it; with interrupts enabled the handler runs first. This is the plain instruction: there is no timed `Sleep`
+or `Snooze`, because the watchdog period registers differ between the families. Set up the wake-up source before the call.
+
+**Example**
+```basic
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = ON, LVP = ON   ' the watchdog is on and wakes the part
+Include "system"
+Do
+    Toggle(PORTB.0)
+    System.Sleep()          ' asleep until the watchdog time-out (a wake-up, not a reset, as the part was asleep)
+Loop
 ```
 
 ---
@@ -4614,6 +4717,57 @@ If st = 0 Then
 End If
 ```
 
+## buttons  (`Include "buttons"`, Counter and Button)
+
+Counterparts of the Positron8 commands, on any pin numbered 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16; a pin the part lacks reads as low). The pin is made an input.
+They are polled and cycle-counted like `pulse`, so they follow `Clock`, interrupts lengthen them, and the module is not reentrant. The module is called `Buttons`
+because `Button` is the routine's name.
+
+### Counter
+
+**Syntax**
+```basic
+n = Buttons.Counter(pin, ms)
+```
+**Overview** Counts the rising edges on `pin` in about `ms` milliseconds. The pin is looked at every 10 us plus the time of the read, so a pulse shorter than
+that, or faster than about 40 kHz, is missed; the period is 10 to 40 per cent longer than `ms` (16 per cent at 64 MHz in the simulator) and longer at a slow clock. Calibrate against a known frequency, or use a hardware
+timer (`Timer1StartGated`) when the number matters. **Returns** `Word` (stops at 65535).
+
+**Example**
+```basic
+Include "buttons"
+Dim edges As Word
+edges = Buttons.Counter(8, 100)        ' rising edges on RB0 in about 100 ms
+If edges > 500 Then
+    High(PORTB.1)                      ' more than about 5 kHz
+End If
+```
+
+### Button
+
+**Syntax**
+```basic
+pressed = Buttons.Button(pin, down, delay, rate, state)
+```
+**Overview** One look at a push button, which is down when the pin reads `down` (`True` = high). Call it again and again from the main loop. It returns `True`
+when a press is to be acted on: at once for a new press (the pin is read again 10 ms later, so a bounce is ignored), and, if `delay` is not 0 or 255, again after
+`delay` more calls with the button held, then every `rate` calls (0 = every call). With `delay` 0 or 255 there is no repeat. `state` is the button's memory:
+a `Byte` of the caller's, one for each button, which must be 0 at the start and must not be changed in between.
+
+**Example**
+```basic
+Include "buttons"
+Dim st As Byte
+Dim count As Word
+Do
+    If Buttons.Button(8, False, 20, 5, st) Then      ' RB0 to ground, repeat after 20 calls then every 5
+        Inc(count)
+    End If
+    DelayMS(10)
+Loop
+```
+Test: `tests/exec/lib_buttons.bas` (the simulator has no pin model: a pin that reads low is a held button).
+
 ## pulse, irremote and x10  (`Include "pulse"`, `Include "irremote"`, `Include "x10"`)
 
 Bit-banged commands (each has its own entry below) on any pin, called as `Pulse.PulseIn(pin, True)` and so on. Pins are numbers 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16); a pin the part lacks
@@ -5158,19 +5312,24 @@ reports these rather than miscompiling them.
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `SerialWriteWord`, `SerialWriteHex` only |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
+| `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
+| `Sleep` | `System.Sleep()` (the plain instruction); `Snooze` and a timed `Sleep` are not available |
 | `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2` | `pulse` module (see *pulse, irremote and x10*) |
 | `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
 | `HPWM`, `Freqout` | `pwm` module (hardware PWM; no `Freqout`) |
 | `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
 | `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `Const` arrays |
-| `Branch`, `On GoTo`, `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
+| `Branch`, `On GoTo` | `Branch index, l0, l1` and `On index GoTo l0, l1` (count from 0; out of range falls through) |
+| `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
 | `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
 | `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*) |
 | `Tan`, `Log`, `Log10`, `Exp`, `Div32`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
 | `Len`, `Left$`, `Mid$`, `Right$` | not available; string arrays are `Dim s(3) As String(8)` |
-| `Tern`, `SizeOf` | not available |
+| `Tern` | `Tern(cond, a, b)` (only the chosen value is evaluated) |
+| `SizeOf` | `SizeOf(variable)`, bytes, known at build time |
+| `Stop` | `Stop` (same as `Terminate()`) |
 | `$config`, `Config` directive | `Config NAME = VALUE` with pack names |
 | `$include`, `$asm`, `Asm` | `Include "name"`, `Asm ... End Asm` (pic-as syntax) |
 | Interrupt via `On_Hardware_Interrupt` | `Interrupt Name() ... End Interrupt` plus `Enable` |
