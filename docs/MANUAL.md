@@ -1336,8 +1336,13 @@ also be called from Basic as usual.
 | `#error "text"`, `#warning "text"` | |
 | `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `FetchNop = true\|false` (PIC16F13145 family above 16 MHz: a NOP at 0000h and at the start of the handler for erratum 1.3.1, default true), `Warn.<id> = true\|false` | |
 
-Not supported: `#variable` (`E-PP-UNSUPPORTED`). Of the predefined names, only `_clock`,
-`_device`, `_ram` and `_eeprom` exist in `#if`. Directives inside `(* *)` or `{ }` comments are ignored.
+`#variable Name = expression` (0.1.134) is `#constant` that may be assigned again (`#variable N = N + 1`) and writes no
+`Const` line: it exists for `#if`. More predefined names, derived from the device description: `_core` (`"pic18"`, `"pic16e"`),
+`_maxram` (all data RAM), `_maxrom` (program memory in bytes), `_ports` (number of `LATx`), `_adc` (1 with an `ADCON0`),
+`_usart` (`RCnSTA` or `UnCON0` registers), `_mssp` (`SSPnCON1`), `_ccp` (`CCPnCON`), `_comparator` (`CMnCON0`),
+`_flash_write` (true with `NVMCON1`). Not available: `_adres`, `_usb`, `_eccp`. `Declare Name = value` (any name but `Xtal`; a
+number, text or True/False expression) is a `Const`, as `#constant`; any other value is `E-UNSUPPORTED`.
+Directives inside `(* *)` or `{ }` comments are ignored.
 
 ---
 
@@ -4364,13 +4369,16 @@ Compared with Positron8: `Plot`, `UnPlot` and `Pixel` take `(x, y)`, not `(y, x)
 |---|---|
 | `GlcdInitKs0108(data, rs, rw, en, cs1, cs2, rst, csHigh)` | `csHigh` True when the module's chip selects are active high. Busy flag polled (200 tries at most) |
 | `GlcdInitT6963(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)` | `fontWidth` 6 or 8 must match the module's FS pin and MD2 / MD3; columns are xres / fontWidth (at most 64). Graphic area at address 0, text area after it, CG RAM above that |
+| `GlcdInitSt7920x4(data, rs, rw, en, rst, folded)` | the same controller on the 4-bit interface: DB4..DB7 on the **upper four pins** of port B or C (`data` 8 or 16); the lower four pins of the port stay free. The start-up sequence follows the data sheet's 4-bit figure, which is ambiguous about the first nibble: **check it on your module** |
+| `GlcdInitSt7920Serial(cs, sid, sclk, rst)` | serial interface (PSB low): `cs` is the module's RS pin, `sid` its R/W pin, `sclk` its E pin. Write only, so the module keeps a 1 KB copy of the graphic RAM (128 x 64 only; returns 0 on a part with less than 1.5 KB of RAM). Each byte waits 90 us instead of polling the busy flag |
+| `GlcdInitT6963Dual(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)` | dual-scan T6963C (DUAL pin low): `yres` is both halves together and a multiple of 16; the lower half lives 8000h above the upper one and is drawn into automatically |
 | `GlcdInitSt7920(data, rs, rw, en, rst, folded)` | `folded` True: 128 x 64 with rows 32..63 held in words 8..15 (the usual module wiring; **the data sheet does not state it, check it on your module**); False: graphic RAM as Table 7, 256 x 64 |
 | `GlcdClear()` | clears graphics (and the T6963C text layer) |
 | `GlcdPlot(x, y)`, `GlcdUnplot(x, y)`, `GlcdSetPixel(x, y, on)`, `GlcdPixel(x, y)` | one pixel; `GlcdPixel` returns 1 or 0 |
 | `GlcdLine(on, x0, y0, x1, y1)`, `GlcdLineTo(on, x, y)` | line, ends included; `on` False erases |
 | `GlcdBox(on, x, y, size)`, `GlcdCircle(on, x, y, r)` | square outline of side `size` pixels / circle outline of radius `r`, centred on (x, y) |
 | `GlcdWriteByte(row, col, v)`, `GlcdReadByte(row, col)` | one byte of display memory: KS0108 `row` page 0..7, `col` x 0..127, bit 0 on top; T6963C and ST7920 `row` pixel row, `col` byte column, leftmost pixel the highest bit |
-| `GlcdTextAt(col, row)`, `GlcdWriteChar(ch)`, `GlcdWrite(s)`, `GlcdWriteWord(v)` | text, 5 x 7 font in 6 x 8 cells; the T6963C uses its own text layer (cell `fontWidth` wide) |
+| `GlcdTextAt(col, row)`, `GlcdWriteChar(ch)`, `GlcdWrite(s)`, `GlcdWriteWord(v)`, `GlcdWriteInt(v)`, `GlcdWriteLong(v)`, `GlcdWriteLongInt(v)`, `GlcdWriteHex(v)`, `GlcdWriteHexWord(v)` | text, 5 x 7 font in 6 x 8 cells; the T6963C uses its own text layer (cell `fontWidth` wide) |
 | `GlcdCommand(c [, d1 [, d2]])` | T6963C command with 0, 1 or 2 data bytes (sent first); ignored on the others |
 | `GlcdUdg(code, img)`, `GlcdWriteCode(code)` | T6963C user character 128..255 from eight row bytes; raw text code |
 

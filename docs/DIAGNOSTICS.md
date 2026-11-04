@@ -11,7 +11,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | E-SYNTAX | The text does not match the grammar |
 | E-RESERVED | A reserved word used as a name |
 | E-ORDER | Headers, includes, declarations and statements out of order |
-| E-PP, E-PP-ERROR, E-PP-UNSUPPORTED | Preprocessor misuse (including a bad `#if` expression), `#error`, `#variable` not implemented |
+| E-PP, E-PP-ERROR, E-PP-UNSUPPORTED | Preprocessor misuse (including a bad `#if` expression), `#error` |
 | E-OPTION | Unknown `#option` or bad value |
 | W-PP-WARNING | `#warning` |
 

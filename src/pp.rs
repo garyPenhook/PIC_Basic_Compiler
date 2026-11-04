@@ -38,6 +38,17 @@ pub struct Predef {
     /// The program asked for the I2C peripheral with `#option I2c = Hardware`. Libraries see it here, like the
     /// clock: `#define` names are file-scoped, so they could not. `_i2chw` is this and the part having `I2C1CON0`.
     pub i2c_hw: bool,
+    /// Values of the other predefined names (`_core`, `_maxram`, `_maxrom`, `_ports`, `_adc`, `_usart`, `_mssp`,
+    /// `_ccp`, `_comparator`, `_flash_write`), derived from the device description; empty without one.
+    pub extra: std::collections::HashMap<&'static str, Pre>,
+}
+
+/// A predefined value other than the clock and device name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pre {
+    Num(f64),
+    Bool(bool),
+    Str(String),
 }
 
 /// Reads `Clock = n` (or `Declare Xtal = n`), `Device = name` and `#option I2c = Hardware` from the
@@ -337,6 +348,14 @@ impl Eval<'_> {
                     None => Err("_has is used but the device description could not be loaded (is there a `Device = name` line?)".into()),
                 }
             }
+            _ if t.starts_with('_') && self.predef.extra.contains_key(t.as_str()) => Ok(match &self.predef.extra[t.as_str()] {
+                Pre::Num(n) => Val::Num(*n),
+                Pre::Bool(b) => Val::Bool(*b),
+                Pre::Str(s) => Val::Str(s.clone()),
+            }),
+            _ if matches!(t.as_str(), "_core" | "_maxram" | "_maxrom" | "_ports" | "_adc" | "_usart" | "_mssp" | "_ccp" | "_comparator" | "_flash_write") => {
+                Err(format!("{t} is used but the device description could not be loaded (is there a `Device = name` line?)"))
+            }
             "_device" => self
                 .predef
                 .device
@@ -356,9 +375,34 @@ impl Eval<'_> {
                 } else if t.starts_with("pic18") {
                     Ok(Val::Str(t[3..].to_string()))
                 } else {
-                    Err(format!("`{t}` is not a number, a name given a value by #define or #constant, or a predefined constant (_clock, _device, _ram, _eeprom, _has, _i2chw)"))
+                    Err(format!("`{t}` is not a number, a name given a value by #define or #constant, or a predefined constant (_clock, _device, _core, _ram, _maxram, _maxrom, _eeprom, _ports, _adc, _usart, _mssp, _ccp, _comparator, _flash_write, _has, _i2chw)"))
                 }
             }
+        }
+    }
+}
+
+type DeclareConst = Option<(String, Val, String, String)>;
+
+/// `Declare Name = expression` where `Name` is not `Xtal` (that one is the clock, read by the parser).
+/// `None`: the line is not such a declaration. `Some(None)`: it is, but is wrong (error reported).
+/// `Some(Some((lower-case name, value, literal, name)))`: it becomes `Const Name = literal`.
+fn declare_const(line: &str, predef: &Predef, values: &HashMap<String, Val>, defined: &HashSet<String>, span: Span, diags: &mut Diagnostics) -> Option<DeclareConst> {
+    let rest = line.trim();
+    let word = rest.get(..7)?;
+    if !word.eq_ignore_ascii_case("declare") || !rest[7..].starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let (n, expr) = rest[7..].split_once('=').map(|(n, e)| (n.trim(), e.trim()))?;
+    let valid = !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !n.starts_with(|c: char| c.is_ascii_digit());
+    if !valid || n.eq_ignore_ascii_case("xtal") {
+        return None;
+    }
+    match eval_value(expr, predef, values, defined).and_then(|v| const_literal(&v).map(|lit| (v, lit))) {
+        Ok((v, lit)) => Some(Some((n.to_ascii_lowercase(), v, lit, n.to_string()))),
+        Err(_) => {
+            diags.error("E-UNSUPPORTED", span, format!("`Declare {n}` needs a number, text or True/False value; other switches are library options, see the module's documentation"));
+            Some(None)
         }
     }
 }
@@ -483,6 +527,19 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
             continue;
         }
         let Some(rest) = directive else {
+            if active && !was_in_comment {
+                if let Some(text) = declare_const(strip_comment(trimmed), predef, &values, defined, span, diags) {
+                    // `Declare Name = value` (not `Xtal`): a `Const`, and a value `#if` can use, like `#constant`.
+                    if let Some((lname, v, lit, n)) = text {
+                        values.insert(lname.clone(), v);
+                        defined.insert(lname);
+                        out.push_str(&format!("Const {n} = {lit}\n"));
+                    } else {
+                        out.push('\n');
+                    }
+                    continue;
+                }
+            }
             if active && starts_asm(line) {
                 in_asm = true;
             }
@@ -542,8 +599,23 @@ pub fn preprocess(file: u32, src: &str, defined: &mut HashSet<String>, predef: &
                 None => diags.error("E-PP", span, "#elseif without #if"),
             },
             "variable" => {
+                // `#variable NAME = expr`: like `#constant`, but the name may be given a new value later
+                // (`#variable N = N + 1`) and no `Const` line is written: it exists for `#if` only.
                 if active {
-                    diags.error("E-PP-UNSUPPORTED", span, "#variable is not implemented; use #constant NAME = expression");
+                    let (n, expr) = arg.split_once('=').map_or((arg, ""), |(n, e)| (n.trim(), e.trim()));
+                    let valid = !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !n.starts_with(|c: char| c.is_ascii_digit());
+                    if !valid || expr.is_empty() {
+                        diags.error("E-PP", span, "#variable needs the form `#variable Name = expression`");
+                    } else {
+                        match eval_value(expr, predef, &values, defined) {
+                            Ok(v) => {
+                                let lname = n.to_ascii_lowercase();
+                                values.insert(lname.clone(), v);
+                                defined.insert(lname);
+                            }
+                            Err(m) => diags.error("E-PP", span, m),
+                        }
+                    }
                 }
             }
             "constant" => {
@@ -651,6 +723,20 @@ mod tests {
         let (t, errs) = run(src, &on);
         assert_eq!(errs, 0);
         assert!(t.contains('A') && !t.contains('B') && !t.contains('C'), "{t:?}");
+    }
+
+    #[test]
+    fn variable_changes_and_extra_predefined_names() {
+        let mut p = Predef::default();
+        p.extra.insert("_mssp", Pre::Num(2.0));
+        p.extra.insert("_core", Pre::Str("pic18".into()));
+        p.extra.insert("_flash_write", Pre::Bool(true));
+        let (t, errs) = run("#variable N = 1\n#variable N = N + 2\n#if N = 3 and _mssp = 2 and _core = \"pic18\" and _flash_write\nYES\n#endif\n", &p);
+        assert_eq!(errs, 0, "{t:?}");
+        assert!(t.contains("YES") && !t.contains("Const"), "{t:?}");
+        // no description: a clear error, not "not a number"
+        let (_, errs) = run("#if _ccp > 1\n#endif\n", &Predef::default());
+        assert_eq!(errs, 1);
     }
 
     #[test]

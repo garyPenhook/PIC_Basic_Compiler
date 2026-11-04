@@ -153,3 +153,19 @@ End Function
 
 Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
 End Sub
+
+Public Sub PortDigital(ByVal base As Byte)
+End Sub
+
+Public Sub PortDigitalHigh(ByVal base As Byte)
+End Sub
+
+Public Sub PortDirectionHigh(ByVal base As Byte, ByVal isInput As Boolean)
+End Sub
+
+Public Sub PortWriteHigh(ByVal base As Byte, ByVal v As Byte)
+End Sub
+
+Public Function PortReadHigh(ByVal base As Byte) As Byte
+    Result = 0
+End Function

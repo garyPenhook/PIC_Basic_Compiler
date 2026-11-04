@@ -4,6 +4,7 @@ Include "pinio"
 '   GlcdInitKs0108(data, rs, rw, en, cs1, cs2, rst, csHigh)   128 x 64 from two KS0108 / S6B0108 segment drivers
 '   GlcdInitT6963(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)   Toshiba T6963C, any size, 6 or 8 pixel font
 '   GlcdInitSt7920(data, rs, rw, en, rst, folded)             Sitronix ST7920, 8-bit parallel (PSB high)
+'   GlcdInitSt7920x4(data, ...), GlcdInitSt7920Serial(cs, sid, sclk, rst), GlcdInitT6963Dual(...)  see the calls
 ' Each returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a data port the part lacks).
 ' `data` is the first pin of the port that carries DB0..DB7: 8 = port B, 16 = port C (port A is refused: RA3 is input only on
 ' most parts); all eight bits of the
@@ -33,8 +34,8 @@ Include "pinio"
 ' ST7920 [pp.10-25, 34, 40]: graphic RAM is 64 rows of 16 words of 16 bits, bit 15 on the left (Table 7); an address is the
 ' vertical address then the horizontal word address (extended instruction set, 80h + n each). `folded` True selects the usual
 ' 128 x 64 module wiring, rows 32..63 held in words 8..15 of rows 0..31. THE DATA SHEET DOES NOT STATE THIS FOLDING: it comes
-' from common module drivers, so check it on the module in hand. `folded` False is Table 7 itself: 256 x 64. No serial
-' interface (it cannot read back, and a pixel needs a read-modify-write). E pulse 1 us (140 ns, cycle 1200 ns at 4.5 V).
+' from common module drivers, so check it on the module in hand. `folded` False is Table 7 itself: 256 x 64. The 4-bit mode (`GlcdInitSt7920x4`, DB4..DB7 on the upper pins of a port) and the serial mode
+' (`GlcdInitSt7920Serial`, write only: the module keeps a copy of the graphic RAM) are described at the init calls. E pulse 1 us (140 ns, cycle 1200 ns at 4.5 V).
 '
 ' Text uses the 5 x 7 font in a 6 x 8 cell, cols 0..xres/6-1 and rows 0..yres/8-1 (the T6963C uses its own text layer, cell
 ' width fontWidth, instead). The font is the public domain X11 "5x7" fixed font (as in `Oled`).
@@ -93,6 +94,15 @@ Dim fw As Byte
 Dim cols As Byte
 Dim textHome As Word
 Dim cgOff As Byte
+Dim dual As Boolean
+Dim smode As Byte
+Dim wHi As Byte
+Dim wLo As Byte
+#if _maxram >= 1536
+' Copy of the 128 x 64 graphic RAM (32 rows of 16 words), kept for the serial interface, which cannot read the display back.
+Dim shadow(1024) As Byte
+#endif
+Dim half As Word
 Dim penX As Integer
 Dim penY As Integer
 Dim tCol As Byte
@@ -115,14 +125,18 @@ Function Claim(ByVal pin As Byte) As Boolean
     End If
 End Function
 
-' True when the eight pins from `base` (0, 8 or 16) exist and are free.
-Function ClaimBus(ByVal base As Byte) As Boolean
+' True when the last `n` (8, 4 or 0) of the eight pins from `base` (8 or 16) exist and are free.
+Function ClaimBus(ByVal base As Byte, ByVal n As Byte) As Boolean
     Dim i As Byte
+    Result = True
+    If n = 0 Then
+        Exit
+    End If
     Result = False
     If base <> 8 And base <> 16 Then
         Exit
     End If
-    i = 0
+    i = 8 - n
     While i < 8
         If Not Claim(base + i) Then
             Exit
@@ -161,7 +175,13 @@ Sub MakeOutputs(ByVal count As Byte, ByVal idle As Boolean)
         Pinio.PinSet(pE, idle)
         Pinio.PinOutput(pE)
     End If
-    Pinio.PortDirection(pData, False)
+    If smode = 1 Then
+        Pinio.PortDigitalHigh(pData)
+        Pinio.PortDirectionHigh(pData, False)
+    ElseIf smode = 0 Then
+        Pinio.PortDigital(pData)
+        Pinio.PortDirection(pData, False)
+    End If
 End Sub
 
 ' The reset pulse (low, at least 10 us) on `rst` and 50 ms of power-up before it.
@@ -308,9 +328,31 @@ Sub TAddr(ByVal a As Word)
     TCmd2(36, Byte(a And 255), Byte(a >> 8))
 End Sub
 
+' Address of the first byte of pixel row y. With dual scan the lower screen holds the same layout as the upper one, 8000h higher
+' [T6963C p.7].
+Function TRowAddr(ByVal y As Word) As Word
+    If dual And y >= half Then
+        Result = 32768 + (y - half) * cols
+    Else
+        Result = y * cols
+    End If
+End Function
+
 ' Address of the graphic byte holding pixel x of row y, and the bit of it.
 Function TByteAddr(ByVal x As Word, ByVal y As Word) As Word
-    Result = y * cols + x / fw
+    Result = TRowAddr(y) + x / fw
+End Function
+
+' Address of the text cell (tCol, tRow); rows below the upper screen are on the lower one.
+Function TTextAddr() As Word
+    Dim r As Word
+    r = tRow
+    Result = textHome
+    If dual And r >= (half >> 3) Then
+        r = r - (half >> 3)
+        Result = Result + 32768
+    End If
+    Result = Result + r * cols + tCol
 End Function
 
 Function TBit(ByVal x As Word) As Byte
@@ -319,44 +361,99 @@ Function TBit(ByVal x As Word) As Byte
     Result = fw - 1 - Byte(x - q * fw)
 End Function
 
-' ---- ST7920: pA = RS, pB = R/W, pC = E ----
+' ---- ST7920: pA = RS (CS in serial mode), pB = R/W (SID), pC = E (SCLK) ----
+' smode 0: 8-bit parallel, 1: 4-bit parallel on DB4..DB7 (the upper four pins of the port), 2: serial (write only).
 
-Function SStatus() As Byte
-    Pinio.PortDirection(pData, True)
-    Pinio.PinSet(pA, False)
+' One read cycle, of the status (`rs` False: the busy flag is bit 7) or of the data register. In the 4-bit mode it takes two
+' E pulses, the upper nibble first [ST7920 p.25].
+Function SReadRaw(ByVal rs As Boolean) As Byte
+    Dim hi As Byte
+    If smode = 0 Then
+        Pinio.PortDirection(pData, True)
+    Else
+        Pinio.PortDirectionHigh(pData, True)
+    End If
+    Pinio.PinSet(pA, rs)
     Pinio.PinSet(pB, True)
     Pinio.PinSet(pC, True)
     DelayUS(1)
-    Result = Pinio.PortRead(pData)
-    Pinio.PinSet(pC, False)
+    If smode = 0 Then
+        Result = Pinio.PortRead(pData)
+        Pinio.PinSet(pC, False)
+    Else
+        hi = Pinio.PortReadHigh(pData)
+        Pinio.PinSet(pC, False)
+        Pinio.PinSet(pC, True)
+        DelayUS(1)
+        Result = hi Or (Pinio.PortReadHigh(pData) >> 4)
+        Pinio.PinSet(pC, False)
+    End If
 End Function
 
+Function SStatus() As Byte
+    Result = SReadRaw(False)
+End Function
+
+' Waits for the busy flag. The serial interface cannot read it: an instruction takes 72 us at the 540 kHz clock (a slow one,
+' 470 kHz, 83 us) [ST7920 p.16].
 Sub SWait()
     Dim n As Byte
+    If smode = 2 Then
+        DelayUS(90)
+        Exit
+    End If
     n = 200
     While n > 0 And (SStatus() And 128) <> 0
         Dec(n)
     Wend
 End Sub
 
+' Sends one byte as serial bits, most significant first, on SID with an SCLK pulse for each.
+Sub SBits(ByVal v As Byte)
+    Dim i As Byte
+    i = 0
+    While i < 8
+        Pinio.PinSet(pB, (v And 128) <> 0)
+        Pulse(pC)
+        v = v << 1
+        Inc(i)
+    Wend
+End Sub
+
 Sub SWrite(ByVal isData As Boolean, ByVal v As Byte)
     SWait()
-    Pinio.PortDirection(pData, False)
-    Pinio.PinSet(pA, isData)
-    Pinio.PinSet(pB, False)
-    Pinio.PortWrite(pData, v)
-    Pulse(pC)
+    If smode = 2 Then
+        ' Start byte 11111, RW = 0, RS, 0; then the upper nibble and the lower nibble, each followed by four zero bits
+        ' [ST7920 p.25]. CS is high for the three bytes.
+        Pinio.PinSet(pA, True)
+        If isData Then
+            SBits(250)
+        Else
+            SBits(248)
+        End If
+        SBits(v And 240)
+        SBits(v << 4)
+        Pinio.PinSet(pA, False)
+    ElseIf smode = 1 Then
+        Pinio.PortDirectionHigh(pData, False)
+        Pinio.PinSet(pA, isData)
+        Pinio.PinSet(pB, False)
+        Pinio.PortWriteHigh(pData, v)
+        Pulse(pC)
+        Pinio.PortWriteHigh(pData, v << 4)
+        Pulse(pC)
+    Else
+        Pinio.PortDirection(pData, False)
+        Pinio.PinSet(pA, isData)
+        Pinio.PinSet(pB, False)
+        Pinio.PortWrite(pData, v)
+        Pulse(pC)
+    End If
 End Sub
 
 Function SRead() As Byte
     SWait()
-    Pinio.PortDirection(pData, True)
-    Pinio.PinSet(pA, True)
-    Pinio.PinSet(pB, True)
-    Pinio.PinSet(pC, True)
-    DelayUS(1)
-    Result = Pinio.PortRead(pData)
-    Pinio.PinSet(pC, False)
+    Result = SReadRaw(True)
 End Function
 
 ' Sets the graphic address: row 0..63 and word 0..15 (the extended instruction set stays selected).
@@ -373,6 +470,96 @@ Sub SMap(ByVal x As Word, ByVal y As Word, ByRef wd As Byte, ByRef row As Byte)
         row = Byte(y - 32)
         wd = wd + 8
     End If
+End Sub
+
+' Loads graphic RAM word `wd` of `row` into wHi, wLo: read from the display, or from the shadow copy of the serial mode.
+Sub SGetWord(ByVal wd As Byte, ByVal row As Byte)
+    Dim v As Byte
+    If smode = 2 Then
+#if _maxram >= 1536
+        v = row And 31
+        wHi = shadow(Word(v) * 32 + Word(wd) * 2)
+        wLo = shadow(Word(v) * 32 + Word(wd) * 2 + 1)
+#endif
+    Else
+        SPos(wd, row)
+        v = SRead()
+        wHi = SRead()
+        wLo = SRead()
+    End If
+End Sub
+
+' Writes wHi, wLo to graphic RAM word `wd` of `row` (and to the shadow copy).
+Sub SPutWord(ByVal wd As Byte, ByVal row As Byte)
+    SPos(wd, row)
+    SWrite(True, wHi)
+    SWrite(True, wLo)
+#if _maxram >= 1536
+    If smode = 2 Then
+        row = row And 31
+        shadow(Word(row) * 32 + Word(wd) * 2) = wHi
+        shadow(Word(row) * 32 + Word(wd) * 2 + 1) = wLo
+    End If
+#endif
+End Sub
+
+' Replaces the `n` bits of `w` whose leftmost is bit `top` (15 = the leftmost bit of the word) by the low `n` bits of `bits`.
+Function Splice(ByVal w As Word, ByVal top As Byte, ByVal n As Byte, ByVal bits As Word) As Word
+    Dim sh As Byte
+    Dim m As Word
+    sh = top + 1 - n
+    m = ((Word(1) << n) - 1) << sh
+    Result = (w And (m Xor 65535)) Or ((bits << sh) And m)
+End Function
+
+' Draws character `ch` (32..126) in the 6 x 8 cell at the text position, a row of eight pixel rows at a time: the six pixels of
+' a row lie in one or two graphic RAM words, which are read, spliced and written back.
+Sub SGlyph(ByVal ch As Byte)
+    Dim base As Word
+    Dim x0 As Word
+    Dim k As Byte
+    Dim i As Byte
+    Dim p As Word
+    Dim wd As Byte
+    Dim row As Byte
+    Dim o As Byte
+    Dim n1 As Byte
+    Dim ww As Word
+    base = Word(ch - 32) * 5
+    x0 = Word(tCol) * 6
+    o = Byte(x0 And 15)
+    k = 0
+    While k < 8
+        p = 0
+        i = 0
+        While i < 5
+            p = (p << 1) Or ((Word(Font(base + i)) >> k) And 1)
+            Inc(i)
+        Wend
+        p = p << 1
+        SMap(x0, Word(tRow) * 8 + Word(k), wd, row)
+        SGetWord(wd, row)
+        ww = Word(wHi) * 256 + Word(wLo)
+        If o <= 10 Then
+            ww = Splice(ww, 15 - o, 6, p)
+            wHi = Byte(ww >> 8)
+            wLo = Byte(ww And 255)
+            SPutWord(wd, row)
+        Else
+            n1 = 16 - o
+            ww = Splice(ww, 15 - o, n1, p >> (6 - n1))
+            wHi = Byte(ww >> 8)
+            wLo = Byte(ww And 255)
+            SPutWord(wd, row)
+            SGetWord(wd + 1, row)
+            ww = Word(wHi) * 256 + Word(wLo)
+            ww = Splice(ww, 15, 6 - n1, p And ((Word(1) << (6 - n1)) - 1))
+            wHi = Byte(ww >> 8)
+            wLo = Byte(ww And 255)
+            SPutWord(wd + 1, row)
+        End If
+        Inc(k)
+    Wend
 End Sub
 
 ' ---- Whole display ----
@@ -401,23 +588,31 @@ Public Sub GlcdClear()
             Inc(c)
         Wend
     ElseIf kind = 2 Then
-        n = textHome + Word(cols) * Word(yres / 8)
-        TAddr(0)
-        TCmd(176)
-        i = 0
-        While i < n
+        n = textHome + Word(cols) * (half >> 3)
+        c = 0
+        While c < 2
+            TAddr(Word(c) << 15)
+            TCmd(176)
+            i = 0
+            While i < n
+                TWait(8)
+                TRaw(False, 0)
+                Inc(i)
+            Wend
             TWait(8)
-            TRaw(False, 0)
-            Inc(i)
+            TRaw(True, 178)
+            Inc(c)
+            If Not dual Then
+                Break
+            End If
         Wend
-        TWait(8)
-        TRaw(True, 178)
     ElseIf kind = 3 Then
         r = 0
-        While r < 64
-            If folded And r >= 32 Then
-                Exit
-            End If
+        n = 64
+        If folded Then
+            n = 32
+        End If
+        While r < n
             SPos(0, r)
             c = 0
             While c < 32
@@ -426,15 +621,24 @@ Public Sub GlcdClear()
             Wend
             Inc(r)
         Wend
+#if _maxram >= 1536
+        If smode = 2 Then
+            i = 0
+            While i < 1024
+                shadow(i) = 0
+                Inc(i)
+            Wend
+        End If
+#endif
     End If
 End Sub
 
 ' ---- Init ----
 
-Function ClaimAll(ByVal bus As Byte, ByVal a As Byte, ByVal b As Byte, ByVal c As Byte, ByVal d As Byte, ByVal e As Byte, ByVal rst As Byte) As Boolean
+Function ClaimAll(ByVal bus As Byte, ByVal busPins As Byte, ByVal a As Byte, ByVal b As Byte, ByVal c As Byte, ByVal d As Byte, ByVal e As Byte, ByVal rst As Byte) As Boolean
     used = 0
     Result = False
-    If Not ClaimBus(bus) Then
+    If Not ClaimBus(bus, busPins) Then
         Exit
     End If
     If Not Claim(a) Then
@@ -456,6 +660,7 @@ Function ClaimAll(ByVal bus As Byte, ByVal a As Byte, ByVal b As Byte, ByVal c A
         Exit
     End If
     pData = bus
+    smode = 0
     pA = a
     pB = b
     pC = c
@@ -476,7 +681,7 @@ Public Function GlcdInitKs0108(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As 
     If cs1 = 255 Or cs2 = 255 Then
         Exit
     End If
-    If Not ClaimAll(bus, rs, rw, en, cs1, cs2, rst) Then
+    If Not ClaimAll(bus, 8, rs, rw, en, cs1, cs2, rst) Then
         Exit
     End If
     csHigh = selHigh
@@ -497,7 +702,7 @@ Public Function GlcdInitKs0108(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As 
     Result = 1
 End Function
 
-Public Function GlcdInitT6963(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As Byte, ByVal ce As Byte, ByVal cd As Byte, ByVal rst As Byte, ByVal width As Word, ByVal height As Word, ByVal fontWidth As Byte) As Byte
+Function T6963Init(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As Byte, ByVal ce As Byte, ByVal cd As Byte, ByVal rst As Byte, ByVal width As Word, ByVal height As Word, ByVal fontWidth As Byte, ByVal isDual As Boolean) As Byte
     Result = 0
     kind = 0
     If fontWidth <> 6 And fontWidth <> 8 Then
@@ -506,20 +711,28 @@ Public Function GlcdInitT6963(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As B
     If width = 0 Or height = 0 Or width > 512 Or height > 256 Or width Mod fontWidth <> 0 Or height Mod 8 <> 0 Then
         Exit
     End If
+    If isDual And height Mod 16 <> 0 Then
+        Exit
+    End If
     If width / fontWidth > 64 Then
         Exit
     End If
     If ce = 255 Then
         Exit
     End If
-    If Not ClaimAll(bus, cd, wr, rd, ce, 255, rst) Then
+    If Not ClaimAll(bus, 8, cd, wr, rd, ce, 255, rst) Then
         Exit
     End If
     xres = Integer(width)
     yres = Integer(height)
     fw = fontWidth
     cols = Byte(width / fontWidth)
-    textHome = Word(cols) * Word(height)
+    dual = isDual
+    half = height
+    If isDual Then
+        half = height >> 1
+    End If
+    textHome = Word(cols) * half
     MakeOutputs(4, True)
     ResetPulse()
     kind = 2
@@ -529,7 +742,7 @@ Public Function GlcdInitT6963(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As B
     TCmd2(67, cols, 0)
     TCmd2(64, Byte(textHome And 255), Byte(textHome >> 8))
     TCmd2(65, cols, 0)
-    cgOff = Byte((textHome + Word(cols) * Word(yres / 8) + 2047) >> 11)
+    cgOff = Byte((textHome + Word(cols) * (half >> 3) + 2047) >> 11)
     TCmd2(34, cgOff, 0)
     TCmd(128)
     TCmd(156)
@@ -537,12 +750,39 @@ Public Function GlcdInitT6963(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As B
     Result = 1
 End Function
 
-Public Function GlcdInitSt7920(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As Byte, ByVal en As Byte, ByVal rst As Byte, ByVal isFolded As Boolean) As Byte
+Public Function GlcdInitT6963(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As Byte, ByVal ce As Byte, ByVal cd As Byte, ByVal rst As Byte, ByVal width As Word, ByVal height As Word, ByVal fontWidth As Byte) As Byte
+    Result = T6963Init(bus, wr, rd, ce, cd, rst, width, height, fontWidth, False)
+End Function
+
+' Dual-scan screen (DUAL pin low): `height` is both halves together, so it must be a multiple of 16. The controller keeps the
+' lower half 8000h above the upper one and displays both; the module draws into the right half.
+Public Function GlcdInitT6963Dual(ByVal bus As Byte, ByVal wr As Byte, ByVal rd As Byte, ByVal ce As Byte, ByVal cd As Byte, ByVal rst As Byte, ByVal width As Word, ByVal height As Word, ByVal fontWidth As Byte) As Byte
+    Result = T6963Init(bus, wr, rd, ce, cd, rst, width, height, fontWidth, True)
+End Function
+
+' One nibble on DB4..DB7 with an E pulse (4-bit mode start-up only).
+Sub SendNibble(ByVal v As Byte)
+    Pinio.PortDirectionHigh(pData, False)
+    Pinio.PinSet(pA, False)
+    Pinio.PinSet(pB, False)
+    Pinio.PortWriteHigh(pData, v)
+    Pulse(pC)
+End Sub
+
+Function St7920Init(ByVal mode As Byte, ByVal bus As Byte, ByVal rs As Byte, ByVal rw As Byte, ByVal en As Byte, ByVal rst As Byte, ByVal isFolded As Boolean) As Byte
+    Dim busPins As Byte
     Result = 0
     kind = 0
-    If Not ClaimAll(bus, rs, rw, en, 255, 255, rst) Then
+    busPins = 8
+    If mode = 1 Then
+        busPins = 4
+    ElseIf mode = 2 Then
+        busPins = 0
+    End If
+    If Not ClaimAll(bus, busPins, rs, rw, en, 255, 255, rst) Then
         Exit
     End If
+    smode = mode
     folded = isFolded
     xres = 256
     If isFolded Then
@@ -552,20 +792,58 @@ Public Function GlcdInitSt7920(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As 
     MakeOutputs(3, False)
     ResetPulse()
     kind = 3
-    ' The 8-bit initialisation of [p.34], then the extended set (RE = 1) and graphic display on (G = 1).
-    SWrite(False, 48)
-    DelayUS(150)
-    SWrite(False, 48)
-    DelayUS(50)
+    If mode = 1 Then
+        ' The 4-bit initialisation of [p.35]: the function set with DL = 0, sent twice. The first nibble alone moves a
+        ' controller that starts in the 8-bit mode over to the 4-bit mode.
+        SendNibble(32)
+        DelayUS(150)
+        SWrite(False, 32)
+        DelayUS(150)
+        SWrite(False, 32)
+        DelayUS(150)
+    Else
+        ' The 8-bit initialisation of [p.34].
+        SWrite(False, 48)
+        DelayUS(150)
+        SWrite(False, 48)
+        DelayUS(50)
+    End If
     SWrite(False, 12)
     DelayUS(150)
     SWrite(False, 1)
     DelayMS(12)
     SWrite(False, 6)
-    SWrite(False, 52)
-    SWrite(False, 54)
+    ' Then the extended set (RE = 1) and graphic display on (G = 1); in the 4-bit mode DL stays 0.
+    If mode = 1 Then
+        SWrite(False, 36)
+        SWrite(False, 38)
+    Else
+        SWrite(False, 52)
+        SWrite(False, 54)
+    End If
     GlcdClear()
     Result = 1
+End Function
+
+
+Public Function GlcdInitSt7920(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As Byte, ByVal en As Byte, ByVal rst As Byte, ByVal isFolded As Boolean) As Byte
+    Result = St7920Init(0, bus, rs, rw, en, rst, isFolded)
+End Function
+
+' 4-bit parallel interface (the controller's function set DL = 0): DB4..DB7 go to the upper four pins of port B or C
+' (`bus` 8 or 16); the lower four pins of the port are left alone, and DB0..DB3 stay unconnected.
+Public Function GlcdInitSt7920x4(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As Byte, ByVal en As Byte, ByVal rst As Byte, ByVal isFolded As Boolean) As Byte
+    Result = St7920Init(1, bus, rs, rw, en, rst, isFolded)
+End Function
+
+' Serial interface (PSB low): `cs` is the RS pin of the module, `sid` its R/W pin and `sclk` its E pin. The display cannot be
+' read back in this mode, so the module keeps a copy of the graphic RAM (1 KB, 128 x 64 only); a part with too little RAM
+' returns 0.
+Public Function GlcdInitSt7920Serial(ByVal cs As Byte, ByVal sid As Byte, ByVal sclk As Byte, ByVal rst As Byte) As Byte
+    Result = 0
+#if _maxram >= 1536
+    Result = St7920Init(2, 255, cs, sid, sclk, rst, True)
+#endif
 End Function
 
 ' ---- Pixels ----
@@ -577,8 +855,6 @@ Sub PutPixel(ByVal x As Word, ByVal y As Word, ByVal on As Boolean)
     Dim col As Byte
     Dim w As Byte
     Dim row As Byte
-    Dim hi As Byte
-    Dim lo As Byte
     Dim b As Byte
     If kind = 1 Then
         col = Byte(x And 63)
@@ -604,27 +880,22 @@ Sub PutPixel(ByVal x As Word, ByVal y As Word, ByVal on As Boolean)
         TCmd(b)
     ElseIf kind = 3 Then
         SMap(x, y, w, row)
-        SPos(w, row)
-        v = SRead()
-        hi = SRead()
-        lo = SRead()
+        SGetWord(w, row)
         m = 1 << (7 - Byte(x And 7))
         If (x And 8) = 0 Then
             If on Then
-                hi = hi Or m
+                wHi = wHi Or m
             Else
-                hi = hi And (m Xor 255)
+                wHi = wHi And (m Xor 255)
             End If
         Else
             If on Then
-                lo = lo Or m
+                wLo = wLo Or m
             Else
-                lo = lo And (m Xor 255)
+                wLo = wLo And (m Xor 255)
             End If
         End If
-        SPos(w, row)
-        SWrite(True, hi)
-        SWrite(True, lo)
+        SPutWord(w, row)
     End If
 End Sub
 
@@ -632,8 +903,6 @@ Sub GetPixelBit(ByVal x As Word, ByVal y As Word, ByRef isSet As Boolean)
     Dim v As Byte
     Dim w As Byte
     Dim row As Byte
-    Dim hi As Byte
-    Dim lo As Byte
     isSet = False
     If kind = 1 Then
         KsAt(Byte(x >> 6), Byte(y >> 3), Byte(x And 63))
@@ -647,14 +916,11 @@ Sub GetPixelBit(ByVal x As Word, ByVal y As Word, ByRef isSet As Boolean)
         isSet = (v And (1 << TBit(x))) <> 0
     ElseIf kind = 3 Then
         SMap(x, y, w, row)
-        SPos(w, row)
-        v = SRead()
-        hi = SRead()
-        lo = SRead()
+        SGetWord(w, row)
         If (x And 8) = 0 Then
-            isSet = (hi And (1 << (7 - Byte(x And 7)))) <> 0
+            isSet = (wHi And (1 << (7 - Byte(x And 7)))) <> 0
         Else
-            isSet = (lo And (1 << (7 - Byte(x And 7)))) <> 0
+            isSet = (wLo And (1 << (7 - Byte(x And 7)))) <> 0
         End If
     End If
 End Sub
@@ -702,7 +968,6 @@ End Sub
 Public Sub GlcdWriteByte(ByVal row As Byte, ByVal col As Byte, ByVal v As Byte)
     Dim w As Byte
     Dim r As Byte
-    Dim other As Byte
     If kind = 1 Then
         If row < 8 And col < 128 Then
             KsAt(col >> 6, row, col And 63)
@@ -710,29 +975,20 @@ Public Sub GlcdWriteByte(ByVal row As Byte, ByVal col As Byte, ByVal v As Byte)
         End If
     ElseIf kind = 2 Then
         If row < yres And col < cols Then
-            TAddr(Word(row) * cols + col)
+            TAddr(TRowAddr(row) + col)
             TCmd1(196, v)
         End If
     ElseIf kind = 3 Then
         If row < 64 And col < (xres >> 3) Then
             SMap(Word(col) << 3, row, w, r)
-            SPos(w, r)
             ' Both bytes of the word are rewritten: the other half is read first.
-            other = 0
+            SGetWord(w, r)
             If (col And 1) = 0 Then
-                other = SRead()
-                other = SRead()
-                other = SRead()
-                SPos(w, r)
-                SWrite(True, v)
-                SWrite(True, other)
+                wHi = v
             Else
-                other = SRead()
-                other = SRead()
-                SPos(w, r)
-                SWrite(True, other)
-                SWrite(True, v)
+                wLo = v
             End If
+            SPutWord(w, r)
         End If
     End If
 End Sub
@@ -750,18 +1006,17 @@ Public Function GlcdReadByte(ByVal row As Byte, ByVal col As Byte) As Byte
         End If
     ElseIf kind = 2 Then
         If row < yres And col < cols Then
-            TAddr(Word(row) * cols + col)
+            TAddr(TRowAddr(row) + col)
             TCmd(197)
             Result = TReadData()
         End If
     ElseIf kind = 3 Then
         If row < 64 And col < (xres >> 3) Then
             SMap(Word(col) << 3, row, w, r)
-            SPos(w, r)
-            v = SRead()
-            Result = SRead()
+            SGetWord(w, r)
+            Result = wHi
             If (col And 1) <> 0 Then
-                Result = SRead()
+                Result = wLo
             End If
         End If
     End If
@@ -877,7 +1132,6 @@ End Sub
 Public Sub GlcdWriteChar(ByVal ch As Byte)
     Dim base As Word
     Dim i As Byte
-    Dim k As Byte
     Dim b As Byte
     Dim perRow As Byte
     Dim rows As Byte
@@ -902,8 +1156,10 @@ Public Sub GlcdWriteChar(ByVal ch As Byte)
         tRow = 0
     End If
     If kind = 2 Then
-        TAddr(textHome + Word(tRow) * cols + tCol)
+        TAddr(TTextAddr())
         TCmd1(192, ch - 32)
+    ElseIf kind = 3 Then
+        SGlyph(ch)
     Else
         base = Word(ch - 32) * 5
         i = 0
@@ -912,15 +1168,7 @@ Public Sub GlcdWriteChar(ByVal ch As Byte)
             If i < 5 Then
                 b = Font(base + i)
             End If
-            If kind = 1 Then
-                GlcdWriteByte(tRow, tCol * 6 + i, b)
-            Else
-                k = 0
-                While k < 8
-                    GlcdSetPixel(Integer(tCol) * 6 + Integer(i), Integer(tRow) * 8 + Integer(k), (b And (1 << k)) <> 0)
-                    Inc(k)
-                Wend
-            End If
+            GlcdWriteByte(tRow, tCol * 6 + i, b)
             Inc(i)
         Wend
     End If
@@ -967,6 +1215,70 @@ Public Sub GlcdWriteWord(ByVal v As Word)
     Wend
 End Sub
 
+Const Pow10(10) As LongWord = (1000000000, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10, 1)
+
+' Unsigned decimal of 0..4294967295, no leading zeros.
+Public Sub GlcdWriteLong(ByVal v As LongWord)
+    Dim started As Boolean
+    Dim i As Byte
+    Dim digit As Byte
+    started = False
+    i = 0
+    While i < 10
+        digit = 0
+        While v >= Pow10(i)
+            v = v - Pow10(i)
+            Inc(digit)
+        Wend
+        If digit > 0 Or started Or i = 9 Then
+            GlcdWriteChar(48 + digit)
+            started = True
+        End If
+        Inc(i)
+    Wend
+End Sub
+
+' Signed decimal of -32768..32767.
+Public Sub GlcdWriteInt(ByVal v As Integer)
+    If v < 0 Then
+        GlcdWriteChar(45)
+        GlcdWriteWord(Word(0) - Word(v))
+    Else
+        GlcdWriteWord(Word(v))
+    End If
+End Sub
+
+' Signed decimal of a 32-bit value.
+Public Sub GlcdWriteLongInt(ByVal v As LongInt)
+    If v < 0 Then
+        GlcdWriteChar(45)
+        GlcdWriteLong(LongWord(0) - LongWord(v))
+    Else
+        GlcdWriteLong(LongWord(v))
+    End If
+End Sub
+
+' Two hexadecimal digits (upper case).
+Public Sub GlcdWriteHex(ByVal v As Byte)
+    Dim h As Byte
+    h = v >> 4
+    If h > 9 Then
+        h = h + 7
+    End If
+    GlcdWriteChar(48 + h)
+    h = v And 15
+    If h > 9 Then
+        h = h + 7
+    End If
+    GlcdWriteChar(48 + h)
+End Sub
+
+' Four hexadecimal digits.
+Public Sub GlcdWriteHexWord(ByVal v As Word)
+    GlcdWriteHex(Byte(v >> 8))
+    GlcdWriteHex(Byte(v And 255))
+End Sub
+
 ' ---- T6963C extras (Positron8 Toshiba_Command, Toshiba_UDG) ----
 
 ' Sends a command byte with no data, one data byte, or two (the data first, as the controller wants). Ignored on the other
@@ -995,14 +1307,22 @@ End Sub
 ' code of 128 or more is written with GlcdWriteCode).
 Public Sub GlcdUdg(ByVal code As Byte, ByRefConst d() As Byte)
     Dim i As Byte
+    Dim h As Byte
     If kind <> 2 Or code < 128 Then
         Exit
     End If
-    TAddr((Word(cgOff) << 11) + Word(code) * 8)
-    i = 0
-    While i < 8
-        TCmd1(192, d(i))
-        Inc(i)
+    h = 0
+    While h < 2
+        TAddr((Word(cgOff) << 11) + Word(code) * 8 + (Word(h) << 15))
+        i = 0
+        While i < 8
+            TCmd1(192, d(i))
+            Inc(i)
+        Wend
+        Inc(h)
+        If Not dual Then
+            Break
+        End If
     Wend
 End Sub
 
@@ -1018,7 +1338,7 @@ Public Sub GlcdWriteCode(ByVal code As Byte)
     If tRow >= Byte(yres >> 3) Then
         tRow = 0
     End If
-    TAddr(textHome + Word(tRow) * cols + tCol)
+    TAddr(TTextAddr())
     TCmd1(192, code)
     Inc(tCol)
 End Sub

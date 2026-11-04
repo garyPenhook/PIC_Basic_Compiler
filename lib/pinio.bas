@@ -315,9 +315,27 @@ Public Function DataRead() As Boolean
 End Function
 #endif
 
-' ---- Whole-port byte access, for 8-bit parallel buses (`glcd`) ----
+' ---- Whole-port byte access, for parallel buses (`glcd`) ----
 ' `base` is the first pin of the port: 0 = port A, 8 = port B, 16 = port C (any other value, or a port the part lacks, is ignored
-' and reads as 0). All eight bits of the port are used, so the part must have all eight pins.
+' and reads as 0). The routines with no suffix use all eight bits of the port, so the part must have all eight pins; the `High`
+' ones use only the upper nibble (pins base + 4 .. base + 7, bits 7..4) and leave the lower four pins alone. `PortDigital` makes
+' the pins digital once (the ANSELx bit), `PortDirection` then only switches TRISx, which is what a bus that turns around for
+' every transfer needs.
+
+' Makes the eight pins of the port digital (clears ANSELx).
+Public Sub PortDigital(ByVal base As Byte)
+    If base = 0 Then
+        ANSELA = 0
+#if _has(LATB)
+    ElseIf base = 8 Then
+        ANSELB = 0
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        ANSELC = 0
+#endif
+    End If
+End Sub
 
 ' Writes `v` to the port's latch.
 Public Sub PortWrite(ByVal base As Byte, ByVal v As Byte)
@@ -350,7 +368,7 @@ Public Function PortRead(ByVal base As Byte) As Byte
     End If
 End Function
 
-' Makes the eight pins of the port digital inputs (`isInput` True) or outputs.
+' Makes the eight pins of the port inputs (`isInput` True) or outputs. The pins must have been made digital (`PortDigital`).
 Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
     Dim t As Byte
     t = 0
@@ -358,17 +376,70 @@ Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
         t = 255
     End If
     If base = 0 Then
-        ANSELA = 0
         TRISA = t
 #if _has(LATB)
     ElseIf base = 8 Then
-        ANSELB = 0
         TRISB = t
 #endif
 #if _has(LATC)
     ElseIf base = 16 Then
-        ANSELC = 0
         TRISC = t
+#endif
+    End If
+End Sub
+
+' Bits 7..4 of `v` to the upper four pins of the port's latch; the lower four are not changed.
+Public Sub PortWriteHigh(ByVal base As Byte, ByVal v As Byte)
+    v = v And 240
+    If base = 0 Then
+        LATA = (LATA And 15) Or v
+#if _has(LATB)
+    ElseIf base = 8 Then
+        LATB = (LATB And 15) Or v
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        LATC = (LATC And 15) Or v
+#endif
+    End If
+End Sub
+
+' The upper four pins of the port in bits 7..4 (the lower four read as 0).
+Public Function PortReadHigh(ByVal base As Byte) As Byte
+    Result = PortRead(base) And 240
+End Function
+
+' Makes the upper four pins inputs or outputs and the lower four stay as they are.
+Public Sub PortDirectionHigh(ByVal base As Byte, ByVal isInput As Boolean)
+    Dim t As Byte
+    t = 0
+    If isInput Then
+        t = 240
+    End If
+    If base = 0 Then
+        TRISA = (TRISA And 15) Or t
+#if _has(LATB)
+    ElseIf base = 8 Then
+        TRISB = (TRISB And 15) Or t
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        TRISC = (TRISC And 15) Or t
+#endif
+    End If
+End Sub
+
+' Makes the upper four pins of the port digital.
+Public Sub PortDigitalHigh(ByVal base As Byte)
+    If base = 0 Then
+        ANSELA = ANSELA And 15
+#if _has(LATB)
+    ElseIf base = 8 Then
+        ANSELB = ANSELB And 15
+#endif
+#if _has(LATC)
+    ElseIf base = 16 Then
+        ANSELC = ANSELC And 15
 #endif
     End If
 End Sub

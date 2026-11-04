@@ -7,7 +7,7 @@ use crate::ast::{Unit, UnitKind};
 use crate::diag::{Diagnostics, SourceMap, Span};
 use crate::lexer::{Tok, lex};
 use crate::parser::parse_unit;
-use crate::pp::{OptionDirective, Predef, preprocess, scan_header};
+use crate::pp::{OptionDirective, Pre, Predef, preprocess, scan_header};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -43,8 +43,9 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
         // `#if` in any file sees the main program's `Clock` and `Device`.
         predef: std::fs::read_to_string(main).map(|t| scan_header(&t)).unwrap_or_default(),
     };
-    if let Some((registers, ram, eeprom)) = ld.predef.device.as_deref().and_then(|d| device_registers(d, &cfg.devices_dirs)) {
+    if let Some((registers, ram, eeprom, extra)) = ld.predef.device.as_deref().and_then(|d| device_registers(d, &cfg.devices_dirs)) {
         ld.predef.registers = Some(registers);
+        ld.predef.extra = extra;
         ld.predef.ram = Some(ram);
         ld.predef.eeprom = Some(eeprom);
     }
@@ -53,7 +54,7 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
 }
 
 /// Lower-case names of the registers (and aliases) of `device`, from the first matching description.
-fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<(HashSet<String>, u32, u32)> {
+fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<(HashSet<String>, u32, u32, HashMap<&'static str, Pre>)> {
     let bare = device.strip_prefix("pic").unwrap_or(device);
     // The header scan lower-cases the name, the files are upper-case.
     let want = format!("{bare}.toml");
@@ -68,7 +69,22 @@ fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<(HashSet<String>, 
         set.extend(s.fields.iter().chain(&s.legacy).map(|f| format!("{}.{}", s.name, f.name).to_ascii_lowercase()));
     }
     set.extend(d.joined.iter().map(|j| j.name.to_ascii_lowercase()));
-    Some((set, d.memory.data.usable_gpr, d.memory.eeprom.size))
+    // Counts of peripheral instances, read from the register names of the description (a register that
+    // exists once per instance: `SSPnCON1`, `CCPnCON`, `CMnCON0`, `UnCON0` or `RCnSTA`, `LATx`).
+    let count = |f: &dyn Fn(&str) -> bool| set.iter().filter(|n| !n.contains('.') && f(n)).count() as f64;
+    let digits = |n: &str, pre: &str, post: &str| n.strip_prefix(pre).and_then(|r| r.strip_suffix(post)).is_some_and(|m| !m.is_empty() && m.chars().all(|c| c.is_ascii_digit()));
+    let mut extra = HashMap::new();
+    extra.insert("_core", Pre::Str(d.device.family.clone()));
+    extra.insert("_maxram", Pre::Num(f64::from(d.memory.data.total_gpr)));
+    extra.insert("_maxrom", Pre::Num(f64::from(d.memory.program.size)));
+    extra.insert("_ports", Pre::Num(count(&|n| n.len() == 4 && n.starts_with("lat") && n.as_bytes()[3].is_ascii_lowercase())));
+    extra.insert("_adc", Pre::Num(count(&|n| n == "adcon0")));
+    extra.insert("_usart", Pre::Num(count(&|n| digits(n, "u", "con0") || digits(n, "rc", "sta"))));
+    extra.insert("_mssp", Pre::Num(count(&|n| digits(n, "ssp", "con1"))));
+    extra.insert("_ccp", Pre::Num(count(&|n| digits(n, "ccp", "con"))));
+    extra.insert("_comparator", Pre::Num(count(&|n| digits(n, "cm", "con0"))));
+    extra.insert("_flash_write", Pre::Bool(set.contains("nvmcon1")));
+    Some((set, d.memory.data.usable_gpr, d.memory.eeprom.size, extra))
 }
 
 /// Parses source text that is already in memory (tests and tools). No includes are followed.

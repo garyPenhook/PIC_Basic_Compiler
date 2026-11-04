@@ -30,6 +30,7 @@ Dim wCd As Byte
 Dim wWr As Byte
 Dim wRd As Byte
 Dim wCe As Byte
+Dim dualOn As Byte
 
 Public Sub Wire(ByVal cd As Byte, ByVal wr As Byte, ByVal rd As Byte, ByVal ce As Byte)
     wCd = cd
@@ -38,6 +39,26 @@ Public Sub Wire(ByVal cd As Byte, ByVal wr As Byte, ByVal rd As Byte, ByVal ce A
     wCe = ce
     hiMin = 65535
 End Sub
+
+' Dual-scan model: the lower screen's memory (576 bytes: graphic 512 + text 64 at 128 x 64) is at 8000h and above, stored after
+' the upper screen's 576 bytes.
+Public Sub SetDual(ByVal on As Byte)
+    dualOn = on
+End Sub
+
+' Index into `mem` of display address `a`, or 65535 when it is outside the modelled memory.
+Function Phys(ByVal a As Word) As Word
+    Result = 65535
+    If dualOn <> 0 Then
+        If a < 576 Then
+            Result = a
+        ElseIf a >= 32768 And a < 33344 Then
+            Result = a - 32768 + 576
+        End If
+    ElseIf a < 1152 Then
+        Result = a
+    End If
+End Function
 
 Public Sub Fill(ByVal v As Byte)
     Dim i As Word
@@ -64,6 +85,24 @@ Public Function Ones() As Word
             Result = Result + (v And 1)
             v = v >> 1
         Wend
+        Inc(i)
+    Wend
+End Function
+
+' Set bits in the graphic memory of both screens of the dual-scan model.
+Public Function OnesDual() As Word
+    Dim i As Word
+    Dim v As Byte
+    Result = 0
+    i = 0
+    While i < 1088
+        If i < 512 Or i >= 576 Then
+            v = mem(i)
+            While v <> 0
+                Result = Result + (v And 1)
+                v = v >> 1
+            Wend
+        End If
         Inc(i)
     Wend
 End Function
@@ -102,8 +141,10 @@ Public Function Reg(ByVal which As Byte) As Word
 End Function
 
 Sub Store(ByVal v As Byte)
-    If adp < 1152 Then
-        mem(adp) = v
+    Dim q As Word
+    q = Phys(adp)
+    If q < 1152 Then
+        mem(q) = v
     Else
         Inc(hiCnt)
         hiSum = hiSum + v
@@ -148,11 +189,11 @@ Sub Command(ByVal c As Byte)
         lastRead = 197
     ElseIf c >= 240 Then
         b = 1 << (c And 7)
-        If adp < 1152 Then
+        If Phys(adp) < 1152 Then
             If (c And 8) <> 0 Then
-                mem(adp) = mem(adp) Or b
+                mem(Phys(adp)) = mem(Phys(adp)) Or b
             Else
-                mem(adp) = mem(adp) And (b Xor 255)
+                mem(Phys(adp)) = mem(Phys(adp)) And (b Xor 255)
             End If
         End If
     End If
@@ -184,8 +225,8 @@ Sub Cycle()
             outv = 15
         Else
             outv = 0
-            If adp < 1152 Then
-                outv = mem(adp)
+            If Phys(adp) < 1152 Then
+                outv = mem(Phys(adp))
             End If
         End If
     End If
@@ -228,3 +269,19 @@ End Function
 
 Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
 End Sub
+
+Public Sub PortDigital(ByVal base As Byte)
+End Sub
+
+Public Sub PortDigitalHigh(ByVal base As Byte)
+End Sub
+
+Public Sub PortDirectionHigh(ByVal base As Byte, ByVal isInput As Boolean)
+End Sub
+
+Public Sub PortWriteHigh(ByVal base As Byte, ByVal v As Byte)
+End Sub
+
+Public Function PortReadHigh(ByVal base As Byte) As Byte
+    Result = 0
+End Function

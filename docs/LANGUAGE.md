@@ -534,9 +534,10 @@ These fill gaps the draft left open; each is recorded in `DECISIONS.md` (D20–D
   arrays and routines.
 * **`BitOf`** is reserved but not specified in 0.1; using it is an error.
 * **Preprocessor subset.** `#define`, `#undefine`, `#ifdef`, `#ifndef`, `#else`, `#endif`, `#error`,
-  `#warning`, `#option`, `#if`, `#elseif` and `#constant` work (0.1.108). `#variable` is reported as
-  unsupported (`E-PP-UNSUPPORTED`) until a later milestone. Only `_clock` and `_device` are predefined in `#if`;
-  the other predefined names in §11 are not yet available to the preprocessor.
+  `#warning`, `#option`, `#if`, `#elseif` and `#constant` work (0.1.108). `#variable` (0.1.134) is
+  `#constant` that can be assigned again and writes no `Const`. `#if` also sees `_ram _maxram _maxrom _eeprom _core _ports _adc
+  _usart _mssp _ccp _comparator _flash_write` (counts read from the device description's register names); `_adres _usb _eccp`
+  are not available. `Declare Name = value` other than `Xtal` is a `Const`.
 * **Clock limits.** `Clock` is checked to be a positive number. The upper limit for the device is
   not in the device description yet (it is a data sheet value, not in the pack), so it is not checked.
 * **Overflow warnings (`W-OVF`)** need range analysis and arrive with the optimiser (M5). The

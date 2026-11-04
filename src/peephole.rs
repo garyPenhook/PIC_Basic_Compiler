@@ -521,6 +521,8 @@ fn dead_paths(items: &[Item], from: usize, w: bool, need: u8) -> bool {
             let Some(it) = items.get(k) else { return false };
             match it {
                 Item::Comment(_) | Item::Label(_) => {}
+                // See `loc_live`: `WREG` may be carried across a statement end.
+                Item::Fence if w => {}
                 Item::Fence => break,
                 Item::Call(_) => {
                     if w {
@@ -622,6 +624,9 @@ fn loc_live(items: &[Item], i: usize, l: Loc, env: &Env) -> Live {
     for it in &items[i + 1..] {
         match it {
             Item::Comment(_) => {}
+            // The code generator carries nothing past a statement end, but `pass_wreg` reuses what `WREG` holds across
+            // one (it emits nothing), so a read of `WREG` after a fence may belong to a value loaded before it.
+            Item::Fence if matches!(l, Loc::W) => {}
             Item::Fence => return Live::Dead,
             // A routine takes its arguments from its own frame; only the `__` helpers and the
             // register-call routines read the scratch registers, and a routine is free to overwrite them.
@@ -1319,6 +1324,16 @@ fn pass_branch_to_next(items: &mut Vec<Item>) -> bool {
                 Item::Comment(_) | Item::Fence => j += 1,
                 Item::Label(l) if l == target => {
                     dead[i] = true;
+                    // The branch carried `WREG` (a routine that takes its argument there) into the target; once it is
+                    // gone the code falls into the label, so a statement end between the two must go as well: it would
+                    // tell the dead-store passes that nothing in `WREG` is read after it.
+                    if matches!(&items[i], Item::Br(Cc::Always, _)) {
+                        for (k, it) in items.iter().enumerate().take(j).skip(i + 1) {
+                            if matches!(it, Item::Fence) {
+                                dead[k] = true;
+                            }
+                        }
+                    }
                     break;
                 }
                 Item::Label(_) => j += 1,
