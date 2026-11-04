@@ -4401,6 +4401,49 @@ The routines are not reentrant: do not use them from a handler and the main prog
 
 ---
 
+## epaper  (`Include "epaper"`, WeAct 2.13" and 2.9" e-paper modules, SSD1680)
+
+The WeAct 2.13" (122 x 250) and 2.9" (128 x 296) e-paper modules, black / white and black / white / red, all with the Solomon Systech SSD1680 driver on 4-wire SPI. Set up the bus first with `SpiInit` (mode 0 or 3, at most 20 MHz). The module owns D/C#, CS# (255 = tied low), RES# (255 = none) and BUSY (needed), pins 0..23 as in `pinio`; the 8-pin module is VCC (3.3 V), GND, SDA, SCL, CS, D/C, RES, BUSY. **Nothing has run on a real panel:** the test runs the module against a software model of the SSD1680 (`tests/exec_epaper`).
+
+There is **no frame buffer** (a plane is 4736 bytes on the 2.9", more than most parts have, and the SPI link cannot be read back), so the RAM is written directly in whole bytes of 8 pixels across: `x` and widths are multiples of 8, `y` and heights any pixel row. There is no single-pixel, line or circle call. Draw filled rectangles, text on an 8 x 8 cell grid, or stream your own bitmap bytes into a window. Nothing shows until `EpdUpdate`, which flashes the panel for a few seconds (longer with red); the RAM keeps its content. Fast and partial refresh are not provided (the vendor's versions need a waveform table or a temperature trick that the SSD1680 data sheet does not describe).
+
+`x` runs along the 122 / 128 side, `y` down the 250 / 296 side with the connector at the top. Colours: 0 white, 1 black, 2 red (drawn black on a black / white panel).
+
+| Routine | Effect |
+|---|---|
+| `EpdInit(size, threeColour, dc, cs, res, busy)` | `size` 0 = 2.13", 1 = 2.9"; `threeColour` True for the black / white / red panels. Resets the controller and sends the start-up code. Returns 1; 0 for a bad size, a pin above 23, a pin the part lacks or a pin used twice; 2 when BUSY did not fall within about 40 s |
+| `EpdWidth()` / `EpdHeight()` | 122 x 250 or 128 x 296 |
+| `EpdClear(colour)` | fills both planes of the whole RAM |
+| `EpdFillRect(x, y, w, h, colour)` | `x`, `w` multiples of 8; a rectangle outside the display is ignored |
+| `EpdTextColour(colour)`, `EpdTextAt(col, row)`, `EpdWriteChar(ch)`, `EpdWrite(s)` | 5 x 7 font (X11 "5x7") in 8 x 8 cells, 16 columns (15 on the 2.13") and height / 8 rows; background white; the position wraps to the next row |
+| `EpdWindow(x, y, w, h)`, `EpdBegin(plane)`, `EpdPut(b)`, `EpdEnd()` | your own bitmap: set the window, open plane 0 (black / white, 1 = white) or 1 (red, 1 = red), send the bytes row by row (bit 7 on the left), close |
+| `EpdUpdate()` | refresh from the RAM (22h = F7h, 20h) and wait for BUSY; returns 1, or 0 on a timeout |
+| `EpdSleep()` / `EpdWake()` | deep sleep mode 1 (about 1 uA); wake needs RES# wired (hardware reset, start-up code again) |
+
+**Example**
+```basic
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+Include "spi"
+Include "epaper"
+Dim r As Byte
+' SCK = RB0, SDO = RB1; D/C = RA0, CS = RA1, RES = RA2, BUSY = RA3.
+r = Spi.SpiInit(4000000, 0, 8, 9, 255)
+r = Epaper.EpdInit(1, True, 0, 1, 2, 3)
+Epaper.EpdClear(0)
+Epaper.EpdFillRect(8, 8, 64, 32, 2)
+Epaper.EpdTextColour(1)
+Epaper.EpdTextAt(1, 6)
+Epaper.EpdWrite("Hello")
+r = Epaper.EpdUpdate()
+Epaper.EpdSleep()
+```
+
+Facts that come from the vendor's example code, not the SSD1680 data sheet, and are marked `[WeAct]` in `lib/epaper.bas`: the gate count and scan direction used for both sizes (296 lines, TB = 1, RAM Y = 295 - y, so the 250-line panel uses RAM Y 295..46), the border (3Ch = 05h) and source (21h = 00h 80h) settings, and writing the same bytes to both planes on a black / white panel. The data sheet does not say which plane wins when a pixel is marked in both, so a red pixel is written white in the black / white plane. A failed init turns the module off until the next successful one; after `EpdSleep` call `EpdWake` before drawing (the chip ignores RAM writes in deep sleep). The routines are not reentrant. Sources (git-ignored in `docs/`): `SSD1680_Datasheet.pdf` Rev 0.14, `WeAct-*-panel.pdf`, `WeAct-EpaperModule-2.13_2.9-SchDoc.pdf`.
+
+---
+
 ## oled  (`Include "oled"`, SSD1309, 128 x 64, I2C or 4-wire SPI)
 
 Set up the bus first: `I2cInit` at no more than 400 kHz, or `SpiInit` in mode 0 at no more than 10 MHz.

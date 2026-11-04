@@ -110,6 +110,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `bits` | `SetBit`, `ClearBit`, `GetBit`, `Rol`, `Ror`, `Dcd`, `Ncd`, `ISqr`, `Random` ... on Byte, Word and LongWord |
 | `buttons` | `Counter` (pulse counting) and `Button` (debounced, auto-repeat) |
 | `glcd` | graphic LCDs: KS0108, T6963C (also dual scan) and ST7920 (8-bit, 4-bit or serial): pixels, lines, boxes, circles, bytes, text and numbers |
+| `epaper` | WeAct 2.13" and 2.9" e-paper (SSD1680, black / white or black / white / red) over SPI: rectangles, text, bitmap windows, refresh, sleep |
 | `strings` | `Len` of a `String` (any size, or a literal); `Left`, `Mid` and `Right` are built into the language |
 | `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |

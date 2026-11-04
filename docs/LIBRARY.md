@@ -462,6 +462,17 @@ Source: Samsung S6B0108 Ver. 0.0 (the KS0108's driver), Toshiba T6963C 2002-01-0
 | `GlcdCommand(c)` / `GlcdCommand(c, d1)` / `GlcdCommand(c, d1, d2)` | Positron8 Toshiba_Command: any T6963C command (data first); ignored on the other controllers |
 | `GlcdUdg(code, img)` / `GlcdWriteCode(code)` | Positron8 Toshiba_UDG: user character 128..255 from 8 row bytes, and a raw text code (T6963C) |
 
+## epaper (WeAct 2.13" / 2.9" e-paper, SSD1680, 4-wire SPI)
+Source: Solomon Systech SSD1680 Rev 0.14 (`docs/SSD1680_Datasheet.pdf`: command table 7-1, data entry 8.3, RAM windows 8.4-8.6, operation flow 9.1, SPI 6.1 and 12.1), the WeAct panel specs and schematic (`docs/WeAct-*`), and the vendor's example code (github.com/WeActStudio/WeActStudio.EpaperModule), which supplies what the data sheet does not (marked `[WeAct]` in the source). Test: `tests/exec_epaper` runs the real module against a software model of the SSD1680 (`epaper_model_in_simulator`); **nothing has run on a real panel.** No frame buffer: bytes of 8 pixels are written straight to the controller RAM (`x`, `w` multiples of 8). Fast and partial refresh are not provided.
+
+| Routine | Effect |
+|---|---|
+| `EpdInit(size, threeColour, dc, cs, res, busy)` | size 0 = 2.13" (122 x 250), 1 = 2.9" (128 x 296); returns 1, 0 (bad argument) or 2 (BUSY stuck) |
+| `EpdClear(colour)` / `EpdFillRect(x, y, w, h, colour)` | colours 0 white, 1 black, 2 red |
+| `EpdTextColour(c)` / `EpdTextAt(col, row)` / `EpdWriteChar(ch)` / `EpdWrite(s)` | 5 x 7 font in 8 x 8 cells |
+| `EpdWindow(x, y, w, h)` / `EpdBegin(plane)` / `EpdPut(b)` / `EpdEnd()` | stream bitmap bytes into plane 0 (black / white) or 1 (red) |
+| `EpdUpdate()` / `EpdSleep()` / `EpdWake()` | refresh (22h F7h, 20h, wait BUSY) / deep sleep / hardware reset and start-up code |
+
 ## oled (SSD1309 128 x 64 OLED, I2C or 4-wire SPI)
 Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tables 9-1..9-5, I2C format 8.1.5, 4-wire SPI 8.1.3, power-on 8.8, timing 13-4/13-6. The caller sets up the bus first (`I2cInit` at no more than 400 kHz, or `SpiInit` in mode 0 at no more than 10 MHz). The panel supply VCC is external. No frame buffer (the interfaces are write-only): the display is written in 8-pixel pages, byte = one column, bit 0 on top.
 

@@ -392,6 +392,23 @@ fn glcd_models_in_simulator() {
     }
 }
 
+/// The e-paper module `epaper` against a software model of the SSD1680 (`tests/exec_epaper/pinio.bas` and `spi.bas` replace `Pinio` and
+/// `Spi`; `epaper.bas` is a symlink to `lib/epaper.bas`). Optimised, and as the `-O0` reference build.
+#[test]
+fn epaper_model_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files: Vec<PathBuf> = bas_files(&root().join("tests/exec_epaper")).into_iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("lib_")).collect();
+    assert_eq!(files.len(), 1);
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
 /// The `pulse`, `irremote` and `x10` routines against a model of the pins: `tests/exec_pins/pinio.bas` replaces `Pinio` (a poll of the
 /// pin steps a waveform, X-10 bursts are recorded and played back), and the modules under test are symlinked next to the program.
 /// Optimised, and as the `-O0` reference build.
