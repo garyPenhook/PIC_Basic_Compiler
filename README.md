@@ -65,7 +65,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * `If`, `Select Case`, `While`, `Repeat`, `For` (with `Break`/`Continue`/`Exit`), `GoTo`.
 * Subroutines and functions with by-value, `ByRef` and `ByRefConst` parameters; `Inline`/`NoInline`; modules and `Include`.
 * `Abs`, `Min`, `Max`, `Inc`/`Dec` (with an optional amount), `AddressOf` / `@`.
-* Preprocessor: `#define`, `#ifdef`, `#if` with `_clock` and `_device`.
+* Preprocessor: `#define`, `#ifdef`, `#if` / `#elseif`, `#constant`, `#variable`, `#error`, with `_clock`, `_device`, `_has(REG)` and the device facts `_ram`, `_maxrom`, `_ports`, `_usart`, `_mssp`, `_ccp` ...; `Declare Name = value` makes a constant.
+* Positron8-style commands: `Stop`, `SizeOf`, `Tern`, `Branch` / `On n GoTo`, `ToUpper` / `ToLower`.
 * Interrupt handlers (one or two priorities) with automatic context saving and `Save … Restore`
   blocks; `Enable`/`Disable`; event handlers.
 * Direct access to every device register and register bit by name, inline assembly, exact
@@ -106,6 +107,9 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `rtccspi` | Microchip SPI RTCCs (MCP7951x/7952x, MCP795W1x/2x): the same, plus hundredths, watchdog and event detection |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
 | `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), bitmaps, pixel/line/rectangle drawing in a frame buffer, fill, contrast, invert, flip |
+| `bits` | `SetBit`, `ClearBit`, `GetBit`, `Rol`, `Ror`, `Dcd`, `Ncd`, `ISqr`, `Random` ... on Byte, Word and LongWord |
+| `buttons` | `Counter` (pulse counting) and `Button` (debounced, auto-repeat) |
+| `glcd` | graphic LCDs: KS0108, T6963C (also dual scan) and ST7920 (8-bit, 4-bit or serial): pixels, lines, boxes, circles, bytes, text and numbers |
 | `strings` | `Len` of a `String` (any size, or a literal); `Left`, `Mid` and `Right` are built into the language |
 | `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
