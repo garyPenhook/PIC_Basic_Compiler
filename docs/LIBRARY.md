@@ -446,7 +446,7 @@ Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "I
 Uses read-modify-write on `LATA/B/C`: not for use from a handler and the main program together.
 
 ## glcd (graphic LCD: KS0108, T6963C, ST7920 on an 8-bit parallel bus)
-Source: Samsung S6B0108 Ver. 0.0 (the KS0108's driver), Toshiba T6963C 2002-01-07, Sitronix ST7920 V4.0 (all in `docs/`, git-ignored). Tests: `tests/exec_glcd_ks`, `tests/exec_glcd_t69`, `tests/exec_glcd_st79` run the real module against a software model of each controller in the simulator (`glcd_models_in_simulator`); **nothing has run on a real display.** The 8 data lines take a whole port (`data` = 0, 8 or 16 for port A, B or C; use B or C, RA3 is input only on most parts); the control lines are pins 0..23 as in `lcd`. All three backends are linked into a program that calls the drawing routines (about 6 KB on the PIC18, 4 K words on a PIC16), so a part with 2 K words of flash (PIC16F152xx 2 K parts) does not fit.
+Source: Samsung S6B0108 Ver. 0.0 (the KS0108's driver), Toshiba T6963C 2002-01-07, Sitronix ST7920 V4.0 (all in `docs/`, git-ignored). Tests: `tests/exec_glcd_ks`, `tests/exec_glcd_t69`, `tests/exec_glcd_st79` run the real module against a software model of each controller in the simulator (`glcd_models_in_simulator`); **nothing has run on a real display.** The 8 data lines take a whole port (`data` = 8 or 16 for port B or C; port A is refused, RA3 is input only on most parts); the control lines are pins 0..23 as in `lcd`. All three backends are linked into a program that calls the drawing routines (about 6 KB on the PIC18, 4 K words on a PIC16), so a part with 2 K words of flash (PIC16F152xx 2 K parts) does not fit.
 
 | Routine | Effect |
 |---|---|

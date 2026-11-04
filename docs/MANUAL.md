@@ -4356,7 +4356,7 @@ writing text.
 
 ## glcd  (`Include "glcd"`, graphic LCDs: KS0108, T6963C, ST7920)
 
-Graphic LCDs on an 8-bit parallel bus, three controllers behind one drawing interface. Choose by the init call: `GlcdInitKs0108` (128 x 64 from two KS0108 chips), `GlcdInitT6963` (Toshiba T6963C, any size) or `GlcdInitSt7920` (Sitronix ST7920 in parallel mode, PSB high). `data` is 0, 8 or 16: the port whose eight pins carry DB0..DB7 (port B or C; all eight bits are used); the other lines are pins 0..23 as in the `lcd` module, 255 for `rst` meaning not controlled. Each init returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a port the part lacks). Coordinates are x right and y down from (0, 0) at the top left; anything outside the display is ignored. **Nothing has run on a real display:** the tests run the module against software models of the three controllers.
+Graphic LCDs on an 8-bit parallel bus, three controllers behind one drawing interface. Choose by the init call: `GlcdInitKs0108` (128 x 64 from two KS0108 chips), `GlcdInitT6963` (Toshiba T6963C, any size) or `GlcdInitSt7920` (Sitronix ST7920 in parallel mode, PSB high). `data` is 8 or 16: the port whose eight pins carry DB0..DB7 (port B or C; all eight bits are used; port A is refused, RA3 is input only on most parts); the other lines are pins 0..23 as in the `lcd` module, 255 for `rst` meaning not controlled. Each init returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a port the part lacks). Coordinates are x right and y down from (0, 0) at the top left; anything outside the display is ignored. **Nothing has run on a real display:** the tests run the module against software models of the three controllers.
 
 Compared with Positron8: `Plot`, `UnPlot` and `Pixel` take `(x, y)`, not `(y, x)`; `Print` / `Cls` are `GlcdWrite` / `GlcdClear`; `Box` and `Circle` are centred as there; `LCDwrite` / `LCDread` are `GlcdWriteByte` / `GlcdReadByte`; `Toshiba_Command` and `Toshiba_UDG` are `GlcdCommand` and `GlcdUdg`. The pins are arguments of the init call, not `Declare` lines.
 
@@ -4368,7 +4368,7 @@ Compared with Positron8: `Plot`, `UnPlot` and `Pixel` take `(x, y)`, not `(y, x)
 | `GlcdClear()` | clears graphics (and the T6963C text layer) |
 | `GlcdPlot(x, y)`, `GlcdUnplot(x, y)`, `GlcdSetPixel(x, y, on)`, `GlcdPixel(x, y)` | one pixel; `GlcdPixel` returns 1 or 0 |
 | `GlcdLine(on, x0, y0, x1, y1)`, `GlcdLineTo(on, x, y)` | line, ends included; `on` False erases |
-| `GlcdBox(on, x, y, size)`, `GlcdCircle(on, x, y, r)` | square outline of side `size` / circle outline of radius `r`, centred on (x, y) |
+| `GlcdBox(on, x, y, size)`, `GlcdCircle(on, x, y, r)` | square outline of side `size` pixels / circle outline of radius `r`, centred on (x, y) |
 | `GlcdWriteByte(row, col, v)`, `GlcdReadByte(row, col)` | one byte of display memory: KS0108 `row` page 0..7, `col` x 0..127, bit 0 on top; T6963C and ST7920 `row` pixel row, `col` byte column, leftmost pixel the highest bit |
 | `GlcdTextAt(col, row)`, `GlcdWriteChar(ch)`, `GlcdWrite(s)`, `GlcdWriteWord(v)` | text, 5 x 7 font in 6 x 8 cells; the T6963C uses its own text layer (cell `fontWidth` wide) |
 | `GlcdCommand(c [, d1 [, d2]])` | T6963C command with 0, 1 or 2 data bytes (sent first); ignored on the others |

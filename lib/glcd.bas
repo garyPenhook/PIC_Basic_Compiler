@@ -5,7 +5,8 @@ Include "pinio"
 '   GlcdInitT6963(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)   Toshiba T6963C, any size, 6 or 8 pixel font
 '   GlcdInitSt7920(data, rs, rw, en, rst, folded)             Sitronix ST7920, 8-bit parallel (PSB high)
 ' Each returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a data port the part lacks).
-' `data` is the first pin of the port that carries DB0..DB7: 0 = port A, 8 = port B, 16 = port C; all eight bits of the
+' `data` is the first pin of the port that carries DB0..DB7: 8 = port B, 16 = port C (port A is refused: RA3 is input only on
+' most parts); all eight bits of the
 ' port are used (`Pinio.PortWrite`, `PortRead`, `PortDirection`). The other lines are pins numbered 0..23 as in `Lcd`; 255 for
 ' `rst` means "not controlled by the module". The module is not reentrant: do not use it from a handler and the main program.
 '
@@ -39,6 +40,7 @@ Include "pinio"
 ' width fontWidth, instead). The font is the public domain X11 "5x7" fixed font (as in `Oled`).
 '
 ' Differences from the Positron8 commands: Plot / UnPlot / Pixel take (x, y), not (y, x); Box and Circle are centred as there.
+' GlcdLine does 16-bit arithmetic: keep coordinates within about +-16000.
 
 Const Font(475) As Byte = ( _
     0, 0, 0, 0, 0, 0, 0, 94, 0, 0, 0, 14, 0, 14, 0, _
@@ -117,7 +119,7 @@ End Function
 Function ClaimBus(ByVal base As Byte) As Boolean
     Dim i As Byte
     Result = False
-    If base <> 0 And base <> 8 And base <> 16 Then
+    If base <> 8 And base <> 16 Then
         Exit
     End If
     i = 0
@@ -820,11 +822,15 @@ Public Sub GlcdBox(ByVal on As Boolean, ByVal x As Integer, ByVal y As Integer, 
     Dim y0 As Integer
     Dim x1 As Integer
     Dim y1 As Integer
+    If size = 0 Then
+        GlcdSetPixel(x, y, on)
+        Exit
+    End If
     h = Integer(size >> 1)
     x0 = x - h
     y0 = y - h
-    x1 = x0 + Integer(size)
-    y1 = y0 + Integer(size)
+    x1 = x0 + Integer(size) - 1
+    y1 = y0 + Integer(size) - 1
     GlcdLine(on, x0, y0, x1, y0)
     GlcdLine(on, x1, y0, x1, y1)
     GlcdLine(on, x1, y1, x0, y1)

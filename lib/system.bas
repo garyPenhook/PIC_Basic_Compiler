@@ -201,6 +201,10 @@ End Sub
 ' unless the Config has WDTCPS = 11111 (software control), and then the period stays at the Config one.
 Private Sub SysWdtSleep(ByVal ps As Byte)
     Dim old As Byte
+    ' Cleared first: with WDTE = ON the watchdog is already running, and a period shorter than its count would reset the part.
+    Asm
+        clrwdt
+    End Asm
 #if _has(WDTCON0.SEN)
     old = WDTCON0
     WDTCON0 = (old And 192) Or (ps << 1) Or 1
