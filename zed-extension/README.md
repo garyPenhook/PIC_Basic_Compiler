@@ -20,7 +20,7 @@ zed-extension/scripts/zed-install.sh
 Then in Zed: command palette -> `zed: install dev extension` -> choose `zed-extension/`.
 
 Keys on `.bas` files: F7 build, Ctrl+F7 debug build, F6 check, Shift+F7 resource report.
-`.zed/settings.json` (here and in `my_src/`) pins `.bas` to Basil because the Swordfish
+`.zed/settings.json` (here and in `my_src/`) pins `.bas` to Basil because another
 extension claims the same suffix.
 
 Before publishing, replace the grammar `repository` in `extension.toml` with a public URL

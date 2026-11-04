@@ -1,5 +1,5 @@
 {
-  // .bas is also claimed by the Swordfish extension; pin it to Basil in basil projects.
+  // .bas is also claimed by another extension; pin it to Basil in basil projects.
   "file_types": { "Basil": ["bas"] },
   "languages": {
     "Basil": {

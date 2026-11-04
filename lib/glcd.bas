@@ -27,8 +27,8 @@ Include "pinio"
 ' area starts at address 0 and the text area (internal CG ROM, code = ASCII - 32) follows it; the external CG RAM (for GlcdUdg) is at
 ' the first 2 KB boundary above the text area (offset register = address / 800h). A pixel is set or cleared with the Bit Set / Bit Reset command on the address
 ' pointer, a read is "Data read, ADP unchanged". The leftmost pixel of a byte is the highest bit in use (bit 7 with the 8
-' pixel font, bit 5 with the 6 pixel font); the datasheet leaves that to the display drawing, this follows the Positron8
-' manual (LCDwrite). `fontWidth` is 8 or 6: it must match the FS pin and the MD2 / MD3 column setting of the module (the
+' pixel font, bit 5 with the 6 pixel font); the datasheet leaves that to the display drawing, this follows the usual
+' LCDwrite convention. `fontWidth` is 8 or 6: it must match the FS pin and the MD2 / MD3 column setting of the module (the
 ' columns are xres / fontWidth, at most 64). CE, RD and WR pulses 80 ns minimum, C/D set-up 100 ns [p.31].
 '
 ' ST7920 [pp.10-25, 34, 40]: graphic RAM is 64 rows of 16 words of 16 bits, bit 15 on the left (Table 7); an address is the
@@ -40,7 +40,7 @@ Include "pinio"
 ' Text uses the 5 x 7 font in a 6 x 8 cell, cols 0..xres/6-1 and rows 0..yres/8-1 (the T6963C uses its own text layer, cell
 ' width fontWidth, instead). The font is the public domain X11 "5x7" fixed font (as in `Oled`).
 '
-' Differences from the Positron8 commands: Plot / UnPlot / Pixel take (x, y), not (y, x); Box and Circle are centred as there.
+' Differences from the classic commands: Plot / UnPlot / Pixel take (x, y), not (y, x); Box and Circle are centred as there.
 ' GlcdLine does 16-bit arithmetic: keep coordinates within about +-16000.
 
 Const Font(475) As Byte = ( _
@@ -960,7 +960,7 @@ Public Sub GlcdSetPixel(ByVal x As Integer, ByVal y As Integer, ByVal on As Bool
     End If
 End Sub
 
-' ---- Bytes (Positron8 LCDwrite / LCDread) ----
+' ---- Bytes (LCDwrite / LCDread) ----
 ' KS0108: `row` is the page 0..7 and `col` the x position 0..127, bit 0 on top. T6963C: `row` is the pixel row and `col` the
 ' byte column 0..xres/fontWidth-1. ST7920: `row` is the pixel row 0..63 and `col` the byte column 0..15 (0..31 unfolded: x / 8).
 ' Anything outside the display is ignored (read as 0).
@@ -1279,7 +1279,7 @@ Public Sub GlcdWriteHexWord(ByVal v As Word)
     GlcdWriteHex(Byte(v And 255))
 End Sub
 
-' ---- T6963C extras (Positron8 Toshiba_Command, Toshiba_UDG) ----
+' ---- T6963C extras (Toshiba_Command, Toshiba_UDG) ----
 
 ' Sends a command byte with no data, one data byte, or two (the data first, as the controller wants). Ignored on the other
 ' controllers. See the command table [T6963C p.11]; the graphic and text areas set at init are the module's, so commands

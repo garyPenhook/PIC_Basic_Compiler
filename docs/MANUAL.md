@@ -209,7 +209,7 @@ or debug a chip (use the VS Code extension or `basil -g` with Microchip's tools 
 | Language server `basil-lsp` | `basil --check` diagnostics (on change) with the file, line and column of each error; keyword and symbol completion (also after `.`); keyword hover; the document outline (`lsp/basil-lsp.js`, Node, no dependencies). It reads the standard library only. |
 | Tasks | `basil: build`, `check (front end only)`, `debug build (-g)`, `resource report`, `build + open assembly`, `clean outputs`, `version` (Run Task: `task: spawn`). |
 | Snippets | Common program shapes, installed as `snippets/basil.json`. |
-| Project settings | `.zed/settings.json` pins `.bas` to Basil (the Swordfish extension claims the same suffix) and turns off its language server. |
+| Project settings | `.zed/settings.json` pins `.bas` to Basil (another extension claims the same suffix) and turns off its language server. |
 
 Install (needs Node, `rsync` and `basil` on the PATH):
 
@@ -1060,7 +1060,7 @@ While True
 Wend
 ```
 
-**Differences from Swordfish.** Swordfish gives every event its own frame that is never shared;
+**Frames.** Some compilers give every event its own frame that is never shared;
 here handler frames overlay by the call graph, which saves RAM, and the compiler's implicit `Save`
 (above) is what makes the call from an interrupt safe. Event parameters, comparison and arrays are
 additions.
@@ -1634,7 +1634,7 @@ EndSelect
 Terminate()
 ```
 **Overview** Stops the program: it falls into the halt loop (a self-branch). `Stop` (with or without parentheses)
-is the same statement, as in Positron8; a program's own `Stop` replaces it.
+is the same statement; a program's own `Stop` replaces it.
 
 **Example**
 ```basic
@@ -1650,7 +1650,7 @@ Terminate()
 Stop
 Stop()
 ```
-**Overview** Halts the program for ever, exactly as `Terminate()` does (the Positron8 name): the code falls into a one-instruction loop that branches to itself.
+**Overview** Halts the program for ever, exactly as `Terminate()` does: the code falls into a one-instruction loop that branches to itself.
 Interrupts that are enabled still run; the program never gets past the `Stop`. Use it to end a program that has no main loop, or to freeze after a fatal error so that the
 state can be read with a debugger. A program's own `Stop` (a routine, variable or constant of that name) replaces it, and a label called `Stop` is not affected.
 
@@ -2559,7 +2559,7 @@ Loop
 ```basic
 System.Snooze(period)
 ```
-**Overview** Sleeps for a short time, timed by the watchdog (so independent of the oscillator). `period` 0..7 gives about 2^period x 16 ms (16, 32, 64, 128, 256, 512 ms, 1 s, 2 s); a larger value counts as 7. Positron8 uses 18 ms units; here the unit is the nearest watchdog period (16 ms nominal). The time is approximate (the 31 kHz LFINTOSC varies with temperature and voltage), and an interrupt that wakes the part sooner ends the snooze sooner. The watchdog register is saved and restored, and it works the same on every supported family (WDTCON or WDTCON0, period in bits 5:1, enable in bit 0).
+**Overview** Sleeps for a short time, timed by the watchdog (so independent of the oscillator). `period` 0..7 gives about 2^period x 16 ms (16, 32, 64, 128, 256, 512 ms, 1 s, 2 s); a larger value counts as 7. The unit here is the nearest watchdog period (16 ms nominal). The time is approximate (the 31 kHz LFINTOSC varies with temperature and voltage), and an interrupt that wakes the part sooner ends the snooze sooner. The watchdog register is saved and restored, and it works the same on every supported family (WDTCON or WDTCON0, period in bits 5:1, enable in bit 0).
 
 **Requirements** The `Config` needs `WDTE = SWDTEN` (the call turns the watchdog on for the sleep and off again) or `WDTE = ON`. With `WDTE` off, or on-except-in-Sleep, nothing wakes the part but an interrupt. On the PIC16F13xxx, PIC16F171xx and PIC18 Q10/Q41 parts the period bits are read-only unless the `Config` has `WDTCPS = 11111`; the snooze then uses the `Config` period.
 
@@ -4363,7 +4363,7 @@ writing text.
 
 Graphic LCDs, three controllers behind one drawing interface (8-bit parallel bus; the ST7920 also on a 4-bit or serial interface, the T6963C also as a dual-scan screen). Choose by the init call: `GlcdInitKs0108` (128 x 64 from two KS0108 chips), `GlcdInitT6963` (Toshiba T6963C, any size) or `GlcdInitSt7920` (Sitronix ST7920 in parallel mode, PSB high). `data` is 8 or 16: the port whose eight pins carry DB0..DB7 (port B or C; all eight bits are used; port A is refused, RA3 is input only on most parts); the other lines are pins 0..23 as in the `lcd` module, 255 for `rst` meaning not controlled. Each init returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a port the part lacks). Coordinates are x right and y down from (0, 0) at the top left; anything outside the display is ignored. **Nothing has run on a real display:** the tests run the module against software models of the three controllers.
 
-Compared with Positron8: `Plot`, `UnPlot` and `Pixel` take `(x, y)`, not `(y, x)`; `Print` / `Cls` are `GlcdWrite` / `GlcdClear`; `Box` and `Circle` are centred as there; `LCDwrite` / `LCDread` are `GlcdWriteByte` / `GlcdReadByte`; `Toshiba_Command` and `Toshiba_UDG` are `GlcdCommand` and `GlcdUdg`. The pins are arguments of the init call, not `Declare` lines.
+Notes: `Plot`, `UnPlot` and `Pixel` take `(x, y)`, not `(y, x)`; `Print` / `Cls` are `GlcdWrite` / `GlcdClear`; `Box` and `Circle` are centred as there; `LCDwrite` / `LCDread` are `GlcdWriteByte` / `GlcdReadByte`; `Toshiba_Command` and `Toshiba_UDG` are `GlcdCommand` and `GlcdUdg`. The pins are arguments of the init call, not `Declare` lines.
 
 | Routine | Effect |
 |---|---|
@@ -4836,7 +4836,7 @@ End If
 
 ## buttons  (`Include "buttons"`, Counter and Button)
 
-Counterparts of the Positron8 commands, on any pin numbered 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16; a pin the part lacks reads as low). The pin is made an input.
+Counterparts of the classic BASIC pin commands, on any pin numbered 0..23 (`RA0` = 0, `RB0` = 8, `RC0` = 16; a pin the part lacks reads as low). The pin is made an input.
 They are polled and cycle-counted like `pulse`, so they follow `Clock`, interrupts lengthen them, and the module is not reentrant. The module is called `Buttons`
 because `Button` is the routine's name.
 
@@ -4993,7 +4993,7 @@ Wend
 ```basic
 PwmPin(pin, duty, cycles)
 ```
-**Overview** Software pulse-width modulation to charge an R-C filter (Positron's `PWM`; it is not the hardware `pwm` module).
+**Overview** Software pulse-width modulation to charge an R-C filter (the classic `PWM` command; it is not the hardware `pwm` module).
 
 **Parameters** `duty` 0..255 steps high out of 256; `cycles` the number of 256-step periods (10 us a step).
 
@@ -5147,7 +5147,7 @@ End If
 
 ## bits  (`Include "bits"`, bit tests, rotates, decoding, integer square root, random numbers)
 
-Counterparts of the Positron8 `ClearBit`, `Dcd`, `Dig`, `GetBit`, `ISqr`, `LoadBit`, `Ncd`, `Random`,
+Counterparts of the classic `ClearBit`, `Dcd`, `Dig`, `GetBit`, `ISqr`, `LoadBit`, `Ncd`, `Random`,
 `Rol`, `Ror`, `Seed`, `SetBit` and `Swap` commands. Spelling differs where the original does not
 fit: the original changes its argument in place, basil's routines **return the new value**
 (`x = SetBit(x, 3)`), and `Swap` is split into `SwapNibbles` and `SwapBytes`. `Byte`, `Word` and

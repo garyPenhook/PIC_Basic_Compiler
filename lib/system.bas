@@ -220,7 +220,7 @@ Private Sub SysWdtSleep(ByVal ps As Byte)
 #endif
 End Sub
 
-' A short sleep, as in Positron8: the part sleeps for about 2^period x 16 ms (period 0..7: 16, 32, 64, 128, 256, 512 ms, 1 s,
+' A short sleep, as in classic BASIC: the part sleeps for about 2^period x 16 ms (period 0..7: 16, 32, 64, 128, 256, 512 ms, 1 s,
 ' 2 s; a larger value counts as 7). The time comes from the watchdog, so it is independent of the oscillator and is
 ' approximate (the LFINTOSC varies with temperature and voltage). An interrupt that wakes the part sooner ends the
 ' sleep sooner. Needs the watchdog Config described at SysWdtSleep (WDTE = SWDTEN or ON).

@@ -997,7 +997,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Intrinsics `PinSet(pin)`, `PinClear(pin)` (LATx) and `PinPullup([Enable|On|Disable|Off,] pin)` (WPUx), sharing the `PinMode` lowering (`pin_op` in `src/lower.rs`): port bit, port, constant or run-time pin number. `Enable`/`Disable` became callable keywords so they parse as the mode word.
 - Modules: `pulse` (`PulseIn`, `PulseOut`, `RCin`, `Pot`, `Servo`, `PwmPin`, `Sound`, `Sound2`), `irremote` (`SonyIn`, `RC5In`), `x10` (`Xout`, `Xin`). All bit-banged over `pinio`.
 - Tests: `tests/exec/pinops.bas`, `tests/exec/lib_pulse.bas`, `tests/exec_pins/lib_pins_model.bas` (pin-model double of `Pinio`: X-10 frames recorded and played back through `Xin`, Sony waveform, pulse widths, pin-write counts), negative tests, library programs.
-- Not done: USB commands (no supported device has USB); `Xin_Translate`/`Xout_Translate`; RC5 and all microsecond timing untested (the simulator has no pin or time model); nothing ran on hardware. The X-10 tables are from memory, cross-checked with the Positron key codes.
+- Not done: USB commands (no supported device has USB); `Xin_Translate`/`Xout_Translate`; RC5 and all microsecond timing untested (the simulator has no pin or time model); nothing ran on hardware. The X-10 tables are from memory, cross-checked with published key codes.
 
 ## PIC18-Q41 hardware I2C: `#option I2c = Hardware` (done 2026-10-31)
 - Why this shape: the I2C1 peripheral counts the bytes of a transfer (`I2C1CNT`) and decides the Stop, the Restart pause and the acknowledge of a received byte from the count, so the step API (`I2cStart/Send/Receive(ack)/Stop`) cannot be mapped onto it exactly (a TXB write at the Restart pause is a Restart; the acknowledge of a sent byte is only visible at the next byte or at the pause). The module therefore offers block routines, `I2cReadRegs(addr, reg, n)`, `I2cWriteRegs(addr, reg, n)`, `I2cProbe(addr)`, data in `I2cBuf(8)`, status 5 for a count outside 1..8. They exist on every backend (built from the step routines on the software host and the MSSP); only the Q41 with `#option I2c = Hardware` drives I2C1. `I2cInit` takes `hz` 1..400000 and any pin 0..23 of the part (`RxyPPS` 33 = SCL1, 34 = SDA1; the registers are contiguous from `RA0PPS` = 0x201, so one `FSR2` indirect write sets either; `I2C1CLK` = FOSC/4).
@@ -1152,14 +1152,14 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `pulse`: bound pins (`BindData`/`BindClk`, `DataPut`/`DataRead`/`ClkPut`). `lcd`, `oled`: private Basic `PinSet`/`PinOutput` removed in favour of `Pinio`'s. lib_lcd 741 -> 727 words, lib_oled 1902 -> 1887, lib_pulse 766 -> 774 (bind routines).
 
 ## bits module; manual in categories (done 2026-11-04, 0.1.128)
-- New `lib/bits.bas`, counterparts of the Positron8 bit/maths commands: `SetBit ClearBit LoadBit GetBit` (Byte/Word/LongWord overloads), `Rol Ror` (Byte/Word), `SwapNibbles SwapBytes`, `Dcd Ncd Dig ISqr`, `Seed Random` (16-bit xorshift). They return the new value rather than changing the argument. Test: `tests/exec/lib_bits.bas` (MDB, 18F27Q10).
+- New `lib/bits.bas`, counterparts of the classic BASIC bit/maths commands: `SetBit ClearBit LoadBit GetBit` (Byte/Word/LongWord overloads), `Rol Ror` (Byte/Word), `SwapNibbles SwapBytes`, `Dcd Ncd Dig ISqr`, `Seed Random` (16-bit xorshift). They return the new value rather than changing the argument. Test: `tests/exec/lib_bits.bas` (MDB, 18F27Q10).
 - `docs/MANUAL.md` sections 2 and 3 regrouped into categories, alphabetical within each (no text removed); contents and Appendix A updated.
-- Still missing from the Positron8 list: `Len`-family string commands beyond `Len` (`ToUpper ToLower`), `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.
+- Still missing from the target command list: `Len`-family string commands beyond `Len` (`ToUpper ToLower`), `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.
 
 ## ToUpper, ToLower (done 2026-11-04, 0.1.129)
 - Built-in statements (`PREDEFINED_INTRINSICS`, so a program's own name wins) that change a `String` or `Char` variable in place: `lower::case_change` writes a loop over the string elements, each letter found by `c - 'a' < 26`. A library routine cannot do it: a `ByRef` String must match the callee's size and `ByRefConst` is read-only.
 - Tests: `tests/exec/str_case.bas` (18F27Q10, 16F17126, 18F16Q41), `tests/negative/case_const.bas`.
-- Still missing from the Positron8 list: `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.
+- Still missing from the target command list: `Sleep`/`Snooze`, `Stop`, `Counter`, `Button`, `Tern`, `SizeOf`, `Branch`/`On GoTo`, graphic LCD commands.
 
 ## Stop, SizeOf, Tern, Branch/On GoTo, Counter, Button, Sleep (done 2026-11-04, 0.1.130)
 - `Stop` is `Terminate()` (a `PREDEFINED_INTRINSICS` name, so a program's own `Stop` wins; bare `Stop` is accepted). The exec harness cannot see a halt that is not at `__halt`, so `tests/exec/stop_cmd.bas` compiles two Stops that are not taken.
@@ -1167,18 +1167,18 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `Tern(c, a, b)`: integers, Booleans or Chars; lowered to an `If` into a hidden variable through `self.pre`, so only the chosen branch's calls run (as `And`/`Or` do). Tests `tern_cmd.bas`, `negative/tern_mixed.bas`.
 - `On n GoTo a, b, c` and `Branch n, a, b, c`: parsed to a `Select` with one `GoTo` case per label (no new IR); `On` and `Branch` stay identifiers (statement start, next token not punctuation). Test `on_goto.bas`.
 - `lib/buttons.bas` (`Buttons.Counter`, `Buttons.Button`) and `System.Sleep()`. Counter ran 16 per cent long at 64 MHz (412645 cycles for 25 ms of delays and a 5 ms count). Tests `lib_buttons.bas`, `lib_sleep.bas`.
-- Still missing from the Positron8 list: timed `Sleep`/`Snooze` (the WDT registers differ per family and need a data sheet pass for each), the graphic LCD commands (a controller has to be chosen first; `oled` covers the SSD1309).
+- Still missing from the target command list: timed `Sleep`/`Snooze` (the WDT registers differ per family and need a data sheet pass for each), the graphic LCD commands (a controller has to be chosen first; `oled` covers the SSD1309).
 
 ## Snooze and timed Sleep (done 2026-11-04, 0.1.131)
 - `System.Snooze(period)` (about 2^period x 16 ms, 0..7) and `System.Sleep(seconds)` in `lib/system.bas`, both on a private `SysWdtSleep(ps)` that writes WDTCON/WDTCON0 (period in bits 5:1, enable in bit 0), sleeps, and restores the register. The layout was checked against DS40002043F, DS40002195E, DS40002242F, DS40002343F, DS40002519D and DS40001839E; the WDT is cleared on entering and leaving Sleep, so no `clrwdt`. Needs `WDTE = SWDTEN` or `ON`; PS is read-only when `WDTCPS` is not 11111 on the newer parts. Test `tests/exec/lib_snooze.bas` (compiled, not run). Nothing has run on a real part.
-- Still missing from the Positron8 list: the graphic LCD commands (a controller has to be chosen first; `oled` covers the SSD1309).
+- Still missing from the target command list: the graphic LCD commands (a controller has to be chosen first; `oled` covers the SSD1309).
 
 ## Graphic LCD (done 2026-11-04, 0.1.132)
 - `lib/glcd.bas`: KS0108 (128 x 64, two chips), T6963C (any size, 6 or 8 pixel font) and ST7920 (8-bit parallel) behind one interface: `GlcdPlot`/`Unplot`/`Pixel`, `Line`/`LineTo`/`Box`/`Circle`, `WriteByte`/`ReadByte` (LCDwrite/LCDread), text, `GlcdCommand` (Toshiba_Command), `GlcdUdg` (Toshiba_UDG). The backend is chosen at run time by the init call, so every backend is linked (about 6 KB on the PIC18); splitting them per controller would save that, at the price of three copies of the drawing code.
 - `lib/pinio.bas` gained `PortWrite` / `PortRead` / `PortDirection` (whole-port byte access for the data bus).
-- Data sheets downloaded to `docs/` (git-ignored): `Samsung_S6B0108_v0.0.pdf`, `Toshiba_T6963C_v2002-01-07.pdf`, `Sitronix_ST7920_v4.0.pdf`. Commands, status bits, read behaviour (dummy read), init sequences and bus timing are from them. Two things are not: the T6963C pixel order within a byte (taken from the Positron8 manual) and the ST7920 128 x 64 folding of rows 32..63 into words 8..15 (taken from common module drivers; `GlcdInitSt7920(..., folded)` makes it a choice). The ST7920 serial mode is not supported (no read-back, so no single-pixel drawing).
+- Data sheets downloaded to `docs/` (git-ignored): `Samsung_S6B0108_v0.0.pdf`, `Toshiba_T6963C_v2002-01-07.pdf`, `Sitronix_ST7920_v4.0.pdf`. Commands, status bits, read behaviour (dummy read), init sequences and bus timing are from them. Two things are not: the T6963C pixel order within a byte (taken from the display documentation) and the ST7920 128 x 64 folding of rows 32..63 into words 8..15 (taken from common module drivers; `GlcdInitSt7920(..., folded)` makes it a choice). The ST7920 serial mode is not supported (no read-back, so no single-pixel drawing).
 - Tests: `tests/exec_glcd_ks`, `exec_glcd_t69`, `exec_glcd_st79`, each a `Pinio` test double that models the controller plus the real module (symlink); `glcd_models_in_simulator` in `tests/backend.rs`. Pixel counts of lines, boxes and circles were computed by a Python mirror of the algorithms. Nothing has run on a real display.
-- Still missing from the Positron8 list: nothing in the command list. Not done: ST7920 serial and 4-bit modes, T6963C dual-scan screens, `Print` of numbers other than `GlcdWriteWord`.
+- Still missing from the target command list: nothing in the command list. Not done: ST7920 serial and 4-bit modes, T6963C dual-scan screens, `Print` of numbers other than `GlcdWriteWord`.
 
 ## Review fixes (0.1.133)
 - `SysWdtSleep` clears the watchdog before changing its period (with `WDTE = ON` a running count could exceed the new, shorter period and reset the part); the docs say a wake-up handler runs before the period is restored.
@@ -1187,7 +1187,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## #variable, more predefined names, Declare Name = value (done 2026-11-04, 0.1.134)
 - `#variable` (reassignable, no `Const`), predefined `_core _maxram _maxrom _ports _adc _usart _mssp _ccp _comparator _flash_write` (derived from register names in the device description: `Predef.extra`, `project::device_registers`), `Declare Name = value` as a `Const` (`pp::declare_const`; non-constant values are `E-UNSUPPORTED`). Tests: `tests/exec/pp_predef.bas`, `declare_const.bas`, `negative/declare_other.bas`, `pp_variable_bad.bas`, unit test `variable_changes_and_extra_predefined_names`.
-- Not done: `BitOf` (the Positron8 manual has no such command, so there is nothing to implement it from), `_adres`, `_usb`, `_eccp`.
+- Not done: `BitOf` (no reference manual has such a command, so there is nothing to implement it from), `_adres`, `_usb`, `_eccp`.
 
 ## glcd gaps closed, two optimiser fixes (done 2026-11-04, 0.1.135)
 - `glcd`: number printing (`GlcdWriteInt/Long/LongInt/Hex/HexWord`); T6963C dual scan (`GlcdInitT6963Dual`, lower half at +8000h, text and UDG written to both); ST7920 4-bit (`GlcdInitSt7920x4`, DB4..DB7 on the upper nibble of a port) and serial (`GlcdInitSt7920Serial`, 1 KB shadow copy, only with `_maxram >= 1536`); ST7920 text now splices the 6 pixels of each glyph row into one or two graphic words (about 100 bus cycles per character instead of about 480).

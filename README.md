@@ -66,7 +66,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * Subroutines and functions with by-value, `ByRef` and `ByRefConst` parameters; `Inline`/`NoInline`; modules and `Include`.
 * `Abs`, `Min`, `Max`, `Inc`/`Dec` (with an optional amount), `AddressOf` / `@`.
 * Preprocessor: `#define`, `#ifdef`, `#if` / `#elseif`, `#constant`, `#variable`, `#error`, with `_clock`, `_device`, `_has(REG)` and the device facts `_ram`, `_maxrom`, `_ports`, `_usart`, `_mssp`, `_ccp` ...; `Declare Name = value` makes a constant.
-* Positron8-style commands: `Stop`, `SizeOf`, `Tern`, `Branch` / `On n GoTo`, `ToUpper` / `ToLower`.
+* BASIC-style commands: `Stop`, `SizeOf`, `Tern`, `Branch` / `On n GoTo`, `ToUpper` / `ToLower`.
 * Interrupt handlers (one or two priorities) with automatic context saving and `Save … Restore`
   blocks; `Enable`/`Disable`; event handlers.
 * Direct access to every device register and register bit by name, inline assembly, exact

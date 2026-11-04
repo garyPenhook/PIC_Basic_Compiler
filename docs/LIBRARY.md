@@ -457,10 +457,10 @@ Source: Samsung S6B0108 Ver. 0.0 (the KS0108's driver), Toshiba T6963C 2002-01-0
 | `GlcdPlot(x, y)` / `GlcdUnplot(x, y)` / `GlcdSetPixel(x, y, on)` / `GlcdPixel(x, y)` | set / clear / either / read (1 or 0); outside the display is ignored |
 | `GlcdLine(on, x0, y0, x1, y1)` / `GlcdLineTo(on, x, y)` | Bresenham line; LineTo starts at the end of the last line |
 | `GlcdBox(on, x, y, size)` / `GlcdCircle(on, x, y, r)` | outline of a square / circle centred on (x, y) |
-| `GlcdWriteByte(row, col, v)` / `GlcdReadByte(row, col)` | Positron8 LCDwrite / LCDread: KS0108 page 0..7 and x 0..127 (bit 0 on top); T6963C pixel row and byte column; ST7920 pixel row and byte column |
+| `GlcdWriteByte(row, col, v)` / `GlcdReadByte(row, col)` | `LCDwrite` / `LCDread` counterpart: KS0108 page 0..7 and x 0..127 (bit 0 on top); T6963C pixel row and byte column; ST7920 pixel row and byte column |
 | `GlcdTextAt(col, row)` / `GlcdWriteChar(ch)` / `GlcdWrite(s)` / `GlcdWriteWord(v)` | text in the 5 x 7 font on a 6 x 8 cell grid (T6963C: its own text layer and CG ROM) |
-| `GlcdCommand(c)` / `GlcdCommand(c, d1)` / `GlcdCommand(c, d1, d2)` | Positron8 Toshiba_Command: any T6963C command (data first); ignored on the other controllers |
-| `GlcdUdg(code, img)` / `GlcdWriteCode(code)` | Positron8 Toshiba_UDG: user character 128..255 from 8 row bytes, and a raw text code (T6963C) |
+| `GlcdCommand(c)` / `GlcdCommand(c, d1)` / `GlcdCommand(c, d1, d2)` | `Toshiba_Command` counterpart: any T6963C command (data first); ignored on the other controllers |
+| `GlcdUdg(code, img)` / `GlcdWriteCode(code)` | `Toshiba_UDG` counterpart: user character 128..255 from 8 row bytes, and a raw text code (T6963C) |
 
 ## epaper (WeAct 2.13" / 2.9" e-paper, SSD1680, 4-wire SPI)
 Source: Solomon Systech SSD1680 Rev 0.14 (`docs/SSD1680_Datasheet.pdf`: command table 7-1, data entry 8.3, RAM windows 8.4-8.6, operation flow 9.1, SPI 6.1 and 12.1), the WeAct panel specs and schematic (`docs/WeAct-*`), and the vendor's example code (github.com/WeActStudio/WeActStudio.EpaperModule), which supplies what the data sheet does not (marked `[WeAct]` in the source). Test: `tests/exec_epaper` runs the real module against a software model of the SSD1680 (`epaper_model_in_simulator`); **nothing has run on a real panel.** No frame buffer: bytes of 8 pixels are written straight to the controller RAM (`x`, `w` multiples of 8). Fast and partial refresh are not provided.
@@ -553,10 +553,10 @@ Tested: `SonyIn` against a waveform in `tests/exec_pins/lib_pins_model.bas`; `RC
 
 `Xout(dataPin, zeroPin, house, key, reps)` sends a code through a PL513 or TW523; `Xin(dataPin, zeroPin, timeout, value)` receives one through a TW523.
 `house` is 0..15 (A..P), `key` 0..15 is the unit 1..16 and 16 + n a function (`UnitOn` 18, `UnitOff` 26, `UnitsOff` 28, `LightsOn` 20, `LightsOff` 16,
-`Bright` 22, `DimIt` 30), sent as in the Positron manual. Frames go out `reps` times (at least 2) in pairs with three silent cycles between pairs, except `Bright` and `DimIt`.
+`Bright` 22, `DimIt` 30), sent as the X-10 protocol defines them. Frames go out `reps` times (at least 2) in pairs with three silent cycles between pairs, except `Bright` and `DimIt`.
 `Xin` gives house in the high byte and key in the low byte and returns False on a timeout (in half-cycles; 0 = until the zero-cross pulses stop), a frame whose bit and complement agree,
 or no zero-cross pulses for about 50 ms. The interface outputs are open collector: use 4.7 k pull-ups. `CodeOf` / `NumberOf` convert a house or unit number to the 4-bit line code and back.
-The start code, bit order and function codes follow the X-10 protocol as recalled with the Positron key-code table (all seven function codes agree with it); the 1 ms burst
+The start code, bit order and function codes follow the X-10 protocol as recalled from memory; the 1 ms burst
 and the 0.5 ms sampling delay are not measured on a real interface. Tested against a pin model: frames recorded by `Xout` are played back through `Xin`. Never connect a pin to the AC line.
 
 ## aht30 (AHT30 temperature and humidity sensor, I2C)

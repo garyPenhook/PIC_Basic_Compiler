@@ -1,6 +1,6 @@
 Module Buttons
 Include "pinio"
-' Counter and Button, counterparts of the Positron8 commands of the same names, on any pin numbered as in `Pinio`
+' Counter and Button, counterparts of the classic commands of the same names, on any pin numbered as in `Pinio`
 ' (RA0 = 0, RB0 = 8, RC0 = 16). A pin the part lacks reads as low. The pin is made an input. The module is not reentrant
 ' (it binds its pin once with `Pinio.BindData`, which `shift` and `pulse` share).
 '
