@@ -296,8 +296,8 @@ measured image deltas, and nothing in this section is implemented.
 
 | # | Where | Change | Estimate |
 |---|---|---|---|
-| L1 | `(x And 2^k) <> 0` on Word/LongWord (CRC, bit loops) copies to `__A`, masks, clears the upper bytes and tests all of them (~13 words) | narrow `And` with a constant to the bytes the mask touches; emit `btfsc`/`btfss` (2 words) | about -11 words per site |
-| L2 | `x = (x >> 1) Xor K` goes through a 4-byte copy-in and copy-out (8 `movff`) although the plain shift is already in place | shift the destination in place, then apply the constant bytes to it | about -16 words per site (CRC32, CRC16, LFSR, `isqrt`) |
+| L1 (done 0.1.139) | `(x And 2^k) <> 0` on Word/LongWord (CRC, bit loops) copies to `__A`, masks, clears the upper bytes and tests all of them (~13 words) | narrow `And` with a constant to the bytes the mask touches; emit `btfsc`/`btfss` (2 words) | about -11 words per site |
+| L2 (done 0.1.139) | `x = (x >> 1) Xor K` goes through a 4-byte copy-in and copy-out (8 `movff`) although the plain shift is already in place | shift the destination in place, then apply the constant bytes to it | about -16 words per site (CRC32, CRC16, LFSR, `isqrt`) |
 | L3 | array access repeats `movf j,w` + a 2-word `lfsr`; the bubble-sort swap rereads `data(j)` it already holds in a temp | keep FSR0 live across adjacent accesses, `POSTINC0` for `a(j)` then `a(j+1)`, reuse a value held in a temp (block-local value numbering) | about -3 to -6 words per extra access |
 | L4 | Integer * Integer is sign-extended to 32 bits and sent to the 67-word `__mul4` | signed 16x16->32 helper from four `MULWF` (about 20 words); same for Word x Word, Byte x Word | about -30 to -45 words per site; `__mul4` drops out of 16-bit-only programs |
 | L5 | `Integer32 / constant` (e.g. `acc / 160`) calls the 73-word `__sdiv4` | choose a 16-bit helper when range analysis shows the dividend fits; extend constant division to signed operands | about -45 words when `__sdiv4` becomes unused |
@@ -313,3 +313,9 @@ touch helper selection in `lower.rs`/`codegen.rs`. (5) Re-measure after each ste
 Flags (carry, zero) must not be assumed from an instruction the new sequence no longer emits. A value reused from a
 temp is valid only until a call, an ISR-visible variable or another store to the same array can change it. Scratch
 `__A`/`__B`/`__C` are shared with the helpers, so no dead-copy removal across a `call`.
+
+**Progress (0.1.139).** `bench/large/` holds the four programs, `run.sh` and the sink expectations (`exec-test.py` checks
+`K_SINK` against the value XC8 `-Os` produced). L1 (`and_test` in `codegen.rs`: `btfsc`/`btfss` for a one-bit mask, `movlw`/`andwf`
+for several bits, one test per non-zero mask byte) and L2 (`(x >> k) Xor K` shifted into the destination, then the constant folded in
+byte by byte) are implemented, `-O1` and up only. Program bytes, basil: a_algo 2382 to 2280, b_dsp 3104 to 3102, c_text 1788 to 1786,
+d_ctrl 1466 to 1464; total 8740 to 8632 (1.14 of `-Os`). Tests: `tests/exec/and_mask_test.bas`, `tests/exec/shift_fold_const.bas`.

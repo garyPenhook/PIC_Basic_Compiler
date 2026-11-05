@@ -128,6 +128,43 @@ fn bit_compare<'a>(k: CmpKind, l: &'a Ex, r: &'a Ex) -> Option<(&'a Place, bool)
     Some((bit, (k == CmpKind::Eq) == (c == 1)))
 }
 
+/// `(x And K) = 0` / `<> 0` where `x` is a directly addressed, zero-extended integer: the place,
+/// the bytes of `K` that are not zero as `(byte index, mask)`, and whether the test is `<> 0`.
+fn and_test<'a>(k: CmpKind, l: &'a Ex, r: &'a Ex) -> Option<(&'a Place, Vec<(u32, u8)>, bool)> {
+    if !matches!(k, CmpKind::Eq | CmpKind::Ne) {
+        return None;
+    }
+    let (and, zero) = match (&l.k, &r.k) {
+        (ExK::Bin(..), ExK::Const(z)) => (l, *z),
+        (ExK::Const(z), ExK::Bin(..)) => (r, *z),
+        _ => return None,
+    };
+    let ExK::Bin(BinKind::And, a, b) = &and.k else { return None };
+    if zero != 0 {
+        return None;
+    }
+    let (x, c) = match (&a.k, &b.k) {
+        (_, ExK::Const(c)) => (&**a, *c),
+        (ExK::Const(c), _) => (&**b, *c),
+        _ => return None,
+    };
+    // Look through a widening of an unsigned operand: the extra bytes are zero.
+    let x = match &x.k {
+        ExK::Conv(inner) if !inner.signed && inner.w <= x.w => &**inner,
+        _ => x,
+    };
+    let ExK::Load(p) = &x.k else { return None };
+    if p.is_bit() || p.indirect() || (x.signed && x.w < and.w) {
+        return None;
+    }
+    let n = p.bytes();
+    let bytes: Vec<(u32, u8)> = (0..n.min(4)).map(|i| (i, (c >> (8 * i)) as u8)).filter(|&(_, m)| m != 0).collect();
+    if bytes.is_empty() {
+        return None;
+    }
+    Some((p, bytes, k == CmpKind::Ne))
+}
+
 impl Region {
     /// The lowest start where `n` bytes fit without clobbering a block that can be live at the
     /// same time as `owner`. With `one_bank` the bytes stay inside one 256-byte bank, so a single
@@ -2741,6 +2778,32 @@ impl<'p> Gen<'p> {
                     self.br(Cc::Always, target);
                     return;
                 }
+                // `(x And K) <> 0` tests only the bytes K touches: `btfsc` for a single bit.
+                if self.tgt.opt && let Some((p, bytes, ne)) = and_test(*k, l, r) {
+                    let m = self.place_mem(p, false);
+                    // Jump on "some masked bit set" when `ne == when`, else on "all masked bits clear".
+                    let on_set = ne == when;
+                    let skip = self.fresh();
+                    let last = bytes.len() - 1;
+                    for (n, &(i, mask)) in bytes.iter().enumerate() {
+                        let mb = m.at(i);
+                        // The final byte decides the fall-through case itself; earlier ones skip on a set bit.
+                        let jump_if_set = on_set || n != last;
+                        let dest = if n == last && !on_set { target } else if on_set { target } else { &skip };
+                        if mask.is_power_of_two() {
+                            self.fbit(if jump_if_set { "btfsc" } else { "btfss" }, &mb, mask.trailing_zeros() as u8);
+                            self.br(Cc::Always, dest);
+                        } else {
+                            self.ins(format!("movlw 0x{mask:02X}"));
+                            self.fop("andwf", &mb, "w");
+                            self.br(if jump_if_set { Cc::Nz } else { Cc::Z }, dest);
+                        }
+                    }
+                    if !on_set && bytes.len() > 1 {
+                        self.label(&skip);
+                    }
+                    return;
+                }
                 let kind = if when { *k } else { k.negate() };
                 self.cmp_jump(kind, l, r, target);
             }
@@ -3347,6 +3410,28 @@ impl<'p> Gen<'p> {
             && self.bin_direct(*op, &dst, &ls, &rs, n)
         {
             return;
+        }
+        // `y = (x >> k) Xor K` (also Or, And, `<<`, either operand order): shift into the destination, then fold the
+        // constant into it byte by byte, instead of building the value in `__A` and copying it out.
+        if n > 1 && self.tgt.opt && let ExK::Bin(op, l, r) = &e.k
+            && matches!(op, BinKind::And | BinKind::Or | BinKind::Xor)
+        {
+            for (sh, k) in [(l, r), (r, l)] {
+                if let ExK::Bin(sop @ (BinKind::Shl | BinKind::Shr), v, amt) = &sh.k
+                    && let Some(amt) = amt.as_const()
+                    && sh.w == e.w
+                    && v.w == e.w
+                    && let Some(ks) = self.simple(k)
+                    && matches!(ks, Src::Imm(_))
+                    && let Some(Src::Mem(sm, real)) = self.simple(v)
+                    && real == n
+                    && self.shift_direct(&dst, &sm, *sop == BinKind::Shl, sh.signed, amt, n)
+                {
+                    let d2 = dst.clone();
+                    self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &ks, n);
+                    return;
+                }
+            }
         }
         if n > 1 && self.tgt.opt && let ExK::Bin(op, l, r) = &e.k {
             // `x << k`, `x >> k` and `x * 2^k` (either way round) on a variable.
