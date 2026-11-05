@@ -1,5 +1,7 @@
 # Plan: portable toolchain discovery
 
+**Status: implemented in 0.1.137** (`src/toolchain.rs`, `--dfp`, `--doctor`). Decisions on the open questions: Linux, macOS and Windows; fall back to the newest installed pack version with a warning; no `basil.toml`. The macOS and Windows install folders are unverified defaults.
+
 ## Problem
 A new user who clones the repo must be able to compile without hand-editing. Today:
 - `find_pic_as` (src/driver.rs) only scans `/opt/microchip/xc8/*` (Linux), picking the newest by lexical sort.
