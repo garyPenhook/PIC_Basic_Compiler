@@ -66,6 +66,38 @@ fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
+/// The per-user settings file: `$XDG_CONFIG_HOME/basil/config`, `~/.config/basil/config`, or `%APPDATA%\basil\config`.
+pub fn config_path() -> Option<PathBuf> {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| home_dir().map(|h| h.join(".config")))
+    };
+    base.map(|b| b.join("basil").join("config"))
+}
+
+/// The settings in `text`: `key = value` lines (`pic-as`, `xc8-cc`, `dfp`, `packs`); blank lines and `#` comments
+/// are skipped and a value may be quoted. A key may repeat (`packs`).
+pub fn parse_config(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let (k, v) = l.split_once('=').filter(|_| !l.starts_with('#'))?;
+            Some((k.trim().to_string(), v.trim().trim_matches('"').trim_matches('\'').to_string()))
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect()
+}
+
+fn config_values(key: &str) -> Vec<String> {
+    let text = config_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    parse_config(&text).into_iter().filter(|(k, _)| k == key).map(|(_, v)| v).collect()
+}
+
+fn config_value(key: &str) -> Option<PathBuf> {
+    config_values(key).pop().map(PathBuf::from)
+}
+
 /// Where a lookup looked, in order, for the error message.
 pub type Searched = Vec<String>;
 
@@ -75,17 +107,19 @@ pub struct PicAsSearch<'a> {
     pub cli: Option<&'a Path>,
     /// `BASIL_PICAS`
     pub env: Option<OsString>,
+    /// `pic-as` in the settings file
+    pub config: Option<PathBuf>,
     /// the folders of `PATH`
     pub path_dirs: Vec<PathBuf>,
     /// the XC8 install roots
     pub roots: Vec<PathBuf>,
 }
 
-/// The first pic-as found: `--pic-as`, `BASIL_PICAS`, `PATH`, then the newest XC8 install.
+/// The first pic-as found: `--pic-as`, `BASIL_PICAS`, the settings file, `PATH`, then the newest XC8 install.
 /// An explicit path that is not a file is an error, not a reason to fall through to another pic-as.
 pub fn search_pic_as(s: &PicAsSearch) -> Result<PathBuf, Searched> {
     let mut searched = Vec::new();
-    for (what, p) in [("--pic-as", s.cli.map(Path::to_path_buf)), ("BASIL_PICAS", s.env.as_ref().filter(|v| !v.is_empty()).map(PathBuf::from))] {
+    for (what, p) in [("--pic-as", s.cli.map(Path::to_path_buf)), ("BASIL_PICAS", s.env.as_ref().filter(|v| !v.is_empty()).map(PathBuf::from)), ("pic-as in the settings file", s.config.clone())] {
         if let Some(p) = p {
             if p.is_file() {
                 return Ok(p);
@@ -149,7 +183,7 @@ pub struct DfpSearch<'a> {
 /// otherwise the newest installed version of the same pack, which the caller warns about.
 pub fn search_dfp(s: &DfpSearch) -> Result<Dfp, Searched> {
     if let Some(p) = &s.explicit {
-        return if p.is_dir() { Ok(Dfp { dir: p.clone(), version: s.version.to_string(), exact: true }) } else { Err(vec![format!("--dfp / BASIL_DFP = {} (no such folder)", p.display())]) };
+        return if p.is_dir() { Ok(Dfp { dir: p.clone(), version: s.version.to_string(), exact: true }) } else { Err(vec![format!("--dfp / BASIL_DFP / settings file dfp = {} (no such folder)", p.display())]) };
     }
     let mut searched = Vec::new();
     for root in &s.roots {
@@ -168,8 +202,11 @@ pub fn search_dfp(s: &DfpSearch) -> Result<Dfp, Searched> {
 }
 
 /// The folders searched for packs: the Microchip pack folder in the home folder, then each MPLAB X install's, newest first.
-pub fn pack_roots() -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = home_dir().map(|h| h.join(".mchp_packs").join("Microchip")).into_iter().collect();
+pub fn pack_roots(extra: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = extra.to_vec();
+    roots.extend(env_var("BASIL_PACKS").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
+    roots.extend(config_values("packs").into_iter().map(PathBuf::from));
+    roots.extend(home_dir().map(|h| h.join(".mchp_packs").join("Microchip")));
     for x in mplabx_roots() {
         roots.extend(versions_in(&x, |d| d.join("packs").join("Microchip").is_dir()).into_iter().map(|(_, d)| d.join("packs").join("Microchip")));
     }
@@ -186,27 +223,28 @@ fn path_dirs() -> Vec<PathBuf> {
 
 /// pic-as for this machine, or the message to print when there is none.
 pub fn resolve_pic_as(cli: Option<&Path>) -> Result<PathBuf, String> {
-    search_pic_as(&PicAsSearch { cli, env: env_var("BASIL_PICAS"), path_dirs: path_dirs(), roots: xc8_roots() }).map_err(|searched| {
+    search_pic_as(&PicAsSearch { cli, env: env_var("BASIL_PICAS"), config: config_value("pic-as"), path_dirs: path_dirs(), roots: xc8_roots() }).map_err(|searched| {
         let mut m = String::from("pic-as not found. Looked in:\n");
         for s in &searched {
             m.push_str(&format!("  {s}\n"));
         }
-        m.push_str("Install MPLAB XC8 (https://www.microchip.com/mplab/compilers), set BASIL_PICAS to the pic-as file, or pass --pic-as PATH.");
+        m.push_str("Install MPLAB XC8 (https://www.microchip.com/mplab/compilers), set BASIL_PICAS to the pic-as file, pass --pic-as PATH, or put `pic-as = PATH` in the settings file.");
         m
     })
 }
 
 /// xc8-cc for this machine, or the message to print when there is none.
-pub fn resolve_xc8_cc(pic_as: &Path) -> Result<PathBuf, String> {
-    search_xc8_cc(pic_as, env_var("BASIL_XC8CC")).map_err(|searched| {
-        format!("xc8-cc not found (looked for {}). A program that calls C needs the MPLAB XC8 C compiler: install it, or set BASIL_XC8CC to the xc8-cc file.", searched.join(", "))
+pub fn resolve_xc8_cc(pic_as: &Path, cli: Option<&Path>) -> Result<PathBuf, String> {
+    let explicit = cli.map(|p| p.as_os_str().to_owned()).or_else(|| env_var("BASIL_XC8CC")).or_else(|| config_value("xc8-cc").map(PathBuf::into_os_string));
+    search_xc8_cc(pic_as, explicit).map_err(|searched| {
+        format!("xc8-cc not found (looked for {}). A program that calls C needs the MPLAB XC8 C compiler: install it, or pass --xc8-cc PATH, set BASIL_XC8CC, or put `xc8-cc = PATH` in the settings file.", searched.join(", "))
     })
 }
 
 /// The device pack for this machine, or the message to print when there is none.
-pub fn resolve_dfp(cli: Option<&Path>, pack: &str, version: &str) -> Result<Dfp, String> {
-    let explicit = cli.map(Path::to_path_buf).or_else(|| env_var("BASIL_DFP").filter(|v| !v.is_empty()).map(PathBuf::from));
-    let roots = pack_roots();
+pub fn resolve_dfp(cli: Option<&Path>, extra_roots: &[PathBuf], pack: &str, version: &str) -> Result<Dfp, String> {
+    let explicit = cli.map(Path::to_path_buf).or_else(|| env_var("BASIL_DFP").filter(|v| !v.is_empty()).map(PathBuf::from)).or_else(|| config_value("dfp"));
+    let roots = pack_roots(extra_roots);
     search_dfp(&DfpSearch { explicit, roots: roots.clone(), pack, version }).map_err(|searched| {
         let mut m = format!("device pack {pack} {version} not found. Looked for:\n");
         for s in &searched {
@@ -216,7 +254,7 @@ pub fn resolve_dfp(cli: Option<&Path>, pack: &str, version: &str) -> Result<Dfp,
             m.push_str("  (no pack folders found)\n");
         }
         m.push_str(&format!("Pack folders searched: {}\n", roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ")));
-        m.push_str(&format!("Install it with MPLAB X (Tools > Packs) or unpack it to <home>/.mchp_packs/Microchip/{pack}/{version}, or pass --dfp DIR / set BASIL_DFP to the pack's xc8 folder."));
+        m.push_str(&format!("Install it with MPLAB X (Tools > Packs) or unpack it to <home>/.mchp_packs/Microchip/{pack}/{version}, pass --dfp DIR (the pack's xc8 folder), pass --packs DIR (a folder holding <pack>/<version>/xc8), or set BASIL_DFP / BASIL_PACKS."));
         m
     })
 }
@@ -235,6 +273,12 @@ mod tests {
     fn touch(p: &Path) {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, "").unwrap();
+    }
+
+    #[test]
+    fn config_lines() {
+        let c = parse_config("# note\npic-as = \"/opt/x/pic-as\"\n\npacks=/a\npacks = /b\nempty =\n");
+        assert_eq!(c, vec![("pic-as".to_string(), "/opt/x/pic-as".to_string()), ("packs".into(), "/a".into()), ("packs".into(), "/b".into())]);
     }
 
     #[test]
@@ -257,7 +301,7 @@ mod tests {
         let old = picas_in(&root, "v2.5");
         let new = picas_in(&root, "v2.46");
         std::fs::create_dir_all(root.join("v9.99")).unwrap(); // a remnant without pic-as is skipped
-        let mut s = PicAsSearch { cli: None, env: None, path_dirs: vec![], roots: vec![root.clone()] };
+        let mut s = PicAsSearch { cli: None, env: None, config: None, path_dirs: vec![], roots: vec![root.clone()] };
         assert_eq!(search_pic_as(&s).unwrap(), new);
         // PATH beats the install roots
         let bin = root.join("pathbin");
@@ -268,6 +312,12 @@ mod tests {
         // BASIL_PICAS beats PATH
         s.env = Some(old.clone().into_os_string());
         assert_eq!(search_pic_as(&s).unwrap(), old);
+        // the settings file beats PATH but not BASIL_PICAS
+        s.env = None;
+        s.config = Some(old.clone());
+        assert_eq!(search_pic_as(&s).unwrap(), old);
+        s.config = None;
+        s.env = Some(old.clone().into_os_string());
         // --pic-as beats BASIL_PICAS
         s.cli = Some(&new);
         assert_eq!(search_pic_as(&s).unwrap(), new);
@@ -276,13 +326,13 @@ mod tests {
     #[test]
     fn pic_as_missing() {
         let root = tmp("missing");
-        let s = PicAsSearch { cli: None, env: None, path_dirs: vec![], roots: vec![root.clone()] };
+        let s = PicAsSearch { cli: None, env: None, config: None, path_dirs: vec![], roots: vec![root.clone()] };
         let e = search_pic_as(&s).unwrap_err();
         assert!(e.iter().any(|l| l.contains("PATH")) && e.iter().any(|l| l.contains(&root.display().to_string())));
         // a bad explicit path is an error, not a fall-through to the install
         picas_in(&root, "v1.0");
         let bad = root.join("nope");
-        let s = PicAsSearch { cli: Some(&bad), env: None, path_dirs: vec![], roots: vec![root] };
+        let s = PicAsSearch { cli: Some(&bad), env: None, config: None, path_dirs: vec![], roots: vec![root] };
         assert!(search_pic_as(&s).unwrap_err()[0].contains("no such file"));
     }
 

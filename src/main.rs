@@ -40,9 +40,16 @@ options:
                   then the newest MPLAB XC8 install)
   --dfp DIR       the device pack's xc8 folder (default: $BASIL_DFP, then the pack the
                   device file names under ~/.mchp_packs/Microchip or MPLAB X's packs)
+  --xc8-cc PATH   the xc8-cc C compiler (default: $BASIL_XC8CC, then the XC8 install of pic-as)
+  --packs DIR     an extra folder holding device packs as <pack>/<version>/xc8 (repeatable;
+                  also $BASIL_PACKS)
   --doctor        show which tools and packs basil found, and exit non-zero if one is missing
   -V, --version   print the version and exit
   -h, --help      print this help and exit
+
+Tool paths can also be kept in ~/.config/basil/config (%APPDATA%\\basil\\config on Windows)
+as `pic-as = PATH`, `xc8-cc = PATH`, `dfp = DIR` and `packs = DIR` lines; flags and
+environment variables win over it.
 
 lib/ and devices/ are found in the source file's folder or the nearest parent; the
 modules and devices built into basil are used last.
@@ -59,11 +66,16 @@ fn nearest_with(start: &Path, name: &str) -> Option<PathBuf> {
 fn doctor() -> ExitCode {
     let mut ok = true;
     println!("basil {}", env!("CARGO_PKG_VERSION"));
+    match toolchain::config_path() {
+        Some(p) if p.is_file() => println!("settings: {}", p.display()),
+        Some(p) => println!("settings: none (optional file: {})", p.display()),
+        None => {}
+    }
     match toolchain::resolve_pic_as(None) {
         Ok(p) => {
             let v = std::process::Command::new(&p).arg("--version").output().ok().map(|o| String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).lines().next().unwrap_or("").trim().to_string()).unwrap_or_default();
             println!("pic-as:  {}{}", p.display(), if v.is_empty() { String::new() } else { format!("  ({v})") });
-            match toolchain::resolve_xc8_cc(&p) {
+            match toolchain::resolve_xc8_cc(&p, None) {
                 Ok(c) => println!("xc8-cc:  {}", c.display()),
                 Err(e) => println!("xc8-cc:  missing (only programs that call C need it)\n         {e}"),
             }
@@ -73,7 +85,7 @@ fn doctor() -> ExitCode {
             println!("pic-as:  MISSING\n{e}");
         }
     }
-    let roots = toolchain::pack_roots();
+    let roots = toolchain::pack_roots(&[]);
     let mut any = false;
     for r in &roots {
         let n = std::fs::read_dir(r).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count()).unwrap_or(0);
@@ -104,6 +116,8 @@ fn main() -> ExitCode {
     let mut out_hex: Option<PathBuf> = None;
     let mut pic_as: Option<PathBuf> = None;
     let mut dfp_arg: Option<PathBuf> = None;
+    let mut xc8_arg: Option<PathBuf> = None;
+    let mut pack_dirs: Vec<PathBuf> = Vec::new();
     let mut defines = Vec::new();
     let mut lib_dirs = Vec::new();
     let mut dev_dirs = Vec::new();
@@ -135,6 +149,14 @@ fn main() -> ExitCode {
             },
             "--dfp" => match args.next() {
                 Some(v) => dfp_arg = Some(PathBuf::from(v)),
+                None => return usage(),
+            },
+            "--xc8-cc" => match args.next() {
+                Some(v) => xc8_arg = Some(PathBuf::from(v)),
+                None => return usage(),
+            },
+            "--packs" => match args.next() {
+                Some(v) => pack_dirs.push(PathBuf::from(v)),
                 None => return usage(),
             },
             "--doctor" => return doctor(),
@@ -256,7 +278,7 @@ fn main() -> ExitCode {
         }
     };
     let dev = analysis.device.as_ref().unwrap();
-    let dfp = match toolchain::resolve_dfp(dfp_arg.as_deref(), &dev.device.pack, &dev.device.pack_version) {
+    let dfp = match toolchain::resolve_dfp(dfp_arg.as_deref(), &pack_dirs, &dev.device.pack, &dev.device.pack_version) {
         Ok(d) => {
             if !d.exact {
                 eprintln!("basil: warning: device pack {} {} is not installed; using {} ({})", dev.device.pack, dev.device.pack_version, d.version, d.dir.display());
@@ -271,7 +293,7 @@ fn main() -> ExitCode {
     let linked = if !program.c_link() {
         run_pic_as(&pic_as, dev, &asm_path, &dfp, &hex, &map_path)
     } else {
-        let xc8 = match toolchain::resolve_xc8_cc(&pic_as) {
+        let xc8 = match toolchain::resolve_xc8_cc(&pic_as, xc8_arg.as_deref()) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("basil: {e}");

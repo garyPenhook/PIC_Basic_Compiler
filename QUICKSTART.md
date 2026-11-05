@@ -13,6 +13,9 @@ From nothing to a `.hex` file for a PIC18F27Q10 (the same steps work for the PIC
   folder), then `~/.mchp_packs/Microchip` and each MPLAB X install's `packs/Microchip`. If the exact version is not
   installed, `basil` uses the newest installed version of the same pack and warns; the configuration-word bits can
   differ between pack versions, so install the version it names when that matters.
+* To enter paths by hand: `--pic-as`, `--xc8-cc`, `--dfp`, `--packs` (extra pack folder), their `BASIL_*` variables,
+  or lines such as `pic-as = /path/to/pic-as` in `~/.config/basil/config` (`%APPDATA%\basil\config` on Windows).
+  Flags win over variables, which win over the file, which wins over the automatic search.
 * Run `basil --doctor` to see what was found; it exits non-zero when `pic-as` or the packs are missing. (The
   macOS and Windows install folders are the Microchip defaults and have not been checked on those systems; use
   `BASIL_PICAS` / `--dfp` if yours differ.)

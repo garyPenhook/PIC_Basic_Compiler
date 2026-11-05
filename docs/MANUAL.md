@@ -111,9 +111,24 @@ basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `--devices DIR` | Folder holding the device descriptions. |
 | `--pic-as PATH` | The `pic-as` assembler (otherwise `$BASIL_PICAS`, then `pic-as` on `PATH`, then the newest XC8 install). |
 | `--dfp DIR` | The device pack's `xc8` folder (otherwise `$BASIL_DFP`, then `~/.mchp_packs/Microchip` and MPLAB X's packs; the newest installed version of the pack is used, with a warning, when the named one is missing). |
+| `--xc8-cc PATH` | The `xc8-cc` C compiler (otherwise `$BASIL_XC8CC`, then the XC8 install of `pic-as`). |
+| `--packs DIR` | An extra folder holding packs as `<pack>/<version>/xc8` (repeatable; also `$BASIL_PACKS`). |
 | `--doctor` | Show the pic-as, xc8-cc and pack folders found; exit 1 if `pic-as` or the packs are missing. |
 | `--version`, `-V` | Print the version. |
 | `--help`, `-h` | Print the option summary and exit. |
+
+Paths can be kept in a settings file, `~/.config/basil/config` (`$XDG_CONFIG_HOME/basil/config`, or
+`%APPDATA%\basil\config` on Windows), so they need not be typed each time:
+
+```
+pic-as = /opt/microchip/xc8/v4.00/pic-as/bin/pic-as
+xc8-cc = /opt/microchip/xc8/v4.00/bin/xc8-cc
+dfp    = /path/to/pack/xc8
+packs  = /extra/folder/of/packs
+```
+
+Order of precedence: flag, environment variable, settings file, automatic search. `basil --doctor` shows the
+settings file it reads.
 
 `lib/` and `devices/` are found by looking in the source file's folder and then each parent folder
 (only the nearest of each is used), so keep programs inside the repository (for example
