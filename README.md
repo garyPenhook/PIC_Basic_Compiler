@@ -78,8 +78,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * Compared with Microchip XC8 on a set of small kernels (written alongside the compiler, so not an independent
   sample), the output is smaller in total and about as fast (see `docs/BENCHMARKS.md`). On four larger,
   independently written programs of 1.5 to 3 KB (algorithms, fixed-point DSP, text formatting, a command
-  state machine) basil's images were **larger** than XC8 `-Os`: 8740 bytes against 7560 in total, 16% more
-  (30% more on the 32-bit-heavy program, 3 to 5% more on the byte-oriented ones), and 4% larger than XC8 `-O2`.
+  state machine) basil's images were **larger** than XC8 `-Os`: 8546 bytes against 7560 in total, 13% more
+  (23% more on the 32-bit-heavy program, 2 to 4% more on the byte-oriented ones), and 2% larger than XC8 `-O2`.
   Results were identical in the simulator. Expect parity or a loss, not a win, on general code.
 * Optimisations include constant folding, narrowing, Access Bank placement, overlapping of
   routines' variables that are never live together, counted-loop forms, tail calls, inlining of routines called once, a Byte argument passed in
