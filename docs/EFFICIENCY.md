@@ -333,3 +333,13 @@ Program bytes: total 8632 to 8556 (1.13 of `-Os`; table in `docs/BENCHMARKS.md`)
 held in a temp (`t = data(j)` rereads), and the inlined-function result copies that cross a statement end, which need
 a code generator change rather than a peephole. Tests: `second_lfsr_of_the_same_array_goes`,
 `reload_of_a_scratch_byte_just_stored_from_w_goes`, `copy_back_after_a_store_goes` and its Fence case.
+
+**Progress (0.1.141).** `pass_load_reuse` finishes L3: a load `movf i,w; [addlw k]; lfsr 0,A; movf PLUSW0,w; movwf h`
+becomes `movf r,w` when an earlier load of the same element went into a byte `r` that neither it, `i`, nor `A` has been
+written since (an indirect store, label, call or unknown instruction forgets everything). The `lfsr` goes too when FSR0
+is not used before its next load; with `addlw` the pass requires carry and overflow to be dead. `pass_copy_back` now
+compares plain bytes by address (`X` and `X+0`). Bubble sort: 5 and 4 words saved in the swap; algorithms 2248 to 2238
+bytes, 92060 to 87997 cycles. Test: `element_already_in_a_temp_is_not_loaded_again`.
+
+**Known failing simulator tests (not from these changes).** `lib_flashwrite` (default device) and `lib_adc` (P13, P16,
+Q41) fail identically with the 0.1.139 compiler and with every pass of 0.1.140 disabled.

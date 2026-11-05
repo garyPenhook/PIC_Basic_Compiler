@@ -2249,6 +2249,10 @@ fn pass_redundant_lfsr(items: &mut Vec<Item>) -> bool {
     changed
 }
 
+fn same_byte(env: &Env, a: &str, b: &str) -> bool {
+    a == b || env.addr(a).is_some_and(|x| env.addr(b) == Some(x))
+}
+
 /// `movff s, d` when `d` already holds the same byte as `s`: an earlier `movff s, d` or `movff d, s` in the same straight
 /// run copied it and neither byte has been written since (a result stored to its variable and read straight back into
 /// `__A` after an inlined function). Only compiler-placed RAM is reasoned about; anything the pass does not understand,
@@ -2274,7 +2278,7 @@ fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
                 };
                 let movff = parse(t).filter(|(m, o)| m == "movff" && o.len() == 2).map(|(_, o)| (o[0].trim().to_string(), o[1].trim().to_string()));
                 if let Some((s, d)) = &movff
-                    && pairs.iter().any(|(a, b)| (a == s && b == d) || (a == d && b == s))
+                    && pairs.iter().any(|(a, b)| (same_byte(env, a, s) && same_byte(env, b, d)) || (same_byte(env, a, d) && same_byte(env, b, s)))
                 {
                     dead[i] = true;
                     continue;
@@ -2283,8 +2287,10 @@ fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
                     pairs.clear();
                 }
                 pairs.retain(|(a, b)| {
+                    // Compare plain bytes by address: `X` and `X+0` name the same byte.
+                    let same = |x: &str, n: &str| x == n || env.addr(x).is_some_and(|ax| env.addr(n) == Some(ax));
                     let hit = |n: &str| {
-                        e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if x == n))
+                        e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same(x, n)))
                             || scratch(n).is_some_and(|k| e.writes.contains(&Loc::S(k)))
                     };
                     !hit(a) && !hit(b)
@@ -2307,6 +2313,151 @@ fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
             k += 1;
             !dead[k - 1]
         });
+    }
+    changed
+}
+
+/// One array element already copied into a byte of compiler RAM: `arr(idx + add)` is in `holder`.
+struct Held {
+    arr: String,
+    idx: String,
+    add: String,
+    holder: String,
+}
+
+/// FSR0 is not used again before it is reloaded or the run ends (no pass keeps FSR0 across a label, call or jump).
+fn fsr0_dead_after(items: &[Item], from: usize) -> bool {
+    for it in &items[from + 1..] {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => {
+                let low = t.trim().to_ascii_lowercase();
+                if low.starts_with("lfsr 0") {
+                    return true;
+                }
+                if low.contains("plusw0") || low.contains("indf0") || low.contains("inc0") || low.contains("dec0") || low.contains("fsr0") || low.starts_with("addfsr 0") || low.starts_with("subfsr 0") || parse(t).is_none() {
+                    return false;
+                }
+            }
+            _ => return true,
+        }
+    }
+    true
+}
+
+/// `movf i, w; [addlw k]; lfsr 0, A; movf PLUSW0, w; movwf h` reads `A(i+k)` into `h`. When an earlier load of the same
+/// element went into a byte `r` that has not been written since (nor `i`, nor `A` through any store), the four or five
+/// instructions become `movf r, w` (the bubble-sort swap rereads `data(j)` and `data(j+1)` it compared a moment before).
+/// The `lfsr` goes too when FSR0 is not used before its next load. Any indirect store, label, call or unknown
+/// instruction forgets what is held.
+fn pass_load_reuse(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let n = items.len();
+    let mut held: Vec<Held> = Vec::new();
+    let mut out: Vec<Item> = Vec::with_capacity(n);
+    let mut changed = false;
+    let same = |a: &str, b: &str| a == b || env.addr(a).is_some_and(|x| env.addr(b) == Some(x));
+    let ins_at = |i: usize| -> Option<(String, Vec<String>)> {
+        match items.get(i) {
+            Some(Item::Ins(t)) if !keep[i] => parse(t).map(|(m, o)| (m, o.iter().map(|x| x.trim().to_string()).collect())),
+            _ => None,
+        }
+    };
+    let mut i = 0;
+    while i < n {
+        if keep[i] {
+            held.clear();
+        }
+        // Try to match a group starting here.
+        let g = (|| {
+            let (m0, o0) = ins_at(i)?;
+            if m0 != "movf" || o0.len() != 3 || !matches!(o0[1].as_str(), "w" | "0") || o0[2] != "c" || !env.is_plain(&o0[0]) || scratch(&o0[0]).is_some() {
+                return None;
+            }
+            let mut j = i + 1;
+            let mut add = String::new();
+            if let Some((m, o)) = ins_at(j)
+                && m == "addlw"
+                && o.len() == 1
+            {
+                add = o[0].clone();
+                j += 1;
+            }
+            let (ml, ol) = ins_at(j)?;
+            if ml != "lfsr" || ol.len() != 2 || ol[0] != "0" {
+                return None;
+            }
+            let arr = ol[1].clone();
+            let lf = j;
+            let (mr, or) = ins_at(j + 1)?;
+            if mr != "movf" || or.len() != 3 || !or[0].eq_ignore_ascii_case("PLUSW0") || !matches!(or[1].as_str(), "w" | "0") {
+                return None;
+            }
+            let rd = j + 1;
+            let h = match ins_at(j + 2) {
+                Some((mw, ow)) if mw == "movwf" && ow.len() == 2 && ow[1] == "c" && env.is_plain(&ow[0]) && scratch(&ow[0]).is_none() => Some(ow[0].clone()),
+                _ => None,
+            };
+            Some((o0[0].clone(), add, arr, lf, rd, h))
+        })();
+        if let Some((idx, add, arr, lf, rd, h)) = g {
+            let hit = held.iter().find(|e| e.arr == arr && e.add == add && same(&e.idx, &idx)).map(|e| e.holder.clone());
+            let flags_ok = add.is_empty() || !flags_live(items, rd, C | OV);
+            if let (Some(r), true) = (hit, flags_ok) {
+                // Replace the load; keep the `lfsr` unless FSR0 is dead after it.
+                out.push(Item::Ins(format!("movf {r}, w, c")));
+                if !fsr0_dead_after(items, rd) {
+                    out.push(items[lf].clone());
+                }
+                changed = true;
+                i = rd + 1;
+                // The `movwf h` that follows is processed as an ordinary instruction (it records h too).
+                if let Some(h) = &h {
+                    held.retain(|e| !same(&e.holder, h) && !same(&e.idx, h));
+                    if !same(&r, h) {
+                        held.push(Held { arr, idx, add, holder: h.clone() });
+                    }
+                    out.push(items[i].clone());
+                    i += 1;
+                }
+                continue;
+            }
+            // No earlier copy: copy the group through and remember the new one.
+            for k in i..(rd + 1 + usize::from(h.is_some())) {
+                out.push(items[k].clone());
+            }
+            if let Some(h) = h {
+                held.retain(|e| !same(&e.holder, &h) && !same(&e.idx, &h));
+                held.push(Held { arr, idx, add, holder: h });
+                i = rd + 2;
+            } else {
+                i = rd + 1;
+            }
+            continue;
+        }
+        // An ordinary item.
+        match &items[i] {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => match effect(t) {
+                None => held.clear(),
+                Some(e) => {
+                    if e.wmem.contains(&Mem::Unknown) {
+                        held.clear();
+                    }
+                    held.retain(|h| {
+                        !e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same(x, &h.holder) || same(x, &h.idx) || split_off(x).map(|b| b.0) == split_off(&h.arr).map(|b| b.0)))
+                    });
+                }
+            },
+            _ => held.clear(),
+        }
+        out.push(items[i].clone());
+        i += 1;
+    }
+    if changed {
+        *items = out;
     }
     changed
 }
@@ -2696,6 +2847,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_hoist_movlb(&mut items);
         changed |= pass_redundant_movlb(&mut items);
         changed |= pass_redundant_movlb_flow(&mut items);
+        changed |= pass_load_reuse(&mut items, env);
         changed |= pass_redundant_lfsr(&mut items);
         changed |= pass_copy_back(&mut items, env);
         changed |= pass_known_sfr_bits(&mut items, env);
@@ -2972,6 +3124,47 @@ mod tests {
     fn copy_back_into_scratch_is_not_trusted_past_a_statement_end() {
         let r = run(&[ins("movff __A0, X"), Item::Fence, ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
         assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
+    }
+
+    fn load(add: &str, h: &str) -> Vec<Item> {
+        let mut v = vec![ins("movf X, w, c")];
+        if !add.is_empty() {
+            v.push(ins(&format!("addlw {add}")));
+        }
+        v.extend([ins("lfsr 0, A"), ins("movf PLUSW0, w, c"), ins(&format!("movwf {h}, c"))]);
+        v
+    }
+
+    fn reads(r: &[String]) -> usize {
+        r.iter().filter(|t| t.starts_with("movf PLUSW0")).count()
+    }
+
+    #[test]
+    fn element_already_in_a_temp_is_not_loaded_again() {
+        let mut s = load("", "Y");
+        s.extend(load("", "Y+1"));
+        assert_eq!(reads(&run(&s)), 1);
+        let mut s = load("0x01", "Y");
+        s.extend(load("0x01", "Y+1"));
+        s.push(ins("subwf Y, w, c"));
+        assert_eq!(reads(&run(&s)), 1);
+        // a different offset is a different element
+        let mut s = load("", "Y");
+        s.extend(load("0x01", "Y+1"));
+        assert_eq!(reads(&run(&s)), 2);
+        // holder, index or array written in between: loaded again
+        for mid in [vec![ins("movwf Y, c")], vec![ins("incf X, f, c")], vec![ins("movlw 1"), ins("movff Y+1, PLUSW0")], vec![ins("lfsr 0, A"), ins("movwf POSTINC0, c")]] {
+            let mut s = load("", "Y");
+            s.extend(mid);
+            s.extend(load("", "Y+1"));
+            assert_eq!(reads(&run(&s)), 2, "{s:?}");
+        }
+        // a label between
+        let mut s = vec![ins("movf Y, w, c"), Item::Br(Cc::Z, "_L9".into())];
+        s.extend(load("", "Y"));
+        s.push(Item::Label("_L9".into()));
+        s.extend(load("", "Y+1"));
+        assert_eq!(reads(&run(&s)), 2);
     }
 
     #[test]

@@ -193,3 +193,6 @@ Same four programs, program bytes; the simulator `sink` still matches XC8 `-Os` 
 | text formatting and parsing | 1788 | 1786 | 1770 | 1738 | 1.02 |
 | command state machine | 1466 | 1464 | 1448 | 1390 | 1.04 |
 | total | 8740 | 8632 | 8556 | 7560 | 1.13 |
+
+0.1.141 (element reuse): algorithms 2238, total 8546 (1.13 of `-Os`); the bubble-sort swap no longer reloads
+`data(j)` and `data(j+1)`, and the algorithms program runs in 87997 cycles instead of 92060.
