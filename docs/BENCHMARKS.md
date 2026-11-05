@@ -164,3 +164,20 @@ Total flash 1156 B against 1453 B for XC8 `-Os` (0.80). Per kernel the ratio ran
 18 B start-up is left in. Gains are concentrated in `add32`, `div16`, `mul8` and `isrmuldiv`; on
 the small control-flow kernels the two compilers are within a few bytes. The "about as fast" claim
 holds (cycles unchanged). RAM is not an advantage: basil is 1-3 B larger on six kernels.
+
+## Larger programs, 2026-11-05 (0.1.138) — basil is larger than XC8
+
+Four programs of 1.5 to 3 KB, each written twice (BASIC and C, same algorithms, no libraries, results
+forced out through `LATB`/`LATC` or a volatile `sink`), PIC18F27Q10, whole-image program bytes. The final
+`sink` value was identical in the simulator for basil and XC8 `-Os` in all four.
+
+| program | basil | XC8 -Os | XC8 -O2 | basil / -Os |
+|---|---:|---:|---:|---:|
+| algorithms (sorts, CRC16/32, sieve, gcd, isqrt, fib) | 2382 | 1826 | 2062 | 1.30 |
+| fixed-point DSP (FIR, PID, RMS, Q15) | 3104 | 2606 | 2878 | 1.19 |
+| text formatting and parsing | 1788 | 1738 | 1896 | 1.03 |
+| command state machine, matrix, RLE | 1466 | 1390 | 1538 | 1.05 |
+| total | 8740 | 7560 | 8374 | 1.16 |
+
+On code of this size basil is 16% larger than XC8 `-Os` and 4% larger than `-O2`, so the small-kernel
+advantage above does not generalise. The loss is largest on 32-bit loops and 16-bit `Mod`.

@@ -282,3 +282,34 @@ words) outweigh the new routine. The same program now builds to 2604 words. The 
 * `Select` and `Boolean`/`Bit` operations were examined in 0.1.115 (PROGRESS.md). Left: `f = (x = 3)` could be `clrf f / movf / xorlw / btfsc Z / incf f` (5 words against 6) when `f` is not read in the test.
 * The measurements are PIC18F27Q10 in the simulator; the PIC18-Q41 parts have the same instruction set and the same helpers, but the
   access bank is not at the same addresses (`__A` landed at 0x500 in one project built for a Q41 part), so the BSR rule in §3.6 needed a look there: checked in 0.1.115, the bank logic is driven by the device's access ranges and is correct on the Q41.
+
+## 9. Larger-program findings (0.1.138, 2026-11-05)
+
+Four 1.5 to 3 KB programs written in BASIC and C (algorithms, fixed-point DSP, text formatting, command state
+machine) came out **16% larger** than XC8 `-Os` in total (8740 against 7560 bytes; table in `docs/BENCHMARKS.md`),
+so the small-kernel advantage does not carry over. Sources and `run.sh` were in the session scratchpad, not the
+repo; step 1 below puts them in `bench/large/`. Counts are instruction counts from the `.S` files *(counted)*, not
+measured image deltas, and nothing in this section is implemented.
+
+**Where the bytes go.** `movff` is 2 words. a_algo has 225 of them (38% of the image), b_dsp 263 (34%); 139 and
+202 of those move operands through `__A`/`__B`/`__C`. The gap is mostly operand shuffling and generic helpers.
+
+| # | Where | Change | Estimate |
+|---|---|---|---|
+| L1 | `(x And 2^k) <> 0` on Word/LongWord (CRC, bit loops) copies to `__A`, masks, clears the upper bytes and tests all of them (~13 words) | narrow `And` with a constant to the bytes the mask touches; emit `btfsc`/`btfss` (2 words) | about -11 words per site |
+| L2 | `x = (x >> 1) Xor K` goes through a 4-byte copy-in and copy-out (8 `movff`) although the plain shift is already in place | shift the destination in place, then apply the constant bytes to it | about -16 words per site (CRC32, CRC16, LFSR, `isqrt`) |
+| L3 | array access repeats `movf j,w` + a 2-word `lfsr`; the bubble-sort swap rereads `data(j)` it already holds in a temp | keep FSR0 live across adjacent accesses, `POSTINC0` for `a(j)` then `a(j+1)`, reuse a value held in a temp (block-local value numbering) | about -3 to -6 words per extra access |
+| L4 | Integer * Integer is sign-extended to 32 bits and sent to the 67-word `__mul4` | signed 16x16->32 helper from four `MULWF` (about 20 words); same for Word x Word, Byte x Word | about -30 to -45 words per site; `__mul4` drops out of 16-bit-only programs |
+| L5 | `Integer32 / constant` (e.g. `acc / 160`) calls the 73-word `__sdiv4` | choose a 16-bit helper when range analysis shows the dividend fits; extend constant division to signed operands | about -45 words when `__sdiv4` becomes unused |
+| L6 | dead copies: `movff A->RESULT` then `RESULT->A` after an inlined function (16 words for a LongWord); `movwf __A0` / `movf __A0,w`; `movwf RESULT` + `movwf TMP` never read | peephole and liveness over scratch and temp bytes, extending P3 to inlined calls and returns | about -4 to -16 words per function |
+| L7 | constant-start loops emit `clrf j / movf j,w / subwf limit / bnc` for a first test that cannot fail; array-element compares go through `TMP`/`TMP+1`; 16-bit `Mod` by a constant such as 251 or 255 | skip the provable first test; compare from W; use the `__div2` path | a few words per site |
+
+**Order.** (1) Add `bench/large/` with the four programs and the simulator sink-equality check (basil against XC8
+`-Os`), gating every step together with `cargo test --release`. (2) L1 and L2. (3) L6 and L3. (4) L4 and L5, which
+touch helper selection in `lower.rs`/`codegen.rs`. (5) Re-measure after each step, record it in
+`docs/BENCHMARKS.md`, bump the version by a patch step, and change the README claim only as far as the data allows.
+
+**Risks to check for each item.** FSR0/FSR1 kept live across statements must be saved by the interrupt context save.
+Flags (carry, zero) must not be assumed from an instruction the new sequence no longer emits. A value reused from a
+temp is valid only until a call, an ISR-visible variable or another store to the same array can change it. Scratch
+`__A`/`__B`/`__C` are shared with the helpers, so no dead-copy removal across a `call`.
