@@ -5482,6 +5482,13 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     } else {
         items
     };
+    // An image that ends below 64 KB needs no upper table-pointer byte arithmetic (absolute code only: a C link
+    // relocates the code).
+    let items = if tgt.opt && !p.c_link() && assemble(&items, 0).words * 2 <= 0x10000 && !items.iter().any(|it| matches!(it, Item::Org(_))) {
+        crate::peephole::narrow_highword(items)
+    } else {
+        items
+    };
     // Variables with storage that no instruction mentions any more.
     let mut unreferenced: Vec<String> = Vec::new();
     if tgt.opt {

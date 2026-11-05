@@ -2934,6 +2934,51 @@ fn pass_div_share(items: &mut Vec<Item>, env: &Env) -> bool {
     true
 }
 
+fn kind(t: &str) -> Option<&str> {
+    t.trim_start().split_whitespace().next()
+}
+
+/// For an image that ends below 64 KB every code or table address has a zero upper byte, so setting `TBLPTRU` (or a
+/// pointer's third byte) from `highword(sym)` is a clear, and the carry into it after an indexed table address
+/// cannot happen. `movlw highword(S); movwf X; movlw 0; addwfc X, f` becomes `clrf X` and `movlw highword(S);
+/// movwf X` becomes `clrf X`. The clear stays, because a flash write elsewhere may have left `TBLPTRU` non-zero.
+/// `clrf` sets Z and leaves W alone, so the rewrite needs the next instruction to be one that neither reads Z nor
+/// W (`W` held `highword`, which is zero, but nothing may count on it).
+pub fn narrow_highword(items: Vec<Item>) -> Vec<Item> {
+    let neutral = |it: Option<&Item>| match it {
+        Some(Item::Ins(t)) => {
+            let t = t.trim_start().to_ascii_lowercase();
+            let m = t.split_whitespace().next().unwrap_or("");
+            m == "tblrd*+" || m == "clrf" || m == "movlw" || m == "movff" || (m == "movf" && t.contains(", w"))
+        }
+        _ => false,
+    };
+    let mut out: Vec<Item> = Vec::with_capacity(items.len());
+    let mut i = 0;
+    while i < items.len() {
+        if let Item::Ins(a) = &items[i]
+            && kind(a) == Some("movlw")
+            && a.contains("highword(")
+            && let Some(Item::Ins(b)) = items.get(i + 1)
+            && kind(b) == Some("movwf")
+        {
+            let x = b.trim_start()["movwf".len()..].trim().to_string(); // "X, c"
+            let name = x.split(',').next().unwrap_or("").trim().to_string();
+            let carry = matches!((items.get(i + 2), items.get(i + 3)), (Some(Item::Ins(c)), Some(Item::Ins(d)))
+                if c.trim() == "movlw 0" && d.trim().replace("  ", " ") == format!("addwfc {name}, f, c"));
+            let n = if carry { 4 } else { 2 };
+            if neutral(items.get(i + n)) {
+                out.push(Item::Ins(format!("clrf {x}")));
+                i += n;
+                continue;
+            }
+        }
+        out.push(items[i].clone());
+        i += 1;
+    }
+    out
+}
+
 pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     let mut prologues = true;
     for _ in 0..12 {
@@ -3207,6 +3252,19 @@ mod tests {
         let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movf PLUSW0, w, c"), ins("movwf Y, c")]);
         assert_eq!(r.len(), 4);
         let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movff Y, PLUSW0")]);
+        assert_eq!(r.len(), 3);
+    }
+
+    #[test]
+    fn highword_set_becomes_a_clear() {
+        let r = narrow_highword(vec![ins("movlw highword(S)"), ins("movwf TBLPTRU, c"), ins("movlw 0"), ins("addwfc TBLPTRU, f, c"), ins("tblrd*+")]);
+        assert_eq!(r.len(), 2, "{r:?}");
+        let r = narrow_highword(vec![ins("movlw highword(S)"), ins("movwf __A2, c"), ins("clrf __A3, c")]);
+        assert!(matches!(&r[0], Item::Ins(t) if t == "clrf __A2, c") && r.len() == 2, "{r:?}");
+        // the next instruction reads W or a flag: left alone
+        let r = narrow_highword(vec![ins("movlw highword(S)"), ins("movwf __A2, c"), ins("movwf __A3, c")]);
+        assert_eq!(r.len(), 3);
+        let r = narrow_highword(vec![ins("movlw highword(S)"), ins("movwf __A2, c"), Item::Br(Cc::Z, "_L9".into())]);
         assert_eq!(r.len(), 3);
     }
 

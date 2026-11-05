@@ -351,3 +351,10 @@ Test: `tests/exec/smul_wide.bas`.
 acc - (r + b)`. Nothing between the two copies may write `__A` or either operand, no label may let another path in, and
 `WREG` and the flags must be dead after the dropped copy. Saves 16 words per use (DSP program 3082 to 3050 bytes). Test:
 `sum_still_in_scratch_is_not_built_again`.
+
+**Progress (0.1.144).** `narrow_highword` (peephole, run in `codegen.rs` once the image is known to end below 64 KB, absolute
+code only): `movlw highword(S); movwf X; movlw 0; addwfc X, f` (the indexed table address) and `movlw highword(S); movwf X`
+become `clrf X`, since every symbol in the image then has a zero upper byte and the add cannot carry into it. The clear
+stays because a flash write elsewhere may leave `TBLPTRU` non-zero. Applied only when the next instruction reads neither W
+nor Z. Program bytes: total 8474 to 8430 (b_dsp 3050 to 3036, c_text 1770 to 1746, d_ctrl 1448 to 1442). Test:
+`highword_set_becomes_a_clear`; `tests/exec/addressof.bas` expects the routine and table addresses 4 bytes lower.
