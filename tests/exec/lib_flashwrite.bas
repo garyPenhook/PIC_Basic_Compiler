@@ -1,3 +1,4 @@
+' engine: sim
 ' expect: FW_SA=65408 FW_R1=1 FW_R2=1 FW_R3=1 FW_R5=1 FW_R6=4660 FW_ADL=2 FW_ADH=255 FW_ADU=1 FW_EN=0 FW_GIE=1 FW_TL=4 FW_TA=18 FW_GIE2=0 FW_ER=0 FW_R4=0
 ' The simulator models program-flash reads, word writes, sector read/erase/write and TBLWT into the holding
 ' registers (picsim periph/nvm.rs). R3 is the quick word write into an erased word. R5 updates that now-programmed

@@ -6,6 +6,8 @@ Each program names its expectations in comments near the top:
     ' expect: T_A=5 T_B=300      (variable symbol = decimal value; little endian, size from the .S)
     ' expect-18F16Q41: T_A=7    (optional: for that part, each name given overrides the same name in the ' expect: lines; names not given keep that value)
     ' devices: 18F27Q10 18F16Q41 (optional: run only for the listed parts (separated by spaces or commas); others are skipped, e.g. a program that tests _device or RB0.
+    ' engine: mdb              (optional: basil-sim differs from MDB on what the program tests; run it in MDB whatever --engine says)
+    ' engine: sim              (optional: MDB does not model what the program tests, e.g. flash reads and writes; run it in basil-sim whatever --engine says)
                                   Skipped programs are counted, and a run in which every program is skipped fails)
     ' cycles: LO HI              (optional: total cycles to __halt must lie in LO..HI)
 
@@ -29,16 +31,28 @@ ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../t
 ap.add_argument("--mdb", default=None)
 ap.add_argument("--keep", action="store_true")
 ap.add_argument("--device", default="18F27Q10", help="part to build for and simulate; the program's Device line is replaced")
-ap.add_argument("--engine", choices=["mdb", "sim", "both"], default=os.environ.get("BASIL_ENGINE", "mdb"),
-                help="mdb: MPLAB X simulator; sim: basil-sim (crates/picsim); both: run both, and fail on a different cycle count")
+ap.add_argument("--engine", choices=["mdb", "sim", "both"], default=os.environ.get("BASIL_ENGINE"),
+                help="mdb: MPLAB X simulator; sim: basil-sim (crates/picsim); both: run both, and fail on a different cycle count. Default: sim for a PIC18 part when basil-sim is built (it has no enhanced mid-range core), else mdb")
 ap.add_argument("--sim", default=os.path.join(os.path.dirname(__file__), "../../picsim/target/release/basil-sim"))
 ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for the reference build")
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()
+if a.engine is None:
+    a.engine = "sim" if a.device.startswith("18F") and os.path.exists(a.sim) else "mdb"
 mdb = a.mdb or ((sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh")) or [None])[-1] if a.engine != "sim" else None)
+if mdb is None and a.engine == "sim":
+    # DMA programs still need MDB (the DMA model attaches to a live session); use it when it is installed.
+    mdb = a.mdb or (sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh")) or [None])[-1]
 work = tempfile.mkdtemp(prefix="basil-exec-")
+if a.keep:
+    os.environ["BASIL_KEEP"] = "1"  # dma_sim keeps its work dirs too
+else:
+    import atexit
+    atexit.register(shutil.rmtree, work, ignore_errors=True)
 
 jobs = []
+sim_only = set()
+mdb_only = set()
 fails = 0
 skipped = 0
 for src in a.files:
@@ -120,6 +134,10 @@ for src in a.files:
             for kv in line.split():
                 k, v = kv.split("=")
                 dma["writes"][k] = [int(x, 0) for x in v.split(",")]
+    if re.search(r"^'\s*engine:\s*sim\b", head, re.M):
+        sim_only.add(name)
+    if re.search(r"^'\s*engine:\s*mdb\b", head, re.M):
+        mdb_only.add(name)
     jobs.append((name, hexf, syms, vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None, dma))
 
 def sim_run(name, hexf, syms, vars_, expect):
@@ -135,14 +153,17 @@ def sim_run(name, hexf, syms, vars_, expect):
 
 
 simres = {}
-if a.engine != "mdb":
-    for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
+def eng_of(name):
+    return "sim" if name in sim_only else "mdb" if name in mdb_only else a.engine
+
+for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
+    if eng_of(name) != "mdb":
         if not dma:
             simres[name] = sim_run(name, hexf, syms, vars_, expect)
 
 script = [f"device PIC{a.device}", "hwtool SIM"]
 for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
-    if dma:
+    if dma or eng_of(name) == "sim":
         continue
     script += [f"program {hexf}", f"break *0x{syms['__halt']:X}", "run", "wait 60000", "stopwatch"]
     for k in expect:
@@ -155,7 +176,7 @@ for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
 script.append("quit")
 sp = os.path.join(work, "run.mdb")
 open(sp, "w").write("\n".join(script) + "\n")
-out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout if a.engine != "sim" and any(not j[6] for j in jobs) else ""
+out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout if any(not j[6] and eng_of(j[0]) != "sim" for j in jobs) else ""
 if a.keep:
     open(os.path.join(work, "mdb.log"), "w").write(out)
     print("work dir:", work)
@@ -215,7 +236,7 @@ def run_dma(name, hexf, syms, vars_, expect, dma):
 
 pos = 0
 for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
-    if dma and a.engine == "sim":
+    if dma and a.engine == "sim" and not mdb:
         print(f"skip {name}  (DMA model needs MDB until S5)")
         continue
     if dma:
@@ -226,15 +247,16 @@ for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
         else:
             print(f"ok   {name}  (DMA model)")
         continue
-    end = out.find("END_" + name, pos) if a.engine != "sim" else -1
+    eng = eng_of(name)
+    end = out.find("END_" + name, pos) if eng != "sim" else -1
     seg = out[pos:end if end >= 0 else len(out)]
     pos = end + 1 if end >= 0 else pos
     cyc = re.findall(r"Stopwatch cycle count = (\d+)", seg)
     blocks = re.findall(r"^x /\d+xb 0x[0-9A-Fa-f]+\n((?:[0-9a-f]{2}\s+)+)", seg, re.M)
     halted = "Simulator halted" in seg or "Single breakpoint" in seg
-    if a.engine != "mdb":
+    if eng != "mdb":
         sb, sc, sh = simres[name]
-        if a.engine == "sim":
+        if eng == "sim":
             blocks, cyc, halted = sb, ([sc] if sc else []), sh
         elif not sh or (cyc and sc != cyc[0]):
             fails += 1
