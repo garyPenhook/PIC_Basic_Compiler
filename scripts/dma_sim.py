@@ -27,7 +27,7 @@ What is not: bus timing (a message completes at once unless the header says `slo
 XIP and DMAnBUF in flight, trigger sources (the test says when a request arrives), and the arbiter priorities.
 The EEPROM source address is taken as a byte offset, the form of TB3164 section 7.1 that library `dma` uses.
 """
-import os, re, subprocess, tempfile
+import atexit, os, re, shutil, subprocess, tempfile
 
 try:
     import tomllib
@@ -288,6 +288,8 @@ class Replay:
         self.ram_lo, self.ram_n = ram  # the data memory window MDB is asked for at every stop: the program's variables
         self.flash = hex_image(hexf)
         self.work = tempfile.mkdtemp(prefix="basil-dma-")
+        if not os.environ.get("BASIL_KEEP"):
+            atexit.register(shutil.rmtree, self.work, ignore_errors=True)
         self.writes = {}
         self.passes = 0
 

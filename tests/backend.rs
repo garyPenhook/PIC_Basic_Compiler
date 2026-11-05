@@ -18,7 +18,8 @@ fn basil() -> PathBuf {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("basil-test-{}", std::process::id())).join(name);
+    // under target/tmp (cargo's CARGO_TARGET_TMPDIR), not the /tmp tmpfs: nothing tears these down after a run
+    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("basil-test-{}", std::process::id())).join(name);
     std::fs::create_dir_all(&d).unwrap();
     d
 }
