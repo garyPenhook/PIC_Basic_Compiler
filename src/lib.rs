@@ -17,4 +17,5 @@ pub mod peephole;
 pub mod pp;
 pub mod project;
 pub mod sema;
+pub mod toolchain;
 pub mod types;

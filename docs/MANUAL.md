@@ -109,7 +109,9 @@ basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `-D NAME` | Define a preprocessor name (visible in every file). |
 | `-L DIR` | Add a library folder (repeatable). |
 | `--devices DIR` | Folder holding the device descriptions. |
-| `--pic-as PATH` | The `pic-as` assembler (otherwise `$BASIL_PICAS`, then `/opt/microchip/xc8/*/pic-as/bin/pic-as`). |
+| `--pic-as PATH` | The `pic-as` assembler (otherwise `$BASIL_PICAS`, then `pic-as` on `PATH`, then the newest XC8 install). |
+| `--dfp DIR` | The device pack's `xc8` folder (otherwise `$BASIL_DFP`, then `~/.mchp_packs/Microchip` and MPLAB X's packs; the newest installed version of the pack is used, with a warning, when the named one is missing). |
+| `--doctor` | Show the pic-as, xc8-cc and pack folders found; exit 1 if `pic-as` or the packs are missing. |
 | `--version`, `-V` | Print the version. |
 | `--help`, `-h` | Print the option summary and exit. |
 

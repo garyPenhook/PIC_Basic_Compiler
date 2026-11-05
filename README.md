@@ -181,7 +181,8 @@ MPLAB XC8) to assemble and link. Simulator tests additionally need MPLAB X's `md
 (`pic-as`, `xc8-cc`), the MPLAB X simulator or the device packs: you install them yourself from Microchip
 and accept their licences. The XC8 licence forbids embedding or redistributing the Software and ties its use
 to Microchip parts (`docs/license.txt` in the XC8 install). basil only finds the installed tools and runs them
-(`/opt/microchip/xc8/*/pic-as/bin/pic-as`, `$BASIL_PICAS` or `--pic-as`; packs under `~/.mchp_packs`). Do not
+(`--pic-as`, `$BASIL_PICAS`, `PATH`, then the newest XC8 install; packs under `~/.mchp_packs` or MPLAB X's `packs`;
+`basil --doctor` shows what it found). Do not
 ship a release archive that bundles them.
 
 ```

@@ -6,10 +6,16 @@ From nothing to a `.hex` file for a PIC18F27Q10 (the same steps work for the PIC
 
 * **Rust** (to build the compiler) and **MPLAB XC8**, installed by you from Microchip (its `pic-as` assembler does the
   last step; basil does not bundle it and its licence does not allow redistribution).
-  `basil` looks for `pic-as` in `/opt/microchip/xc8/*/pic-as/bin/pic-as`; to use another one set
-  `BASIL_PICAS=/path/to/pic-as` or pass `--pic-as PATH`.
-* The **device pack** for the part under `~/.mchp_packs/Microchip/<pack>/<version>/xc8`.
-  If it is missing, `basil` says which pack and version it wants.
+  `basil` takes the first `pic-as` it finds in this order: `--pic-as PATH`, `$BASIL_PICAS`, `pic-as` on `PATH`, then the
+  newest version under the XC8 install folder (Linux `/opt/microchip/xc8`, macOS `/Applications/microchip/xc8`,
+  Windows `C:\Program Files\Microchip\xc8`). `xc8-cc` is taken from the same install, or `$BASIL_XC8CC`.
+* The **device pack** for the part (`<pack>/<version>/xc8`), looked up in `--dfp DIR`, `$BASIL_DFP` (the pack's `xc8`
+  folder), then `~/.mchp_packs/Microchip` and each MPLAB X install's `packs/Microchip`. If the exact version is not
+  installed, `basil` uses the newest installed version of the same pack and warns; the configuration-word bits can
+  differ between pack versions, so install the version it names when that matters.
+* Run `basil --doctor` to see what was found; it exits non-zero when `pic-as` or the packs are missing. (The
+  macOS and Windows install folders are the Microchip defaults and have not been checked on those systems; use
+  `BASIL_PICAS` / `--dfp` if yours differ.)
 
 ## 2. Build and install the compiler
 
@@ -101,6 +107,6 @@ definition and build commands. Details in `vscode-extension/README.md`.
 | `E-NODEVICE` / `E-DEVICE` | Add `Device = 18F27Q10` as the first line after `Program`; the description must exist in `devices/`. |
 | `E-UNDECLARED` | Name is misspelled, or a module is not `Include`d. Device registers (`PORTB`, `ANSELB`) are always known. |
 | `E-CONFIG` | Unknown `Config` setting or value; copy the line from the example. |
-| `device pack … not found` | Install the pack under `~/.mchp_packs` (MPLAB X or `mplab_platform` downloads it). |
-| `pic-as` not found | Set `BASIL_PICAS` or use `--pic-as`. |
+| `device pack … not found` | The message lists where it looked. Install the pack (MPLAB X, Tools > Packs), or pass `--dfp DIR` / set `BASIL_DFP`. |
+| `pic-as` not found | The message lists where it looked. Install MPLAB XC8, set `BASIL_PICAS` or use `--pic-as`. Check with `basil --doctor`. |
 | Full list | `docs/DIAGNOSTICS.md` |

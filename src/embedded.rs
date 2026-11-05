@@ -13,7 +13,7 @@ include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 pub fn dirs() -> Option<(PathBuf, PathBuf)> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cache")))
+        .or_else(|| crate::toolchain::home_dir().map(|h| h.join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
         .join("basil")
         .join(HASH);

@@ -50,32 +50,9 @@ pub fn target_of(dev: &Device) -> Target {
     }
 }
 
-/// The newest installed pic-as, or the one named by `BASIL_PICAS`.
+/// The pic-as this machine would use (see `toolchain::resolve_pic_as`), if any.
 pub fn find_pic_as() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("BASIL_PICAS") {
-        return Some(PathBuf::from(p));
-    }
-    let root = Path::new("/opt/microchip/xc8");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(root).ok()?.filter_map(|e| e.ok()).map(|e| e.path().join("pic-as/bin/pic-as")).filter(|p| p.is_file()).collect();
-    found.sort();
-    found.pop()
-}
-
-/// The device pack's `xc8` folder (`-mdfp`).
-pub fn find_dfp(dev: &Device) -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let p = Path::new(&home).join(".mchp_packs/Microchip").join(&dev.device.pack).join(&dev.device.pack_version).join("xc8");
-    p.is_dir().then_some(p)
-}
-
-/// The C compiler driver (`xc8-cc`) of the same XC8 install as `pic_as`, or the one named by `BASIL_XC8CC`.
-pub fn find_xc8_cc(pic_as: &Path) -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("BASIL_XC8CC") {
-        return Some(PathBuf::from(p));
-    }
-    // <xc8>/pic-as/bin/pic-as sits beside <xc8>/bin/xc8-cc.
-    let p = pic_as.parent()?.parent()?.parent()?.join("bin/xc8-cc");
-    p.is_file().then_some(p)
+    crate::toolchain::resolve_pic_as(None).ok()
 }
 
 /// The C file the program is linked with besides its `CFile`s. It holds
@@ -147,8 +124,7 @@ pub fn c_stub(externs: &[ExternSig], exports: &[ExportSig]) -> String {
 
 /// Links the generated assembly with the program's C files through `xc8-cc`. The data RAM the
 /// program allocated itself (`reserved`, start and end exclusive) is kept free of C data.
-pub fn run_xc8_cc(xc8: &Path, dev: &Device, asm: &Path, stub: &Path, cfiles: &[PathBuf], reserved: &[(u32, u32)], hex: &Path, map: &Path) -> Result<AsmRun, String> {
-    let dfp = find_dfp(dev).ok_or_else(|| format!("device pack {} {} not found under ~/.mchp_packs", dev.device.pack, dev.device.pack_version))?;
+pub fn run_xc8_cc(xc8: &Path, dev: &Device, asm: &Path, stub: &Path, cfiles: &[PathBuf], reserved: &[(u32, u32)], dfp: &Path, hex: &Path, map: &Path) -> Result<AsmRun, String> {
     let cpu = dev.device.name.strip_prefix("PIC").unwrap_or(&dev.device.name).to_string();
     let mut cmd = Command::new(xc8);
     cmd.arg(format!("-mcpu={cpu}")).arg(format!("-mdfp={}", dfp.display())).arg("-Os").arg("-Wno-1388");
@@ -174,8 +150,7 @@ pub struct AsmRun {
     pub output: String,
 }
 
-pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, hex: &Path, map: &Path) -> Result<AsmRun, String> {
-    let dfp = find_dfp(dev).ok_or_else(|| format!("device pack {} {} not found under ~/.mchp_packs", dev.device.pack, dev.device.pack_version))?;
+pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Path, map: &Path) -> Result<AsmRun, String> {
     let cpu = dev.device.name.strip_prefix("PIC").unwrap_or(&dev.device.name).to_string();
     let out = Command::new(pic_as)
         .arg(format!("-mcpu={cpu}"))

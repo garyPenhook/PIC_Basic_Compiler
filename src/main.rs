@@ -5,7 +5,8 @@
 
 use basil::codegen::generate;
 use basil::diag::{Diagnostics, Render, Severity};
-use basil::driver::{c_stub, find_pic_as, find_xc8_cc, report, run_pic_as, run_xc8_cc, target_of, usage_summary};
+use basil::toolchain;
+use basil::driver::{c_stub, report, run_pic_as, run_xc8_cc, target_of, usage_summary};
 use basil::lower::lower;
 use basil::project::{LoadConfig, load};
 use basil::sema::{SemaConfig, analyze};
@@ -35,8 +36,11 @@ options:
   -D NAME         define a preprocessor name (repeatable)
   -L DIR          add a library folder (repeatable)
   --devices DIR   folder holding the device descriptions
-  --pic-as PATH   the pic-as assembler (default: $BASIL_PICAS, then
-                  /opt/microchip/xc8/*/pic-as/bin/pic-as)
+  --pic-as PATH   the pic-as assembler (default: $BASIL_PICAS, then pic-as on PATH,
+                  then the newest MPLAB XC8 install)
+  --dfp DIR       the device pack's xc8 folder (default: $BASIL_DFP, then the pack the
+                  device file names under ~/.mchp_packs/Microchip or MPLAB X's packs)
+  --doctor        show which tools and packs basil found, and exit non-zero if one is missing
   -V, --version   print the version and exit
   -h, --help      print this help and exit
 
@@ -51,6 +55,42 @@ fn nearest_with(start: &Path, name: &str) -> Option<PathBuf> {
     start.ancestors().map(|d| d.join(name)).find(|c| c.is_dir())
 }
 
+/// `--doctor`: what basil found on this machine. Fails when pic-as or every pack folder is missing.
+fn doctor() -> ExitCode {
+    let mut ok = true;
+    println!("basil {}", env!("CARGO_PKG_VERSION"));
+    match toolchain::resolve_pic_as(None) {
+        Ok(p) => {
+            let v = std::process::Command::new(&p).arg("--version").output().ok().map(|o| String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).lines().next().unwrap_or("").trim().to_string()).unwrap_or_default();
+            println!("pic-as:  {}{}", p.display(), if v.is_empty() { String::new() } else { format!("  ({v})") });
+            match toolchain::resolve_xc8_cc(&p) {
+                Ok(c) => println!("xc8-cc:  {}", c.display()),
+                Err(e) => println!("xc8-cc:  missing (only programs that call C need it)\n         {e}"),
+            }
+        }
+        Err(e) => {
+            ok = false;
+            println!("pic-as:  MISSING\n{e}");
+        }
+    }
+    let roots = toolchain::pack_roots();
+    let mut any = false;
+    for r in &roots {
+        let n = std::fs::read_dir(r).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count()).unwrap_or(0);
+        println!("packs:   {} ({n} found)", r.display());
+        any |= n > 0;
+    }
+    if !any {
+        ok = false;
+        println!("packs:   MISSING: no device packs in {}\n         install them with MPLAB X (Tools > Packs) or set BASIL_DFP / pass --dfp", roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", "));
+    }
+    match basil::embedded::dirs() {
+        Some((lib, dev)) => println!("built-in: lib {}, devices {}", lib.display(), dev.display()),
+        None => println!("built-in: lib and devices cache not writable; only folders next to the program are used"),
+    }
+    if ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut file: Option<PathBuf> = None;
@@ -63,6 +103,7 @@ fn main() -> ExitCode {
     let mut dual = false;
     let mut out_hex: Option<PathBuf> = None;
     let mut pic_as: Option<PathBuf> = None;
+    let mut dfp_arg: Option<PathBuf> = None;
     let mut defines = Vec::new();
     let mut lib_dirs = Vec::new();
     let mut dev_dirs = Vec::new();
@@ -92,6 +133,11 @@ fn main() -> ExitCode {
                 Some(v) => pic_as = Some(PathBuf::from(v)),
                 None => return usage(),
             },
+            "--dfp" => match args.next() {
+                Some(v) => dfp_arg = Some(PathBuf::from(v)),
+                None => return usage(),
+            },
+            "--doctor" => return doctor(),
             "-D" => match args.next() {
                 Some(v) => defines.push(v),
                 None => return usage(),
@@ -202,17 +248,35 @@ fn main() -> ExitCode {
         eprintln!("basil: wrote {} ({} words)", asm_path.display(), generated.out.words);
         return ExitCode::SUCCESS;
     }
-    let Some(pic_as) = pic_as.or_else(find_pic_as) else {
-        eprintln!("basil: pic-as not found (install MPLAB XC8 or set BASIL_PICAS)");
-        return ExitCode::from(1);
+    let pic_as = match toolchain::resolve_pic_as(pic_as.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("basil: {e}");
+            return ExitCode::from(1);
+        }
     };
     let dev = analysis.device.as_ref().unwrap();
-    let linked = if !program.c_link() {
-        run_pic_as(&pic_as, dev, &asm_path, &hex, &map_path)
-    } else {
-        let Some(xc8) = find_xc8_cc(&pic_as) else {
-            eprintln!("basil: xc8-cc not found (a program that calls C needs the MPLAB XC8 C compiler; set BASIL_XC8CC)");
+    let dfp = match toolchain::resolve_dfp(dfp_arg.as_deref(), &dev.device.pack, &dev.device.pack_version) {
+        Ok(d) => {
+            if !d.exact {
+                eprintln!("basil: warning: device pack {} {} is not installed; using {} ({})", dev.device.pack, dev.device.pack_version, d.version, d.dir.display());
+            }
+            d.dir
+        }
+        Err(e) => {
+            eprintln!("basil: {e}");
             return ExitCode::from(1);
+        }
+    };
+    let linked = if !program.c_link() {
+        run_pic_as(&pic_as, dev, &asm_path, &dfp, &hex, &map_path)
+    } else {
+        let xc8 = match toolchain::resolve_xc8_cc(&pic_as) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("basil: {e}");
+                return ExitCode::from(1);
+            }
         };
         let stub = hex.with_file_name(format!("{stem}_cstub.c"));
         if let Err(e) = std::fs::write(&stub, c_stub(&program.externs, &program.exports)) {
@@ -227,7 +291,7 @@ fn main() -> ExitCode {
             }
         }
         let reserved = basil::codegen::ram_ranges(&generated.objs, &generated.layout);
-        run_xc8_cc(&xc8, dev, &asm_path, &stub, &cfiles, &reserved, &hex, &map_path)
+        run_xc8_cc(&xc8, dev, &asm_path, &stub, &cfiles, &reserved, &dfp, &hex, &map_path)
     };
     match linked {
         Ok(run) => {
