@@ -196,3 +196,7 @@ Same four programs, program bytes; the simulator `sink` still matches XC8 `-Os` 
 
 0.1.141 (element reuse): algorithms 2238, total 8546 (1.13 of `-Os`); the bubble-sort swap no longer reloads
 `data(j)` and `data(j+1)`, and the algorithms program runs in 87997 cycles instead of 92060.
+
+0.1.142 (16x16 signed multiply): `Integer * Integer` widened to `LongInt` (`acc + v*v`, `acc + a*b`) calls
+`__smul4`, four hardware multiplies, instead of `__mul4`; fixed-point DSP program 3090 to 3082 bytes
+(larger-program total 8546 to about 8538), and each such multiply is faster.

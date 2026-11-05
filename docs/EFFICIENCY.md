@@ -343,3 +343,8 @@ bytes, 92060 to 87997 cycles. Test: `element_already_in_a_temp_is_not_loaded_aga
 
 **Known failing simulator tests (not from these changes).** `lib_flashwrite` (default device) and `lib_adc` (P13, P16,
 Q41) fail identically with the 0.1.139 compiler and with every pass of 0.1.140 disabled.
+
+**Progress (0.1.142).** `gen_mul` recognises two operands that are both sign-extended 16-bit values and loads only
+their low two bytes, then calls `__smul4` (unsigned 16x16 from four `MULWF`, less each operand shifted up 16 where the
+other is negative). The call site shrinks by about 22 words; the helper costs about 45, so it pays from the third site.
+Test: `tests/exec/smul_wide.bas`.

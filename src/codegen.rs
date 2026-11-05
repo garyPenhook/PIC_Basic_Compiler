@@ -2191,6 +2191,21 @@ impl<'p> Gen<'p> {
             }
             return;
         }
+        // Two sign-extended 16-bit values into 32 bits: one shared routine with four hardware multiplies, and
+        // only the 16-bit operands are loaded.
+        if n == 4 {
+            let s16 = |x: &Ex| -> Option<Ex> {
+                match &x.k {
+                    ExK::Conv(i) if i.w == 16 && i.signed => Some((**i).clone()),
+                    _ => None,
+                }
+            };
+            if let (Some(x), Some(y)) = (s16(l), s16(r)) {
+                self.prep_ab(&x, &y, 2);
+                self.call_helper("smul4".to_string());
+                return;
+            }
+        }
         // A constant factor: shift for a power of two, otherwise one `MULLW` per non-zero byte of it.
         let mask = crate::ir::mask(e.w);
         let (var, k) = match (l.as_const(), r.as_const()) {
@@ -4566,6 +4581,45 @@ impl<'p> Gen<'p> {
                     }
                 }
                 self.mul_partials(n, pairs);
+                self.ins("return");
+            }
+            "smul" => {
+                // `__A` (16 bits, signed) times `__B` (16 bits, signed) into the 32 bits of `__A`: the unsigned
+                // product, less each operand shifted up 16 where the other is negative. The upper bytes of both
+                // operands are free, so the product forms in `__A2:__A3` (high half) and `__B2:__B3` (low half)
+                // while the operands stay intact for the corrections.
+                let (a0, a1, a2, a3) = (self.a(0), self.a(1), self.a(2), self.a(3));
+                let (b0, b1, b2, b3) = (self.b(0), self.b(1), self.b(2), self.b(3));
+                self.fop("movf", &a1, "w");
+                self.fo("mulwf", &b1);
+                self.movff_sfr(&a2, "PRODL");
+                self.movff_sfr(&a3, "PRODH");
+                self.fop("movf", &a0, "w");
+                self.fo("mulwf", &b0);
+                self.movff_sfr(&b2, "PRODL");
+                self.movff_sfr(&b3, "PRODH");
+                for (x, y) in [(&a0, &b1), (&a1, &b0)] {
+                    self.fop("movf", x, "w");
+                    self.fo("mulwf", y);
+                    self.ins("movf PRODL, w, c");
+                    self.fop("addwf", &b3, "f");
+                    self.ins("movf PRODH, w, c");
+                    self.fop("addwfc", &a2, "f");
+                    self.ins("movlw 0");
+                    self.fop("addwfc", &a3, "f");
+                }
+                for (tested, lo, hi) in [(&b1, &a0, &a1), (&a1, &b0, &b1)] {
+                    let skip = self.fresh();
+                    self.fbit("btfss", tested, 7);
+                    self.br(Cc::Always, &skip);
+                    self.fop("movf", lo, "w");
+                    self.fop("subwf", &a2, "f");
+                    self.fop("movf", hi, "w");
+                    self.fop("subwfb", &a3, "f");
+                    self.label(&skip);
+                }
+                self.movff(&a0, &b2);
+                self.movff(&a1, &b3);
                 self.ins("return");
             }
             "div" => {

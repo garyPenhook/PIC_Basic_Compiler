@@ -78,6 +78,9 @@ convention. Measured against the cost model (open question 3) in M5.
   summed in `__C`); a multiply by a constant is expanded inline with `MULLW` and calls no helper. Both
   clobber `PRODH:PRODL` and `__C`. Division truncates toward zero; the remainder has the dividend's sign; division
   by zero yields an all-ones quotient and the dividend as remainder (no trap).
+  `__smul4` multiplies two sign-extended 16-bit values (`__A0:1`, `__B0:1`) into the 32 bits of `__A`: four
+  `MULWF`, then each operand subtracted from the high half where the other is negative. It forms the product
+  in `__A2:3` and `__B2:3`, so it needs only the low two bytes of each operand and clobbers `__B`.
 * **Frame overlay (done)**: two routines whose frames can never be live together (neither reaches
   the other through the call graph) are given the same addresses; a routine and anything it calls,
   directly or not, never overlap. The main program's own storage, globals and compiler scratch are
