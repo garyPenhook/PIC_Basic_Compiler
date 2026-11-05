@@ -125,6 +125,8 @@ struct Eff {
     /// `WREG` is set to this literal / copy of this byte.
     w_imm: Option<u8>,
     w_mem: Option<String>,
+    /// `WREG` and this scratch register hold the same byte after the instruction (`movwf __A0`, `movf __A0, w`).
+    w_scr: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -260,6 +262,8 @@ fn effect(t: &str) -> Option<Eff> {
             write(&mut e, ops[0]);
             if loc(ops[0]).is_none() && !is_indirect(ops[0]) {
                 e.w_mem = Some(ops[0].to_string());
+            } else if scratch(ops[0]).is_some() {
+                e.w_scr = Some(ops[0].trim().to_string());
             }
         }
         "clrf" | "setf" if (1..=2).contains(&ops.len()) => {
@@ -281,6 +285,8 @@ fn effect(t: &str) -> Option<Eff> {
                     e.writes.push(Loc::W);
                     if loc(ops[0]).is_none() && !is_indirect(ops[0]) {
                         e.w_mem = Some(ops[0].to_string());
+                    } else if scratch(ops[0]).is_some() {
+                        e.w_scr = Some(ops[0].trim().to_string());
                     }
                 }
                 Dest::F => write(&mut e, ops[0]),
@@ -760,6 +766,16 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                     w = W::Unknown;
                     continue;
                 };
+                // `movf __A0, w` when W already holds __A0 (it was just stored there or loaded from there).
+                if let (Some(m), W::Mem(h)) = (&e.w_scr, &w)
+                    && e.writes == [Loc::W]
+                    && m == h
+                    && t.trim_start().starts_with("movf ")
+                    && !flags_live(items, i, e.flags_w)
+                {
+                    dead[i] = true;
+                    continue;
+                }
                 // Redundant load?
                 if e.writes == [Loc::W] && e.reads.is_empty() {
                     if let (Some(k), W::Imm(h) | W::Both(h, _)) = (e.w_imm, &w)
@@ -805,7 +821,21 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                         _ => W::Mem(m.clone()),
                     };
                 }
-                // A scratch register copy of W stays valid only until it is rewritten: not tracked.
+                // A scratch register written by this instruction no longer matches W.
+                if let W::Mem(h) | W::Both(_, h) = &next
+                    && let Some(n) = scratch(h)
+                    && e.writes.contains(&Loc::S(n))
+                {
+                    next = if let W::Both(k, _) = next { W::Imm(k) } else { W::Unknown };
+                }
+                // `movwf __A0` and `movf __A0, w` leave W and the scratch byte equal.
+                if let Some(m) = &e.w_scr {
+                    next = match &next {
+                        W::Imm(k) | W::Both(k, _) if !wrote_w => W::Both(*k, m.clone()),
+                        _ if wrote_w => W::Mem(m.clone()),
+                        _ => W::Mem(m.clone()),
+                    };
+                }
                 w = next;
             }
             // A fence emits nothing, so what `WREG` holds is still true after it. A conditional
@@ -2170,6 +2200,117 @@ fn pass_redundant_movlb(items: &mut Vec<Item>) -> bool {
     changed
 }
 
+/// `lfsr n, X` when FSR n already holds X on every path to it: the pointer was loaded earlier in the same straight
+/// run and nothing since has written it. `PLUSW`/`INDF` accesses leave the pointer alone, so a second access to the
+/// same array (the swap in a bubble sort) reloads nothing. Any other mention of an FSR, the auto-increment forms, a
+/// label, a branch taken, a call or raw text forgets what is known. Interrupt handlers save and restore FSR0..2.
+fn pass_redundant_lfsr(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let mut known: [Option<String>; 3] = [None, None, None];
+    let mut dead = vec![false; items.len()];
+    for (i, it) in items.iter().enumerate() {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => {
+                let low = t.trim().to_ascii_lowercase();
+                if let Some(rest) = low.strip_prefix("lfsr ") {
+                    let (n, v) = rest.split_once(',').map(|(a, b)| (a.trim(), b.trim())).unwrap_or(("", ""));
+                    match (n.parse::<usize>(), v.is_empty()) {
+                        (Ok(n), false) if n < 3 => {
+                            if keep[i] {
+                                known[n] = None;
+                            } else if known[n].as_deref() == Some(v) {
+                                dead[i] = true;
+                            } else {
+                                known[n] = Some(v.to_string());
+                            }
+                        }
+                        _ => known = [None, None, None],
+                    }
+                } else if parse(t).is_none() || low.contains("fsr") || low.contains("inc0") || low.contains("dec0")
+                    || low.contains("inc1") || low.contains("dec1") || low.contains("inc2") || low.contains("dec2")
+                    || matches!(parse(t), Some((m, _)) if matches!(m.as_str(), "return" | "retfie" | "goto" | "bra" | "call" | "rcall"))
+                {
+                    known = [None, None, None];
+                }
+            }
+            _ => known = [None, None, None],
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// `movff s, d` when `d` already holds the same byte as `s`: an earlier `movff s, d` or `movff d, s` in the same straight
+/// run copied it and neither byte has been written since (a result stored to its variable and read straight back into
+/// `__A` after an inlined function). Only compiler-placed RAM is reasoned about; anything the pass does not understand,
+/// a label, a call or a taken branch forgets every pair, and an indirect write forgets them too.
+fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut dead = vec![false; items.len()];
+    for (i, it) in items.iter().enumerate() {
+        if keep[i] {
+            pairs.clear();
+            continue;
+        }
+        match it {
+            Item::Comment(_) => {}
+            // No scratch value is carried past a statement, so a pair that names one is not either.
+            Item::Fence => pairs.retain(|(a, b)| scratch(a).is_none() && scratch(b).is_none()),
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => {
+                let Some(e) = effect(t) else {
+                    pairs.clear();
+                    continue;
+                };
+                let movff = parse(t).filter(|(m, o)| m == "movff" && o.len() == 2).map(|(_, o)| (o[0].trim().to_string(), o[1].trim().to_string()));
+                if let Some((s, d)) = &movff
+                    && pairs.iter().any(|(a, b)| (a == s && b == d) || (a == d && b == s))
+                {
+                    dead[i] = true;
+                    continue;
+                }
+                if e.wmem.contains(&Mem::Unknown) {
+                    pairs.clear();
+                }
+                pairs.retain(|(a, b)| {
+                    let hit = |n: &str| {
+                        e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if x == n))
+                            || scratch(n).is_some_and(|k| e.writes.contains(&Loc::S(k)))
+                    };
+                    !hit(a) && !hit(b)
+                });
+                if let Some((s, d)) = movff
+                    && s != d
+                    && (scratch(&s).is_some() || env.is_plain(&s))
+                    && (scratch(&d).is_some() || env.is_plain(&d))
+                {
+                    pairs.push((s, d));
+                }
+            }
+            _ => pairs.clear(),
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// Instructions that leave `WREG` alone.
 fn keeps_w(t: &str) -> bool {
     let Some((mn, ops)) = parse(t) else { return false };
@@ -2555,6 +2696,8 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_hoist_movlb(&mut items);
         changed |= pass_redundant_movlb(&mut items);
         changed |= pass_redundant_movlb_flow(&mut items);
+        changed |= pass_redundant_lfsr(&mut items);
+        changed |= pass_copy_back(&mut items, env);
         changed |= pass_known_sfr_bits(&mut items, env);
         changed |= pass_warg(&mut items);
         changed |= pass_bit_branch(&mut items);
@@ -2782,6 +2925,53 @@ mod tests {
         assert_eq!(r.len(), 4);
         let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movff Y, PLUSW0")]);
         assert_eq!(r.len(), 3);
+    }
+
+    #[test]
+    fn second_lfsr_of_the_same_array_goes() {
+        let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movf PLUSW0, w, c"), ins("movwf Y, c"), ins("lfsr 0, A"), ins("movf K, w, c"), ins("movff Y, PLUSW0")]);
+        assert_eq!(r.iter().filter(|t| t.starts_with("lfsr")).count(), 1);
+        // an auto-increment, a different array, or a label forgets the pointer
+        let r = run(&[ins("lfsr 0, A"), ins("movf Y, w, c"), ins("movwf POSTINC0, c"), ins("lfsr 0, A"), ins("movf Y, w, c"), ins("movwf INDF0, c")]);
+        assert_eq!(r.iter().filter(|t| t.starts_with("lfsr")).count(), 2);
+        let r = run(&[ins("lfsr 0, A"), ins("lfsr 0, B"), ins("lfsr 0, A")]);
+        assert_eq!(r.iter().filter(|t| t.starts_with("lfsr")).count(), 3);
+        let r = run(&[ins("movf Y, w, c"), Item::Br(Cc::Z, "_L9".into()), ins("lfsr 0, A"), Item::Label("_L9".into()), ins("lfsr 0, A")]);
+        assert_eq!(r.iter().filter(|t| t.starts_with("lfsr")).count(), 2);
+    }
+
+    #[test]
+    fn reload_of_a_scratch_byte_just_stored_from_w_goes() {
+        let r = run(&[ins("lfsr 0, A"), ins("movf K, w, c"), ins("movf PLUSW0, w, c"), ins("movwf __A0, c"), ins("movf __A0, w, c"), ins("xorwf Y, f, c")]);
+        assert!(!r.contains(&"movf __A0, w, c".to_string()), "{r:?}");
+        // flags read afterwards, W changed, or the scratch byte rewritten: the reload stays
+        let r = run(&[ins("movf Y, w, c"), ins("movwf __A0, c"), ins("movf __A0, w, c"), Item::Br(Cc::Z, "_L9".into()), Item::Label("_L9".into()), ins("movwf X, c")]);
+        assert!(r.contains(&"movf __A0, w, c".to_string()), "{r:?}");
+        let r = run(&[ins("movf Y, w, c"), ins("movwf __A0, c"), ins("movlw 0x05"), ins("addwf X, f, c"), ins("movf __A0, w, c"), ins("xorwf Y, f, c"), ins("movwf X, c")]);
+        assert!(r.contains(&"movf __A0, w, c".to_string()), "{r:?}");
+        let r = run(&[ins("movf Y, w, c"), ins("movwf __A0, c"), ins("incf __A0, f, c"), ins("movf __A0, w, c"), ins("xorwf Y, f, c"), ins("movwf X, c")]);
+        assert!(r.contains(&"movf __A0, w, c".to_string()), "{r:?}");
+    }
+
+    #[test]
+    fn copy_back_after_a_store_goes() {
+        let r = run(&[ins("movff __A0, X"), ins("movff __A1, X+1"), ins("movff X, __A0"), ins("movff X+1, __A1"), ins("addwf Y, f, c")]);
+        assert_eq!(r.iter().filter(|t| t.starts_with("movff")).count(), 2, "{r:?}");
+        // either byte written in between, or a label: the copy stays
+        let r = run(&[ins("movff __A0, X"), ins("incf __A0, f, c"), ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
+        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
+        let r = run(&[ins("movff __A0, X"), ins("incf X, f, c"), ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
+        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
+        let r = run(&[ins("movff __A0, X"), ins("movwf POSTINC0, c"), ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
+        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
+        let r = run(&[ins("movff __A0, X"), Item::Br(Cc::Z, "_L9".into()), Item::Label("_L9".into()), ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
+        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
+    }
+
+    #[test]
+    fn copy_back_into_scratch_is_not_trusted_past_a_statement_end() {
+        let r = run(&[ins("movff __A0, X"), Item::Fence, ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
+        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
     }
 
     #[test]

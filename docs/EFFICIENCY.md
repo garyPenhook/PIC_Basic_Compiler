@@ -319,3 +319,17 @@ temp is valid only until a call, an ISR-visible variable or another store to the
 for several bits, one test per non-zero mask byte) and L2 (`(x >> k) Xor K` shifted into the destination, then the constant folded in
 byte by byte) are implemented, `-O1` and up only. Program bytes, basil: a_algo 2382 to 2280, b_dsp 3104 to 3102, c_text 1788 to 1786,
 d_ctrl 1466 to 1464; total 8740 to 8632 (1.14 of `-Os`). Tests: `tests/exec/and_mask_test.bas`, `tests/exec/shift_fold_const.bas`.
+
+**Progress (0.1.140).** Part of L6 and L3 is implemented in `peephole.rs`, `-O1` and up:
+* `pass_redundant_lfsr` drops `lfsr n, X` when FSR n already holds X in the same straight run (`PLUSW`/`INDF`
+  accesses leave the pointer alone; auto-increment forms, labels, calls, raw text and any other FSR mention forget it).
+  Interrupt handlers save the FSRs they use, so reuse is safe.
+* `pass_wreg` tracks `movwf __A0` / `movf __A0, w` as W and the scratch byte being equal, so the reload goes.
+* `pass_copy_back` drops `movff R, A` after `movff A, R` when neither byte was written since. Pairs naming a scratch
+  byte are forgotten at a `Fence` (no scratch value is carried past a statement); keeping them made `b_dsp` miscompile,
+  which the simulator sink check caught.
+
+Program bytes: total 8632 to 8556 (1.13 of `-Os`; table in `docs/BENCHMARKS.md`). Not done: reusing a value already
+held in a temp (`t = data(j)` rereads), and the inlined-function result copies that cross a statement end, which need
+a code generator change rather than a peephole. Tests: `second_lfsr_of_the_same_array_goes`,
+`reload_of_a_scratch_byte_just_stored_from_w_goes`, `copy_back_after_a_store_goes` and its Fence case.

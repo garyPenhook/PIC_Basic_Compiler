@@ -181,3 +181,15 @@ forced out through `LATB`/`LATC` or a volatile `sink`), PIC18F27Q10, whole-image
 
 On code of this size basil is 16% larger than XC8 `-Os` and 4% larger than `-O2`, so the small-kernel
 advantage above does not generalise. The loss is largest on 32-bit loops and 16-bit `Mod`.
+
+### After L1/L2 (0.1.139) and L6/L3 (0.1.140)
+
+Same four programs, program bytes; the simulator `sink` still matches XC8 `-Os` in all four.
+
+| program | 0.1.138 | 0.1.139 | 0.1.140 | XC8 -Os | basil / -Os |
+|---|---:|---:|---:|---:|---:|
+| algorithms | 2382 | 2280 | 2248 | 1826 | 1.23 |
+| fixed-point DSP | 3104 | 3102 | 3090 | 2606 | 1.19 |
+| text formatting and parsing | 1788 | 1786 | 1770 | 1738 | 1.02 |
+| command state machine | 1466 | 1464 | 1448 | 1390 | 1.04 |
+| total | 8740 | 8632 | 8556 | 7560 | 1.13 |
