@@ -2462,6 +2462,105 @@ fn pass_load_reuse(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// A wide sum built in `__A`: `movff X0, __A0 ...` then `movf Y0, w ; addwf __A0, f ; movf Y1, w ; addwfc __A1, f ...`.
+/// Returns the byte count and the symbols it reads, when `items[i..]` starts one.
+fn sum_group(items: &[Item], i: usize, keep: &[bool]) -> Option<(usize, Vec<String>)> {
+    let ins = |k: usize| -> Option<(String, Vec<String>)> {
+        match items.get(k) {
+            Some(Item::Ins(t)) if !keep[k] => parse(t).map(|(m, o)| (m, o.iter().map(|x| x.trim().to_string()).collect())),
+            _ => None,
+        }
+    };
+    let mut n = 0;
+    while n < 4 {
+        match ins(i + n) {
+            Some((m, o)) if m == "movff" && o.len() == 2 && scratch(&o[1]) == Some(n as u8) && scratch(&o[0]).is_none() => n += 1,
+            _ => break,
+        }
+    }
+    if n < 2 {
+        return None;
+    }
+    let mut syms = Vec::new();
+    for k in 0..n {
+        syms.push(ins(i + k)?.1[0].clone());
+    }
+    for k in 0..n {
+        let (m, o) = ins(i + n + 2 * k)?;
+        if m != "movf" || o.len() != 3 || !matches!(o[1].as_str(), "w" | "0") || scratch(&o[0]).is_some() {
+            return None;
+        }
+        syms.push(o[0].clone());
+        let (m, o) = ins(i + n + 2 * k + 1)?;
+        let want = if k == 0 { "addwf" } else { "addwfc" };
+        if m != want || o.len() != 3 || scratch(&o[0]) != Some(k as u8) || o[1] != "f" {
+            return None;
+        }
+    }
+    Some((n, syms))
+}
+
+/// A wide sum built in `__A` again while `__A` still holds it: `if acc >= r + b then acc = acc - (r + b)`. Nothing
+/// between the two copies may write `__A`'s bytes or either operand, and no label may let another path in. The later
+/// copy goes when `WREG` and the flags are dead after it (it leaves the sum in `__A`, which is all the rest reads).
+fn pass_sum_share(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut dead = vec![false; items.len()];
+    let mut i = 0;
+    while i < items.len() {
+        let Some((n, syms)) = sum_group(items, i, &keep) else {
+            i += 1;
+            continue;
+        };
+        let len = 3 * n;
+        let mut k = i;
+        let mut found = false;
+        while k > 0 && i - k < 80 {
+            k -= 1;
+            // An earlier copy ending at `k`, identical text.
+            if k + 1 >= len && (0..len).all(|j| matches!((&items[k + 1 - len + j], &items[i + j]), (Item::Ins(a), Item::Ins(b)) if a == b)) && !dead[k + 1 - len] && sum_group(items, k + 1 - len, &keep).is_some() {
+                found = true;
+                break;
+            }
+            if keep[k] {
+                break;
+            }
+            match &items[k] {
+                Item::Comment(_) => {}
+                Item::Br(cc, _) if *cc != Cc::Always => {}
+                Item::Ins(t) => {
+                    let Some(e) = effect(t) else { break };
+                    let hits = |name: &str| {
+                        e.wmem.iter().any(|m| matches!(m, Mem::Unknown) || matches!(m, Mem::Sym(x) if same_byte(env, x, name)))
+                            || scratch(name).is_some_and(|s| e.writes.contains(&Loc::S(s)))
+                    };
+                    if syms.iter().any(|s| hits(s)) || (0..n).any(|b| e.writes.contains(&Loc::S(b as u8)) || e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same_byte(env, x, &format!("__A{b}"))))) {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        if found && w_and_flags_dead(items, i + len, 2) {
+            for d in dead.iter_mut().skip(i).take(len) {
+                *d = true;
+            }
+            i += len;
+        } else {
+            i += 1;
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// Instructions that leave `WREG` alone.
 fn keeps_w(t: &str) -> bool {
     let Some((mn, ops)) = parse(t) else { return false };
@@ -2850,6 +2949,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_load_reuse(&mut items, env);
         changed |= pass_redundant_lfsr(&mut items);
         changed |= pass_copy_back(&mut items, env);
+        changed |= pass_sum_share(&mut items, env);
         changed |= pass_known_sfr_bits(&mut items, env);
         changed |= pass_warg(&mut items);
         changed |= pass_bit_branch(&mut items);
@@ -2959,6 +3059,37 @@ mod tests {
                 _ => "?".into(),
             })
             .collect()
+    }
+
+    #[test]
+    fn sum_still_in_scratch_is_not_built_again() {
+        let mut v = Vec::new();
+        let sum = |v: &mut Vec<Item>| {
+            for k in 0..4 {
+                v.push(ins(&format!("movff X+{k}, __A{k}")));
+            }
+            for k in 0..4 {
+                v.push(ins(&format!("movf Y+{k}, w, c")));
+                v.push(ins(&format!("{} __A{k}, f, c", if k == 0 { "addwf" } else { "addwfc" })));
+            }
+        };
+        sum(&mut v);
+        v.push(ins("movf __A0, w, c"));
+        v.push(ins("subwf __D0, f, c"));
+        v.push(Item::Br(Cc::Nc, "L1".into()));
+        sum(&mut v);
+        v.push(ins("movf __A0, w, c"));
+        v.push(ins("subwf X, f, c"));
+        let out = run(&v);
+        assert_eq!(out.iter().filter(|l| l.starts_with("movff X")).count(), 4);
+        // A write to an operand in between keeps the second sum.
+        let mut w = Vec::new();
+        sum(&mut w);
+        w.push(ins("incf X, f, c"));
+        sum(&mut w);
+        w.push(ins("movf __A0, w, c"));
+        w.push(ins("subwf X, f, c"));
+        assert_eq!(run(&w).iter().filter(|l| l.starts_with("movff X")).count(), 8);
     }
 
     #[test]

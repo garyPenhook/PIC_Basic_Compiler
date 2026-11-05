@@ -341,10 +341,13 @@ is not used before its next load; with `addlw` the pass requires carry and overf
 compares plain bytes by address (`X` and `X+0`). Bubble sort: 5 and 4 words saved in the swap; algorithms 2248 to 2238
 bytes, 92060 to 87997 cycles. Test: `element_already_in_a_temp_is_not_loaded_again`.
 
-**Known failing simulator tests (not from these changes).** `lib_flashwrite` (default device) and `lib_adc` (P13, P16,
-Q41) fail identically with the 0.1.139 compiler and with every pass of 0.1.140 disabled.
-
 **Progress (0.1.142).** `gen_mul` recognises two operands that are both sign-extended 16-bit values and loads only
 their low two bytes, then calls `__smul4` (unsigned 16x16 from four `MULWF`, less each operand shifted up 16 where the
 other is negative). The call site shrinks by about 22 words; the helper costs about 45, so it pays from the third site.
 Test: `tests/exec/smul_wide.bas`.
+
+**Progress (0.1.143).** `pass_sum_share` (peephole): a wide sum built in `__A` (`movff` of the first operand, then
+`movf`/`addwf`/`addwfc` of the second) is not built again while `__A` still holds it, as in `if acc >= r + b then acc =
+acc - (r + b)`. Nothing between the two copies may write `__A` or either operand, no label may let another path in, and
+`WREG` and the flags must be dead after the dropped copy. Saves 16 words per use (DSP program 3082 to 3050 bytes). Test:
+`sum_still_in_scratch_is_not_built_again`.

@@ -1,5 +1,5 @@
-' expect: LA_CLK=15 LA_ACQ=5 LA_CON=132 LA_REF=0 LA_CP=64 LA_CLK2=15 LA_ACQ2=5 LA_REF2=3 LA_TA=2 LA_NA=2 LA_MV=3300 LA_FV=3 LA_RD=0 LA_OK=1
-' ADC library on the PIC16F17146 at 32 MHz (DS40002343F chapter 33): ADCLK = n with 2 * (n + 1) / FOSC >= 1 us gives n = 15, ADACQ covers 5 us (5 ADC clocks of 1 us),
+' expect: LA_CLK=15 LA_ACQ=160 LA_CON=132 LA_REF=0 LA_CP=64 LA_CLK2=15 LA_ACQ2=160 LA_REF2=3 LA_TA=2 LA_NA=2 LA_MV=3300 LA_FV=3 LA_RD=0 LA_OK=1
+' ADC library on the PIC16F17146 at 32 MHz (DS40002343F chapter 33): ADCLK = n with 2 * (n + 1) / FOSC >= 1 us gives n = 15, ADACQ covers 5 us (160 clocks of FOSC, Table 33-9),
 ' ADCON0 = ADON | ADFM (132), RC1 (pin 17, on the 14-pin part too) becomes an analog input, the 12-bit scale gives 3300 mV for 4095, FVR as reference sets ADREF = 3 and no
 ' slower clock (the PIC16F171xx has no erratum for it). Errata 1.6.1 (DS80001009E): AdcInit writes CPON = 01 to CPCON (64). The simulator does not run the ADC (ADGO never clears), so no conversion is made.
 Program La

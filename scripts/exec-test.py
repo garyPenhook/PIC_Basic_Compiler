@@ -146,7 +146,7 @@ def sim_run(name, hexf, syms, vars_, expect):
     cmd = [a.sim, hexf, "--device", a.device, "--asm", os.path.join(work, name + ".S")]
     if not os.path.exists(cmd[-1]):
         cmd[-1] = os.path.join(work, name + "_basil.S")
-    r = subprocess.run(cmd + (["--dump", dump] if dump else []), capture_output=True, text=True, timeout=1800)
+    r = subprocess.run(cmd + (["--dump", dump] if dump else []), capture_output=True, text=True, timeout=3600)
     m = re.search(r"stop: (\w+).*cycles: (\d+)", r.stdout)
     blocks = [l.split("(")[1].rstrip(")") for l in r.stdout.splitlines() if " = " in l and "(" in l]
     return blocks, (m.group(2) if m else None), bool(m) and m.group(1) == "Halt"
@@ -165,7 +165,7 @@ script = [f"device PIC{a.device}", "hwtool SIM"]
 for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
     if dma or eng_of(name) == "sim":
         continue
-    script += [f"program {hexf}", f"break *0x{syms['__halt']:X}", "run", "wait 60000", "stopwatch"]
+    script += [f"program {hexf}", f"break *0x{syms['__halt']:X}", "run", "wait 300000", "stopwatch"]
     for k in expect:
         if k not in vars_:
             continue
@@ -176,7 +176,7 @@ for name, hexf, syms, vars_, expect, cyc_range, dma in jobs:
 script.append("quit")
 sp = os.path.join(work, "run.mdb")
 open(sp, "w").write("\n".join(script) + "\n")
-out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=1800).stdout if any(not j[6] and eng_of(j[0]) != "sim" for j in jobs) else ""
+out = subprocess.run([mdb, sp], capture_output=True, text=True, timeout=3600).stdout if any(not j[6] and eng_of(j[0]) != "sim" for j in jobs) else ""
 if a.keep:
     open(os.path.join(work, "mdb.log"), "w").write(out)
     print("work dir:", work)

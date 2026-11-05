@@ -200,3 +200,6 @@ Same four programs, program bytes; the simulator `sink` still matches XC8 `-Os` 
 0.1.142 (16x16 signed multiply): `Integer * Integer` widened to `LongInt` (`acc + v*v`, `acc + a*b`) calls
 `__smul4`, four hardware multiplies, instead of `__mul4`; fixed-point DSP program 3090 to 3082 bytes
 (larger-program total 8546 to about 8538), and each such multiply is faster.
+
+0.1.143 (shared sum): `If acc >= r + b Then acc = acc - (r + b)` builds `r + b` in `__A` once; the second copy goes when
+nothing in between writes `__A` or either operand. Fixed-point DSP program 3082 to 3050 bytes (1541 to 1525 words).

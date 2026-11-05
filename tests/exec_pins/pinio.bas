@@ -109,3 +109,27 @@ Public Function Bursts() As Byte
         End If
     Next
 End Function
+
+' Bound pins (`BindData` / `DataPut` / `DataRead` / `BindClk` / `ClkPut`), as the non-PIC18 `Pinio` does them.
+Dim dPin As Byte
+Dim cPin As Byte
+
+Public Sub BindData(ByVal pin As Byte)
+    dPin = pin
+End Sub
+
+Public Sub BindClk(ByVal pin As Byte)
+    cPin = pin
+End Sub
+
+Public Sub DataPut(ByVal level As Boolean)
+    PinSet(dPin, level)
+End Sub
+
+Public Sub ClkPut(ByVal level As Boolean)
+    PinSet(cPin, level)
+End Sub
+
+Public Function DataRead() As Boolean
+    Result = PinGet(dPin)
+End Function

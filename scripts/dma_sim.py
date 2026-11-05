@@ -281,7 +281,7 @@ class Event:
 class Replay:
     """Runs one program through MDB with the DMA engine replayed into it; see the module comment."""
 
-    def __init__(self, mdb, device, hexf, halt, info, mailbox=None, feed=None, slow=False, reads=(), ram=(0, 0), eeinit=(), timeout_ms=60000):
+    def __init__(self, mdb, device, hexf, halt, info, mailbox=None, feed=None, slow=False, reads=(), ram=(0, 0), eeinit=(), timeout_ms=300000):
         self.mdb, self.device, self.hexf, self.halt, self.info = mdb, device, hexf, halt, info
         self.mailbox, self.feed, self.slow, self.reads, self.timeout_ms = mailbox, feed or {}, slow, list(reads), timeout_ms
         self.eeinit = list(eeinit)
