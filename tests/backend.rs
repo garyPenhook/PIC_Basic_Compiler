@@ -466,6 +466,32 @@ fn hardware_stack_depth_is_checked() {
     }
 }
 
+/// A main program of `n` nested `GoSub`s: each subroutine adds one level of the hardware stack.
+fn gosub_chain_program(n: u32) -> String {
+    let mut s = String::from("Program T\nDevice = 18F27Q10\nDim g As Byte\nGoSub S1\nGoTo Done\n");
+    for i in 1..=n {
+        s += &format!("S{i}:\n");
+        s += &if i < n { format!("GoSub S{}\n", i + 1) } else { "g = g + 1\n".to_string() };
+        s += "Return\n";
+    }
+    s + "Done:\n"
+}
+
+#[test]
+fn gosub_levels_count_towards_the_hardware_stack() {
+    let out = scratch("gosubdepth");
+    let src = out.join("s.bas");
+    for (n, ok) in [(31, true), (32, false)] {
+        std::fs::write(&src, gosub_chain_program(n)).unwrap();
+        let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+        let err = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert_eq!(r.status.success(), ok, "{n} nested GoSubs: {err}");
+        if !ok {
+            assert!(err.contains("E-STACK"), "{err}");
+        }
+    }
+}
+
 /// A constant baud rate and a literal passed to one routine fold away: no run-time divide, no RAM
 /// copy of the string, and the transmit-ready wait is a bit test rather than a compare.
 #[test]
