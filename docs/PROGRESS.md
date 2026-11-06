@@ -1215,4 +1215,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Safety against the optimisers: `ir::has_jump_target` counts both (so every analysis that refuses jumps refuses them), `propagate_locals` forgets everything at a `GoSub` (the subroutine changes locals), `inline_single_calls` leaves a routine alone when its body calls one of its own labels (the subroutine's `return` would have been taken for the routine's), and the BSR flow pass in `peephole` takes the bank after a call to a user label (`L_<n>_name`) as unknown (it looks for the label's `return`s as if it were a routine). The PIC16 back end uses `call()` so its tracked BSR is dropped.
 - Return stack: `stack_depth` (both back ends) adds one level per distinct `GoSub` target of a routine; 31 chained subroutines compile, 33 give `E-STACK`.
 - Tests: `tests/exec/gosub.bas` (constants across a `GoSub`, nested, `On n GoSub`, early `Return`, a `Sub` with locals, other banks; 18F27Q10, 18F16Q41, 16F17126, 16F13145), `tests/negative/return_no_gosub.bas`, `gosub_no_label.bas`, `gosub_deep.bas`.
-- Not done: `Call`, `If cond GoSub label` (use `If … Then` / `GoSub` on its own line), `GoSub` inside `Save`.
+- Not done: `If cond GoSub label` (use `If … Then` / `GoSub` on its own line), `GoSub` inside `Save`.
+
+## Call (done 2026-11-06, 0.1.149)
+- `Call Name(args)` is parsed as the plain call `Name(args)` (`parser`: contextual word, an identifier follows, so a variable or routine named `Call` still works). Test `tests/exec/call_stmt.bas`.

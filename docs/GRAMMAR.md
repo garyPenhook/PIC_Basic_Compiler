@@ -24,9 +24,9 @@ Reserved words (initial list; extended by the device layer is **not** allowed â€
 names are ordinary identifiers resolved by the device description):
 `absolute access addressof and as asm bit bitof boolean bound break byref byrefconst byte byval case char
 clear clock compound config const continue dec delayms delayus device dim disable else elseif enable end
-endif endselect event exit false float for function goto high if inc include inline input integer
+endif endselect event exit false float for function gosub goto high if inc include inline input integer
 interrupt longint longword low mod module next noinline not null or output private program public
-reentrant repeat restore result save select shortint static step string structure sub terminate then to toggle
+reentrant repeat restore result return save select shortint static step string structure sub terminate then to toggle
 true type until volatile wend while word xor`
 
 ## Compilation units
@@ -104,7 +104,7 @@ event_decl     = "Event" IDENT "(" [ event_params ] ")" EOL body "End" "Event" ;
 
 ```
 stmt        = ( assign | call | if_stmt | select_stmt | while_stmt | repeat_stmt | do_stmt | for_stmt
-              | "Break" | "Continue" | "Exit" | "ExitProc" | goto_stmt | label | save_block
+              | "Break" | "Continue" | "Exit" | "ExitProc" | goto_stmt | gosub_stmt | "Return" | label | save_block
               | asm_block | enable_stmt ) EOL ;
 
 assign      = designator "=" expr ;
@@ -127,6 +127,8 @@ repeat_stmt = "Repeat" EOL { stmt } "Until" expr ;
 for_stmt    = "For" designator "=" expr "To" expr [ "Step" expr ] EOL { stmt } "Next" ;
 
 goto_stmt   = "GoTo" IDENT ;
+gosub_stmt  = "GoSub" IDENT | "On" expr "GoSub" IDENT { "," IDENT } ;
+                                                  (* "Call" designator is the plain call: contextual, not reserved *)
 label       = IDENT ":" ;                         (* first on its line, nothing after the colon *)
 enable_stmt = ( "Enable" | "Disable" ) "(" IDENT ")" ;
 save_block  = "Save" "(" save_item { "," save_item } ")" EOL { stmt } "Restore" ;

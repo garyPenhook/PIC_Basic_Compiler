@@ -989,6 +989,13 @@ impl<'a> Parser<'a> {
                 self.end_stmt()?;
                 StmtKind::Select { subject, cases, otherwise: None }
             }
+            // `Call Name(args)`: the same as `Name(args)`. `Call` is not reserved: a variable or routine of that name still works.
+            Tok::Ident(w) if w.eq_ignore_ascii_case("call") && matches!(self.peek_at(1), Tok::Ident(_)) => {
+                self.bump();
+                let d = self.designator()?;
+                self.end_stmt()?;
+                StmtKind::Call(d)
+            }
             Tok::Ident(_) if self.at_line_start() && matches!(self.peek_at(1), Tok::Colon) && matches!(self.peek_at(2), Tok::Newline | Tok::Eof) => {
                 let l = self.ident()?;
                 self.bump(); // the colon

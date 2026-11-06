@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.128**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.149**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -1580,7 +1580,17 @@ Done:
 * A `Return` reached with no `GoSub` active (by falling into the subroutine) returns from the whole routine, or resets
   the part when the stack is empty.
 
-**See also** `GoTo`, `On ... GoTo`, `Exit`.
+**See also** `GoTo`, `On ... GoTo`, `Exit`, `Call`.
+
+## Call
+
+**Syntax**
+```basic
+Call Name(arguments)
+```
+**Overview** Calls the `Sub` or `Function` `Name`; exactly the same as writing `Name(arguments)`, for programs written with
+the keyword. The result of a `Function` is discarded. `Call` is not a reserved word: a variable or routine of that name still
+works. To run a subroutine of the current routine use `GoSub`.
 
 ## On ... GoTo, Branch
 
@@ -5484,7 +5494,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.128 |
+| Feature of other BASIC compilers | basil 0.1.149 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -5504,7 +5514,7 @@ reports these rather than miscompiling them.
 | `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
 | `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `Const` arrays |
 | `Branch`, `On GoTo` | `Branch index, l0, l1` and `On index GoTo l0, l1` (count from 0; out of range falls through) |
-| `On GoSub`, `GoSub`, `Return` | `GoSub label`, `On index GoSub l0, l1`, `Return` (labels of the same routine); `Call` is just the routine name with parentheses |
+| `On GoSub`, `GoSub`, `Return` | `GoSub label`, `On index GoSub l0, l1`, `Return` (labels of the same routine); `Call Name(args)` (same as `Name(args)`; `Call` is not reserved) |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
 | `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
