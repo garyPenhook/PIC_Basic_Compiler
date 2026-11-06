@@ -353,7 +353,7 @@ impl Eval<'_> {
                 Pre::Bool(b) => Val::Bool(*b),
                 Pre::Str(s) => Val::Str(s.clone()),
             }),
-            _ if matches!(t.as_str(), "_core" | "_maxram" | "_maxrom" | "_ports" | "_adc" | "_usart" | "_mssp" | "_ccp" | "_comparator" | "_flash_write") => {
+            _ if matches!(t.as_str(), "_core" | "_maxram" | "_maxrom" | "_ports" | "_adc" | "_usart" | "_mssp" | "_ccp" | "_comparator" | "_flash_write" | "_usb" | "_eccp" | "_adres") => {
                 Err(format!("{t} is used but the device description could not be loaded (is there a `Device = name` line?)"))
             }
             "_device" => self
@@ -375,7 +375,7 @@ impl Eval<'_> {
                 } else if t.starts_with("pic18") {
                     Ok(Val::Str(t[3..].to_string()))
                 } else {
-                    Err(format!("`{t}` is not a number, a name given a value by #define or #constant, or a predefined constant (_clock, _device, _core, _ram, _maxram, _maxrom, _eeprom, _ports, _adc, _usart, _mssp, _ccp, _comparator, _flash_write, _has, _i2chw)"))
+                    Err(format!("`{t}` is not a number, a name given a value by #define or #constant, or a predefined constant (_clock, _device, _core, _ram, _maxram, _maxrom, _eeprom, _ports, _adc, _usart, _mssp, _ccp, _comparator, _flash_write, _usb, _eccp, _adres, _has, _i2chw)"))
                 }
             }
         }

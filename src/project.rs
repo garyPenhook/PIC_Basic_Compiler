@@ -84,6 +84,16 @@ fn device_registers(device: &str, dirs: &[PathBuf]) -> Option<(HashSet<String>, 
     extra.insert("_ccp", Pre::Num(count(&|n| digits(n, "ccp", "con"))));
     extra.insert("_comparator", Pre::Num(count(&|n| digits(n, "cm", "con0"))));
     extra.insert("_flash_write", Pre::Bool(set.contains("nvmcon1")));
+    extra.insert("_usb", Pre::Num(count(&|n| n == "ucon")));
+    extra.insert("_eccp", Pre::Num(count(&|n| digits(n, "eccp", "con"))));
+    // ADC result width: not in the description. DS40002043F 33.2.2 (10-bit, PIC18F27Q10) and
+    // DS40002242F 40.2.2 (12-bit, PIC18-Q41); a device not in this list leaves `_adres` undefined.
+    let up = d.device.name.to_ascii_uppercase();
+    if up.contains("Q10") {
+        extra.insert("_adres", Pre::Num(10.0));
+    } else if up.contains("Q41") {
+        extra.insert("_adres", Pre::Num(12.0));
+    }
     Some((set, d.memory.data.usable_gpr, d.memory.eeprom.size, extra))
 }
 

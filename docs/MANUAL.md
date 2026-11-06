@@ -693,8 +693,10 @@ the routines used are linked.
   comparisons; mixed integer and Float expressions (the integer is converted); `Float(x)` and the
   integer conversions `Byte(f)`, `Integer(f)`, ... (truncating).
 * Rounding is to nearest even. Infinities and NaN propagate. Denormals are flushed to zero.
-* Not supported at run time: `Sqr`, `Sin`, `Cos`, `Tan`, `Log`, `Exp`, `Pow`, `fRound` and the other math
-  functions; `Print`/`Str` of a Float; a Float as a `For` variable, in `Select`, or with `Inc`/`Dec`;
+* Run-time maths: `Include "fmath"` gives `FSqr`, `FExp`, `FLog`, `FLog10`, `FPow` (x > 0), `FSin`, `FCos` and `FTan`
+  (radians, |x| under 200000; accurate to about six digits; about 94,000 cycles for the 18-call self-test).
+  `Sqr`, `Sin`, `Cos`, `Pow` and `Log2` themselves stay build-time only.
+* Not supported at run time: `fRound` and the other math functions; `Print`/`Str` of a Float; a Float as a `For` variable, in `Select`, or with `Inc`/`Dec`;
   `=` and `<>` between floats are available but avoid them as for any float.
 * Cost: about 700 words for `+`, 800 for `*`, 470 for `/`, plus about 250 shared (roughly 2,500 words
   for a program using all three).
@@ -1357,7 +1359,7 @@ also be called from Basic as usual.
 `Const` line: it exists for `#if`. More predefined names, derived from the device description: `_core` (`"pic18"`, `"pic16e"`),
 `_maxram` (all data RAM), `_maxrom` (program memory in bytes), `_ports` (number of `LATx`), `_adc` (1 with an `ADCON0`),
 `_usart` (`RCnSTA` or `UnCON0` registers), `_mssp` (`SSPnCON1`), `_ccp` (`CCPnCON`), `_comparator` (`CMnCON0`),
-`_flash_write` (true with `NVMCON1`). Not available: `_adres`, `_usb`, `_eccp`. `Declare Name = value` (any name but `Xtal`; a
+`_flash_write` (true with `NVMCON1`), `_usb` (1 with a `UCON`), `_eccp` (`ECCPnCON`), `_adres` (ADC result bits: 10 on the Q10, 12 on the Q41; undefined for other devices). `Declare Name = value` (any name but `Xtal`; a
 number, text or True/False expression) is a `Const`, as `#constant`; any other value is `E-UNSUPPORTED`.
 Directives inside `(* *)` or `{ }` comments are ignored.
 
@@ -5460,7 +5462,8 @@ reports these rather than miscompiling them.
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
 | `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
 | `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*) |
-| `Tan`, `Log`, `Log10`, `Exp`, `Div32`, `@`, `?` | not available; `Abs`, `Min`, `Max` and arithmetic only |
+| `Tan`, `Log`, `Log10`, `Exp` | `FTan`, `FLog`, `FLog10`, `FExp` of the `fmath` module (also `FSqr`, `FSin`, `FCos`, `FPow`) |
+| `Div32`, `@`, `?` | not available |
 | `Len`, `Left$`, `Mid$`, `Right$` | not available; string arrays are `Dim s(3) As String(8)` |
 | `Tern` | `Tern(cond, a, b)` (only the chosen value is evaluated) |
 | `SizeOf` | `SizeOf(variable)`, bytes, known at build time |

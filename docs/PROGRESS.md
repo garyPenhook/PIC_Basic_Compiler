@@ -1200,3 +1200,8 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - New `lib/epaper.bas`: WeAct 2.13" (122 x 250) and 2.9" (128 x 296) e-paper modules, black / white and black / white / red (SSD1680, 4-wire SPI). Init, clear, filled rectangles, text (8 x 8 cells), bitmap windows into either colour plane, full refresh, deep sleep and wake. Source: `docs/SSD1680_Datasheet.pdf` (downloaded from the WeAct repository with the panel specs and schematic) plus the vendor example for what the data sheet leaves out.
 - Test: `tests/exec_epaper` (SSD1680 model: command and data decoding, RAM window and address counter, BUSY), run optimised and `-O0` on the 18F27Q10, also passes on the 18F16Q41.
 - Not done, and why: single pixels, lines and circles (no frame buffer, the RAM cannot be read back); fast and partial refresh (the vendor uses a 153-byte waveform table and a temperature-register trick, neither in the data sheet); the BUSY timeout path (40 s of simulated time) is untested. Nothing has run on a real panel.
+
+## Preprocessor names; run-time Float maths (0.1.145, 0.1.146)
+- 0.1.145: `_usb`, `_eccp`, `_adres` (10 on the Q10, DS40002043F 33.2.2; 12 on the Q41, DS40002242F 40.2.2). Test `pp_predef.bas`.
+- 0.1.146: `lib/fmath.bas`: `FSqr FExp FLog FLog10 FPow FSin FCos FTan` on binary32 (D7 already chose IEEE binary32). Test `tests/exec/lib_fmath.bas` (values from the host). Only run on the 18F27Q10.
+- Still to do: `GoSub/Return/Call`, `Len/Left$/Mid$/Right$`, `Print` and `Dec/Hex/Bin/Str$/Val` modifiers, `Freqout`, 1-wire, `Div32 @ ?`, statements without parentheses. Not possible: `BitOf` (undefined), USB (no device has it).
