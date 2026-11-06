@@ -5,6 +5,7 @@ Each program names its expectations in comments near the top:
 
     ' expect: T_A=5 T_B=300      (variable symbol = decimal value; little endian, size from the .S)
     ' expect-18F16Q41: T_A=7    (optional: for that part, each name given overrides the same name in the ' expect: lines; names not given keep that value)
+    ' expect-O0: T_PR=172       (optional: for a -O0 build, each name given overrides the same name; for values that are code addresses)
     ' devices: 18F27Q10 18F16Q41 (optional: run only for the listed parts (separated by spaces or commas); others are skipped, e.g. a program that tests _device or RB0.
     ' engine: mdb              (optional: basil-sim differs from MDB on what the program tests; run it in MDB whatever --engine says)
     ' engine: sim              (optional: MDB does not model what the program tests, e.g. flash reads and writes; run it in basil-sim whatever --engine says)
@@ -106,7 +107,7 @@ for src in a.files:
         vars_[m.group(1)] = (int(m.group(2), 16), int(m.group(3) or 1))
     head = text
     expect = {}
-    for line in re.findall(r"^'\s*expect:(.*)$", head, re.M) + re.findall(rf"^'\s*expect-{re.escape(a.device)}:(.*)$", head, re.M):
+    for line in re.findall(r"^'\s*expect:(.*)$", head, re.M) + re.findall(rf"^'\s*expect-{re.escape(a.device)}:(.*)$", head, re.M) + (re.findall(r"^'\s*expect-O0:(.*)$", head, re.M) if "-O0" in a.flags.split() else []):
         for kv in line.split():
             k, v = kv.split("=")
             expect[k] = int(v, 0)
