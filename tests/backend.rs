@@ -1099,7 +1099,8 @@ const P180_PARTS: [&str; 2] = ["16F18056", "16F18076"];
 /// Programs of the PIC16F171xx sets that do not apply to the PIC16F18056/76: the library modules whose registers differ (`tests/exec_p180` has the
 /// PIC16F18056 versions), and four programs that the simulator's PIC16F18056/76 model gets wrong although the same hex file is right on its
 /// PIC16F17146 model: in each, a 4-byte (or longer) variable that sits at data address 5A0h loses its first bytes (`float_compare`: `vGe`, `lib_floatlib_edge`: `r217`, and
-/// the last results of `arith_integer` and `arith_word`). The program runs to the end with the cycle count of the PIC16F17146 run; the hex files differ only in the Config words. Not understood yet.
+/// the last results of `arith_integer` and `arith_word`). Cause found: the simulator's PIC16F18056 and PIC16F18076 models ignore every write to 5A0h..5A3h
+/// (linear 2370h..2373h), direct or through an FSR; a hand-written fill of all RAM leaves only those four bytes unwritten. The generated code and the device files are not at fault.
 const P180_SKIP: &[&str] = &["arith_integer", "arith_word", "float_compare", "lib_floatlib_edge", "lib_adc", "lib_i2c", "lib_pwm", "lib_serial", "lib_serial2", "lib_spi"];
 
 /// The programs for the PIC16F18056/76: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p180`.
@@ -1158,7 +1159,7 @@ fn p180_unported_modules_stop() {
     }
 }
 
-/// With `BASIL_MDB=1` the PIC16F18056 programs run on the simulator's `PIC16F18056`.
+/// With `BASIL_MDB=1` the PIC16F18056/76 programs run on the simulator's `PIC16F18056` and `PIC16F18076`.
 #[test]
 fn p180_programs_in_simulator() {
     if std::env::var("BASIL_MDB").is_err() {
@@ -1166,10 +1167,12 @@ fn p180_programs_in_simulator() {
         return;
     }
     let files = p180_programs();
-    for flags in ["", "-O0"] {
-        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F18056").args(&files).output().unwrap();
-        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
-        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    for dev in P180_PARTS {
+        for flags in ["", "-O0"] {
+            let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg(dev).args(&files).output().unwrap();
+            let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+            assert!(r.status.success(), "{dev} flags `{flags}`:\n{text}");
+        }
     }
 }
 
