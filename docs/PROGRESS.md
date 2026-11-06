@@ -1204,7 +1204,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## Preprocessor names; run-time Float maths (0.1.145, 0.1.146)
 - 0.1.145: `_usb`, `_eccp`, `_adres` (10 on the Q10, DS40002043F 33.2.2; 12 on the Q41, DS40002242F 40.2.2). Test `pp_predef.bas`.
 - 0.1.146: `lib/fmath.bas`: `FSqr FExp FLog FLog10 FPow FSin FCos FTan` on binary32 (D7 already chose IEEE binary32). Test `tests/exec/lib_fmath.bas` (values from the host). Only run on the 18F27Q10.
-- Still to do: `Print` and `Dec/Hex/Bin/Str$/Val` modifiers, `Freqout`, 1-wire, `Div32 @ ?`, statements without parentheses. Not possible: `BitOf` (undefined), USB (no device has it).
+- Still to do: `Print` and `Dec/Hex/Bin/Str$/Val` modifiers, 1-wire, `Div32 @ ?`, statements without parentheses. Not possible: `BitOf` (undefined), USB (no device has it).
 
 ## String functions: Left$, Mid$, Right$, Str$ (done 2026-11-05, 0.1.147)
 - The lexer takes a `$` straight after `left mid right str` as part of the name. `sema` types them as `String` values (`check_intrinsic`; a constant count bounds the size, so `Left$(s, 2) + "-"` stays small); `lower::str_parts` builds each into a hidden String ahead of the statement with the same loops as the statements (`slice_core`, `num_core`, split out of `str_slice` / `str_of_num`). Works wherever a String expression does: assignment, `+` chains, comparisons, arguments (`is_intrinsic` keeps them out of the variable path).
@@ -1222,3 +1222,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## If cond GoSub label (done 2026-11-06, 0.1.150)
 - The parser turns `If cond GoSub label` into an `If` holding the one `GoSub` (no new AST or IR). Test `tests/exec/if_gosub.bas` on the 18F27Q10, 18F16Q41, 16F17126, 16F13145.
+
+## Freqout (done 2026-11-06, 0.1.151)
+- `Pulse.Freqout(pin, ms, f1)` (half period `500000 / f` us through `WaitUs`, `f * ms / 500` half periods) and `Freqout(pin, ms, f1, f2)` (both tones from `Sound2`'s 10 us base, exclusive-ored onto one pin). Square waves, not sine. Tests: `lib_pulse.bas` (set-up, ends low) and `lib_pins_model.bas` (pin writes counted: 6 and 14).

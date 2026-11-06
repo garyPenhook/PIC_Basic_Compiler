@@ -285,3 +285,92 @@ Public Sub Sound2(ByVal pin1 As Byte, ByVal pin2 As Byte, ByVal f1 As Word, ByVa
     Pinio.DataPut(False)
     Pinio.ClkPut(False)
 End Sub
+
+' Square wave of f Hz on pin for `ms` milliseconds (8..32767 Hz; a lower or higher frequency or a zero time is silence, the pin is
+' still made an output and ends low). The half period is a whole number of microseconds, so the pitch is exact to
+' about 1 us per half period plus the loop time (a few us), which matters above a few kHz.
+Public Sub Freqout(ByVal pin As Byte, ByVal ms As Word, ByVal f As Word)
+    Dim count As LongWord
+    Dim half As Word
+    Dim level As Boolean
+    If Not Pinio.PinOk(pin) Then
+        Exit
+    End If
+    Pinio.BindData(pin)
+    Pinio.DataPut(False)
+    Pinio.PinOutput(pin)
+    If f < 8 Or f > 32767 Then
+        Exit
+    End If
+    half = Word(500000 / f)
+    count = f
+    count = (count * ms) / 500
+    level = False
+    While count > 0
+        level = Not level
+        Pinio.DataPut(level)
+        WaitUs(half)
+        count = count - 1
+    Wend
+    Pinio.DataPut(False)
+End Sub
+
+' Two square waves, f1 and f2 Hz, added (exclusive-or) on one pin for `ms` milliseconds. Both run from one 10 us
+' time base like `Sound2`: frequencies 197..32767 Hz are rounded to a whole number of 10 us half periods (exact only
+' to about 10 %); a frequency below 197 Hz or 0 is silent.
+Public Sub Freqout(ByVal pin As Byte, ByVal ms As Word, ByVal f1 As Word, ByVal f2 As Word)
+    Dim h1 As Byte
+    Dim h2 As Byte
+    Dim c1 As Byte
+    Dim c2 As Byte
+    Dim l1 As Boolean
+    Dim l2 As Boolean
+    Dim ticks As LongWord
+    If Not Pinio.PinOk(pin) Then
+        Exit
+    End If
+    Pinio.BindData(pin)
+    Pinio.DataPut(False)
+    Pinio.PinOutput(pin)
+    h1 = 0
+    h2 = 0
+    If f1 >= 197 Then
+        h1 = Byte(50000 / f1)
+        If h1 = 0 Then
+            h1 = 1
+        End If
+    End If
+    If f2 >= 197 Then
+        h2 = Byte(50000 / f2)
+        If h2 = 0 Then
+            h2 = 1
+        End If
+    End If
+    c1 = 0
+    c2 = 0
+    l1 = False
+    l2 = False
+    ticks = ms
+    ticks = ticks * 100
+    While ticks > 0
+        DelayUS(10)
+        If h1 > 0 Then
+            c1 = c1 + 1
+            If c1 >= h1 Then
+                c1 = 0
+                l1 = Not l1
+                Pinio.DataPut(l1 Xor l2)
+            End If
+        End If
+        If h2 > 0 Then
+            c2 = c2 + 1
+            If c2 >= h2 Then
+                c2 = 0
+                l2 = Not l2
+                Pinio.DataPut(l1 Xor l2)
+            End If
+        End If
+        ticks = ticks - 1
+    Wend
+    Pinio.DataPut(False)
+End Sub

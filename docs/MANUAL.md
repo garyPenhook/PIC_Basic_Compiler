@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.150**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.151**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -5100,6 +5100,26 @@ Pulse.Sound(14, 60, 20)    ' about 4.7 kHz for 200 ms
 
 **See also** `Sound2`
 
+### Freqout
+
+**Syntax**
+```basic
+Freqout(pin, ms, f1)
+Freqout(pin, ms, f1, f2)
+```
+**Overview** Plays a square wave of `f1` Hz on a pin, or two added together (exclusive-or).
+
+**Parameters** `ms` the time in milliseconds; `f1`, `f2` frequencies in Hz (0 is silent).
+
+**Example**
+```basic
+Pulse.Freqout(14, 500, 1000)
+Pulse.Freqout(14, 500, 1000, 2000)
+```
+**Notes** One tone runs 8..32767 Hz with a half period of whole microseconds; the loop time shifts the pitch above a few kHz. Two tones run from one 10 us time base like `Sound2`: exact to about 10 %, none below 197 Hz. The wave is square, not the sine of other compilers. The pin is made an output and ends low.
+
+**See also** `Sound`, `Sound2`
+
 ### Sound2
 
 **Syntax**
@@ -5495,7 +5515,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.150 |
+| Feature of other BASIC compilers | basil 0.1.151 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
@@ -5509,9 +5529,10 @@ reports these rather than miscompiling them.
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
 | `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
-| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2` | `pulse` module (see *pulse, irremote and x10*) |
+| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout` | `pulse` module (see *pulse, irremote and x10*) |
 | `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
-| `HPWM`, `Freqout` | `pwm` module (hardware PWM; no `Freqout`) |
+| `HPWM` | `pwm` module (hardware PWM) |
+| `Freqout` | `Pulse.Freqout(pin, ms, f1)` and `Pulse.Freqout(pin, ms, f1, f2)` of the `pulse` module (square waves; no sine) |
 | `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
 | `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `Const` arrays |
 | `Branch`, `On GoTo` | `Branch index, l0, l1` and `On index GoTo l0, l1` (count from 0; out of range falls through) |

@@ -156,4 +156,8 @@ Pulse.PwmPin(19, 255, 2)
 Chk(e8, Pinio.Sets(19), 2)
 Pulse.PwmPin(20, 100, 2)
 Chk(e8, Pinio.Sets(20), 4)
+Pulse.Freqout(21, 2, 1000)
+Chk(e8, Pinio.Sets(21), 6)
+Pulse.Freqout(22, 2, 1000, 2000)
+Chk(e8, Pinio.Sets(22), 14)
 done = 1
