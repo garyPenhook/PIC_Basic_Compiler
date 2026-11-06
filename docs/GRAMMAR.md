@@ -127,7 +127,7 @@ repeat_stmt = "Repeat" EOL { stmt } "Until" expr ;
 for_stmt    = "For" designator "=" expr "To" expr [ "Step" expr ] EOL { stmt } "Next" ;
 
 goto_stmt   = "GoTo" IDENT ;
-gosub_stmt  = "GoSub" IDENT | "On" expr "GoSub" IDENT { "," IDENT } ;
+gosub_stmt  = "GoSub" IDENT | "If" expr "GoSub" IDENT | "On" expr "GoSub" IDENT { "," IDENT } ;
                                                   (* "Call" designator is the plain call: contextual, not reserved *)
 label       = IDENT ":" ;                         (* first on its line, nothing after the colon *)
 enable_stmt = ( "Enable" | "Disable" ) "(" IDENT ")" ;

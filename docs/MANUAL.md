@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.149**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.150**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -1547,13 +1547,14 @@ If x < 5 GoTo Again
 **Syntax**
 ```basic
 GoSub label
+If condition GoSub label
 On index GoSub label0, label1, label2
 Return
 ```
 **Overview** `GoSub` runs the code at a label of the same routine (or of the main program) and `Return` comes back to the
 statement after the `GoSub`. The subroutine shares the variables of the routine that holds it, so it needs no arguments, and
 costs one `rcall` and one `return`. The usual layout puts the subroutines after the end of the statements that call them, behind a
-`GoTo` (or `Exit`, or `Terminate`) so that the code does not run into them. `On index GoSub` is `On ... GoTo` that calls (an
+`GoTo` (or `Exit`, or `Terminate`) so that the code does not run into them. `If condition GoSub label` calls only when the condition is true (it is an `If` with the `GoSub` as its only statement, like `If condition GoTo label`). `On index GoSub` is `On ... GoTo` that calls (an
 `index` past the end of the list calls nothing). Subroutines can call each other and can call routines.
 
 **Example**
@@ -5494,7 +5495,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.149 |
+| Feature of other BASIC compilers | basil 0.1.150 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |

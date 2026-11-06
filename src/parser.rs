@@ -1056,6 +1056,14 @@ impl<'a> Parser<'a> {
             self.end_stmt()?;
             return Ok(StmtKind::IfGoto { cond, label });
         }
+        // `If cond GoSub label` is an `If` whose only statement is the `GoSub`.
+        if self.peek() == &Tok::Kw("gosub") {
+            let sp = self.span();
+            self.bump();
+            let label = self.ident()?;
+            self.end_stmt()?;
+            return Ok(StmtKind::If { arms: vec![(cond, vec![Stmt { span: sp, kind: StmtKind::GoSub(label) }])], otherwise: None });
+        }
         let mut arms = Vec::new();
         let mut otherwise = None;
         self.expect_kw("then")?;
