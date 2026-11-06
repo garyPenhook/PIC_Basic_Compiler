@@ -55,6 +55,8 @@ Module Flashwrite
 ' and the unlock] and no NOPs after the WR bit [11.4.2 note]. NVMADRH bit 7 is unimplemented and reads 1 [Register 11-4], so NVMADRH reads back 80h above the row address bits.
 ' Errata (DS80000666H item 4.2, DS80000667E 1.2.2, DS80000668L 4.2): WRERR may be set again by a Reset after an interrupted write; FlashWriteWord clears NVMCON1 and reports
 ' success only by the read-back. The LF parts may fail to write below 2.2 V at -40 C (item 4.1) and may not use NVM below 2.0 V at 25 C or less (item 5.3).
+' PIC16F18056/76 (DS40002325C, section 15.1; the same branch, `Not _has(PRODL)`): 16384 words of 14 bits, a row of 32 words with 32 write latches [15.1 p.122], the same NVMCON1 bits, the unlock sequence
+' 55h, AAh, WR [15.1.2.2 p.124] and the CPU stall during an operation. The silicon errata (DS80001014D) show nothing for the NVM, so the code is that of the PIC16F17126/46.
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim NvmErr As NVMCON1.7

@@ -3,7 +3,7 @@
 Written in the language, found by `Include "name"` in the project's `lib/` folder (LANGUAGE.md §9).
 A routine is called as `Module.Routine(...)` or, when the name is unambiguous, by its own name.
 Only what a program calls is compiled in. Each module cites the data sheet pages its register
-values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F, PIC16F13113..13145 values from DS40002519D, PIC16F183xx values from DS40001799F / DS40001800E / DS40001795K / DS40001839E, PIC16F152xx values from DS40002195E and PIC18F0x/1xQ41
+values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F, PIC16F13113..13145 values from DS40002519D, PIC16F183xx values from DS40001799F / DS40001800E / DS40001795K / DS40001839E, PIC16F152xx values from DS40002195E, PIC16F18056/76 values from DS40002325C and PIC18F0x/1xQ41
 values from DS40002214G / DS40002242F where the module is ported, see "Device support" below); the values were
 checked against those documents.
 
@@ -98,6 +98,32 @@ The simulator tests (`tests/exec_p152`, the portable programs and `tests/exec_p1
 | `oled`, `aht30` | done over `i2c`/`spi` (the 1 KB frame buffer does not fit: use OledGoto/OledData) |
 | `dma` | `#error` (no DMA) |
 | `floatlib` | done (as the PIC16F171xx; about 1.2K words for `+`, so the 2K-word parts have little room left) |
+
+### PIC16F18056 / 18076 (DS40002325C; facts in `FACTS-16F1805x.md`)
+
+Parts with a fixed clock (no clock switching), the 10-bit ADCC of the PIC16F171xx, two MSSP and two EUSART, 256 bytes of data flash and the PIC16F183xx-style `OSCCON2`/`OSCFRQ.FRQ`. The modules tell the part apart with
+`Not _has(OSCCON1)` (the PIC16F152xx has none either but is picked out first by `_has(ADCON1.PREF)`) or, in `pwm`, with `_has(PWM5CON) And Not _has(PWM6CON)`. PPS routes each peripheral to two ports only
+(Tables 18-1 and 18-2 p.169-170), so the pin-number modules accept pins 8..23 (ports B and C) where the table allows both, and the fixed pins below. The simulator tests (`tests/exec_p180`, the portable programs and
+`tests/exec_p16` that apply) run on the PIC16F18056; the simulator does not convert with the ADC, so only its set-up is tested, and four programs are held back (see `FACTS-16F1805x.md`). Nothing was run on a real part.
+
+| Module | PIC16F18056 / 18076 |
+|---|---|
+| `delay`, `strings` | portable |
+| `gpio` | done (`GpioAllDigital` also clears `ANSELD` and `ANSELE` on the PIC16F18076; the mask routines cover ports A, B and C) |
+| `intosc` | done for `Clock` = 32, 16, 8, 4, 2, 1 as on the PIC16F152xx: only `OSCFRQ.FRQ` is written; the source must be `RSTOSC = HFINTOSC_32MHz` or `HFINTOSC_1MHz` (COSC is `OSCCON2` bits 6:4) |
+| `system` | done (no window violation cause on `PCON0`; `SysClockFrom(cosc, 0, frq)` takes COSC 0 or 6 and `OSCFRQ.FRQ` 0..5 = 1 .. 32 MHz; the watchdog is `WDTCON`) |
+| `timer` | done (Timer0, Timer1, Timer2; flags `TMR1IF` and `TMR1GIF` in `PIR1` bits 3 and 4, `TMR2IF` bit 7; `T1Clk*` adds Sosc and ExtOsc, `T1Gate*` adds Pwm3, Pwm4, Pwm5, Nco1, Cmp1; `T2Rst*`: Pin, Tmr4, Tmr6, Ccp1, Ccp2, Pwm3, Pwm4, Pwm5, Cmp1; erratum 1.2.1 handled) |
+| `serial` | done (EUSART1, TX on RC6 through `RC6PPS = 0Eh`, RX on RC7 through `RX1PPS = 23`; `TX1IF`/`RC1IF` are `PIR3` bits 2 and 3) |
+| `serial2` | done (EUSART2, TX on RB6 through `RB6PPS = 11h`, RX on RB7 through `RX2PPS = 15`; `TX2IF`/`RC2IF` are `PIR3` bits 4 and 5) |
+| `adc` | done (10 bits, `AdcMax` = 1023; ADCC registers; `AdcChVss` 58, `AdcChTemp` 59, `AdcChFvr` 62, `AdcChFvr2` 63, no DAC channel; `AdcPin` also takes channels 24..34 on the PIC16F18076; the charge pump is switched on, erratum 1.1.1) |
+| `eeprom` | done (256 bytes, `NVMREGS`; as the PIC16F171xx) |
+| `flashwrite` | done (32-word row, 14-bit words; `FlashLastSector` = 511) |
+| `spi` | done (MSSP1, `RxyPPS` 15h = SCK1 and 16h = SDO1; pins 8..23) |
+| `i2c` | done (MSSP1 hardware host, `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF`/`BCL1IF` are `PIR3` bits 6 and 7; pins 8..23) |
+| `lcd`, `shift`, `oled`, `aht30`, `rtcc`, `rtccspi` | done (portable programs run in the simulator; pins 0..23, ports A, B and C; `pinio` and `pulse` have no register differences but were not run there) |
+| `pwm` | done (CCP1, CCP2, PWM3, PWM4 = channels 1..4 on Timer2 with prescalers 1..128; `RxyPPS` 09h, 0Ah, 0Bh, 0Ch; channels 1 and 2 on pins 8..23, channels 3 and 4 on pins 8..15 and, on the 28-pin part, 16..23) |
+| `dma` | `#error` (no DMA) |
+| `floatlib` | done (as the PIC16F171xx) |
 
 On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check

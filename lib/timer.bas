@@ -23,6 +23,10 @@ Module Timer
 ' PIC16F152xx (DS40002195E, chapters 19, 20 and 21; chosen with `#if _has(ADCON1.PREF)`): Timer0 is the same, Timer1 (T1CON, T1CLK, T1GATE, T1GCON, RD16) and Timer2 (T2CON, T2HLT, T2CLKCON, T2RST,
 ' T2PR) have the layout of the PIC16F171xx, with the flags in PIR0 (TMR0IF bit 5), PIR1 (TMR1IF bit 5, TMR2IF bit 6) and PIR2 (TMR1GIF bit 5) [12.9.5 to 12.9.7] and their enables in PIE0 and PIE1. The clock,
 ' gate and reset source codes are the part's own [Tables 20-4, 20-5, 21-4 p.174-197]: there is no secondary oscillator and no comparator, and the CCP1, CCP2, PWM3 and PWM4 outputs are the gate and reset sources.
+' PIC16F18056/76 (DS40002325C, chapters 19, 20 and 21; chosen with `Not _has(OSCCON1) And _has(PIR1.TMR1IF)`): Timer0 is the same (T0CON0 = EN | MD16 | OUTPS, T0CON1 = CS | ASYNC | CKPS, CS = 010 is FOSC/4 [19.5.1, 19.5.2 p.181-182]); Timer1 (T1CON,
+' T1CLK, T1GATE, T1GCON, RD16) and Timer2 (T2CON, T2HLT, T2CLKCON, T2RST, T2PR) have the layout of the PIC16F171xx, with the flags in PIR0 (TMR0IF bit 5), PIR1 (TMR1IF bit 3, TMR1GIF bit 4, TMR2IF bit 7) and their
+' enables in PIE0 and PIE1 [12.10.5 to 12.10.7]. The clock, gate and reset source codes are the part's own [Tables 20-4, 20-5 p.197-198, 21-4 p.220]. Erratum 1.2.1 (DS80001014D, all silicon): writing the Timer1 gate source
+' can set TMR1GIF; the gate procedures clear it after the writes, as for the PIC16F171xx.
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
 #if _has(T1CON.TMR1CS)
@@ -86,6 +90,32 @@ Public Const T1GateNco1 = 14
 Public Const T1GateCmp1 = 15
 Public Const T1GateCmp2 = 16
 Public Const T1GateZcd = 17
+#elseif Not _has(OSCCON1) And _has(PIR1.TMR1IF)
+' Timer1 clock sources, the CS field of T1CLK [DS40002325C Table 20-4 p.197]. T1ClkPin counts rising edges on the pin selected by T1CKIPPS; T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise.
+' T1ClkMfIntOsc is the 500 kHz MFINTOSC, T1ClkMfIntOsc32 the 32 kHz one.
+Public Const T1ClkPin = 0
+Public Const T1ClkFosc4 = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkHfIntOsc = 3
+Public Const T1ClkLfIntOsc = 4
+Public Const T1ClkSfIntOsc = 5
+Public Const T1ClkMfIntOsc = 6
+Public Const T1ClkMfIntOsc32 = 7
+Public Const T1ClkSosc = 8
+Public Const T1ClkExtOsc = 9
+Public Const T1ClkTmr0 = 10
+
+' Timer1 gate sources, the GSS field of T1GATE [Table 20-5 p.198]. T1GatePin is the pin selected by T1GPPS; T1GateTmr2 is the postscaled Timer2 output.
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateTmr2 = 3
+Public Const T1GateCcp1 = 7
+Public Const T1GateCcp2 = 8
+Public Const T1GatePwm3 = 9
+Public Const T1GatePwm4 = 10
+Public Const T1GatePwm5 = 11
+Public Const T1GateNco1 = 12
+Public Const T1GateCmp1 = 13
 #elseif _has(PIR1.TMR1IF)
 ' Timer1 clock sources, the CS field of T1CLK [DS40002343F Table 23-4]. T1ClkPin counts rising edges on the
 ' pin selected by T1CKIPPS; T1ClkSosc needs the secondary oscillator enabled and time to stabilise.
@@ -189,6 +219,17 @@ Public Const T2RstPwm3P2 = 10
 Public Const T2RstCmp1 = 11
 Public Const T2RstCmp2 = 12
 Public Const T2RstZcd = 13
+#elseif Not _has(OSCCON1) And _has(PIR1.TMR1IF)
+' Timer2 external reset sources, the RSEL field of T2RST [DS40002325C Table 21-4 p.220]. T2RstPin is the pin selected by T2INPPS.
+Public Const T2RstPin = 0
+Public Const T2RstTmr4 = 2
+Public Const T2RstTmr6 = 3
+Public Const T2RstCcp1 = 4
+Public Const T2RstCcp2 = 5
+Public Const T2RstPwm3 = 6
+Public Const T2RstPwm4 = 7
+Public Const T2RstPwm5 = 8
+Public Const T2RstCmp1 = 9
 #elseif _has(PIR1.TMR1IF)
 ' Timer2 external reset sources, the RSEL field of T2RST [DS40002343F Table 24-4]. T2RstPin is the pin
 ' selected by T2INPPS. The PIC16F13145 family (DS40002519D Table 23-4 p.268) has no Timer4, and the same CCP and comparator codes.
@@ -238,6 +279,14 @@ Dim Tmr1If As PIR3.4
 Dim Tmr1Ie As PIE3.4
 Dim Tmr2If As PIR3.3
 Dim Tmr2Ie As PIE3.3
+#elseif Not _has(OSCCON1) And _has(PIR1.TMR1IF)
+Dim Tmr0If As PIR0.5
+Dim Tmr0Ie As PIE0.5
+Dim Tmr1If As PIR1.3
+Dim Tmr1GIf As PIR1.4
+Dim Tmr1Ie As PIE1.3
+Dim Tmr2If As PIR1.7
+Dim Tmr2Ie As PIE1.7
 #elseif _has(PIR1.TMR1IF)
 Dim Tmr0If As PIR0.5
 Dim Tmr0Ie As PIE0.5

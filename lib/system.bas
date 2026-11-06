@@ -18,6 +18,10 @@ Module System
 ' clock switching and no divider: RSTOSC fixes the source, OSCCON holds only COSC<1:0> (bits 5:4; 00 and 10 are the HFINTOSC, 01 LFINTOSC, 11 the external clock) and the HFINTOSC runs at OSCFRQ.FRQ = 0..5 =
 ' 1, 2, 4, 8, 16, 32 MHz [Table 11-1 p.77, OSCFRQ p.85]. SysClockFrom takes `cosc` 0 or 2 and `cdiv` 0 there; any divider code gives 0.
 '
+' PIC16F18056/76 (DS40002325C chapters 10 and 11; chosen with `_has(OSCFRQ.FRQ) And Not _has(OSCCON1)`, the PIC16F171xx having both): PCON0 has no window violation flag (bit 5 is unimplemented, Register 10.12.2 p.89), so cause 5 is left out. There is
+' no clock switching and no divider (p.81): RSTOSC fixes the source, OSCCON2 holds the read-only COSC<2:0> (bits 6:4; 000 and 110 are the HFINTOSC, 101 LFINTOSC, 100 SOSC, 111 the external clock,
+' Table 11-1 p.80) and the HFINTOSC runs at OSCFRQ.FRQ = 0..5 = 1, 2, 4, 8, 16, 32 MHz [OSCFRQ p.93]. SysClockFrom takes `cosc` 0 or 6 and `cdiv` 0 there; any divider code gives 0.
+'
 ' Clock check: the library modules and DelayUs/DelayMs compute from the compile-time `Clock`; the
 ' module does not change the clock at run time (that would make every one of them wrong), it
 ' reads what the oscillator really does and compares it with `Clock`.
@@ -68,8 +72,12 @@ End Sub
 Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq As Byte) As LongWord
     Dim mhz As Byte
     Result = 0
+#if _has(ADCON1.PREF) Or (_has(OSCFRQ.FRQ) And Not _has(OSCCON1))
 #if _has(ADCON1.PREF)
     If (cosc <> 0 And cosc <> 2) Or cdiv <> 0 Then
+#else
+    If (cosc <> 0 And cosc <> 6) Or cdiv <> 0 Then
+#endif
         Exit
     End If
     mhz = 0
@@ -163,6 +171,8 @@ End Function
 Public Function SysClockHz() As LongWord
 #if _has(ADCON1.PREF)
     Result = SysClockFrom((OSCCON >> 4) And 3, 0, OSCFRQ And 7)
+#elseif _has(OSCFRQ.FRQ) And Not _has(OSCCON1)
+    Result = SysClockFrom((OSCCON2 >> 4) And 7, 0, OSCFRQ And 7)
 #else
     Result = SysClockFrom((OSCCON2 >> 4) And 7, OSCCON2 And 15, OSCFRQ And 15)
 #endif
@@ -193,7 +203,7 @@ End Sub
 
 ' Runs the watchdog as a timer for one sleep: sets the period code `ps` (WDTPS/PS, bits 5:1) and the enable bit (bit 0),
 ' sleeps, and puts the register back as it was. The layout is the same on every family: WDTCON
-' (PIC16F183xx: WDTPS and SWDTEN, DS40001839E Register 10-1; PIC16F152xx: CS, PS and SEN, DS40002195E 14.6.1) or
+' (PIC16F183xx: WDTPS and SWDTEN, DS40001839E Register 10-1; PIC16F152xx: CS, PS and SEN, DS40002195E 14.6.1; PIC16F18056/76: CS, PS and SEN, DS40002325C 14.6.1) or
 ' WDTCON0 (PIC16F13xxx, PIC16F171xx, PIC18 Q10/Q41: PS and SEN, DS40002519D 14.7.1, DS40002343F 14.7.1, DS40002043F 10.8.1,
 ' DS40002242F 15.7.1). Period code n is 2^(n+5) cycles of the 31 kHz LFINTOSC: 0 = 1 ms, 4 = 16 ms, 10 = 1 s, 11 = 2 s.
 ' SEN/SWDTEN counts only when the Config has WDTE = SWDTEN (01); with WDTE = ON (11) the watchdog always runs and the bit is

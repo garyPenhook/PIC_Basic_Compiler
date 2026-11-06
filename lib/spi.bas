@@ -41,6 +41,9 @@ Module Spi
 ' PIC16F152xx (DS40002195E chapters 18 and 25; chosen with `_has(ADCON1.PREF)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 07h and SDO1/SDA1 = 08h [Table 18-2 p.148], SSP1CLKPPS and SSP1DATPPS take
 ' the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [18.8.1]); the pins that exist are those of the PIC16F183xx (port A on every part, RC0..RC5 on the 14-pin parts, RB4..RB7 and
 ' RC6, RC7 on the 20-pin parts; RA3 is input only). The silicon errata (DS80000918K) concern only the MSSP I2C start and stop flags, which SPI does not use.
+' PIC16F18056/76 (DS40002325C chapters 18 and 29; chosen with `Not _has(OSCCON1)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 15h (21) and SDO1/SDA1 = 16h (22) [Table 18-2 p.170], SSP1CLKPPS and SSP1DATPPS take
+' the pin number [18.8.1 p.173]. The 28- and 40-pin parts route MSSP1 to port B or port C only [Tables 18-1 and 18-2 p.169-170], so only pins 8..23 (RB0..RB7, RC0..RC7) are accepted. RB6 and RB7 are also the ICSP
+' clock and data pins. The silicon errata (DS80001014D) list nothing for the MSSP.
 #if _has(SPI1CON0) Or Not _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
@@ -81,6 +84,16 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
         RA4PPS = code
     ElseIf pin = 5 Then
         RA5PPS = code
+#if _has(RB0PPS)
+    ElseIf pin = 8 Then
+        RB0PPS = code
+    ElseIf pin = 9 Then
+        RB1PPS = code
+    ElseIf pin = 10 Then
+        RB2PPS = code
+    ElseIf pin = 11 Then
+        RB3PPS = code
+#endif
 #if _has(RB4PPS)
     ElseIf pin = 12 Then
         RB4PPS = code
@@ -117,6 +130,10 @@ End Sub
 
 ' True for a pin the part has: RA0..RA5, RB4..RB7 (20-pin parts), RC0..RC7 (RC6, RC7 on the 20-pin parts).
 Function PinOk(ByVal pin As Byte) As Boolean
+#if Not _has(OSCCON1) And Not _has(ADCON1.PREF)
+    ' PIC16F18056/76: port B and C only (see the top).
+    Result = pin >= 8 And pin <= 23
+#else
 #if _has(RC0PPS)
     Result = pin <= 5 Or (pin >= 16 And pin <= 21)
 #else
@@ -131,6 +148,7 @@ Function PinOk(ByVal pin As Byte) As Boolean
     If pin >= 12 And pin <= 15 Then
         Result = True
     End If
+#endif
 #endif
 End Function
 
@@ -279,6 +297,9 @@ Const SdoCode = 8
 #elseif _has(ADCON0.CHS)
 Const SckCode = 24
 Const SdoCode = 25
+#elseif Not _has(OSCCON1)
+Const SckCode = 21
+Const SdoCode = 22
 #else
 Const SckCode = 27
 Const SdoCode = 28

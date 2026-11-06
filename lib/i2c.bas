@@ -733,6 +733,8 @@ Public Function I2cReadReg(ByVal addr As Byte, ByVal reg As Byte) As Byte
 End Function
 #endif
 
+' PIC16F18056/76 (DS40002325C chapters 18 and 29; chosen with `Not _has(OSCCON1)`): the same MSSP1 host, `RxyPPS` 15h (21) = SCL1 and 16h (22) = SDA1 [Table 18-2 p.170], SSP1IF and BCL1IF in PIR3 bits 6 and 7 [12.10.10 p.111].
+' The 28- and 40-pin parts route MSSP1 to port B or port C only [Tables 18-1 and 18-2 p.169-170], so the pins are numbered 8..23 as on the Q10 (RB0..RB7 = 8..15, RC0..RC7 = 16..23). The silicon errata (DS80001014D) list nothing for the MSSP.
 #else
 #if _has(PRODL)
 Dim FlagSsp As PIR3.0
@@ -747,6 +749,11 @@ Dim FlagSsp As PIR1.3
 Dim FlagBcl As PIR1.2
 Const SclCode = 24
 Const SdaCode = 25
+#elseif Not _has(OSCCON1)
+Dim FlagSsp As PIR3.6
+Dim FlagBcl As PIR3.7
+Const SclCode = 21
+Const SdaCode = 22
 #else
 Dim FlagSsp As PIR5.2
 Dim FlagBcl As PIR5.3
@@ -773,6 +780,16 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
         RA4PPS = code
     ElseIf pin = 5 Then
         RA5PPS = code
+#if _has(RB0PPS)
+    ElseIf pin = 8 Then
+        RB0PPS = code
+    ElseIf pin = 9 Then
+        RB1PPS = code
+    ElseIf pin = 10 Then
+        RB2PPS = code
+    ElseIf pin = 11 Then
+        RB3PPS = code
+#endif
 #if _has(RB4PPS)
     ElseIf pin = 12 Then
         RB4PPS = code
@@ -808,6 +825,10 @@ End Sub
 
 ' True for a pin the part has (RA3 is input only and refused).
 Function PinOk(ByVal pin As Byte) As Boolean
+#if Not _has(OSCCON1) And Not _has(ADCON1.PREF)
+    ' PIC16F18056/76: port B and C only (see the top).
+    Result = pin >= 8 And pin <= 23
+#else
 #if _has(RC0PPS)
     Result = (pin <= 5 And pin <> 3) Or (pin >= 16 And pin <= 21)
 #else
@@ -822,6 +843,7 @@ Function PinOk(ByVal pin As Byte) As Boolean
     If pin >= 12 And pin <= 15 Then
         Result = True
     End If
+#endif
 #endif
 End Function
 

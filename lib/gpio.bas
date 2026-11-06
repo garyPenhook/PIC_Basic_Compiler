@@ -1,8 +1,9 @@
 Module Gpio
 ' Port-level helpers for parts with the ANSELx / WPUx / ODCONx port registers (PIC18F27/47Q10,
-' DS40002043F chapter 16; PIC16F17126/46, DS40002343F section 16.14). Each register is written only
+' DS40002043F chapter 16; PIC16F17126/46, DS40002343F section 16.14; PIC16F18056/76, DS40002325C chapter 16). Each register is written only
 ' when the device description defines it (`#if _has(REG)`), so a part with fewer ports, or no
-' open-drain register, compiles; the mask of a port the part lacks is ignored.
+' open-drain register, compiles; the mask of a port the part lacks is ignored. GpioAllDigital also clears ANSELD and
+' ANSELE on the 40-pin PIC16F18076; the mask routines below cover ports A, B and C only.
 ' Single pins need no library: `Input(p)`, `Output(p)`, `High(p)`, `Low(p)`, `Toggle(p)` are
 ' compiler intrinsics and `Dim led As PORTB.0` names a pin.
 
@@ -17,6 +18,12 @@ Public Sub GpioAllDigital()
 #endif
 #if _has(ANSELC)
     ANSELC = 0
+#endif
+#if _has(ANSELD)
+    ANSELD = 0
+#endif
+#if _has(ANSELE)
+    ANSELE = 0
 #endif
 End Sub
 

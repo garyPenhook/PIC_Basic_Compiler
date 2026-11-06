@@ -28,6 +28,8 @@ Module Eeprom
 ' PIC16F17126/46 serves; only the NVM interrupt flag differs (NVMIF is PIR2 bit 4). Errata (DS80000666H item 4.2, DS80000667E 1.2.2, DS80000668L 4.2): after a Reset during a write WRERR is set again
 ' by every later Reset until a write succeeds; EepromWrite reports success by the read-back and clears NVMCON1 (WRERR with it) afterwards, so it is not affected. The LF parts
 ' may not write below 2.2 V at -40 C (item 4.1, silicon A3/A4 only) and may not access NVM at all below 2.0 V at 25 C or less (item 5.3, all revisions).
+' PIC16F18056/76 (DS40002325C, section 15.2; chosen with `Not _has(PRODL)`): the same 256 bytes at 70h:address through NVMREGS = 1, the same read (RD), write (WREN | NVMREGS, 55h and AAh, WR; erase before write) and flag (NVMIF is PIR1 bit 0) as the PIC16F17126/46
+' [15.2.2.1 to 15.2.2.5 p.135-139]. Writing the data flash through the FSRs is not supported there [15.2.1.2]. The silicon errata (DS80001014D) show nothing for the NVM.
 #if _eeprom = 0
 #error "eeprom needs a part with data EEPROM: the PIC16F13145 family and the PIC16F152xx parts have none (DS40002519D Table 1 p.1; DS40002195E Table 1 p.1); use module Flashwrite"
 #endif

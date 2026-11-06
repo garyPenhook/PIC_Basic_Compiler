@@ -15,6 +15,9 @@ Module Serial
 ' RxyPPS = 05h (TX1/CK1) [Table 18-2 p.148] and RX1PPS = PORT[5:3] | PIN[2:0] selects RX [18.8.1]; RC4 and RC5 on the 14- and 20-pin parts, RA4 and RA5 on the 8-pin PIC16F15213/14 (port A only).
 ' Silicon erratum 1.3.1 (DS80000918K, all revisions): a byte written to TX1REG just as the shift register empties can be sent twice. SerialWriteByte therefore waits for TRMT (the shift
 ' register empty, workaround method 2) instead of TXIF; characters still go out back to back, as the byte is written within a few cycles of the stop bit.
+' PIC16F18056/76 (DS40002325C, chapters 18 and 30; chosen with `Not _has(OSCCON1) And _has(PIR3.TX1IF)`): the same EUSART1 registers; TX1IF and RC1IF are PIR3 bits 2 and 3 [Register 12.10.10 p.111,
+' PIR3]. TX goes out on RC6 through RC6PPS = 0Eh (TX1/CK1) [Table 18-2 p.170] and RX1PPS = PORT[5:3] | PIN[2:0] selects RC7, 010 111 = 23 [18.8.1 p.173; the Reset value of RX1PPS, Table 18-1 p.169];
+' RC6 and RC7 exist on the 28- and the 40-pin part, and both PPS tables allow port C for TX1 and RX1. The silicon errata (DS80001014D) list nothing for the EUSART.
 ' PIC18F0x/1xQ41 (DS40002214G, chapters 21 and 34): UART1 (U1CON0/1/2, U1BRG, U1TXB, U1RXB, U1FIFO), TX on RC4
 ' and RX on RC5, which exist on the 14-pin parts too. RC4PPS = 0x10 selects UART1 TX [Table 21-2]; U1RXPPS =
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
@@ -87,6 +90,16 @@ Const SerRxCode = 5
 Const SerTxCode = 19
 Dim OverrunErr As RC1STA.1
 Dim RxEnable As RC1STA.4
+#elseif Not _has(OSCCON1) And _has(PIR3.TX1IF)
+Dim TxIf As PIR3.2
+Dim RxIf As PIR3.3
+Dim TxPin As TRISC.6
+Dim RxPin As TRISC.7
+Dim RxAnalog As ANSELC.7
+Const SerTxCode = 14
+Const SerRxCode = 23
+Dim OverrunErr As RC1STA.1
+Dim RxEnable As RC1STA.4
 #else
 Dim TxIf As PIR3.4
 Dim RxIf As PIR3.5
@@ -154,6 +167,7 @@ Public Sub SerialInit(ByVal baud As LongWord)
     TX1STA = 36
     RC1STA = 144
 #else
+    ' PIC18F27Q10 and PIC16F18056/76: TX on RC6, RX on RC7 (the codes differ, see the top).
     RC6PPS = SerTxCode
     RX1PPS = SerRxCode
     SP1BRGL = Byte(n)

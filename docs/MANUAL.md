@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.151**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.152**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -70,9 +70,10 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 | PIC16F17146 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | As the PIC16F17126 (`devices/16F17146.toml`) |
 | PIC16F18313 (8-pin), PIC16F18323 / 18324 / 18325 / 18326 (14-pin), PIC16F18344 / 18345 / 18346 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 2K / 4K / 8K / 16K / 4K / 8K / 16K words | 256 / 256 / 512 / 1,024 / 2,048 / 512 / 1,024 / 2,048 bytes; 256 bytes of EEPROM | **Supported (0.1.87; the LF parts 0.1.88).** Device files `devices/16F18313.toml` … `16F18346.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheets DS40001799F, DS40001800E, DS40001795K and DS40001839E, errata DS80000666H, DS80000667E, DS80000668L and DS80000709H, facts in `docs/FACTS-16F183xx.md`). The code generator is the PIC16F171xx one. The PIC16LF18313 … 18346 (1.8 to 3.6 V) have their own device files (`devices/16LF18313.toml` …) with the same registers; their FVR has no 4.096 V gain (DS40001839E Register 16-1). The portable programs and `tests/exec_p16` that apply, with `tests/exec_p183`, pass in the simulator on the PIC16F18346 and the PIC16F18326; every part builds `tests/exec_p183_parts/small.bas`. The power-up clock is chosen with `Config RSTOSC = HFINT32` (32 MHz) or `HFINT1`. Modules: `serial2`, `dma` and `intosc` stop with `#error` (one EUSART, no DMA, `intosc` not ported); `timer` has the old Timer1 and Timer2 (no clock-select or hardware-limit registers, so no `T2Mode*`/`T2Rst*` and no `Timer2StartLimit`); `pwm` offers CCP1, CCP2, PWM5 and PWM6 (channels 1..4); the 8-pin part has port A only and the 14-pin parts no port B. Nothing has run on a real part |
 | PIC16F15213 / 15214 (8-pin), PIC16F15223 / 15224 (14-pin), PIC16F15243 / 15244 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 4K words | 256 / 512 bytes; no data EEPROM | **Supported (0.1.89).** Device files `devices/16F15213.toml` … `16F15244.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002195E, errata DS80000918K, facts in `docs/FACTS-16F152xx.md`). Fixed clock (no clock switching; `intosc` only sets `OSCFRQ`), 10-bit ADC, one MSSP and EUSART, CCP1/2 and PWM3/4. Library: every module is ported or stops with `#error` (`eeprom`, `serial2`, `dma`); see `docs/LIBRARY.md`. Larger parts of the family (PIC16F15225 …) are not described. |
+| PIC16F18056 (28-pin), PIC16F18076 (40/44-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes; 256 bytes of data flash (EEPROM) | **Supported (0.1.152).** Device files `devices/16F18056.toml`, `16F18076.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002325C, errata DS80001014D, facts in `docs/FACTS-16F1805x.md`). Fixed clock (no clock switching; `intosc` only sets `OSCFRQ`), 10-bit ADCC, two MSSP and two EUSART, CCP1/2 and PWM3/4/5. Library: every module is ported except `dma`, which stops with `#error`; `spi` and `i2c` take pins of ports B and C, `pwm` offers CCP1, CCP2, PWM3 and PWM4 (channels 1..4); ports D and E of the PIC16F18076 are reached by name and by `Adc`/`Gpio`, not by the pin-number modules. Four of the portable test programs are held back in the simulator (see `docs/FACTS-16F1805x.md`). Nothing has run on a real part. |
 | PIC16F13113 / 13114 / 13115 (8-pin), PIC16F13123 / 13124 / 13125 (14-pin), PIC16F13143 / 13144 / 13145 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 4K / 8K words | 256 / 512 / 1,024 bytes; no data EEPROM | **Supported (0.1.76; erratum 1.3.1 work around in 0.1.77).** Device files `devices/16F13113.toml` … `16F13145.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002519D, errata DS80001115F, facts in `docs/FACTS-16F1314x.md`). The code generator is the PIC16F171xx one. The portable programs that fit the RAM and flash, `tests/exec_p16` and `tests/exec_p13` pass in the simulator on the PIC16F13145; every part builds `tests/exec_p13_parts/small.bas`. Modules: `serial2` and `eeprom` stop with `#error` (one EUSART, no data EEPROM), `dma` stops with `#error`; `pwm` offers CCP1, CCP2, PWM1 and PWM2 (channels 1..4); the 8-pin part has port A only. Nothing has run on a real part. Erratum 1.3.1 (revisions A2, A3, instruction fetch above 16 MHz) is worked around with a NOP at 0000h and at the handler start when `Clock` is above 16; `#option FetchNop = false` removes them for revision A4; an `Asm` `sleep` needs two `nop`s after it |
 
-`Device = 18F27Q10` (or `PIC18F27Q10`), the PIC18-Q41 parts (`Device = 18F16Q41`, `18F04Q41` …) the PIC16F17126/17146, the PIC16F13113 … 13145, the PIC16F18313 … 18346 (also `16LF18313` … `16LF18346`) and the PIC16F15213 … 15244 are the values that compile today. A device is added only
+`Device = 18F27Q10` (or `PIC18F27Q10`), the PIC18-Q41 parts (`Device = 18F16Q41`, `18F04Q41` …) the PIC16F17126/17146, the PIC16F13113 … 13145, the PIC16F18313 … 18346 (also `16LF18313` … `16LF18346`), the PIC16F15213 … 15244 and the PIC16F18056 / 18076 are the values that compile today. A device is added only
 after it has its own description file and passes its own tests, and **adding one means more than the
 description file**:
 
@@ -1127,7 +1128,7 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 
 `tools/pic-config/` is a small Qt 6 program that builds the `Config` line from drop-downs, so the setting
 and value names do not have to be looked up. It knows PIC18F27Q10, PIC18F04/05/06/14/15/16Q41, PIC16F17126/17146, the
-nine PIC16F13113 … 13145 parts, the sixteen PIC16F183xx / PIC16LF183xx parts and the six PIC16F152xx parts.
+nine PIC16F13113 … 13145 parts, the sixteen PIC16F183xx / PIC16LF183xx parts, the six PIC16F152xx parts and the PIC16F18056 / 18076.
 
 ![pic-config showing a PIC18F05Q41](images/pic-config.png)
 
@@ -5515,7 +5516,7 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.151 |
+| Feature of other BASIC compilers | basil 0.1.152 |
 |---|---|
 | Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |

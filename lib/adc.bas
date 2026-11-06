@@ -40,6 +40,10 @@ Module Adc
 ' RC6, RC7), VSS 27 and FVR buffer 1 30; there is no temperature indicator and no DAC channel. The positive reference is VDD (PREF = 00) or the FVR (11) [27.4.2]. TAD must be 0.5..9 us (AD20, Table 32-12 p.378), so SetClock (constants worked out by the compiler from `Clock`) uses
 ' the smallest FOSC/n with n / FOSC >= 0.5 us. CPON resets to 00 (charge pump off) [CPCON p.335], so AdcInit writes 01: the pump runs when the ADC is on and VDD < 4.6 V. The silicon errata (DS80000918K) list nothing for the ADC.
 '
+' PIC16F18056/76 (DS40002325C, chapter 31, 10 bits [AD01 p.529]; chosen with `Not _has(OSCCON1)` inside the ADCC branch): the same registers as the PIC16F17126 with a 10-bit result. Channels [Table 31-6 p.428]: RA0..RA7 = 0..7, RB0..RB7 = 8..15,
+' RC0..RC7 = 16..23, RD0..RD7 = 24..31 and RE0..RE2 = 32..34 (the 40-pin PIC16F18076 only; the 28-pin PIC16F18056 has port A, B and C and RE3 as an input), ADCG1 35, VSS 58, temperature indicator 59, FVR buffer 1 62 and
+' buffer 2 63; there is no DAC channel (60 and 61 are reserved). TAD is 1..8 us (AD20 p.529). Erratum 1.1.1 (DS80001014D, all silicon): CPON resets to 00 (off), so AdcInit writes 01 as on the PIC16F171xx.
+'
 ' Errata (DS80000832G):
 '  1.4.4  after the input channel changes, the first conversion can have its top bit wrongly set
 '         (a fall of more than 3.2 V faster than 11 V/us). AdcRead converts once and drops the
@@ -75,6 +79,13 @@ Public Const AdcChVss = 60
 Public Const AdcChTemp = 61
 Public Const AdcChDac = 62
 Public Const AdcChFvr = 63
+#elseif Not _has(OSCCON1)
+' PIC16F18056/76, ADPCH [DS40002325C Table 31-6 p.428]: RA0..RA7 = 0..7, RB = 8..15, RC = 16..23, RD = 24..31 and RE0..RE2 = 32..34 on the 40-pin part. AdcChFvr is FVR buffer 1, the one the ADC
+' reference uses (ADFVR); AdcChFvr2 is buffer 2. There is no DAC channel.
+Public Const AdcChVss = 58
+Public Const AdcChTemp = 59
+Public Const AdcChFvr = 62
+Public Const AdcChFvr2 = 63
 #else
 ' PIC16F17126/46, ADPCH [DS40002343F Table 33-6]: RA0, RA1, RA2, RA4, RA5 = 0, 1, 2, 4, 5 (3 is the guard
 ' ring ADCG1, not a pin); RB4..RB7 = 12..15 and RC0..RC7 = 16..23 (RB and RC6, RC7 on the 20-pin part only).
@@ -92,7 +103,7 @@ Public Const AdcChFvr = 62
 
 ' Largest result: 10 bits on the Q10 [DS40002043F AD01], 12 bits on the PIC16F171xx [DS40002343F AD01] and
 ' the Q41 [DS40002214G AD01].
-#if _has(ADCON0.CHS) Or _has(CLBCON) Or (_has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON))
+#if _has(ADCON0.CHS) Or _has(CLBCON) Or (_has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)) Or Not _has(OSCCON1)
 Public Const AdcMax = 1023
 #else
 Public Const AdcMax = 4095
@@ -215,7 +226,7 @@ End Sub
     ' The charge pump runs when the ADC asks for it [40.4, ADCP]; it keeps the converter accurate at low VDD.
     ADCPCON = 128
 #elseif _has(CPCON) And Not _has(CLBCON)
-    ' Errata 1.6.1 (DS80001009E, all silicon revisions): CPON resets to 00 (off) instead of 01; write 01, charge pump on
+    ' Errata 1.6.1 (DS80001009E, all silicon revisions; PIC16F18056/76: 1.1.1, DS80001014D): CPON resets to 00 (off) instead of 01; write 01, charge pump on
     ' when the ADC is enabled and VDD < 4.6 V [40.7.1].
     CPCON = 64
 #endif
@@ -226,7 +237,7 @@ End Sub
 End Sub
 #endif
 
-' Makes the pin of channel 0..23 an analog input (TRISx = 1, ANSELx = 1) [33.1.1]. Other
+' Makes the pin of channel 0..23 (0..34 on a part with port D and E, the PIC16F18076) an analog input (TRISx = 1, ANSELx = 1) [33.1.1]. Other
 ' channel numbers are internal and need no pin.
 Public Sub AdcPin(ByVal ch As Byte)
     Dim m As Byte
@@ -248,6 +259,14 @@ Public Sub AdcPin(ByVal ch As Byte)
 #endif
         TRISC = TRISC Or m
         ANSELC = ANSELC Or m
+#endif
+#if _has(TRISD)
+    ElseIf ch >= 24 And ch < 32 Then
+        TRISD = TRISD Or m
+        ANSELD = ANSELD Or m
+    ElseIf ch >= 32 And ch < 35 Then
+        TRISE = TRISE Or m
+        ANSELE = ANSELE Or m
 #endif
     End If
 End Sub

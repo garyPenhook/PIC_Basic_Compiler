@@ -16,6 +16,10 @@ Module Serial2
 ' selection of RX2PPS, Table 18-1]. TX2IF and RC2IF are PIR5 bits 0 and 1. The registers and the baud-rate formula are
 ' those of EUSART1.
 '
+' PIC16F18056/76 (DS40002325C, chapters 18 and 30; chosen with `Not _has(OSCCON1)`): EUSART2 with TX on RB6 and RX on RB7, the Reset selections of CK2PPS and RX2PPS [Table 18-1 p.169]; both
+' PPS tables allow port B on the 28- and the 40-pin part (the second port is C on the 28-pin and D on the 40-pin part). RB6PPS = 11h selects TX2/CK2 [Table 18-2 p.170]; RX2PPS = PORT[5:3] | PIN[2:0],
+' RB7 = 001 111 = 15 [18.8.1 p.173]. TX2IF and RC2IF are PIR3 bits 4 and 5 [PIR3, p.111]. RB6 and RB7 are also the ICSP clock and data pins. The registers and the baud-rate formula are those of EUSART1.
+'
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
@@ -32,6 +36,14 @@ Dim TxPin As TRISC.2
 Dim RxPin As TRISC.1
 Dim TxAnalog As ANSELC.2
 Dim RxAnalog As ANSELC.1
+#elseif Not _has(OSCCON1)
+Dim TxIf As PIR3.4
+Dim RxIf As PIR3.5
+Dim OverrunErr As RC2STA.1
+Dim RxEnable As RC2STA.4
+Dim TxPin As TRISB.6
+Dim RxPin As TRISB.7
+Dim RxAnalog As ANSELB.7
 #elseif _has(PRODL)
 Dim TxIf As PIR3.6
 Dim RxIf As PIR3.7
@@ -66,6 +78,14 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     U2CON0 = 176
     U2CON2 = 128
     U2CON1 = 128
+#elseif Not _has(OSCCON1)
+    RB6PPS = 17
+    RX2PPS = 15
+    SP2BRGL = Byte(n)
+    SP2BRGH = Byte(n >> 8)
+    BAUD2CON = 8
+    TX2STA = 36
+    RC2STA = 144
 #elseif _has(PRODL)
     RB6PPS = 11
     RX2PPS = 15

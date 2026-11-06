@@ -1,5 +1,5 @@
 Module IntOsc
-' Internal oscillator set-up for the PIC18(L)F2x/4xQ10, DS40002043F chapter 5.
+' Internal oscillator set-up for the PIC18(L)F2x/4xQ10, DS40002043F chapter 5 (and the parts listed below).
 '
 ' `Clock` only tells the compiler what speed to expect (it times DelayMs, DelayUs and the library
 ' baud rates); it does not touch the hardware. This module is what makes the hardware match it:
@@ -38,6 +38,10 @@ Module IntOsc
 ' source, and only when it is an HFINTOSC setting (RSTOSC = HFINTOSC_32MHZ or HFINTOSC_1MHZ, COSC = 00 or 10) does OSCFRQ.FRQ set the speed [Table 11-1 p.77, OSCFRQ p.85]. So only Clock = 32, 16, 8, 4, 2
 ' and 1 are accepted there, the module writes OSCFRQ (FRQ = 0..5) and waits, bounded, for OSCSTAT.HFOR; with another RSTOSC nothing waits and `System.SysClockOk()` is False.
 '
+' PIC16F18056/76 (DS40002325C chapter 11; chosen with `Not _has(OSCCON1)`, like the PIC16F152xx): the same model, no clock switching and no divider ("does not allow the system clock source to be changed through clock
+' switching", p.81). RSTOSC picks the source (COSC in OSCCON2 bits 6:4, read-only: 000 and 110 are the HFINTOSC, Table 11-1 p.80) and only then does OSCFRQ.FRQ (1, 2, 4, 8, 16, 32 MHz = codes 0..5, p.93) set the
+' speed. Only Clock = 32, 16, 8, 4, 2 and 1 are accepted; the module writes OSCFRQ and waits, bounded, for OSCSTAT.HFOR (bit 6, p.94).
+'
 ' HFINTOSC frequency codes: OSCFRQ.HFFRQ (Q10: 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz = codes 0..8) or
 ' OSCFRQ.FRQ (PIC16F171xx: 1, 2, 4, 8, 16, 32 MHz = codes 0..5, DS40002343F 11.5.6).
 #if _has(ADCON0.CHS) And Not _has(ADCON1.PREF)
@@ -49,8 +53,8 @@ Module IntOsc
 #error "intosc needs a part with an OSCFRQ register (HFFRQ or FRQ field)"
 #endif
 
-#if _has(ADCON1.PREF) And _clock < 1
-#error "Clock is not an HFINTOSC speed of the PIC16F152xx, which has no clock divider: use 32, 16, 8, 4, 2 or 1"
+#if Not _has(OSCCON1) And _clock < 1
+#error "Clock is not an HFINTOSC speed of this part (PIC16F152xx, PIC16F18056/76), which has no clock divider: use 32, 16, 8, 4, 2 or 1"
 #endif
 
 ' OSCFRQ code and divider code (NDIV, a power of two: 0 = 1:1 .. 5 = 1:32) for `Clock`.
@@ -153,6 +157,22 @@ Private Sub WaitSettle()
         Inc(n)
     Wend
 End Sub
+#elseif Not _has(OSCCON1)
+' True when the system clock is the HFINTOSC: COSC (OSCCON2 bits 6:4) = 000 or 110 [Table 11-1 p.80].
+Private Function OnHf() As Boolean
+    Dim c As Byte
+    c = OSCCON2 And 112
+    Result = c = 0 Or c = 96
+End Function
+
+' Waits for HFINTOSC to be ready (HFOR) when it is the system clock; gives up after a bounded number of polls.
+Private Sub WaitSettle()
+    Dim n As Word
+    n = 0
+    While OSCSTAT.HFOR = 0 And OnHf() And n < 60000
+        Inc(n)
+    Wend
+End Sub
 #else
 ' NOSC = 110 (HFINTOSC) in OSCCON1 bits 6:4 [Table 5-2].
 Const NoscHf As Byte = 96
@@ -180,6 +200,12 @@ Private Function Apply(ByVal frq As Byte, ByVal shift As Byte) As Boolean
     OSCFRQ = frq
     WaitSettle()
     Result = (OSCFRQ And 7) = frq And (OSCCON And 16) = 0
+End Function
+#elseif Not _has(OSCCON1)
+Private Function Apply(ByVal frq As Byte, ByVal shift As Byte) As Boolean
+    OSCFRQ = frq
+    WaitSettle()
+    Result = (OSCFRQ And 7) = frq And OnHf()
 End Function
 #else
 Private Function Apply(ByVal frq As Byte, ByVal shift As Byte) As Boolean
@@ -232,13 +258,13 @@ Private Function FrqCode(ByVal mhz As Byte) As Byte
     End If
 End Function
 
-' Runs HFINTOSC at `mhz` divided by 2^shift (shift 0..9, so 1:1 to 1:512; the PIC16F152xx has no divider, shift must be 0). False, and nothing changed,
+' Runs HFINTOSC at `mhz` divided by 2^shift (shift 0..9, so 1:1 to 1:512; the PIC16F152xx and PIC16F18056/76 have no divider, shift must be 0). False, and nothing changed,
 ' for a `mhz` or `shift` the part does not have; False too when the clock did not switch.
 Public Function SetClockDiv(ByVal mhz As Byte, ByVal shift As Byte) As Boolean
     Dim frq As Byte
     frq = FrqCode(mhz)
     Result = False
-#if _has(ADCON1.PREF)
+#if Not _has(OSCCON1)
     If frq <> 255 And shift = 0 Then
 #else
     If frq <> 255 And shift <= 9 Then
@@ -256,7 +282,7 @@ End Function
 ' Start-up: put the oscillator on `Clock`. The same steps as Apply with the constants written in, so a
 ' program that never calls SetClock or SetClockDiv does not carry Apply (nor its variables); the order
 ' rule is the same, and OSCCON2 is read because the reset divider depends on RSTOSC [Table 5-1].
-#if _has(ADCON1.PREF)
+#if Not _has(OSCCON1)
 OSCFRQ = ClockFrq
 #elseif _clock >= 1
 ' No divider: the new divider (0) can never exceed the current one, so OSCFRQ goes first.

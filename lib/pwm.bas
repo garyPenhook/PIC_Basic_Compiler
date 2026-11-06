@@ -36,7 +36,7 @@ Module Pwm
 ' CCPTMRS0 and PWMTMRS0 reset to Timer2, so the module leaves them alone.
 ' PIC16F17126/46 (DS40002343F chapter 29): the same 16-bit PWM modules as the Q41 but two of them, so channels 1..4 (PWM1S1P1, PWM1S1P2, PWM2S1P1,
 ' PWM2S1P2) with RxyPPS = 10 + channel [Table 18-2: PWM1S1P1_OUT = 0Bh]; channels 5 and 6 are refused. Pins as on the Q41.
-' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapters 18 and 29; chosen with `_has(PWM5DCL)` in the Timer2 branch below): the same four channels on Timer2 as the PIC16F13145
+' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapters 18 and 29; chosen with `_has(PWM6DCL)` in the Timer2 branch below): the same four channels on Timer2 as the PIC16F13145
 ' family: channels 1 and 2 are CCP1 and CCP2 in PWM mode and channels 3 and 4 are the 10-bit modules PWM5 and PWM6 (CCP3, CCP4 and the other timers are not offered). RxyPPS = 0Ch CCP1, 0Dh CCP2,
 ' 02h PWM5, 03h PWM6 [Register 13-2]; any pin of the part. Timer2 is the old one: PR2, TMR2, T2CON = TMR2ON | T2CKPS with prescalers 1, 4, 16, 64 [Register 28-1] and no clock register (FOSC/4 only), so
 ' f = FOSC / (4 * prescale * (PR2 + 1)) [Equation 18-1, 29-1] and the duty steps are 1 / (4 * (PR2 + 1)) of the period [Equation 18-3]; PwmInit therefore tries the prescalers 1, 4, 16, 64.
@@ -45,6 +45,11 @@ Module Pwm
 ' PIC16F152xx (DS40002195E chapters 22 and 23; chosen with `_has(PWM3CON) And _has(PIR1.TMR2IF)`): the Q10 channels and registers (channels 1 and 2 are CCP1 and CCP2, 3 and 4 are PWM3 and PWM4,
 ' Timer2 with T2CLKCON, T2PR and prescalers 1..128, CCPxCON and PWMxCON as above) with the PPS routing of the PIC16F13145 family: any pin of the part, RxyPPS = 01h CCP1, 02h CCP2, 03h PWM3, 04h PWM4
 ' [Table 18-2 p.148]. The Timer2 flag is TMR2IF = PIR1 bit 6 [12.9.6]; there is no CCPTMRS or PWMTMRS (CCP PWM and PWM3/4 always use Timer2, Table 22-1).
+' PIC16F18056/76 (DS40002325C chapters 24 to 27; chosen with `_has(PWM5CON) And Not _has(PWM6CON)`): the Q10 channels and registers (channels 1 and 2 are CCP1 and CCP2, 3 and 4 are PWM3 and PWM4 (PWM5 is not offered),
+' Timer2 with T2CLKCON, T2PR and prescalers 1..128, CCPxCON = EN | FMT | MODE 11xx (156) and PWMxCON = EN | POL [24.5.1 p.268, 26.11.1 p.280]). RxyPPS = 09h CCP1, 0Ah CCP2, 0Bh PWM3, 0Ch PWM4 [Table 18-2 p.170], so the
+' code is 8 + channel. PPS offers CCP1 and CCP2 on port B or C on both parts, and PWM3 and PWM4 on port B and C on the 28-pin part but on port B and D on the 40-pin part [Table 18-2], so the pins accepted are RB0..RB7 and
+' RC0..RC7 (pins 8..23) for channels 1 and 2 and RB0..RB7 for channels 3 and 4, plus RC0..RC7 where the part has no port D. The Timer2 flag is TMR2IF = PIR1 bit 7. CCPTMRS0 and PWMTMRS0 reset to Timer2
+' [25.1.1, 27.1.1 p.273, 284], so they are left alone. The silicon errata (DS80001014D) show nothing for CCP or PWM. RB6 and RB7 are also the ICSP clock and data pins.
 #if _has(PWMEN)
 ' Output channels: three modules of two on the PIC18-Q41, two modules of two on the PIC16F171xx.
 #if _has(PWM3CON)
@@ -460,10 +465,12 @@ Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
     End If
 End Function
 #else
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
 Dim Tmr2If As PIR1.1
 #elseif _has(PWM1DCL)
 Dim Tmr2If As PIR2.2
+#elseif _has(PWM5CON)
+Dim Tmr2If As PIR1.7
 #elseif (_has(PWM3CON) And _has(PIR1.TMR2IF))
 Dim Tmr2If As PIR1.6
 #else
@@ -493,7 +500,7 @@ Public Function PwmInit(ByVal hz As LongWord) As Byte
     fosc = LongWord(_Clock * 1000000)
     found = False
     e = 0
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
     ' Prescalers 1, 4, 16, 64: the prescale is 4 ^ e, the T2CKPS code.
     While e < 4 And Not found
         d = (LongWord(4) * hz) << (e * 2)
@@ -512,7 +519,7 @@ Public Function PwmInit(ByVal hz As LongWord) As Byte
         ckps = e
         period = Byte(n - 1)
         steps = Word(n * 4)
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
         freq = fosc / ((LongWord(4) << (e * 2)) * n)
 #else
         freq = fosc / ((LongWord(4) << e) * n)
@@ -543,7 +550,23 @@ End Function
 ' (RC6, RC7 on the 20-pin parts; port C is missing on the 8-pin part).
 Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
     Result = False
-#if _has(PWM1DCL) Or _has(PWM5DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
+#if _has(PWM5CON) And Not _has(PWM6CON)
+    ' PIC16F18056/76: port B or C for the CCP channels, port B (and C without port D) for the PWM channels (see the top).
+    If ch = 1 Or ch = 2 Then
+        If pin >= 8 And pin < 24 Then
+            Result = True
+        End If
+    ElseIf ch = 3 Or ch = 4 Then
+        If pin >= 8 And pin < 16 Then
+            Result = True
+        End If
+#if Not _has(TRISD)
+        If pin >= 16 And pin < 24 Then
+            Result = True
+        End If
+#endif
+    End If
+#elseif _has(PWM1DCL) Or _has(PWM6DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
     If ch >= 1 And ch <= 4 Then
         Result = pin <= 5 And pin <> 3
 #if _has(RB4PPS)
@@ -621,7 +644,43 @@ Sub PinDigital(ByVal pin As Byte)
 End Sub
 
 ' RxyPPS = code for pin 0..23 (code 0 gives the pin back to its LATxy bit).
-#if _has(PWM1DCL) Or _has(PWM5DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
+#if _has(PWM5CON) And Not _has(PWM6CON)
+Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+    If pin = 8 Then
+        RB0PPS = code
+    ElseIf pin = 9 Then
+        RB1PPS = code
+    ElseIf pin = 10 Then
+        RB2PPS = code
+    ElseIf pin = 11 Then
+        RB3PPS = code
+    ElseIf pin = 12 Then
+        RB4PPS = code
+    ElseIf pin = 13 Then
+        RB5PPS = code
+    ElseIf pin = 14 Then
+        RB6PPS = code
+    ElseIf pin = 15 Then
+        RB7PPS = code
+    ElseIf pin = 16 Then
+        RC0PPS = code
+    ElseIf pin = 17 Then
+        RC1PPS = code
+    ElseIf pin = 18 Then
+        RC2PPS = code
+    ElseIf pin = 19 Then
+        RC3PPS = code
+    ElseIf pin = 20 Then
+        RC4PPS = code
+    ElseIf pin = 21 Then
+        RC5PPS = code
+    ElseIf pin = 22 Then
+        RC6PPS = code
+    ElseIf pin = 23 Then
+        RC7PPS = code
+    End If
+End Sub
+#elseif _has(PWM1DCL) Or _has(PWM6DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     If pin = 0 Then
         RA0PPS = code
@@ -696,7 +755,7 @@ Sub SetCon(ByVal ch As Byte, ByVal v As Byte)
         CCP1CON = v
     ElseIf ch = 2 Then
         CCP2CON = v
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
     ElseIf ch = 3 Then
         PWM5CON = v
     Else
@@ -731,7 +790,7 @@ Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
     ElseIf ch = 2 Then
         CCPR2L = lo
         CCPR2H = hi
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
     ElseIf ch = 3 Then
         PWM5DCL = lo
         PWM5DCH = hi
@@ -802,7 +861,7 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     pins(ch - 1) = pin
     PinInput(pin, True)
     PinDigital(pin)
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
     ' RxyPPS: CCP1 0Ch, CCP2 0Dh, PWM5 02h, PWM6 03h [Register 13-2]. CxTSEL and PxTSEL = 01 select Timer2 (their reset value) where the part has them.
     If ch <= 2 Then
         SetPps(pin, ch + 11)
@@ -821,6 +880,9 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     Else
         SetPps(pin, ch + 41)
     End If
+#elseif _has(PWM5CON)
+    ' RxyPPS: CCP1 09h, CCP2 0Ah, PWM3 0Bh, PWM4 0Ch [Table 18-2 p.170]. Timer2 is the reset selection of CCPTMRS0 and PWMTMRS0, so they are not written.
+    SetPps(pin, ch + 8)
 #elseif (_has(PWM3CON) And _has(PIR1.TMR2IF))
     ' RxyPPS: CCP1 01h, CCP2 02h, PWM3 03h, PWM4 04h [Table 18-2 p.148]. Timer2 is the only PWM timer; there is no CCPTMRS.
     SetPps(pin, ch)
@@ -839,7 +901,7 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     SetDuty(ch, duty)
     If active = 0 Then
         T2CON = 0
-#if _has(PWM5DCL)
+#if _has(PWM6DCL)
         PR2 = period
         TMR2 = 0
         Tmr2If = 0
