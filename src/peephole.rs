@@ -1706,6 +1706,11 @@ impl Bank {
     }
 }
 
+/// A label the program wrote (`L_<number>_<name>`), as opposed to a routine's or a compiler-made one.
+fn user_label(l: &str) -> bool {
+    l.strip_prefix("L_").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+}
+
 /// A label the code generator made for the inside of one routine (loops, `If`, the shared return).
 fn local_label(l: &str) -> bool {
     l.starts_with("_L")
@@ -1743,7 +1748,8 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
     let mut routine = vec![usize::MAX; n];
     let mut cur = usize::MAX;
     for (i, it) in items.iter().enumerate() {
-        if let Item::Label(l) = it && !local_label(l) {
+        // A label the program wrote (a `GoSub` target) is inside a routine, not the start of one.
+        if let Item::Label(l) = it && !local_label(l) && !user_label(l) {
             cur = i;
         }
         routine[i] = cur;
@@ -1794,6 +1800,9 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
                 }
             };
             let callee = |l: &str, exit: &HashMap<usize, Bank>| match label_at.get(l) {
+                // A `GoSub` target is a label inside a routine, not a routine: its `return`s are not found by the
+                // label, so nothing is known about the bank when it comes back.
+                _ if user_label(l) => Bank::Unknown,
                 Some(&k) => exit.get(&k).copied().unwrap_or(Bank::Top),
                 None => Bank::Unknown,
             };

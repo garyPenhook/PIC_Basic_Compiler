@@ -1204,4 +1204,15 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## Preprocessor names; run-time Float maths (0.1.145, 0.1.146)
 - 0.1.145: `_usb`, `_eccp`, `_adres` (10 on the Q10, DS40002043F 33.2.2; 12 on the Q41, DS40002242F 40.2.2). Test `pp_predef.bas`.
 - 0.1.146: `lib/fmath.bas`: `FSqr FExp FLog FLog10 FPow FSin FCos FTan` on binary32 (D7 already chose IEEE binary32). Test `tests/exec/lib_fmath.bas` (values from the host). Only run on the 18F27Q10.
-- Still to do: `GoSub/Return/Call`, `Len/Left$/Mid$/Right$`, `Print` and `Dec/Hex/Bin/Str$/Val` modifiers, `Freqout`, 1-wire, `Div32 @ ?`, statements without parentheses. Not possible: `BitOf` (undefined), USB (no device has it).
+- Still to do: `Print` and `Dec/Hex/Bin/Str$/Val` modifiers, `Freqout`, 1-wire, `Div32 @ ?`, statements without parentheses. Not possible: `BitOf` (undefined), USB (no device has it).
+
+## String functions: Left$, Mid$, Right$, Str$ (done 2026-11-05, 0.1.147)
+- The lexer takes a `$` straight after `left mid right str` as part of the name. `sema` types them as `String` values (`check_intrinsic`; a constant count bounds the size, so `Left$(s, 2) + "-"` stays small); `lower::str_parts` builds each into a hidden String ahead of the statement with the same loops as the statements (`slice_core`, `num_core`, split out of `str_slice` / `str_of_num`). Works wherever a String expression does: assignment, `+` chains, comparisons, arguments (`is_intrinsic` keeps them out of the variable path).
+- Test: `tests/exec/str_func.bas` (18F27Q10, 18F16Q41, 16F17126, 16F13145), `tests/negative/strfunc_type.bas`.
+
+## GoSub / Return (done 2026-11-05, 0.1.148)
+- `GoSub label`, `On n GoSub a, b, c` and `Return` (new keywords `gosub`, `return`). A subroutine is code at a label of the same routine: `St::GoSub` is an `rcall`/`call` of that label (`Item::Call`), `St::SubRet` a plain `return`. `Exit` stays the way out of a `Sub`/`Function`; `sema` gives `E-RETURN` for a `Return` in a routine without a `GoSub`.
+- Safety against the optimisers: `ir::has_jump_target` counts both (so every analysis that refuses jumps refuses them), `propagate_locals` forgets everything at a `GoSub` (the subroutine changes locals), `inline_single_calls` leaves a routine alone when its body calls one of its own labels (the subroutine's `return` would have been taken for the routine's), and the BSR flow pass in `peephole` takes the bank after a call to a user label (`L_<n>_name`) as unknown (it looks for the label's `return`s as if it were a routine). The PIC16 back end uses `call()` so its tracked BSR is dropped.
+- Return stack: `stack_depth` (both back ends) adds one level per distinct `GoSub` target of a routine; 31 chained subroutines compile, 33 give `E-STACK`.
+- Tests: `tests/exec/gosub.bas` (constants across a `GoSub`, nested, `On n GoSub`, early `Return`, a `Sub` with locals, other banks; 18F27Q10, 18F16Q41, 16F17126, 16F13145), `tests/negative/return_no_gosub.bas`, `gosub_no_label.bas`, `gosub_deep.bas`.
+- Not done: `Call`, `If cond GoSub label` (use `If … Then` / `GoSub` on its own line), `GoSub` inside `Save`.

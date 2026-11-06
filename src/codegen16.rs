@@ -269,9 +269,12 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, isr
 /// main program or the interrupt handler (which adds one level on top of the main chain).
 fn stack_depth(g: &G, items: &[Item]) -> u32 {
     fn callees(items: &[Item], s: usize, e: usize) -> Vec<String> {
+        // A call to a label inside the routine is a `GoSub`; `gosub_levels` counts those.
+        let inside = |t: &str| items[s + 1..e].iter().any(|b| matches!(b, Item::Label(l) if l == t));
         items[s..e]
             .iter()
             .filter_map(|it| match it {
+                Item::Call(t) if inside(t) => None,
                 Item::Call(t) => Some(t.clone()),
                 Item::Raw(t) | Item::Ins(t) => {
                     let t = t.split(';').next().unwrap_or("").trim();
@@ -290,6 +293,27 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
     for (h, s, e) in &g.hranges {
         bodies.insert(h.clone(), (*s, *e));
     }
+    /// Levels a routine's own `GoSub`s add: one for each distinct label inside the routine that a call names
+    /// (a subroutine can be inside another, so the chain through them is at most that long).
+    fn gosub_levels(items: &[Item], s: usize, e: usize, bodies: &HashMap<String, (usize, usize)>) -> u32 {
+        let mut inside: Vec<&str> = Vec::new();
+        for it in &items[s + 1..e] {
+            if let Item::Label(l) = it {
+                inside.push(l);
+            }
+        }
+        let mut hit: Vec<&str> = Vec::new();
+        for it in &items[s..e] {
+            if let Item::Call(t) = it
+                && !bodies.contains_key(t)
+                && inside.contains(&t.as_str())
+                && !hit.contains(&t.as_str())
+            {
+                hit.push(t);
+            }
+        }
+        hit.len() as u32
+    }
     fn depth(name: &str, items: &[Item], bodies: &HashMap<String, (usize, usize)>, memo: &mut HashMap<String, u32>, active: &mut Vec<String>) -> u32 {
         if let Some(&d) = memo.get(name) {
             return d;
@@ -299,7 +323,7 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
             return 0;
         }
         active.push(name.to_string());
-        let d = callees(items, s, e).iter().map(|c| 1 + depth(c, items, bodies, memo, active)).max().unwrap_or(0);
+        let d = callees(items, s, e).iter().map(|c| 1 + depth(c, items, bodies, memo, active)).max().unwrap_or(0) + gosub_levels(items, s, e, bodies);
         active.pop();
         memo.insert(name.to_string(), d);
         d
@@ -307,13 +331,13 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
     let mut memo = HashMap::new();
     let pos = |l: &str| items.iter().position(|i| matches!(i, Item::Label(x) if x == l));
     let main = match (pos("__reset"), pos("__halt")) {
-        (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0),
+        (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0) + gosub_levels(items, s, e, &bodies),
         _ => 0,
     };
     let mut isr = 0;
     for (f, s, e) in &g.ranges {
         if g.p.isrs.iter().any(|x| x.0 == *f) {
-            isr = isr.max(1 + callees(items, *s, *e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0));
+            isr = isr.max(1 + callees(items, *s, *e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0) + gosub_levels(items, *s, *e, &bodies));
         }
     }
     main + isr

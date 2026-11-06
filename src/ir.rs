@@ -309,6 +309,10 @@ pub enum St {
     Continue,
     Return,
     Goto(LabelId),
+    /// `GoSub`: call the code at the label (of this routine) with the hardware return stack; it ends in `SubRet`.
+    GoSub(LabelId),
+    /// `Return`: leave the code a `GoSub` entered.
+    SubRet,
     Label(LabelId),
     /// Raw pic-as lines (`Asm … End Asm`).
     Asm(Vec<String>),
@@ -526,7 +530,7 @@ pub fn blocks_count_loop(body: &[S], var: VarId, calls: bool, reads: bool) -> bo
         St::Asm(_) => true,
         St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || sub(body),
         // A jump out leaves `var` unset when it is only assigned after the loop.
-        St::Break | St::Return | St::Goto(_) | St::Label(_) | St::Halt => reads,
+        St::Break | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Halt => reads,
         St::Continue | St::Int { .. } => false,
         St::FlashSeek(_, _, e) => e.as_ref().is_some_and(ex),
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
@@ -560,7 +564,7 @@ pub fn mentions(body: &[S], var: VarId) -> bool {
         St::Asm(_) => true,
         St::Save { items, body, .. } => items.iter().any(|i| *i == SaveIt::Var(var)) || mentions(body, var),
         St::DelayUs(e) | St::DelayMs(e) => ex(e),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Halt | St::Int { .. } => false,
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Halt | St::Int { .. } => false,
         St::FlashSeek(_, _, e) => e.as_ref().is_some_and(ex),
     })
 }
@@ -574,7 +578,7 @@ fn has_break(s: &S) -> bool {
 }
 
 pub fn has_jump_target(body: &[S]) -> bool {
-    body.iter().any(|s| matches!(s.st, St::Label(_) | St::Goto(_)) || sub_blocks(&s.st).into_iter().any(has_jump_target))
+    body.iter().any(|s| matches!(s.st, St::Label(_) | St::Goto(_) | St::GoSub(_) | St::SubRet) || sub_blocks(&s.st).into_iter().any(has_jump_target))
 }
 
 /// Whether the scalar `var` is certainly assigned before anything reads it: the first top-level

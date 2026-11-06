@@ -248,12 +248,14 @@ struct Ctx {
     loops: u32,
     saves: u32,
     labels: HashSet<String>,
+    /// The routine has a `GoSub` (so a `Return` has something to return from).
+    gosubs: bool,
     result_assigned: bool,
 }
 
 impl Ctx {
     fn main() -> Ctx {
-        Ctx { routine: None, kind: Kind::Main, ret: None, fn_key: None, loops: 0, saves: 0, labels: HashSet::new(), result_assigned: false }
+        Ctx { routine: None, kind: Kind::Main, ret: None, fn_key: None, loops: 0, saves: 0, labels: HashSet::new(), gosubs: false, result_assigned: false }
     }
 }
 
@@ -275,7 +277,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "toupper", "tolower", "str", "val", "stop", "sizeof", "tern", "pinmode", "pinset", "pinclear", "pinpullup"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "left$", "mid$", "right$", "str$", "toupper", "tolower", "str", "val", "stop", "sizeof", "tern", "pinmode", "pinset", "pinclear", "pinpullup"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -1550,7 +1552,7 @@ impl<'p, 'd> Sema<'p, 'd> {
     fn body(&mut self, b: &'p Body, kind: Kind, routine: Option<SymId>, ret: Option<Ty>, fn_key: Option<String>, params: &[(Ident, ParamInfo)]) {
         let saved_ctx = std::mem::replace(
             &mut self.ctx,
-            Ctx { routine, kind, ret: ret.clone(), fn_key, loops: 0, saves: 0, labels: HashSet::new(), result_assigned: self.in_extern },
+            Ctx { routine, kind, ret: ret.clone(), fn_key, loops: 0, saves: 0, labels: HashSet::new(), gosubs: false, result_assigned: self.in_extern },
         );
         let saved_for = std::mem::take(&mut self.for_vars);
         self.scopes.push(HashMap::new());
@@ -1580,33 +1582,36 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     fn check_labels(&mut self, stmts: &'p [Stmt]) {
         let mut seen: HashMap<String, Span> = HashMap::new();
-        fn walk(ss: &[Stmt], out: &mut Vec<(String, Span)>) {
+        fn walk(ss: &[Stmt], out: &mut Vec<(String, Span)>, gosub: &mut bool) {
             for s in ss {
                 match &s.kind {
                     StmtKind::Label(l) => out.push((l.key(), l.span)),
+                    StmtKind::GoSub(_) => *gosub = true,
                     StmtKind::If { arms, otherwise } => {
                         for (_, b) in arms {
-                            walk(b, out);
+                            walk(b, out, gosub);
                         }
                         if let Some(b) = otherwise {
-                            walk(b, out);
+                            walk(b, out, gosub);
                         }
                     }
                     StmtKind::Select { cases, otherwise, .. } => {
                         for c in cases {
-                            walk(&c.body, out);
+                            walk(&c.body, out, gosub);
                         }
                         if let Some(b) = otherwise {
-                            walk(b, out);
+                            walk(b, out, gosub);
                         }
                     }
-                    StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } | StmtKind::For { body, .. } | StmtKind::Save { body, .. } => walk(body, out),
+                    StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } | StmtKind::For { body, .. } | StmtKind::Save { body, .. } => walk(body, out, gosub),
                     _ => {}
                 }
             }
         }
         let mut all = Vec::new();
-        walk(stmts, &mut all);
+        let mut gosub = false;
+        walk(stmts, &mut all, &mut gosub);
+        self.ctx.gosubs = gosub;
         for (k, sp) in all {
             if let Some(prev) = seen.insert(k.clone(), sp) {
                 self.diags.error("E-LABEL", sp, format!("label `{k}` is already defined on line {}", prev.line));
@@ -1683,6 +1688,12 @@ impl<'p, 'd> Sema<'p, 'd> {
                 }
             }
             StmtKind::GoTo(l) => self.check_goto(l),
+            StmtKind::GoSub(l) => self.check_goto(l),
+            StmtKind::SubReturn => {
+                if !self.ctx.gosubs {
+                    self.diags.error("E-RETURN", s.span, "`Return` needs a `GoSub` in the same routine (use `Exit` to leave a Sub or Function)");
+                }
+            }
             StmtKind::Label(_) => {}
             StmtKind::Save { items, body } => {
                 for it in items {
@@ -3000,6 +3011,49 @@ impl<'p, 'd> Sema<'p, 'd> {
                     }
                 }
                 call(Ty::Void)
+            }
+            "left$" | "mid$" | "right$" => {
+                // `Left$(s, n)`, `Right$(s, n)`, `Mid$(s, start)` and `Mid$(s, start, n)`: a String value.
+                let (lo, hi) = if name == "mid$" { (2, 3) } else { (2, 2) };
+                if args.len() < lo || args.len() > hi {
+                    let n = if lo == hi { lo.to_string() } else { format!("{lo} or {hi}") };
+                    self.diags.error("E-ARGS", span, format!("`{}` takes {n} arguments, {} given", d.head.name, args.len()));
+                    return None;
+                }
+                let src = self.check_expr(&args[0])?;
+                if !matches!(src.ty, Ty::Str(_)) {
+                    return self.err("E-TYPE", args[0].span, format!("the first argument of `{}` must be a String, found {}", d.head.name, src.ty));
+                }
+                let mut last = None;
+                for a in &args[1..] {
+                    let v = self.check_expr(a)?;
+                    if !v.ty.is_numeric_int() {
+                        return self.err("E-TYPE", a.span, format!("`{}` needs a whole number for a position or count, found {}", d.head.name, v.ty));
+                    }
+                    last = Some(v);
+                }
+                let Ty::Str(mut n) = src.ty else { return None };
+                // A known count bounds the length of the result (`Mid$(s, start)` has no count).
+                if let (true, Some(CVal::Int(c))) = (name != "mid$" || args.len() == 3, last.and_then(|v| v.val)) {
+                    n = n.min(c.clamp(0, 255) as u32);
+                }
+                Some(EI::new(Ty::Str(n)))
+            }
+            "str$" => {
+                // `Str$(n)`: the decimal text of a whole number, as a String value.
+                if !want(self, 1) {
+                    return None;
+                }
+                let v = self.check_expr(&args[0])?;
+                if !v.ty.is_numeric_int() {
+                    return self.err("E-TYPE", args[0].span, format!("`{}` needs a whole number to write as text, found {}", d.head.name, v.ty));
+                }
+                let (w, signed) = match &v.ty {
+                    Ty::Int(w, s) => (u32::from(*w), *s),
+                    _ => (32, true),
+                };
+                let digits = match w { 8 => 3, 16 => 5, _ => 10 };
+                Some(EI::new(Ty::Str(digits + u32::from(signed))))
             }
             "toupper" | "tolower" => {
                 // `ToUpper(s)`, `ToLower(s)`: the letters of a String (or a Char) variable changed in place.

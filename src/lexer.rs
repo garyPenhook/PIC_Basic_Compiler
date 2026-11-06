@@ -31,9 +31,9 @@ pub const KEYWORDS: &[&str] = &[
     "absolute", "access", "addressof", "and", "as", "asm", "bit", "bitof", "boolean", "bound", "break", "byref",
     "byrefconst", "byte", "byval", "case", "char", "clear", "clock", "compound", "config", "const", "continue", "dec",
     "delayms", "delayus", "device", "dim", "disable", "else", "elseif", "enable", "end", "endif", "endselect", "event",
-    "exit", "false", "float", "for", "function", "goto", "high", "if", "inc", "include", "inline", "input", "integer",
+    "exit", "false", "float", "for", "function", "gosub", "goto", "high", "if", "inc", "include", "inline", "input", "integer",
     "interrupt", "longint", "longword", "low", "mod", "module", "next", "noinline", "not", "null", "or", "output",
-    "private", "program", "public", "reentrant", "repeat", "restore", "result", "save", "select", "shortint", "static", "step",
+    "private", "program", "public", "reentrant", "repeat", "restore", "result", "return", "save", "select", "shortint", "static", "step",
     "string", "structure", "sub", "terminate", "then", "to", "toggle", "true", "type", "until", "volatile", "wend", "while",
     "word", "xor", // alternative-spelling aliases
     "declare", "do", "endproc", "exitproc", "loop", "proc", "symbol",
@@ -189,7 +189,12 @@ pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
                 while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
                     adv!();
                 }
-                let word: String = chars[st..i].iter().collect();
+                let mut word: String = chars[st..i].iter().collect();
+                // `Left$`, `Mid$`, `Right$`, `Str$`: the string-valued forms of the string statements.
+                if i < chars.len() && chars[i] == '$' && matches!(word.to_ascii_lowercase().as_str(), "left" | "mid" | "right" | "str") {
+                    word.push('$');
+                    adv!();
+                }
                 let low = word.to_ascii_lowercase();
                 match keyword(&low) {
                     Some(k) => {

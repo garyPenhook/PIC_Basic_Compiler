@@ -133,7 +133,7 @@ fn w_block<V: Visit>(v: &mut V, b: &[S]) {
             }
             St::Save { body, .. } => w_block(v, body),
             St::DelayUs(e) | St::DelayMs(e) => w_ex(v, e),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
             St::FlashSeek(_, _, e) => {
                 if let Some(e) = e {
                     w_ex(v, e);
@@ -245,7 +245,7 @@ fn m_stmt(s: &mut S, f: &mut dyn FnMut(&mut Ex)) {
         }
         St::Save { body, .. } => m_block(body, f),
         St::DelayUs(e) | St::DelayMs(e) => m_ex(e, f),
-        St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+        St::Break | St::Continue | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
         St::FlashSeek(_, _, e) => {
             if let Some(e) = e {
                 m_ex(e, f);
@@ -1520,7 +1520,7 @@ fn share_results(p: &mut Program) -> bool {
             }
             fn stmt(&mut self, s: &S) {
                 match &s.st {
-                    St::Return | St::Goto(_) | St::Label(_) => self.ret = true,
+                    St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) => self.ret = true,
                     St::Save { items, .. } if items.contains(&SaveIt::Var(self.rv)) => self.bad = true,
                     _ => {}
                 }

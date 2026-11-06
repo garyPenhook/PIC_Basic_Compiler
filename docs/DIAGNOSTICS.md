@@ -52,6 +52,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 |---|---|
 | E-COND | Condition is not Boolean |
 | E-LOOP, E-EXIT, E-LABEL | `Break`/`Continue` outside a loop, `Exit` outside a routine, missing or duplicate label |
+| E-RETURN | `Return` in a routine that has no `GoSub` |
 | E-FOR, E-LOOPVAR | Bad `For` variable or step; loop variable modified inside its loop |
 | E-CASE-OVERLAP, E-CASE-RANGE, W-CASE-ELSE | Overlapping `Case`, empty range, `Else` that cannot run |
 | E-CALL, E-ARGS, E-PARAM, E-STMT | Misused call, wrong argument count, bad parameter or argument, expression used as a statement |

@@ -584,6 +584,13 @@ out at compile time. Convert the result for a narrower variable (`w = Word(Val(s
 32-bit divide; `Val` about 100), so put repeated uses in a routine. A program's own `Str` or `Val` replaces them.
 Neither handles a `Float`.
 
+`Left$(s, n)`, `Right$(s, n)`, `Mid$(s, start)`, `Mid$(s, start, n)` and `Str$(n)` are the same operations as values, for
+use inside an expression: `u = Left$(s, 2) + "-" + Right$(s, 2)`, `If Left$(s, 1) = "h" Then`, `Len(Str$(w))`, or an
+argument of a routine. Each is built into a hidden `String` before the statement it is in runs, so a result costs the
+RAM of that String (as long as the source, or as the constant count if there is one; `Str$` of a Byte takes 3
+characters, of a Word 5, of a 32-bit number 10, plus one for a sign) and the same code as the statement form. Counts and
+positions behave as for the statements. The `$` must follow the name directly.
+
 Oddities to know about:
 
 * A String or structure function result is copied into a hidden object *before* the statement it is in runs, so
@@ -1523,7 +1530,7 @@ GoTo label
 If condition GoTo label
 ```
 **Overview** Jump to a label in the same routine. A label is a name followed by a colon at the start
-of a line. `GoSub`/`Return` and `Call` are not supported; the computed jump is `On ... GoTo` (below).
+of a line. For a subroutine inside a routine see `GoSub` and `Return` (below); the computed jump is `On ... GoTo`.
 
 **Example**
 ```basic
@@ -1533,7 +1540,47 @@ Inc(x)
 If x < 5 GoTo Again
 ```
 **Notes** `GoTo` and labels are not allowed inside a `Save` block.
-**See also** `On ... GoTo`, `Branch`.
+**See also** `GoSub`, `On ... GoTo`, `Branch`.
+
+## GoSub, Return
+
+**Syntax**
+```basic
+GoSub label
+On index GoSub label0, label1, label2
+Return
+```
+**Overview** `GoSub` runs the code at a label of the same routine (or of the main program) and `Return` comes back to the
+statement after the `GoSub`. The subroutine shares the variables of the routine that holds it, so it needs no arguments, and
+costs one `rcall` and one `return`. The usual layout puts the subroutines after the end of the statements that call them, behind a
+`GoTo` (or `Exit`, or `Terminate`) so that the code does not run into them. `On index GoSub` is `On ... GoTo` that calls (an
+`index` past the end of the list calls nothing). Subroutines can call each other and can call routines.
+
+**Example**
+```basic
+Dim x As Byte
+x = 5
+GoSub Double
+GoTo Done
+Double:
+x = x + x
+Return
+Done:
+```
+**Notes**
+* A `GoSub` uses a level of the hardware return stack for as long as the subroutine runs. The stack check
+  (`E-STACK`) counts each subroutine of a routine as one level, on top of the routines it calls.
+* A `Return` needs at least one `GoSub` in the same routine (`E-RETURN`); it is not the way to leave a `Sub` or `Function`
+  (that is `Exit`). Leaving a subroutine with `Exit`, `GoTo` or `Terminate` instead of `Return` leaves its return address on the
+  stack: do not.
+* A routine with a `GoSub` is never moved into its caller (inlined).
+* A subroutine that `GoSub`s itself (directly or through another) is not detected by the stack check; keep them non-recursive.
+* `GoSub` and `Return` are reserved words: a variable or routine of that name must be renamed.
+* `GoSub` and `Return` are not allowed inside a `Save` block, and `Return` does not take a value.
+* A `Return` reached with no `GoSub` active (by falling into the subroutine) returns from the whole routine, or resets
+  the part when the stack is empty.
+
+**See also** `GoTo`, `On ... GoTo`, `Exit`.
 
 ## On ... GoTo, Branch
 
@@ -5457,14 +5504,14 @@ reports these rather than miscompiling them.
 | `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
 | `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `Const` arrays |
 | `Branch`, `On GoTo` | `Branch index, l0, l1` and `On index GoTo l0, l1` (count from 0; out of range falls through) |
-| `On GoSub`, `GoSub`, `Return`, `Call` | not available; use `Select` and routines |
+| `On GoSub`, `GoSub`, `Return` | `GoSub label`, `On index GoSub l0, l1`, `Return` (labels of the same routine); `Call` is just the routine name with parentheses |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
 | `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
 | `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*) |
 | `Tan`, `Log`, `Log10`, `Exp` | `FTan`, `FLog`, `FLog10`, `FExp` of the `fmath` module (also `FSqr`, `FSin`, `FCos`, `FPow`) |
 | `Div32`, `@`, `?` | not available |
-| `Len`, `Left$`, `Mid$`, `Right$` | not available; string arrays are `Dim s(3) As String(8)` |
+| `Len`, `Left$`, `Mid$`, `Right$`, `Str$` | `Len(s)` of the `strings` module; `Left$`, `Mid$`, `Right$`, `Str$` as expressions (zero-based positions) and `Left`, `Mid`, `Right`, `Str` as statements; string arrays are `Dim s(3) As String(8)` |
 | `Tern` | `Tern(cond, a, b)` (only the chosen value is evaluated) |
 | `SizeOf` | `SizeOf(variable)`, bytes, known at build time |
 | `Stop` | `Stop` (same as `Terminate()`) |

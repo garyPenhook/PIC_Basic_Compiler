@@ -492,7 +492,7 @@ fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
             }
             St::DelayUs(e) | St::DelayMs(e) => ex_calls(e, out),
             St::Save { body, .. } => stmt_calls(body, out),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
             St::FlashSeek(_, _, e) => {
                 if let Some(e) = e {
                     ex_calls(e, out);
@@ -4156,6 +4156,11 @@ impl<'p> Gen<'p> {
                 let name = self.p.label_names[*l].clone();
                 self.br(Cc::Always, &name);
             }
+            St::GoSub(l) => {
+                let name = self.p.label_names[*l].clone();
+                self.items.push(Item::Call(name));
+            }
+            St::SubRet => self.ins("return"),
             St::Label(l) => {
                 let name = self.p.label_names[*l].clone();
                 self.label(&name);
@@ -4926,8 +4931,11 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
     }
     fn callees(items: &[Item], s: usize, e: usize) -> Vec<String> {
         let mut v = Vec::new();
+        // A call to a label inside the routine is a `GoSub`; `gosub_levels` counts those.
+        let inside = |t: &str| items[s + 1..e].iter().any(|b| matches!(b, Item::Label(l) if l == t));
         for it in &items[s..e] {
             match it {
+                Item::Call(t) if inside(t) => {}
                 Item::Call(t) => v.push(t.clone()),
                 Item::Raw(t) => v.extend(t.lines().filter_map(raw_target)),
                 _ => {}
@@ -4944,6 +4952,27 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
     for (h, s, e) in &g.hranges {
         bodies.insert(h.clone(), (*s, *e));
     }
+    /// Levels a routine's own `GoSub`s add: one for each distinct label inside the routine that a call names
+    /// (a subroutine can be inside another, so the chain through them is at most that long).
+    fn gosub_levels(items: &[Item], s: usize, e: usize, bodies: &HashMap<String, (usize, usize)>) -> u32 {
+        let mut inside: Vec<&str> = Vec::new();
+        for it in &items[s + 1..e] {
+            if let Item::Label(l) = it {
+                inside.push(l);
+            }
+        }
+        let mut hit: Vec<&str> = Vec::new();
+        for it in &items[s..e] {
+            if let Item::Call(t) = it
+                && !bodies.contains_key(t)
+                && inside.contains(&t.as_str())
+                && !hit.contains(&t.as_str())
+            {
+                hit.push(t);
+            }
+        }
+        hit.len() as u32
+    }
     fn depth(name: &str, items: &[Item], bodies: &HashMap<String, (usize, usize)>, memo: &mut HashMap<String, u32>, active: &mut Vec<String>) -> u32 {
         if let Some(&d) = memo.get(name) {
             return d;
@@ -4953,7 +4982,7 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
             return 0;
         }
         active.push(name.to_string());
-        let d = callees(items, s, e).iter().map(|c| 1 + depth(c, items, bodies, memo, active)).max().unwrap_or(0);
+        let d = callees(items, s, e).iter().map(|c| 1 + depth(c, items, bodies, memo, active)).max().unwrap_or(0) + gosub_levels(items, s, e, bodies);
         active.pop();
         memo.insert(name.to_string(), d);
         d
@@ -4961,7 +4990,7 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
     let mut memo = HashMap::new();
     let pos = |l: &str| items.iter().position(|i| matches!(i, Item::Label(x) if x == l));
     let main = match (pos("__reset"), pos("__halt")) {
-        (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0),
+        (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0) + gosub_levels(items, s, e, &bodies),
         _ => 0,
     };
     // One entry level per priority (a high handler can interrupt a low one, which can interrupt
@@ -4970,7 +4999,7 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
     let mut low = None;
     for (f, s, e) in &g.ranges {
         if let Some(&(_, level)) = g.p.isrs.iter().find(|x| x.0 == *f) {
-            let d = 1 + callees(items, *s, *e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0);
+            let d = 1 + callees(items, *s, *e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0) + gosub_levels(items, *s, *e, &bodies);
             let slot = if level == Level::Low { &mut low } else { &mut high };
             *slot = Some(slot.map_or(d, |x: u32| x.max(d)));
         }
@@ -5265,6 +5294,10 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
             }
             let body = &items[s + 1..e];
             if body.iter().any(|it| matches!(it, Item::Raw(_) | Item::Org(_) | Item::Data(_))) {
+                continue;
+            }
+            // A `GoSub` inside it: that subroutine's `return` is not the routine's own.
+            if body.iter().any(|it| matches!(it, Item::Call(t) if body.iter().any(|b| matches!(b, Item::Label(l) if l == t)))) {
                 continue;
             }
             let is_ret = |it: &Item| matches!(it, Item::Ins(t) if t.trim() == "return");

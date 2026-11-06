@@ -1966,7 +1966,7 @@ impl<'a> Lowerer<'a> {
                         return None;
                     };
                     let agg = matches!(self.vars[*pv].ty, Ty::Str(_) | Ty::Struct(_));
-                    let variable = matches!(&arg.kind, ExprKind::Designator(d) if self.callee_of(d).is_none()) && !matches!(self.a.types.get(&arg.id), Some(Ty::Char));
+                    let variable = matches!(&arg.kind, ExprKind::Designator(d) if self.callee_of(d).is_none() && !self.is_intrinsic(d)) && !matches!(self.a.types.get(&arg.id), Some(Ty::Char));
                     if agg && !variable {
                         // A function result, a concatenation or a Char: worked out into a hidden object first.
                         self.agg_temp(arg)?
@@ -2421,6 +2421,30 @@ impl<'a> Lowerer<'a> {
                 out.push(StrSrc::Ram(tmp));
                 Some(())
             }
+            (ExprKind::Designator(d), Some(Ty::Str(n))) if matches!(self.a.resolved.get(&d.id), Some(Res::Intrinsic(_))) => {
+                // `Left$` / `Mid$` / `Right$` / `Str$`: built into a hidden String ahead of the statement.
+                let Some(Res::Intrinsic(name)) = self.a.resolved.get(&d.id).cloned() else { return None };
+                let args: &'a [Expr] = match d.parts.first() {
+                    Some(Part::Args(a, _)) => a,
+                    _ => &[],
+                };
+                let tmp = self.hidden_var(Ty::Str(n));
+                if name == "str$" {
+                    self.num_core(tmp.clone(), &args[0], e.span, pre);
+                } else {
+                    let src = match (&args[0].kind, self.a.consts.get(&args[0].id)) {
+                        (_, Some(CVal::Str(t))) => {
+                            let bytes: Vec<u8> = t.bytes().take_while(|&b| b != 0).collect();
+                            self.lit_place(bytes, args[0].span)
+                        }
+                        (ExprKind::Designator(sd), _) if self.callee_of(sd).is_none() && !self.is_intrinsic(sd) => self.place_idx_of(sd)?,
+                        _ => self.agg_temp(&args[0])?,
+                    };
+                    self.slice_core(name.trim_end_matches('$'), tmp.clone(), src, &args[1..], e.span, pre);
+                }
+                out.push(StrSrc::Ram(tmp));
+                Some(())
+            }
             (ExprKind::Designator(d), Some(Ty::Str(_))) => {
                 let mut p = self.place_idx_of(d)?;
                 if p.bit.is_some() {
@@ -2469,6 +2493,11 @@ impl<'a> Lowerer<'a> {
         // A `Reentrant` routine leaves the result where its callers' frame restore does not reach.
         let at = self.sym_func[&sym].out.unwrap_or(rv);
         Some(Some(Place { base: Base::Var(at), off: 0, bit: None, idx: None, dbit: None, ty: self.vars[rv].ty.clone() }))
+    }
+
+    /// True when the designator names a built-in routine (`Left$`, `Abs`, ...) rather than a variable.
+    fn is_intrinsic(&self, d: &Designator) -> bool {
+        matches!(self.a.resolved.get(&d.id), Some(Res::Intrinsic(_)))
     }
 
     /// A String or structure argument that is not a variable (a function result, a concatenation, a Char) worked out
@@ -2631,28 +2660,34 @@ impl<'a> Lowerer<'a> {
             return;
         };
         let Some(mut dst) = self.place_idx_of(dd) else { return };
-        let Ty::Str(cap) = dst.ty else {
+        if !matches!(dst.ty, Ty::Str(_)) {
             self.unsupported(span, "this destination");
             return;
-        };
+        }
         if dst.is_bit() {
             self.unsupported(span, "this string");
             return;
         }
         self.hoist_idx(&mut dst, span, out);
+        self.num_core(dst, &args[1], span, out);
+    }
+
+    /// The decimal text of the number `arg` written into `dst`.
+    fn num_core(&mut self, dst: Place, arg: &'a Expr, span: Span, out: &mut Vec<S>) {
+        let Ty::Str(cap) = dst.ty else { return };
         // A known number is text at compile time.
-        if let Some(CVal::Int(c)) = self.a.consts.get(&args[1].id) {
+        if let Some(CVal::Int(c)) = self.a.consts.get(&arg.id) {
             let text = c.to_string().into_bytes();
             let take = text.len().min(cap as usize);
             Self::push(out, St::StrSet { dst, cap, parts: vec![StrSrc::Lit(text[..take].to_vec())], keep: false }, span);
             return;
         }
-        let aty = self.a.types.get(&args[1].id).cloned().unwrap_or(BYTE);
+        let aty = self.a.types.get(&arg.id).cloned().unwrap_or(BYTE);
         let Some((aw, asg)) = nat(&aty) else {
-            self.unsupported(args[1].span, "this number");
+            self.unsupported(arg.span, "this number");
             return;
         };
-        let Some(x) = self.expr(&args[1]) else { return };
+        let Some(x) = self.expr(&arg) else { return };
         // Digits are worked out at the argument's own width (a Byte needs no 32-bit division).
         let w = aw.max(8);
         let digits = match w {
@@ -2715,7 +2750,7 @@ impl<'a> Lowerer<'a> {
                 let bytes: Vec<u8> = t.bytes().take_while(|&b| b != 0).collect();
                 self.lit_place(bytes, arg.span)
             }
-            (ExprKind::Designator(sd), _) if self.callee_of(sd).is_none() => self.place_idx_of(sd)?,
+            (ExprKind::Designator(sd), _) if self.callee_of(sd).is_none() && !self.is_intrinsic(sd) => self.place_idx_of(sd)?,
             _ => self.agg_temp(arg)?,
         };
         if !matches!(src.ty, Ty::Str(_)) || src.is_bit() {
@@ -2762,7 +2797,7 @@ impl<'a> Lowerer<'a> {
             return;
         };
         let Some(dst) = self.place_idx_of(dd) else { return };
-        let Ty::Str(cap) = dst.ty else {
+        let Ty::Str(_) = dst.ty else {
             self.unsupported(span, "this destination");
             return;
         };
@@ -2780,6 +2815,12 @@ impl<'a> Lowerer<'a> {
                 return;
             }
         };
+        self.slice_core(name, dst, src, &args[2..], span, out);
+    }
+
+    /// The loops of `Left` / `Mid` / `Right`: `src` cut into `dst` by the position and count expressions `counts`.
+    fn slice_core(&mut self, name: &str, dst: Place, src: Place, counts: &'a [Expr], span: Span, out: &mut Vec<S>) {
+        let Ty::Str(cap) = dst.ty else { return };
         if !matches!(src.ty, Ty::Str(_)) || src.is_bit() || dst.is_bit() {
             self.unsupported(span, "this string");
             return;
@@ -2788,7 +2829,7 @@ impl<'a> Lowerer<'a> {
         let (mut dst, mut src) = (dst, src);
         self.hoist_idx(&mut dst, span, out);
         self.hoist_idx(&mut src, span, out);
-        let Some(counts) = args[2..].iter().map(|a| self.expr(a)).collect::<Option<Vec<_>>>() else { return };
+        let Some(counts) = counts.iter().map(|a| self.expr(a)).collect::<Option<Vec<_>>>() else { return };
         let mut counts = counts.into_iter();
         let byte = |p: &Place| Ex::new(ExK::Load(p.clone()), 8, false);
         let cmp = |k: CmpKind, a: Ex, b: Ex| Ex::boolean(ExK::Cmp(k, Box::new(a), Box::new(b)));
@@ -3035,6 +3076,13 @@ impl<'a> Lowerer<'a> {
             StmtKind::Continue => Self::push(out, St::Continue, span),
             StmtKind::Exit => self.push_return(out, span),
             StmtKind::GoTo(l) if self.in_save > 0 => self.unsupported(l.span, "Goto inside Save"),
+            StmtKind::GoSub(l) if self.in_save > 0 => self.unsupported(l.span, "GoSub inside Save"),
+            StmtKind::SubReturn if self.in_save > 0 => self.unsupported(span, "Return inside Save"),
+            StmtKind::GoSub(l) => {
+                let id = self.label_id(l);
+                Self::push(out, St::GoSub(id), span);
+            }
+            StmtKind::SubReturn => Self::push(out, St::SubRet, span),
             StmtKind::Label(l) if self.in_save > 0 => self.unsupported(l.span, "a label inside Save"),
             StmtKind::GoTo(l) => {
                 let id = self.label_id(l);
@@ -3654,7 +3702,7 @@ fn strip_block(b: &mut [S], is_len: LenTest) {
             }
             St::DelayUs(e) | St::DelayMs(e) => strip_ex(e, is_len),
             St::Save { body, .. } => strip_block(body, is_len),
-            St::Break | St::Continue | St::Return | St::Goto(_) | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
+            St::Break | St::Continue | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Asm(_) | St::Halt | St::Int { .. } => {}
             St::FlashSeek(_, _, e) => {
                 if let Some(e) = e {
                     strip_ex(e, is_len);

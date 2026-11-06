@@ -119,6 +119,11 @@ impl<'p> G<'p> {
                 let name = self.p.label_names[*l].clone();
                 self.br(Cc::Always, &name);
             }
+            St::GoSub(l) => {
+                let name = self.p.label_names[*l].clone();
+                self.call(&name);
+            }
+            St::SubRet => self.ins("return"),
             St::Label(l) => {
                 let name = self.p.label_names[*l].clone();
                 self.label(&name);

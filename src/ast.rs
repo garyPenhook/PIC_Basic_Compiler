@@ -255,6 +255,10 @@ pub enum StmtKind {
     Continue,
     Exit,
     GoTo(Ident),
+    /// `GoSub label`: a call of the code at a label of the same routine, ended by `Return`.
+    GoSub(Ident),
+    /// `Return`: back to the statement after the `GoSub` that got here.
+    SubReturn,
     Label(Ident),
     Save { items: Vec<SaveItem>, body: Vec<Stmt> },
     Asm { preserves: Vec<Ident>, lines: Vec<String> },

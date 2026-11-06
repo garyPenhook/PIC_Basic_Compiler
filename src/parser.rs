@@ -893,6 +893,17 @@ impl<'a> Parser<'a> {
                 self.end_stmt()?;
                 StmtKind::GoTo(l)
             }
+            Tok::Kw("gosub") => {
+                self.bump();
+                let l = self.ident()?;
+                self.end_stmt()?;
+                StmtKind::GoSub(l)
+            }
+            Tok::Kw("return") => {
+                self.bump();
+                self.end_stmt()?;
+                StmtKind::SubReturn
+            }
             Tok::Kw(k @ ("enable" | "disable")) => {
                 self.bump();
                 self.expect_punct("(")?;
@@ -956,8 +967,12 @@ impl<'a> Parser<'a> {
                 let on = w.eq_ignore_ascii_case("on");
                 self.bump();
                 let subject = self.expr()?;
+                let mut sub = false;
                 if on {
-                    self.expect_kw("goto")?;
+                    sub = self.eat_kw("gosub");
+                    if !sub {
+                        self.expect_kw("goto")?;
+                    }
                 } else {
                     self.expect_punct(",")?;
                 }
@@ -966,7 +981,7 @@ impl<'a> Parser<'a> {
                     let sp = self.span();
                     let l = self.ident()?;
                     let value = Expr { id: self.id(), span: sp, kind: ExprKind::Int(cases.len() as u64) };
-                    cases.push(Case { conds: vec![CaseCond::Value(value)], body: vec![Stmt { span: sp, kind: StmtKind::GoTo(l) }], span: sp });
+                    cases.push(Case { conds: vec![CaseCond::Value(value)], body: vec![Stmt { span: sp, kind: if sub { StmtKind::GoSub(l) } else { StmtKind::GoTo(l) } }], span: sp });
                     if !self.eat_punct(",") {
                         break;
                     }
@@ -1008,7 +1023,7 @@ impl<'a> Parser<'a> {
         let mut n = 1;
         loop {
             match self.peek_at(n) {
-                Tok::Kw("goto") => return true,
+                Tok::Kw("goto" | "gosub") => return true,
                 Tok::Newline | Tok::Eof | Tok::Colon => return false,
                 _ => n += 1,
             }
