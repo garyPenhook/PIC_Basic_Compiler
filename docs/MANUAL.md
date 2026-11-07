@@ -2505,7 +2505,7 @@ Dim ok As Boolean
 ok = SetClockDiv(16, 2)           ' 16 MHz / 4 = 4 MHz
 ```
 
-## system  (`Include "system"`, reset cause and clock check)
+## system  (`Include "system"`, reset cause, wake-up cause and clock check)
 
 ### SysResetCause
 
@@ -2555,6 +2555,38 @@ SysClearResetFlags()
 **Example**
 ```basic
 SysClearResetFlags()
+```
+
+### SysWakeCause
+
+**Syntax**
+```basic
+cause = SysWakeCause()
+```
+**Overview** Reports why the part woke from Sleep or whether the watchdog timed out, from the `TO` and `PD` flags in `STATUS` (the flags older PIC18 data sheets list in `RCON`). Works on every supported part.
+
+**Returns** `Byte`: 0 none (power-up, or the flags cleared), 1 woke from Sleep by an interrupt or other non-watchdog event, 2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
+
+**Example**
+```basic
+Dim w As Byte
+Sleep()
+w = SysWakeCause()
+SysClearWakeFlags()
+```
+**Notes** `TO` and `PD` are read-only and keep their values until `clrwdt` or the next power-up, so call `SysClearWakeFlags` after reading. `SysWakeFrom(st)` gives the same result for a given `STATUS` value `st`.
+
+### SysClearWakeFlags
+
+**Syntax**
+```basic
+SysClearWakeFlags()
+```
+**Overview** Sets `TO` and `PD` back to 1 with `clrwdt`, which also restarts the watchdog count.
+
+**Example**
+```basic
+SysClearWakeFlags()
 ```
 
 ### SysClockHz

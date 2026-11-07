@@ -64,6 +64,43 @@ Public Sub SysClearResetFlags()
     PCON0 = 63
 End Sub
 
+' Wake-up / power-down cause from the STATUS flags TO and PD (the flags the older PIC18 parts keep in RCON). Every part has them in
+' STATUS: PIC16 TO = bit 4, PD = bit 3 (DS40002325C 9.7.4 p.61); PIC18 TO = bit 6, PD = bit 5 (DS40002043F 11.8.5 p.131). TO = 0 means a
+' watchdog time-out occurred; PD = 0 means a SLEEP instruction was executed; CLRWDT and power-up set both to 1. Both are read-only
+' and stay as they are until CLRWDT or the next power-up, so call SysClearWakeFlags after reading them.
+' The cause for a given STATUS value `st` (only the TO and PD bits are looked at):
+'   0 none (power-up, or cleared), 1 woke from Sleep by an interrupt or another non-watchdog event,
+'   2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
+Public Function SysWakeFrom(ByVal st As Byte) As Byte
+    Dim m As Byte
+#if _has(PRODL)
+    m = (st >> 5) And 3
+#else
+    m = (st >> 3) And 3
+#endif
+    ' m bit 0 = PD, bit 1 = TO
+    Result = 0
+    If m = 2 Then
+        Result = 1
+    ElseIf m = 0 Then
+        Result = 2
+    ElseIf m = 1 Then
+        Result = 3
+    End If
+End Function
+
+' The wake-up / power-down cause now, from STATUS (see SysWakeFrom).
+Public Function SysWakeCause() As Byte
+    Result = SysWakeFrom(STATUS)
+End Function
+
+' Sets TO and PD back to 1 (the `clrwdt` instruction, which also restarts the watchdog count), so the next Sleep or watchdog time-out shows only its own cause.
+Public Sub SysClearWakeFlags()
+    Asm
+        clrwdt
+    End Asm
+End Sub
+
 ' The system clock in Hz for a source `cosc` (OSCCON2 bits 6:4), divider code `cdiv` (OSCCON2 bits 3:0)
 ' and HFINTOSC frequency code `hffrq` (OSCFRQ bits 3:0) [5.6.2, 5.6.5, Table 5-1]: HFINTOSC (cosc = 6) at
 ' 1, 2, 4, 8, 12, 16, 32, 48 or 64 MHz (codes 0..8) divided by 1..512 (codes 0..9). 0 for any other source (the

@@ -1,4 +1,4 @@
-' expect: LY_C0=0 LY_C1=1 LY_C2=2 LY_C12=1 LY_C3=3 LY_C4=4 LY_C5=0 LY_C6=6 LY_C7=7 LY_C8=8 LY_C78=7 LY_RAW=29 LY_CLR=31 LY_HZ32=32000000 LY_HZ16=16000000 LY_HZ1=1000000 LY_HZ8=8000000 LY_HZR=0 LY_HZR2=0 LY_HZ4D=0 LY_HZB=0 LY_HZX=0 LY_HZS=0 LY_HZK=0 LY_HZH=32000000 LY_OK=1
+' expect: LY_C0=0 LY_C1=1 LY_C2=2 LY_C12=1 LY_C3=3 LY_C4=4 LY_C5=0 LY_C6=6 LY_C7=7 LY_C8=8 LY_C78=7 LY_RAW=29 LY_CLR=31 LY_HZ32=32000000 LY_HZ16=16000000 LY_HZ1=1000000 LY_HZ8=8000000 LY_HZR=0 LY_HZR2=0 LY_HZ4D=0 LY_HZB=0 LY_HZX=0 LY_HZS=0 LY_HZK=0 LY_HZH=32000000 LY_OK=1 LY_W0=0 LY_W1=1 LY_W2=2 LY_W3=3
 ' System library on the PIC16F152xx (PIC16F18056; DS40002195E chapters 10 and 11). PCON0 has no window violation flag (bit 5 is unimplemented, p.73), so the pattern that would be cause 5 elsewhere
 ' gives 0 here, and PCON0 reads back without bit 5 (61 reads 29, the cleared state 63 reads 31). Clock: COSC 000 and 110 are the HFINTOSC at OSCFRQ.FRQ 0, 3, 4, 5 = 1, 8, 16, 32 MHz [Table 11-1 p.80, OSCFRQ p.93];
 ' there is no divider (any divider code gives 0), FRQ 6 and 7 are reserved and any other source (LFINTOSC 101, SOSC 100, external 111, reserved 010) gives 0. RSTOSC = HFINTOSC_32MHZ starts the part at 32 MHz (COSC 000, FRQ 5).
@@ -7,6 +7,10 @@ Device = 16F18056
 Clock = 32
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHZ, WDTE = OFF, LVP = ON
 Include "system"
+Dim w0 As Byte
+Dim w1 As Byte
+Dim w2 As Byte
+Dim w3 As Byte
 Dim c0 As Byte
 Dim c1 As Byte
 Dim c2 As Byte
@@ -78,3 +82,8 @@ ok = 0
 If f Then
     ok = 1
 End If
+' Wake-up cause: STATUS TO is bit 4 and PD bit 3 on the PIC16 (read-only, so tested through SysWakeFrom).
+w0 = System.SysWakeFrom(24)
+w1 = System.SysWakeFrom(16)
+w2 = System.SysWakeFrom(0)
+w3 = System.SysWakeFrom(8)

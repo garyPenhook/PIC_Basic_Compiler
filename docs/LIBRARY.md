@@ -433,12 +433,15 @@ PIC16F183xx: `#error`; set the speed with `Config RSTOSC = HFINT32` (32 MHz) or 
 
 PIC16F152xx: `Clock` = 32, 16, 8, 4, 2 or 1 writes `OSCFRQ.FRQ`; there is no divider and no clock switching, so the source must be `RSTOSC = HFINTOSC_32MHZ` or `HFINTOSC_1MHZ`.
 
-## system (reset cause, clock check)
+## system (reset cause, wake-up cause, clock check)
 | Routine | Effect |
 |---|---|
 | `SysResetCause()` | cause of the latest Reset not yet cleared, from `PCON0`, tested in this order: 1 power-on, 2 brown-out, 7 stack overflow, 8 stack underflow, 5 watchdog window violation, 4 watchdog time-out, 3 MCLR pin, 6 `RESET` instruction, 0 none |
 | `SysResetFlags()` | the raw `PCON0` value |
 | `SysClearResetFlags()` | all `PCON0` flags to their inactive state (`PCON0` = 63); call it after reading the cause, because hardware never clears a flag |
+| `SysWakeCause()` | wake-up / power-down cause from `STATUS` `TO` and `PD` (read-only; bits 4 and 3 on PIC16, 6 and 5 on PIC18): 0 none, 1 woke from Sleep (not by the watchdog), 2 woke from Sleep by a watchdog time-out, 3 watchdog time-out while running |
+| `SysWakeFrom(st)` | the same decoding of a given `STATUS` value |
+| `SysClearWakeFlags()` | `TO` and `PD` back to 1 (`clrwdt`, which also restarts the watchdog count); call it after reading the cause |
 | `SysClockHz()` | system clock in Hz from `OSCCON2` and `OSCFRQ`: HFINTOSC (1, 2, 4, 8, 12, 16, 32, 48 or 64 MHz) divided by 1..512; 0 for any other source or a reserved code. Nominal frequency (`OSCTUNE` ignored) |
 | `SysClockFrom(cosc, cdiv, hffrq)` | the same conversion from given field values |
 | `SysClockOk()` | True when `SysClockHz()` equals `Clock` |

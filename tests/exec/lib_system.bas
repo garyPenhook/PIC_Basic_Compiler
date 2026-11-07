@@ -1,4 +1,4 @@
-' expect: LY_C0=0 LY_C1=1 LY_C2=2 LY_C12=1 LY_C3=3 LY_C4=4 LY_C5=5 LY_C6=6 LY_C7=7 LY_C8=8 LY_C78=7 LY_RAW=61 LY_CLR=63 LY_HZ=64000000 LY_OK=1 LY_HZ8=8000000 LY_OK8=1 LY_HZ1=1953 LY_HZB=0 LY_HZR=6000000 LY_HZ12=3000000
+' expect: LY_C0=0 LY_C1=1 LY_C2=2 LY_C12=1 LY_C3=3 LY_C4=4 LY_C5=5 LY_C6=6 LY_C7=7 LY_C8=8 LY_C78=7 LY_RAW=61 LY_CLR=63 LY_HZ=64000000 LY_OK=1 LY_HZ8=8000000 LY_OK8=1 LY_HZ1=1953 LY_HZB=0 LY_HZR=6000000 LY_HZ12=3000000 LY_W0=0 LY_W1=1 LY_W2=2 LY_W3=3 LY_WC=0
 Program Ly
 Device = 18F27Q10
 Clock = 64
@@ -25,6 +25,11 @@ Dim hz1 As LongWord
 Dim hzb As LongWord
 Dim hzr As LongWord
 Dim hz12 As LongWord
+Dim w0 As Byte
+Dim w1 As Byte
+Dim w2 As Byte
+Dim w3 As Byte
+Dim wc As Byte
 ' Each case writes the PCON0 pattern a Reset would leave and reads the cause back.
 PCON0 = 63
 c0 = System.SysResetCause()
@@ -61,3 +66,10 @@ hz1 = System.SysClockFrom(6, 9, 0)
 hzb = System.SysClockFrom(6, 0, 9) + System.SysClockFrom(6, 10, 8) + System.SysClockFrom(5, 0, 8) + System.SysClockFrom(7, 0, 8)
 hzr = System.SysClockFrom(6, 3, 7)
 hz12 = System.SysClockFrom(6, 2, 4)
+' Wake-up cause: STATUS TO is bit 6 and PD bit 5 on the PIC18 (the bits are read-only, so the cause is tested through SysWakeFrom).
+w0 = System.SysWakeFrom(96)
+w1 = System.SysWakeFrom(64)
+w2 = System.SysWakeFrom(0)
+w3 = System.SysWakeFrom(32)
+System.SysClearWakeFlags()
+wc = System.SysWakeCause()
