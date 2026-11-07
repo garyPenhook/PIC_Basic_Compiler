@@ -330,9 +330,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     }
-    if debug && dev.device.family == "pic16e" {
-        eprintln!("basil: warning: -g does not add line and variable information for the enhanced mid-range core yet");
-    } else if debug {
+    if debug {
         let elf = hex.with_extension("elf");
         let source = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
         let mut info = generated.debug.clone();

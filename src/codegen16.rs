@@ -528,5 +528,45 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
     if asmd.words > mem.prog_words {
         errors.push((Span::default(), format!("the program needs {} words of program memory but the device has {}", asmd.words, mem.prog_words)));
     }
-    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug: Default::default() }
+    let mut debug = crate::dwarf::DebugInfo::default();
+    if !tgt.debug_files.is_empty() {
+        // Word addresses throughout: the units of the program counter on this core.
+        debug.end = asmd.words;
+        let mut bounds: Vec<u32> = starts.iter().map(|s| s.1).collect();
+        bounds.extend(asmd.labels.get("__reset").copied());
+        for (f, _) in &p.isrs {
+            bounds.extend(asmd.labels.get(&p.funcs[*f].asm).copied());
+        }
+        bounds.push(asmd.words);
+        let mut scope_of = vec![None; nf];
+        for (f, func) in p.funcs.iter().enumerate() {
+            if let Some(&low) = asmd.labels.get(&func.asm) {
+                let high = bounds.iter().copied().filter(|&b| b > low).min().unwrap_or(asmd.words);
+                scope_of[f] = Some(debug.funcs.len());
+                debug.funcs.push(crate::dwarf::DFunc { name: func.name.clone(), low, high });
+            }
+        }
+        if let Some(&h) = asmd.labels.get("__halt") {
+            debug.funcs.push(crate::dwarf::DFunc { name: "__halt".into(), low: h, high: h });
+        }
+        for (i, v) in p.vars.iter().enumerate() {
+            let Some(addr) = layout.addr[i] else { continue };
+            if v.bytes == 0 || matches!(v.kind, VarKind::Hidden) || objs[i].bytes == 0 {
+                continue;
+            }
+            // An object that runs across banks is not one run of data addresses: leave it out.
+            if layout::phys_off(addr, v.bytes - 1) != addr + v.bytes - 1 {
+                continue;
+            }
+            let scope = match (v.kind, v.owner) {
+                (VarKind::Global, _) | (_, None) => None,
+                (_, Some(o)) => match scope_of[o] {
+                    Some(s) => Some(s),
+                    None => continue,
+                },
+            };
+            debug.vars.push(crate::dwarf::DVar { name: v.name.clone(), ty: if v.by_ref { crate::types::WORD } else { v.ty.clone() }, bytes: v.bytes, addr, scope, param: matches!(v.kind, VarKind::Param) });
+        }
+    }
+    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }
 }

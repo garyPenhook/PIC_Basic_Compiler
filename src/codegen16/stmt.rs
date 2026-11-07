@@ -7,7 +7,20 @@ use crate::asm::Cc;
 impl<'p> G<'p> {
     pub fn block(&mut self, b: &[S]) {
         for s in b {
+            self.line_marker(s.span);
             self.stmt(s);
+        }
+    }
+
+    /// `#line` for the statement about to be emitted (debug builds only; pic-as turns it into the line table).
+    fn line_marker(&mut self, span: Span) {
+        let Some(name) = self.tgt.debug_files.get(span.file as usize) else { return };
+        if span.line == 0 {
+            return;
+        }
+        let m = format!("#line {} \"{}\"", span.line, name.replace('\\', "/"));
+        if !matches!(self.items.iter().rev().find(|i| !matches!(i, Item::Fence)), Some(Item::Comment(t)) if *t == m) {
+            self.items.push(Item::Comment(m));
         }
     }
 

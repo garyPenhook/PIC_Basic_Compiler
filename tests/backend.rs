@@ -575,6 +575,31 @@ fn debug_flag_adds_variables_and_routines_to_the_elf() {
     assert!(!elf2.windows(6).any(|w| w == b"basil\0"), "plain build carries debug-only data");
 }
 
+/// `-g` on an enhanced mid-range part: `#line` for the BASIC lines, and routines and variables in word / data addresses.
+#[test]
+fn debug_flag_on_pic16_adds_lines_routines_and_variables() {
+    if !have_pic_as() {
+        return;
+    }
+    let dir = scratch("debug_pic16");
+    let bas = dir.join("p16.bas");
+    std::fs::write(&bas, "Program T\nDevice = 16F17146\nDim counter As Byte\nSub Bump(amount As Byte)\n    Dim local_tmp As Byte\n    local_tmp = amount + 1\n    counter = local_tmp\nEnd Sub\ncounter = 5\nBump(counter)\nBump(counter)\nEnd\n").unwrap();
+    let out = Command::new(basil()).arg("-g").arg(&bas).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && !err.contains("warning"), "{err}");
+    let asm = std::fs::read_to_string(dir.join("p16.S")).unwrap();
+    assert!(asm.lines().any(|l| l.starts_with("#line 9 ") && l.contains("p16.bas")), "no #line for the program");
+    let elf = std::fs::read(dir.join("p16.elf")).unwrap();
+    let has = |needle: &[u8]| elf.windows(needle.len()).any(|w| w == needle);
+    assert!(has(b"counter\0") && has(b"local_tmp\0") && has(b"Bump\0") && has(b"basil\0"), "names missing from the ELF");
+    let plain = scratch("debug_pic16_plain").join("p16.bas");
+    std::fs::copy(&bas, &plain).unwrap();
+    assert!(Command::new(basil()).arg(&plain).output().unwrap().status.success());
+    let asm2 = std::fs::read_to_string(plain.with_extension("S")).unwrap();
+    let strip = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");
+    assert_eq!(strip(&asm), strip(&asm2), "-g changed the generated code");
+}
+
 // ---- PIC18-Q41 ---------------------------------------------------------------------------------
 
 const Q41_PARTS: [&str; 6] = ["18F04Q41", "18F05Q41", "18F06Q41", "18F14Q41", "18F15Q41", "18F16Q41"];
