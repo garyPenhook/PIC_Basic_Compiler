@@ -406,7 +406,7 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         config.push((reg.name.clone(), reg.addr, v as u16));
     }
 
-    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default(), reg: false, ext: false };
+    let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default(), reg: false, ext: false, no_inline: false };
     let mut funcs: Vec<Func> = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
     let mut main = main;
     strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
@@ -624,7 +624,7 @@ impl<'a> Lowerer<'a> {
         body.append(&mut rest);
         let mut entry = self.entry_clears(id, &body, i.name.span);
         entry.append(&mut body);
-        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span, reg: false, ext: false });
+        self.funcs[id] = Some(Func { asm, name: i.name.name.clone(), params: vec![], result: None, body: entry, span: i.name.span, reg: false, ext: false, no_inline: false });
         self.isrs.push((id, level));
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
@@ -969,7 +969,7 @@ impl<'a> Lowerer<'a> {
         entry.append(&mut body);
         let mut body = entry;
         body.push(S { st: St::Return, span: e.name.span });
-        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params, result: None, body, span: e.name.span, reg: false, ext: false });
+        self.funcs[id] = Some(Func { asm, name: e.name.name.clone(), params, result: None, body, span: e.name.span, reg: false, ext: false, no_inline: false });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
@@ -1042,7 +1042,7 @@ impl<'a> Lowerer<'a> {
             let name = if k == 0 { "__EVDISP".to_string() } else { format!("__EVDISP{k}") };
             let mut params = vec![idv];
             params.extend(pvs);
-            self.funcs[id] = Some(Func { asm: name, name: "event".into(), params, result: None, body, span: sp, reg: false, ext: false });
+            self.funcs[id] = Some(Func { asm: name, name: "event".into(), params, result: None, body, span: sp, reg: false, ext: false, no_inline: false });
         }
     }
 
@@ -1119,7 +1119,7 @@ impl<'a> Lowerer<'a> {
         entry.append(&mut body);
         let mut body = entry;
         self.push_return(&mut body, r.name.span);
-        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span, reg, ext: r.ext });
+        self.funcs[id] = Some(Func { asm, name: r.name.name.clone(), params, result, body, span: r.name.span, reg, ext: r.ext, no_inline: matches!(self.a.symbols[sym].kind, SymKind::Routine { inlining: Inlining::NoInline, .. }) });
         self.cur_func = saved.0;
         self.cur_asm = saved.1;
         self.labels = saved.2;
@@ -1196,7 +1196,7 @@ impl<'a> Lowerer<'a> {
         }
         body.push(S { st: St::Return, span });
         sig.entry = asm.trim_start_matches('_').to_string();
-        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span, reg: false, ext: false }));
+        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span, reg: false, ext: false, no_inline: false }));
         self.exports.push(sig);
     }
 

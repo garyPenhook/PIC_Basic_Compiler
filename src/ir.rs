@@ -366,6 +366,8 @@ pub struct Func {
     pub reg: bool,
     /// An `Extern` routine: its body calls into C, which may use any register XC8 does.
     pub ext: bool,
+    /// Declared `NoInline`: the optimiser keeps it a called routine even when it has only one call.
+    pub no_inline: bool,
 }
 
 /// A routine implemented in C (`Extern`), as the C stub that keeps it in the link declares it.

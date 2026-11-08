@@ -1459,7 +1459,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                 && matches!(&self.a.symbols[*id].kind, SymKind::Routine { params: pp, .. }
                     if pp.len() == params.len() && pp.iter().zip(params).all(|(x, y)| x.ty == y.ty && x.mode == y.mode))
         })?;
-        let SymKind::Routine { params: pp, ret: pr, reentrant, .. } = &self.a.symbols[id].kind else { return None };
+        let SymKind::Routine { params: pp, ret: pr, reentrant, inlining: pi } = &self.a.symbols[id].kind else { return None };
+        let declared_inlining = *pi;
         let at = self.a.symbols[id].span.line;
         let name = r.name.name.clone();
         let mut problem = None;
@@ -1467,6 +1468,8 @@ impl<'p, 'd> Sema<'p, 'd> {
             problem = Some("a different result type");
         } else if *reentrant != r.reentrant {
             problem = Some("a different Reentrant attribute");
+        } else if declared_inlining != Inlining::Default && r.inlining != Inlining::Default && declared_inlining != r.inlining {
+            problem = Some("a different Inline/NoInline attribute");
         } else if pp.iter().zip(params).any(|(x, y)| x.has_default != y.has_default) {
             problem = Some("different default values");
         } else if self.a.symbols[id].vis != vis {
@@ -1478,7 +1481,10 @@ impl<'p, 'd> Sema<'p, 'd> {
         self.forward.remove(&id);
         self.a.symbols[id].span = r.name.span;
         self.a.decl_syms.insert(r.name.span, id);
-        if let SymKind::Routine { inlining, .. } = &mut self.a.symbols[id].kind {
+        // `Inline`/`NoInline` may be written on the Declare, the definition or both; one given on either holds.
+        if let SymKind::Routine { inlining, .. } = &mut self.a.symbols[id].kind
+            && r.inlining != Inlining::Default
+        {
             *inlining = r.inlining;
         }
         Some(id)

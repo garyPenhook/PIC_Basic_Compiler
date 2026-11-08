@@ -5495,6 +5495,12 @@ impl<'p> Gen<'p> {
     }
 }
 
+/// The item ranges of the routines `inline_single_calls` may move into their call: not an interrupt handler, not
+/// declared `NoInline`.
+pub(crate) fn inlinable_ranges(p: &Program, isr_mask: &[bool], ranges: &[(FuncId, usize, usize)]) -> Vec<(String, usize, usize)> {
+    ranges.iter().filter(|(f, _, _)| !isr_mask[*f] && !p.funcs[*f].no_inline).map(|(f, s, e)| (p.funcs[*f].asm.clone(), *s, *e)).collect()
+}
+
 /// A routine called from exactly one place, and from nowhere else (not by address, not by a jump),
 /// is moved into the call: the `rcall` and the `return` go. Its `return`s other than the last
 /// become jumps to the end. `ranges` are the routines' item ranges (label first).
@@ -5696,7 +5702,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
         errors.extend(g2.errors.iter().cloned());
         let helpers: Vec<String> = g2.helpers.iter().cloned().collect();
         let levels = stack_depth(&g2, &items);
-        let ranges: Vec<(String, usize, usize)> = g2.ranges.iter().filter(|(f, _, _)| !isr_mask[*f]).map(|(f, s, e)| (p.funcs[*f].asm.clone(), *s, *e)).collect();
+        let ranges = inlinable_ranges(p, &isr_mask, &g2.ranges);
         result = Some((objs, layout, items, helpers, levels, ranges));
         break;
     }

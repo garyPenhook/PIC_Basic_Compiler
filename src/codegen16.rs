@@ -445,7 +445,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
         errors.extend(g2.errors.iter().cloned());
         let levels = stack_depth(&g2, &items);
         let helpers: Vec<String> = g2.helpers.iter().cloned().collect();
-        let mut ranges: Vec<(String, usize, usize)> = g2.ranges.iter().filter(|(f, _, _)| !isr_mask[*f]).map(|(f, s, e)| (p.funcs[*f].asm.clone(), *s, *e)).collect();
+        let mut ranges = crate::codegen::inlinable_ranges(p, &isr_mask, &g2.ranges);
         ranges.extend(g2.hranges.iter().cloned());
         result = Some((objs, layout, items, helpers, levels, ranges));
         break;

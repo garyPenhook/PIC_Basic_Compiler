@@ -465,6 +465,7 @@ Word stores).
   `__A0` reloaded for the FSR, then `movff T, POSTINC0`): a scratch byte's writes are tracked locations (`Eff::writes`),
   not `wmem`. The X-10 `Xin` result in `tests/exec_pins/lib_pins_model.bas` caught it; unit test
   `staged_byte_is_stored_from_its_source`.
-* Not from this work: `lib_system` fails on the PIC18F16Q41 (`LY_WC` 2, expected 0) on 0.1.155 as well.
+* Not from this work: `lib_system` failed on the PIC18F16Q41 (`LY_WC` 2, expected 0) on 0.1.155 as well. Fixed in
+  0.1.161: a basil-sim fault, not the compiler's (see `docs/PROGRESS.md`).
 
 Program bytes: total 7124 to 7092. Test: `tests/exec/partial_write_clear.bas`.

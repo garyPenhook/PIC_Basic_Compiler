@@ -319,8 +319,9 @@ param := [ByVal | ByRef | ByRefConst] Name [()] As Type [= constexpr]
   every routine static frame storage and **overlays** the frames of routines that are never live
   at the same time (frame recycling, SF); RAM use is the maximum depth of the call chain, not
   the sum. Declaring working variables locally therefore saves RAM.
-* **Inlining**: a routine called exactly once is inlined by default; `Inline` forces it,
-  `NoInline` forbids it; the optimiser may also inline small routines by its cost model.
+* **Inlining**: a routine called exactly once is inlined by default; `NoInline` (on the routine or
+  its `Declare`) forbids it. `Inline` is accepted but does not yet expand a routine called from more
+  than one place, and there is no cost model for small routines yet.
 * **Overloading** (same name, different parameter types) is supported: the best fit of the
   arguments wins, a tie is `E-AMBIG`. **Compound subroutines** are deferred to milestone M9. (SF)
 * **Reentrant** routines (opt-in attribute `Reentrant`) may recurse. Their variables keep fixed

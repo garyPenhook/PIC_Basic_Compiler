@@ -1244,6 +1244,40 @@ fn asm_of(dir: &Path, name: &str, body: &str, extra: &[&str]) -> String {
     std::fs::read_to_string(dir.join(format!("{name}.S"))).unwrap()
 }
 
+/// A routine called once is moved into its call, unless it is declared `NoInline` (PIC18 and PIC16 back ends).
+#[test]
+fn noinline_keeps_a_routine_called_once() {
+    if !have_pic_as() {
+        return;
+    }
+    let d = scratch("noinline");
+    let body = |kw: &str| format!("Dim q As Byte\n{kw}Sub Bump()\n    LATA = LATA + 3\nEnd Sub\nq = PORTB\nBump()\nLATB = q\n");
+    let s = asm_of(&d, "inl", &body(""), &[]);
+    assert!(!s.contains("T_BUMP:"), "{s}");
+    let s = asm_of(&d, "noinl", &body("NoInline "), &[]);
+    assert!(s.contains("rcall T_BUMP") && s.contains("T_BUMP:"), "{s}");
+    // On the Declare only, and on a Function.
+    let s = asm_of(&d, "decl", &body("Declare NoInline Sub Bump()\n"), &[]);
+    assert!(s.contains("rcall T_BUMP") && s.contains("T_BUMP:"), "{s}");
+    let f = "Dim q As Byte\nNoInline Function Twice(ByVal x As Byte) As Byte\n    Result = x + x\nEnd Function\nq = Twice(PORTB)\nLATB = q\n";
+    let s = asm_of(&d, "func", f, &[]);
+    assert!(s.contains("rcall T_TWICE") && s.contains("T_TWICE:"), "{s}");
+    let s = asm_of(&d, "func_inl", &f.replace("NoInline ", ""), &[]);
+    assert!(!s.contains("T_TWICE:"), "{s}");
+    // A Declare and a definition that disagree.
+    let src = d.join("clash.bas");
+    std::fs::write(&src, "Program T\nDevice = 18F27Q10\nClock = 16\nDeclare NoInline Sub Bump()\nInline Sub Bump()\n    LATA = 1\nEnd Sub\nBump()\n").unwrap();
+    let r = Command::new(basil()).arg("-S").arg(&src).output().unwrap();
+    assert!(!r.status.success() && String::from_utf8_lossy(&r.stderr).contains("E-FORWARD"), "{}", String::from_utf8_lossy(&r.stderr));
+    let src = d.join("p16.bas");
+    std::fs::write(&src, "Program T\nDevice = 16F17126\nClock = 8\nDim q As Byte\nNoInline Sub Bump()\n    LATA = LATA + 3\nEnd Sub\nq = PORTC\nBump()\nLATC = q\n").unwrap();
+    let r = Command::new(basil()).arg("-S").arg(&src).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let s = std::fs::read_to_string(d.join("p16.S")).unwrap();
+    assert!(s.contains("call T_BUMP") && s.contains("T_BUMP:"), "{s}");
+    std::fs::remove_dir_all(&d).ok();
+}
+
 #[test]
 fn write_only_globals_get_no_ram_and_counted_loops_share_their_variable() {
     if !have_pic_as() {

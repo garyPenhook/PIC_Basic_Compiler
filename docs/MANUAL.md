@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.160**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.161**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -801,7 +801,7 @@ EndProc
   routine static storage and **overlays** the storage of routines never live at the same time, so
   RAM use is the deepest call chain, not the sum. Declaring working variables locally saves RAM.
   A routine marked `Reentrant` may call itself; see *Reentrant routines* below.
-* A routine called once is inlined by default; `Inline` forces and `NoInline` forbids it.
+* A routine called once is inlined by default; `NoInline` (on the routine or its `Declare`) forbids it. `Inline` is accepted but adds nothing yet: a routine called from more than one place is not expanded.
 * **Overloading**: several routines may share a name when their parameter types differ. A call
   picks the overload whose parameters its arguments fit best (an exact type match first, then the
   narrowest type that holds the value); a call that fits two equally well is `E-AMBIG`, one that
