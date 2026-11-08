@@ -253,6 +253,10 @@ class Event:
     def __init__(self, text, info, mailbox):
         m = re.search(r"Single breakpoint: @0x([0-9A-Fa-f]+)", text)
         self.hit = int(m.group(1), 16) if m else None
+        # MDB reports a watchpoint and a breakpoint the same way, `@` giving the watched data address or the breakpoint's
+        # program address; the PC (`Stop at / address:`) tells them apart.
+        m = re.search(r"Stop at\s+address:\s*0x([0-9A-Fa-f]+)", text)
+        self.pc = int(m.group(1), 16) if m else None
         self.blocks = blocks_of(text)
         self.flag_addrs = sorted({info.bit[f"DMA{n}{k}IF"][0] for n in range(1, 5) for k in ("SCNT", "DCNT", "OR", "A")})
         self.mailbox = mailbox
@@ -273,6 +277,11 @@ class Event:
         i += 1 if info.eeprom else 0
         self.flags = {a: b[i + k][0] for k, a in enumerate(self.flag_addrs)}
         return True
+
+    def is_halt(self, halt):
+        """The stop at the `__halt` breakpoint: `__halt` may be the same number as a watched data address (DMASELECT is
+        0xE8), so the PC has to be there too."""
+        return self.hit == halt and (self.pc is None or self.pc == halt)
 
     def key(self):
         return (self.hit, self.cfg, self.dsz, self.sel, self.prlock, self.mail, self.ram, self.ee, tuple(sorted(self.flags.items())))
@@ -347,7 +356,7 @@ class Replay:
         eng = Engine(Bus(), slow=self.slow)
         inj = {}
         for i, ev in enumerate(events):
-            if ev.hit == self.halt:
+            if ev.is_halt(self.halt):
                 break
             cur["ev"] = ev
             pend.clear()
@@ -419,9 +428,9 @@ class Replay:
                 if ev.hit is None or not ev.parse(self.info):
                     break
                 events.append(ev)
-                if ev.hit == self.halt:
+                if ev.is_halt(self.halt):
                     break
-            if not events or events[-1].hit != self.halt:
+            if not events or not events[-1].is_halt(self.halt):
                 if len(events) == nev:
                     nev *= 2  # more stops than the script allowed for
                     continue

@@ -267,6 +267,7 @@ with arguments and optional for a subroutine with none (`Print` or `Print()`). (
 target = expression                      ' assignment
 If c Then … [ElseIf c Then …] [Else …] EndIf
 If c GoTo label                          ' single-line conditional jump
+If c GoSub label                         ' single-line conditional subroutine call
 Select e
     Case v {, v | lo To hi | < v | > v}  ' relational and range conditions
         …
@@ -279,6 +280,9 @@ Break                                    ' leave the innermost loop
 Continue                                 ' next iteration of the innermost loop
 Exit                                     ' leave the current Sub/Function
 GoTo label  /  label:
+GoSub label  /  Return                   ' subroutine inside the current routine
+On index GoSub l0, l1, l2                ' computed GoSub (index 0 = l0)
+Call Name(args)                          ' same as Name(args); Call is not reserved
 Inc(v)  Inc(v, n)  Dec(v)  Dec(v, n)  Clear(v)  Toggle(bit)  High(bit)  Low(bit)  Input(bit)  Output(bit)
 PinMode(pin, Input|Output|PullUp|Input_PullUp)
 PinSet(pin)  PinClear(pin)  PinPullup(pin)  PinPullup(Enable|Disable, pin)
@@ -289,6 +293,7 @@ PinSet(pin)  PinClear(pin)  PinPullup(pin)  PinPullup(Enable|Disable, pin)
 * A `For` loop whose bounds are constants and whose body is small may be unrolled; `For` over a
   `Byte` with an upper bound of 255 is safe (the compiler does not wrap-loop forever). (NEW)
 * `Case` conditions are compile-time-checked for overlap and unreachable `Else`. (NEW)
+* `GoSub` runs the code at a label of the same routine (or of the main program) and `Return` comes back to the statement after it. It uses a level of the hardware return stack while it runs; `GoSub`/`Return` are reserved words, are not allowed inside `Save`, and `Return` takes no value. A routine holding a `GoSub` is never inlined. See the manual.
 * **Alternative loop forms** `Do … Loop`, `Do While/Until … Loop` are accepted as aliases (§14).
 
 ## 7. Subroutines and functions
@@ -495,7 +500,7 @@ Anything not listed here is not accepted.
 | `$FF`, `%1010`, `0xFF`, `0b1010` | native |
 | `:` between statements | native |
 | `PinSet`, `PinClear`, `PinPullup`, `PinMode` | intrinsics with parentheses: `PinPullup(Enable, PORTB)`; `Pin_A0` style names are not defined (use `PORTA.0` or the number) |
-| `Pot`, `PulseIn`, `PulseOut`, `RCin`, `Servo`, `Sound`, `Sound2`, `PWM` (software), `SonyIn`, `RC5In`, `Xin`, `Xout` | `pulse`, `irremote`, `x10` modules (pins are numbers 0..23, `PWM` is `PwmPin`, and `Sound2` takes two frequencies and a time in ms) |
+| `Pot`, `PulseIn`, `PulseOut`, `Freqout`, `RCin`, `Servo`, `Sound`, `Sound2`, `PWM` (software), `SonyIn`, `RC5In`, `Xin`, `Xout` | `pulse`, `irremote`, `x10` modules (pins are numbers 0..23, `PWM` is `PwmPin`, and `Sound2` takes two frequencies and a time in ms) |
 | `Shin`, `Shout` | `ShiftIn`, `ShiftOut` of the `shift` module |
 | `USBinit`, `USBin`, `USBout`, `USBpoll` | not provided: no supported device has a USB peripheral |
 | `HRSOut`, `HRSIn`, `Toggle`, `Inc`, `Dec`, `DelayMS`, `DelayUS` | library or intrinsic with the same name where the behaviour matches |

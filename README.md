@@ -62,7 +62,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
   and unions, constants.
 * Full arithmetic, logic, shifts and comparisons at every integer width (hardware multiply is used),
   short-circuit conditions.
-* `If`, `Select Case`, `While`, `Repeat`, `For` (with `Break`/`Continue`/`Exit`), `GoTo`.
+* `If`, `Select Case`, `While`, `Repeat`, `For` (with `Break`/`Continue`/`Exit`), `GoTo`, `GoSub` / `Return` / `On n GoSub` / `If c GoSub`, `Call`.
 * Subroutines and functions with by-value, `ByRef` and `ByRefConst` parameters; `Inline`/`NoInline`; modules and `Include`.
 * `Abs`, `Min`, `Max`, `Inc`/`Dec` (with an optional amount), `AddressOf` / `@`.
 * Preprocessor: `#define`, `#ifdef`, `#if` / `#elseif`, `#constant`, `#variable`, `#error`, with `_clock`, `_device`, `_has(REG)` and the device facts `_ram`, `_maxrom`, `_ports`, `_usart`, `_mssp`, `_ccp` ...; `Declare Name = value` makes a constant.
@@ -78,9 +78,10 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * Compared with Microchip XC8 on a set of small kernels (written alongside the compiler, so not an independent
   sample), the output is smaller in total and about as fast (see `docs/BENCHMARKS.md`). On four larger,
   independently written programs of 1.5 to 3 KB (algorithms, fixed-point DSP, text formatting, a command
-  state machine) basil's images were **larger** than XC8 `-Os`: 8546 bytes against 7560 in total, 13% more
-  (23% more on the 32-bit-heavy program, 2 to 4% more on the byte-oriented ones), and 2% larger than XC8 `-O2`.
-  Results were identical in the simulator. Expect parity or a loss, not a win, on general code.
+  state machine) basil's images were 6% smaller than XC8 `-Os` in total: 7092 bytes against 7560 (smaller on
+  three of the four; the fixed-point DSP program is 4% larger, 2714 against 2606). Results were identical in the
+  simulator. These programs were also used to find the optimisations, so expect parity on other code rather
+  than a reliable win.
 * Optimisations include constant folding, narrowing, Access Bank placement, overlapping of
   routines' variables that are never live together, counted-loop forms, tail calls, inlining of routines called once, a Byte argument passed in
   `WREG` and a peephole pass, and literal strings read through
@@ -92,7 +93,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | Module | What it gives you |
 |---|---|
 | `intosc` | sets the internal oscillator to `Clock` (just `Include` it) |
-| `system` | reset cause and clock check |
+| `system` | reset cause, wake cause (`SysWakeCause`, `SysWakeFrom`, `SysClearWakeFlags`) and clock check |
 | `gpio` | port set-up, pull-ups, open-drain |
 | `delay` | millisecond/microsecond/second delays |
 | `timer` | Timer0, Timer1 (external clock, gate, pulse measurement), Timer2 (hardware-limit and one-shot modes) |
@@ -104,7 +105,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `spi` | SPI host on MSSP1: all four modes, any clock down to FOSC / 1024 |
 | `pinio` | run-time pin access by number (0..23), digital set-up, open-drain emulation |
 | `shift` | bit-banged `ShiftOut` / `ShiftIn` (1..16 bits, either bit order) on any two pins |
-| `pulse` | `PulseIn`, `PulseOut`, `RCin`, `Pot`, `Servo`, `PwmPin`, `Sound`, `Sound2` on any pin (bit-banged) |
+| `pulse` | `PulseIn`, `PulseOut`, `Freqout`, `RCin`, `Pot`, `Servo`, `PwmPin`, `Sound`, `Sound2` on any pin (bit-banged) |
 | `irremote` | `SonyIn` (SIRC) and `RC5In` infrared remote decoders |
 | `x10` | `Xout` / `Xin` X-10 power-line control through a PL513 / TW523 |
 | `rtcc` | Microchip I2C RTCCs (MCP7940M/N, MCP79400/1/2, MCP79410/1/2): time, alarms, trim, SRAM, EEPROM, protected EEPROM, time stamps |

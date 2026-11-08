@@ -203,3 +203,27 @@ Same four programs, program bytes; the simulator `sink` still matches XC8 `-Os` 
 
 0.1.143 (shared sum): `If acc >= r + b Then acc = acc - (r + b)` builds `r + b` in `__A` once; the second copy goes when
 nothing in between writes `__A` or either operand. Fixed-point DSP program 3082 to 3050 bytes (1541 to 1525 words).
+
+0.1.156 (M1/M2, `docs/EFFICIENCY.md` §10): a call on the right of an operator no longer makes the left variable be
+saved first when the callee cannot write it, and `x = (x op a) op b …` (constant shifts allowed) is worked out in
+`x` itself. Program bytes, simulator `sink` equal to XC8 `-Os` in all four:
+
+| program | 0.1.155 | 0.1.156 | XC8 -Os | basil / -Os |
+|---|---:|---:|---:|---:|
+| algorithms | 2206 | 1742 | 1826 | 0.95 |
+| fixed-point DSP | 3036 | 2746 | 2606 | 1.05 |
+| text formatting and parsing | 1746 | 1624 | 1738 | 0.93 |
+| command state machine | 1442 | 1284 | 1390 | 0.92 |
+| total | 8430 | 7396 | 7560 | 0.98 |
+
+0.1.157 (M3/M4): a routine ending `Result = v` returns in `v`, and entry clears of locals that are never read before
+being written go. Total 7396 to 7244 bytes (algorithms 1670, fixed-point DSP 2722, text 1602, command state machine
+1250; 0.96 of XC8 `-Os`), `sink` unchanged in all four.
+
+0.1.158 (M5/M6): zero-extended values stored without `__A`, constant hidden loop limits folded, entry tests that cannot
+fail dropped. Total 7244 to 7124 bytes (algorithms 1618, fixed-point DSP 2722, text 1540, command state machine 1244;
+0.94 of XC8 `-Os`), `sink` unchanged in all four.
+
+0.1.159 (M7/M8): constant multiplies read a plain multiplicand where it is, and array stores of a staged byte read the
+source directly. Total 7124 to 7092 bytes (algorithms 1598, fixed-point DSP 2714, text 1536, command state machine
+1244; 0.94 of XC8 `-Os`), `sink` unchanged in all four.

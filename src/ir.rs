@@ -608,3 +608,396 @@ pub fn written_first(body: &[S], var: VarId, after_exit: bool) -> bool {
         _ => false,
     }
 }
+
+/// The variables a routine body writes and reads itself (not through its callees), and the routines
+/// it calls. `None` when that cannot be known: raw assembly, or an access through a `ByRef` pointer
+/// (which may reach any object whose address was passed).
+#[derive(Clone, Debug, Default)]
+pub struct Effects {
+    pub writes: std::collections::BTreeSet<VarId>,
+    pub reads: std::collections::BTreeSet<VarId>,
+    pub calls: std::collections::BTreeSet<FuncId>,
+}
+
+impl Effects {
+    fn place(&mut self, p: &Place, write: bool) -> Option<()> {
+        match p.base {
+            Base::Var(v) => {
+                if write {
+                    self.writes.insert(v);
+                } else {
+                    self.reads.insert(v);
+                }
+            }
+            Base::Ptr(_) => return None,
+            // An indirect-access register reaches whatever RAM its FSR points at.
+            Base::Abs { ref name, .. } if indirect_sfr(name) => return None,
+            Base::Abs { .. } | Base::Flash(_) | Base::FlashNext(_) => {}
+        }
+        if let Some(i) = &p.idx {
+            self.ex(i)?;
+        }
+        if let Some(b) = &p.dbit {
+            self.ex(b)?;
+        }
+        Some(())
+    }
+    fn src(&mut self, s: &StrSrc) -> Option<()> {
+        match s {
+            StrSrc::Ram(p) => self.place(p, false),
+            StrSrc::Lit(_) => Some(()),
+            StrSrc::Char(e) => self.ex(e),
+            StrSrc::Cat { tmp, parts } => {
+                self.place(tmp, true)?;
+                self.place(tmp, false)?;
+                parts.iter().try_for_each(|p| self.src(p))
+            }
+        }
+    }
+    fn call(&mut self, f: FuncId, args: &[(Place, Ex)]) -> Option<()> {
+        self.calls.insert(f);
+        for (p, e) in args {
+            self.place(p, true)?;
+            self.ex(e)?;
+        }
+        Some(())
+    }
+    fn ex(&mut self, e: &Ex) -> Option<()> {
+        match &e.k {
+            ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => Some(()),
+            ExK::Load(p) => self.place(p, false),
+            // The address escapes; whatever writes through it is a `ByRef` access, which is unknown.
+            ExK::Addr(p) => self.place(p, false),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => self.ex(x),
+            ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => {
+                self.ex(a)?;
+                self.ex(b)
+            }
+            ExK::Call(f, args) => self.call(*f, args),
+            ExK::StrEq(a, b) => {
+                self.src(a)?;
+                self.src(b)
+            }
+        }
+    }
+    /// A read-modify-write of `p` (`Inc`, a bit set, a loop variable).
+    fn rmw(&mut self, p: &Place) -> Option<()> {
+        self.place(p, true)?;
+        self.place(p, false)
+    }
+    pub fn block(&mut self, body: &[S]) -> Option<()> {
+        for s in body {
+            match &s.st {
+                St::Assign(p, e) => {
+                    self.ex(e)?;
+                    self.place(p, true)?;
+                    // A part of a variable (a byte, a bit) keeps the rest of it.
+                    self.place(p, false)?;
+                }
+                St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::Clear(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => self.rmw(p)?,
+                St::Copy { dst, src, .. } => {
+                    self.place(src, false)?;
+                    self.rmw(dst)?;
+                }
+                St::StrSet { dst, parts, .. } => {
+                    parts.iter().try_for_each(|p| self.src(p))?;
+                    self.rmw(dst)?;
+                }
+                St::Call(f, args) => self.call(*f, args)?,
+                St::FlashSeek(_, _, e) => {
+                    if let Some(e) = e {
+                        self.ex(e)?;
+                    }
+                }
+                St::If(arms, other) => {
+                    for (c, b) in arms {
+                        self.ex(c)?;
+                        self.block(b)?;
+                    }
+                    self.block(other)?;
+                }
+                St::While(c, b) | St::Repeat(b, c) => {
+                    self.ex(c)?;
+                    self.block(b)?;
+                }
+                St::For { var, from, limit, body, .. } => {
+                    self.ex(from)?;
+                    self.ex(limit)?;
+                    self.rmw(var)?;
+                    self.block(body)?;
+                }
+                St::Count { counter, body, step, .. } => {
+                    self.rmw(counter)?;
+                    if let Some((p, _)) = step {
+                        self.rmw(p)?;
+                    }
+                    self.block(body)?;
+                }
+                St::Asm(_) => return None,
+                St::Save { items, body, .. } => {
+                    for i in items {
+                        match i {
+                            SaveIt::Var(v) => {
+                                self.writes.insert(*v);
+                                self.reads.insert(*v);
+                            }
+                            SaveIt::Func(_) => return None,
+                            SaveIt::Regs => {}
+                        }
+                    }
+                    self.block(body)?;
+                }
+                St::DelayUs(e) | St::DelayMs(e) => self.ex(e)?,
+                St::Break | St::Continue | St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) | St::Halt | St::Int { .. } => {}
+            }
+        }
+        Some(())
+    }
+}
+
+/// `INDFn`, `POSTINCn`, `POSTDECn`, `PREINCn`, `PLUSWn`: a register whose access reads or writes the RAM byte an FSR
+/// points at.
+pub fn indirect_sfr(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    ["INDF", "POSTINC", "POSTDEC", "PREINC", "PLUSW"].iter().any(|p| n.strip_prefix(p).is_some_and(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit()))
+}
+
+/// Whether evaluating `e` reads memory through a pointer: a `ByRef` parameter or an indirect-access register (an
+/// array element is a known object and does not count).
+pub fn reads_through_pointer(e: &Ex) -> bool {
+    let place = |p: &Place| matches!(&p.base, Base::Ptr(_)) || matches!(&p.base, Base::Abs { name, .. } if indirect_sfr(name)) || p.idx.as_ref().is_some_and(|i| reads_through_pointer(i));
+    match &e.k {
+        ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => false,
+        ExK::Load(p) | ExK::Addr(p) => place(p),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => reads_through_pointer(x),
+        ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => reads_through_pointer(a) || reads_through_pointer(b),
+        ExK::Call(_, args) => args.iter().any(|(p, a)| place(p) || reads_through_pointer(a)),
+        ExK::StrEq(..) => true,
+    }
+}
+
+/// For each routine, everything it and the routines it calls may write and read, or `None` when
+/// that is unknown for it or for anything it can reach (raw assembly, `ByRef` accesses, C code).
+pub fn routine_effects(p: &Program) -> Vec<Option<Effects>> {
+    let direct: Vec<Option<Effects>> = p
+        .funcs
+        .iter()
+        .map(|f| {
+            if f.ext || f.reg {
+                return None;
+            }
+            let mut e = Effects::default();
+            e.block(&f.body)?;
+            Some(e)
+        })
+        .collect();
+    (0..direct.len())
+        .map(|f| {
+            let mut out = Effects::default();
+            let mut seen = std::collections::BTreeSet::new();
+            let mut todo = vec![f];
+            while let Some(g) = todo.pop() {
+                if !seen.insert(g) {
+                    continue;
+                }
+                let d = direct.get(g)?.as_ref()?;
+                out.writes.extend(d.writes.iter().copied());
+                out.reads.extend(d.reads.iter().copied());
+                todo.extend(d.calls.iter().copied());
+            }
+            Some(out)
+        })
+        .collect()
+}
+
+/// Whether the scalar `var` may be read before it is written on some path through `body`: the opposite of the
+/// guarantee the entry clear of a local relies on. Conservative: raw assembly, a jump or label, a `Save` of it,
+/// a partial write (a byte or bit of it) before a whole write, and any mention that is not a whole write count as a
+/// read. With `after_exit` (the `Result`), leaving the routine before a whole write also counts as a read.
+pub fn may_read_unset(body: &[S], var: VarId, bytes: u32, after_exit: bool) -> bool {
+    if has_jump_target(body) {
+        return true;
+    }
+    let mut set = false;
+    let read = rbw_block(body, var, bytes, after_exit, &mut set);
+    read || (after_exit && !set)
+}
+
+/// The whole of `var` (all `bytes` of it, no bit, no index): `w.Byte0 = k` writes only part of it.
+fn whole_of(p: &Place, var: VarId, bytes: u32) -> bool {
+    matches!(p.base, Base::Var(v) if v == var) && p.off == 0 && p.bit.is_none() && p.dbit.is_none() && p.idx.is_none() && p.bytes() == bytes
+}
+
+fn may_run_zero(from: &Ex, limit: &Ex, step: i64) -> bool {
+    match (from.as_const(), limit.as_const()) {
+        (Some(a), Some(b)) => {
+            let (a, b) = (as_signed(a, from), as_signed(b, limit));
+            if step > 0 { a > b } else { a < b }
+        }
+        _ => true,
+    }
+}
+
+fn as_signed(v: u32, e: &Ex) -> i64 {
+    if e.signed && e.w < 32 && v & (1 << (e.w - 1)) != 0 {
+        v as i64 - (1i64 << e.w)
+    } else if e.signed && e.w == 32 {
+        v as i32 as i64
+    } else {
+        v as i64
+    }
+}
+
+/// A `Break`/`Continue` that leaves (or restarts) the loop whose body is `b`: not those inside nested loops.
+fn leaves_loop(b: &[S]) -> bool {
+    b.iter().any(|s| match &s.st {
+        St::Break | St::Continue => true,
+        St::If(..) | St::Save { .. } => sub_blocks(&s.st).into_iter().any(leaves_loop),
+        _ => false,
+    })
+}
+
+/// Walks `body` in order with `set` (the variable is certainly written whole on every path so far); returns true
+/// at the first possible read while it is not set.
+fn rbw_block(body: &[S], var: VarId, bytes: u32, after_exit: bool, set: &mut bool) -> bool {
+    let ex = |e: &Ex, set: bool| !set && e.touches(var, true);
+    for s in body {
+        match &s.st {
+            St::Assign(p, e) => {
+                if ex(e, *set) || p.idx.as_ref().is_some_and(|i| ex(i, *set)) {
+                    return true;
+                }
+                if whole_of(p, var, bytes) {
+                    *set = true;
+                } else if p.touches(var, true) && !*set {
+                    return true;
+                }
+            }
+            St::Clear(p) => {
+                if whole_of(p, var, bytes) {
+                    *set = true;
+                } else if p.touches(var, true) && !*set {
+                    return true;
+                }
+            }
+            St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => {
+                if p.touches(var, true) && !*set {
+                    return true;
+                }
+            }
+            St::Copy { dst, src, .. } => {
+                if !*set && (dst.touches(var, true) || src.touches(var, true)) {
+                    return true;
+                }
+            }
+            St::StrSet { dst, parts, .. } => {
+                if !*set && (dst.touches(var, true) || parts.iter().any(|p| p.touches(var, true))) {
+                    return true;
+                }
+            }
+            St::Call(_, args) => {
+                if args.iter().any(|(p, e)| ex(e, *set) || (!*set && p.touches(var, true))) {
+                    return true;
+                }
+            }
+            St::FlashSeek(_, _, e) => {
+                if e.as_ref().is_some_and(|e| ex(e, *set)) {
+                    return true;
+                }
+            }
+            St::DelayUs(e) | St::DelayMs(e) => {
+                if ex(e, *set) {
+                    return true;
+                }
+            }
+            St::If(arms, other) => {
+                let before = *set;
+                let mut all = true;
+                for (c, b) in arms {
+                    if ex(c, before) {
+                        return true;
+                    }
+                    let mut s2 = before;
+                    if rbw_block(b, var, bytes, after_exit, &mut s2) {
+                        return true;
+                    }
+                    all &= s2;
+                }
+                let mut s2 = before;
+                if rbw_block(other, var, bytes, after_exit, &mut s2) {
+                    return true;
+                }
+                *set = before || (all && s2);
+            }
+            St::While(c, b) => {
+                if ex(c, *set) {
+                    return true;
+                }
+                let mut s2 = *set;
+                if rbw_block(b, var, bytes, after_exit, &mut s2) {
+                    return true;
+                }
+                // The test runs again after the body, with at least what was set before it; the body may not run at
+                // all, so nothing it sets carries past the loop.
+            }
+            St::Repeat(b, c) => {
+                let mut s2 = *set;
+                if rbw_block(b, var, bytes, after_exit, &mut s2) {
+                    return true;
+                }
+                let s2 = s2 && !leaves_loop(b);
+                if ex(c, s2) {
+                    return true;
+                }
+                *set = s2;
+            }
+            St::For { var: p, from, limit, step, body } => {
+                if ex(from, *set) || ex(limit, *set) {
+                    return true;
+                }
+                if whole_of(p, var, bytes) {
+                    *set = true;
+                } else if p.touches(var, true) && !*set {
+                    return true;
+                }
+                let mut s2 = *set;
+                if rbw_block(body, var, bytes, after_exit, &mut s2) {
+                    return true;
+                }
+                if !may_run_zero(from, limit, *step) && !leaves_loop(body) {
+                    *set = s2;
+                }
+            }
+            St::Count { counter, body, step, .. } => {
+                if !*set && (counter.touches(var, true) || step.as_ref().is_some_and(|(p, _)| p.touches(var, true))) {
+                    return true;
+                }
+                let mut s2 = *set;
+                if rbw_block(body, var, bytes, after_exit, &mut s2) {
+                    return true;
+                }
+                // `count` is 1 to 255: the body runs at least once.
+                if !leaves_loop(body) {
+                    *set = s2;
+                }
+            }
+            St::Asm(_) => return true,
+            St::Save { items, body, .. } => {
+                if items.iter().any(|i| *i == SaveIt::Var(var)) {
+                    return true;
+                }
+                if rbw_block(body, var, bytes, after_exit, set) {
+                    return true;
+                }
+            }
+            St::Return => {
+                if after_exit && !*set {
+                    return true;
+                }
+            }
+            St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) => return true,
+            St::Break | St::Continue | St::Halt | St::Int { .. } => {}
+        }
+    }
+    false
+}

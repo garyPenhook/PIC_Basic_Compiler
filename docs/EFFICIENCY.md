@@ -358,3 +358,113 @@ become `clrf X`, since every symbol in the image then has a zero upper byte and 
 stays because a flash write elsewhere may leave `TBLPTRU` non-zero. Applied only when the next instruction reads neither W
 nor Z. Program bytes: total 8474 to 8430 (b_dsp 3050 to 3036, c_text 1770 to 1746, d_ctrl 1448 to 1442). Test:
 `highword_set_becomes_a_clear`; `tests/exec/addressof.bas` expects the routine and table addresses 4 bytes lower.
+
+## 10. Second larger-program review (0.1.155, 2026-11-08)
+
+The four `bench/large/` programs build to 8430 bytes against 7560 for XC8 `-Os` (11.5% larger). In the listings,
+`movff` is 624 of 3454 instructions (about 30% of the image); most of those move values through `__A`,
+`__main__TMP` and `Result` without need. Word counts below are counted from the `.S` files *(counted)*, not measured
+image deltas.
+
+| # | Where | Change | Estimate |
+|---|---|---|---|
+| M1 | `sink = sink Xor Crc32(48)`: a call on the right makes `bin_multi` (and the shift/compare paths) copy the left variable to `__main__TMP` first, combine in `__A`, then copy `__A` back to `sink` | skip the copy when the callee (transitively) cannot write the variable; apply the result to the variable in place when the destination is the left operand | 16-24 words per statement; about 150 words in a_algo |
+| M2 | `r = (r >> 1) + bt` copies `r` to `__A` (8 words), shifts and adds there, copies back (8 words) | evaluate `x = (x op k) op y` in the destination when no later operand reads `x` (L2 generalised) | about 16 words per site (isqrt, RMS) |
+| M3 | `movff v -> RESULT` in the callee, `movff RESULT -> __A`/dest in the caller; inlined calls copy `__A -> RESULT -> dest` | give `v` the storage of `Result` when the last statement is `Result = v`; forward an inlined result straight to its destination | 4-16 words per routine |
+| M4 | `entry_clears` keeps clears of locals written inside a loop that runs at least once, or written before every read (`j`, `t`, `k`, `s` in the sorts, MatMul, Crc16, Gcd, Fib) | replace `written_first` with "not live at entry" | about 25 words over the set |
+| M5 | zero-extended bytes routed through `__A` (`clrf __A2 ... movff __A2, X+2`); `movlw 0; xorwf X+n` (a no-op) | clear the destination byte directly; drop Xor/Or with known-zero bytes | 2-12 words per site |
+| M6 | a loop limit that became constant after argument propagation stays in a hidden variable (`movlw 0x2F; movwf H5`, `xorwf H5`) and the first test of `For j = 0 To e` is kept | fold the hidden limit to a constant; drop a first test that cannot fail (L7) | about 5 words and 1 RAM byte per loop |
+| M7 | `x * k + c` builds the product in `__C`, copies it to `__A`, adds, copies to the destination | add in `__C`, or build into the destination | 4-11 words per site |
+| M8 | `a(i) = v` goes `movf v,w; movwf TMP; ...; movff TMP, PLUSW0`; inlined parameters loaded via `__A` | `movff v, PLUSW0`; load the parameter directly | 2-4 words per site |
+| M9 | `SINT(idx + 1)` after `SINT(idx)` recomputes `TBLPTR`; `movff TABLAT, __A0 ... movff __A0, V` | reuse the post-incremented pointer; `movff TABLAT, V` | about 14 words in Sine |
+| M10 | counted loops index arrays with `movf i,w; lfsr` on every pass | pointer set once, `POSTINC0`; `decfsz` count when `i` is not otherwise read | 3+ words per loop |
+
+Peepholes (1-3 words each): `movlw 2^k; iorwf F,f` to `bsf` (BSF affects no status bits, DS40002043F p.627, so W, Z, N must be
+dead); `movf X,w; addlw 1/0xFF` to `incf/decf X,w` with dead flags; `op X,w; movwf X` to `op X,f` with W dead; the
+self-copy `movf T,w; movwf T`; keep W known across `movff R, PLUSW0`; `x = 0 - x` as `comf/negf/btfsc Z/incf` (NEGF, p.661);
+Byte `>> 4..7` through `swapf` (p.627); fold `(a And m) >> k` masks; `> 0` on unsigned as `movf X,f; bnz`; the dead
+`movff i, __A0` before a table address; helpers placed within `rcall` range.
+
+**Order.** M1 and M2 first (one analysis: a write set per routine, then in-place evaluation), then M3 and M4, M5 and M6,
+then the peepholes. Each step gated by the `bench/large` sink check, the `-O0` differential and `cargo test --release`.
+
+**Progress (0.1.156).** M1 and M2, `-O1` and up, PIC18 back end (`codegen.rs`):
+* `ir::routine_effects` gives each routine the variables it and everything it calls may write and read, or `None`
+  when unknown (raw `Asm`, any `ByRef` access, `Extern`/register-call routines, a `Save` of a routine's frame).
+  `Gen::calls_spare(e, v, no_read)` holds when no call in `e` writes `v` (or reads it, with `no_read`), `v` is not
+  `Volatile`, no interrupt handler uses it (an unknown handler blocks everything), and `v` is a global or a variable
+  of the routine being generated. The last rule matters: frames of routines that are never live together share
+  addresses, so another routine's variable may sit on the callee's bytes; the routine being generated reaches the
+  callee, so its own frame never overlaps it.
+  An access through an indirect-file register (`INDFn`, `POSTINCn`, `POSTDECn`, `PREINCn`, `PLUSWn`) makes a routine
+  unknown, like a `ByRef` access: it reaches whatever RAM its FSR points at.
+* The six operand paths that saved a memory left operand before a right operand holding a call (`bin_byte`,
+  `bin_multi`, `prep_ab`, `mul8`, the equality and ordered compares) take it from `Gen::left_src`, which skips the save
+  when `calls_spare` holds.
+* `store`: `x = x op f()` folds into `x` when the call spares it (`fold_into`; a zero-extended narrower operand is
+  built at its own width and the missing bytes taken as zero). `Gen::spine` takes a left-leaning chain over `x`
+  (`((x op a) op b) …`, with constant shifts of the running value) of at least two steps and applies each to `x` in
+  order; after the first change no operand may read `x` (by name or through a pointer: `ByRef`, `INDFn`) and no
+  call in it may read or write it. `a op (x …)` is taken right side first only when `a` is a constant or neither side
+  has a call, since that moves `a` after the calls on the other side.
+
+Program bytes: total 8430 to 7396 (0.98 of `-Os`; table in `docs/BENCHMARKS.md`). Test: `tests/exec/call_operand_inplace.bas`
+(callees that write the variable, read it, write it through `ByRef`, write it after the first step; zero-extended
+Byte results; a later step that reads the shifted variable) and `tests/exec/call_operand_order.bas` (a callee writing
+through `INDF0`, call order under a commutative operator, a later step reading through `ByRef`). Not done: `codegen16`
+(mid-range core).
+
+**Progress (0.1.157).** M3 and M4, `-O1` and up (the IR, so both back ends):
+* `opt::coalesce_results`: a routine ending `Result = v` (`v` a scalar local of the same type) makes `v` its result and
+  drops the copy, when nothing in it reads `Result`, writes it other than by top-level clears (which go), or can leave
+  before the copy (`Return`, a jump, a label), nothing else writes it, `Asm` names neither, and the routine is reached
+  only by plain calls (not through its address, from `Asm` or from C).
+* `ir::may_read_unset` replaces `written_first` for the entry clears of scalar locals and `Result`: a structured walk
+  that keeps the clear only when some path may read the variable before writing all of it. An `If` sets it when every
+  arm and the `Else` do; a `For` with constant bounds that runs at least once, or a `Count`, carries what its body sets
+  when nothing in the body leaves or restarts the loop; a `While` never does; `Asm`, jumps, labels, a `Save` of it and
+  partial writes count as reads. `Volatile` locals and strings keep the old rule.
+* Calling-side copies of `Result` into `__A` were already forwarded by the peephole, so no codegen change was needed there.
+
+Program bytes: total 7396 to 7244. Tests: `call_operand_order.bas` (an early `Exit` leaving `Result` 0, a read of
+`Result` before the final copy, a local set on one path only).
+
+**Progress (0.1.158).** M5 and M6, `-O1` and up:
+* `store` (PIC18): a zero-extended value that needs code (`sink = Crc16(48)`, `t = data(i)`) is worked out at its own
+  width and stored, and the upper bytes of the destination cleared, instead of building all bytes in `__A` and copying
+  them out (2 words per extended byte). Xor/Or with the zero bytes of a zero-extended operand had already gone with M1
+  (`fold_into` takes the missing bytes as zero, which `chain` skips).
+* `opt::propagate_locals` also tracks hidden variables and puts what it knows into a `For`'s start and limit (worked
+  out once, before the loop), so a limit that became a constant after argument propagation (`For i = 0 To n - 1`,
+  `n` always 48) is folded and its hidden byte goes; a `Select` subject that is constant resolves the same way.
+* `for_loop`: the entry test is also skipped when the start is the lowest value of the type counting up (the highest
+  counting down) and the limit has the variable's width and signedness: no such limit can fail it (L7).
+
+Program bytes: total 7244 to 7124. Test: `tests/exec/loop_entry_zext.bas` (limits 0 and 255 for a Byte loop from 0, a
+signed loop from -32768, a loop counting down from 255, the folded hidden limit and `Select`, zero-extended Byte and
+Word stores).
+
+**Progress (0.1.159).** M7 and M8, `-O1` and up, PIC18:
+* `gen_mul` by a constant: a multiplicand that is a plain variable private to this code (`Gen::var_private`: not
+  `Volatile`, not used by an interrupt handler, since a byte may be read once per factor byte) is read where it is,
+  so the partial products are summed in `__A` directly instead of in `__C` and copied over (`mul_partials_from`;
+  2 words a byte: `seed * 25 + 13849`, `n * 3 + 1`, `lcg * 5 + 1`).
+* `pass_stage_store` (peephole): `movf X, w` + `movwf T` (or `movff X, T`), an index set up in `WREG`/an FSR, then
+  `movff T, <indirect>` becomes `movff X, <indirect>` when the window neither writes `X` nor touches `T`, the
+  first instruction after the staging overwrites `WREG`, the flags `movf` sets are dead, and `T` is not read again on
+  any path before it is written (`byte_dead_paths`, which follows branches and statement ends, since a temporary may be
+  reused across one by `pass_load_reuse`). `X` is a compiler-placed RAM byte or `TABLAT`.
+* Review fixes to M4: a write to part of a variable (`w.Byte0 = k`, `Result.Byte0 = k`) no longer counts as setting
+  all of it; a `Break` in an inner loop no longer stops the outer loop's write from counting.
+
+* Test tooling: `scripts/dma_sim.py` took the first stop whose address equalled `__halt` as the halt, but MDB prints a
+  watchpoint (a data address) and a breakpoint (a program address) the same way; when the code shrank so that `__halt`
+  landed on 0xE8, the DMASELECT watchpoint ended the replay and `lib_dma_abortmove` read all zeros. `Event.is_halt` also
+  requires the PC to be at `__halt` (tests in `scripts/test_dma_sim.py`).
+* 0.1.160: `pass_stage_store` missed a write to the source when the source was a scratch byte (`movff __A0, T`, then
+  `__A0` reloaded for the FSR, then `movff T, POSTINC0`): a scratch byte's writes are tracked locations (`Eff::writes`),
+  not `wmem`. The X-10 `Xin` result in `tests/exec_pins/lib_pins_model.bas` caught it; unit test
+  `staged_byte_is_stored_from_its_source`.
+* Not from this work: `lib_system` fails on the PIC18F16Q41 (`LY_WC` 2, expected 0) on 0.1.155 as well.
+
+Program bytes: total 7124 to 7092. Test: `tests/exec/partial_write_clear.bas`.

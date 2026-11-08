@@ -6,7 +6,7 @@ Run: python3 scripts/test_dma_sim.py
 import os, sys, unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-from dma_sim import Engine
+from dma_sim import Engine, Event
 
 NO_STOP, SSTP, DSTP = 0, 1, 32
 
@@ -201,6 +201,28 @@ class DmaModel(unittest.TestCase):
         self.e.write_con0(0, 0xA0)
         self.assertEqual(len(self.bus.out), 4095)
         self.assertEqual(self.e.ch[0].dgo, 0)
+
+
+
+class Stops(unittest.TestCase):
+    """MDB's text at a stop: a watchpoint on DMASELECT (0xE8) and a `__halt` breakpoint placed at program address 0xE8
+    print the same `Single breakpoint: @0xE8`; only the PC differs."""
+
+    class Info:
+        bit = {f"DMA{n}{k}IF": (0x4A0, 0) for n in range(1, 5) for k in ("SCNT", "DCNT", "OR", "A")}
+        eeprom = 0
+
+    def stop(self, at, pc):
+        return f"Single breakpoint: @0x{at:X}\nSimulator halted\nStop at\n\taddress:0x{pc:x}\n"
+
+    def test_watchpoint_at_the_halt_number_is_not_the_halt(self):
+        self.assertFalse(Event(self.stop(0xE8, 0x9A), self.Info, None).is_halt(0xE8))
+
+    def test_breakpoint_at_halt_is_the_halt(self):
+        self.assertTrue(Event(self.stop(0xE8, 0xE8), self.Info, None).is_halt(0xE8))
+
+    def test_other_watchpoint_is_not_the_halt(self):
+        self.assertFalse(Event(self.stop(0x50F, 0xE8), self.Info, 0x50F).is_halt(0xE8))
 
 
 if __name__ == "__main__":

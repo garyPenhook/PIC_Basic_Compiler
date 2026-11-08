@@ -915,12 +915,20 @@ fn propagate_locals(p: &mut Program) -> bool {
     let vars = p.vars.clone();
     for (owner, body) in all_bodies(p) {
         let Some(owner) = owner else { continue };
-        let tracked = |v: VarId| vars[v].kind == VarKind::Local && vars[v].owner == Some(owner) && !vars[v].by_ref && !vars[v].volatile && !addr.contains(&v);
+        // Hidden variables too: a loop limit that is a constant by now (`For i = 0 To n - 1` with `n` known).
+        let tracked = |v: VarId| matches!(vars[v].kind, VarKind::Local | VarKind::Hidden) && vars[v].owner == Some(owner) && !vars[v].by_ref && !vars[v].volatile && !addr.contains(&v);
         let mut known: HashMap<VarId, u32> = HashMap::new();
         let mut todo: std::collections::VecDeque<S> = std::mem::take(body).into();
         let mut out: Vec<S> = Vec::with_capacity(todo.len());
         while let Some(mut s) = todo.pop_front() {
             let straight = matches!(s.st, St::Assign(..) | St::Add(..) | St::SetBit(..) | St::ToggleBit(..) | St::Clear(..) | St::ClearMem(..) | St::Copy { .. } | St::StrSet { .. } | St::Call(..) | St::DelayUs(_) | St::DelayMs(_) | St::Direction { .. });
+            // A `For` works out its start and limit once, before the loop: what is known then applies to them.
+            if let St::For { from, limit, .. } = &mut s.st
+                && !known.is_empty()
+            {
+                changed |= subst_known(from, &known, &vars);
+                changed |= subst_known(limit, &known, &vars);
+            }
             if !straight {
                 let compound = matches!(s.st, St::If(..) | St::While(..)) && !known.is_empty() && !has_jump_target(std::slice::from_ref(&s));
                 if !compound {
@@ -1577,6 +1585,127 @@ fn share_results(p: &mut Program) -> bool {
     changed
 }
 
+/// A routine that ends with `Result = v`, `v` a scalar local of the same type, keeps its value in `v` itself:
+/// `v` becomes the routine's result and the final copy goes (with it, a callee-side `movff` per byte). Only when
+/// nothing else in the routine touches `Result` but whole-object clears at its top level (which go too: `v` holds the
+/// value), and no `Return`, jump or label could leave the routine before the copy (it would have returned the old
+/// `Result`, not `v`).
+fn coalesce_results(p: &mut Program) -> bool {
+    let mut asm_lines: Vec<String> = Vec::new();
+    {
+        let mut refs: Vec<&String> = Vec::new();
+        for b in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+            collect_asm(b, &mut refs);
+        }
+        asm_lines.extend(refs.into_iter().cloned());
+    }
+    let named = |asm: &str| asm_lines.iter().any(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|t| t == asm));
+    let whole = |pl: &Place, v: VarId, ty: &Ty| matches!(pl.base, Base::Var(x) if x == v) && pl.off == 0 && pl.bit.is_none() && pl.idx.is_none() && pl.dbit.is_none() && pl.ty == *ty;
+    struct Uses {
+        v: VarId,
+        loads: usize,
+        writes: usize,
+        bad: bool,
+        jump: bool,
+    }
+    impl Visit for Uses {
+        fn place(&mut self, p: &Place, _: Acc) {
+            if matches!(p.base, Base::Var(x) | Base::Ptr(x) if x == self.v) {
+                self.writes += 1;
+            }
+        }
+        fn ex(&mut self, e: &Ex) {
+            match &e.k {
+                ExK::Load(p) if matches!(p.base, Base::Var(x) | Base::Ptr(x) if x == self.v) => self.loads += 1,
+                ExK::Addr(p) if matches!(p.base, Base::Var(x) | Base::Ptr(x) if x == self.v) => self.bad = true,
+                _ => {}
+            }
+        }
+        fn stmt(&mut self, s: &S) {
+            match &s.st {
+                St::Return | St::Goto(_) | St::GoSub(_) | St::SubRet | St::Label(_) => self.jump = true,
+                St::Save { items, .. } if items.contains(&SaveIt::Var(self.v)) => self.bad = true,
+                St::StrSet { parts, .. } if parts.iter().any(|q| matches!(q, StrSrc::Ram(pl) if matches!(pl.base, Base::Var(x) if x == self.v))) => self.bad = true,
+                St::Copy { src, .. } if matches!(src.base, Base::Var(x) if x == self.v) => self.bad = true,
+                _ => {}
+            }
+        }
+    }
+    // A routine called through its address, from `Asm` or from C expects its `Result` where it always was.
+    let other_callers = reachable_otherwise(p);
+    let mut changed = false;
+    for fi in 0..p.funcs.len() {
+        if p.funcs[fi].ext || p.funcs[fi].reg || other_callers.contains(&fi) || p.exports.iter().any(|e| e.thunk == fi) {
+            continue;
+        }
+        let Some(rv) = p.funcs[fi].result else { continue };
+        let rvar = &p.vars[rv];
+        if rvar.kind != VarKind::Result || rvar.owner != Some(fi) || rvar.by_ref || rvar.volatile || rvar.init.is_some() || !matches!(rvar.ty, Ty::Int(..)) {
+            continue;
+        }
+        let rty = rvar.ty.clone();
+        let body = &p.funcs[fi].body;
+        if !matches!(body.last().map(|s| &s.st), Some(St::Return)) || body.len() < 2 {
+            continue;
+        }
+        let k = body.len() - 2;
+        let St::Assign(pl, ex) = &body[k].st else { continue };
+        let ExK::Load(q) = &ex.k else { continue };
+        let Base::Var(v) = q.base else { continue };
+        if !whole(pl, rv, &rty) || !whole(q, v, &rty) || v == rv || ex.w != q.width() {
+            continue;
+        }
+        let vvar = &p.vars[v];
+        if vvar.kind != VarKind::Local || vvar.owner != Some(fi) || vvar.by_ref || vvar.volatile || vvar.init.is_some() || vvar.bytes != rvar.bytes {
+            continue;
+        }
+        if named(&rvar.asm) || named(&vvar.asm) {
+            continue;
+        }
+        // In the routine, before the copy: no load of `Result`, only top-level whole clears of it, no way out.
+        let mut own = Uses { v: rv, loads: 0, writes: 0, bad: false, jump: false };
+        w_block(&mut own, &body[..k]);
+        let clears = body[..k].iter().filter(|s| matches!(&s.st, St::Clear(c) if whole(c, rv, &rty))).count();
+        if own.bad || own.jump || own.loads > 0 || own.writes != clears {
+            continue;
+        }
+        let mut vu = Uses { v, loads: 0, writes: 0, bad: false, jump: false };
+        w_block(&mut vu, &body[..k]);
+        if vu.bad {
+            continue;
+        }
+        // Elsewhere `Result` may only be read (those loads are renamed).
+        let mut other = Uses { v: rv, loads: 0, writes: 0, bad: false, jump: false };
+        for (g, f) in p.funcs.iter().enumerate() {
+            if g != fi {
+                w_block(&mut other, &f.body);
+            }
+        }
+        w_block(&mut other, &p.main.body);
+        if other.bad || other.writes > 0 {
+            continue;
+        }
+        let body = &mut p.funcs[fi].body;
+        body.remove(k);
+        body.retain(|s| !matches!(&s.st, St::Clear(c) if whole(c, rv, &rty)));
+        p.funcs[fi].result = Some(v);
+        p.vars[v].kind = VarKind::Result;
+        let mut rename = |e: &mut Ex| {
+            if let ExK::Load(pl) = &mut e.k
+                && matches!(pl.base, Base::Var(x) if x == rv)
+            {
+                pl.base = Base::Var(v);
+            }
+        };
+        for f in p.funcs.iter_mut() {
+            m_block(&mut f.body, &mut rename);
+        }
+        m_block(&mut p.main.body, &mut rename);
+        changed = true;
+    }
+    changed
+}
+
 /// A counted loop whose body never mentions its variable counts with that variable instead of a hidden byte
 /// (`Count` followed by the store of the last value). The variable then holds the count while the loop runs,
 /// so a global is used only when nothing outside the main program mentions it (an interrupt handler or a routine
@@ -1651,6 +1780,7 @@ pub fn optimize(p: &mut Program) {
         }
     }
     share_counters(p);
+    coalesce_results(p);
     if share_results(p) {
         drop_dead(p);
     }

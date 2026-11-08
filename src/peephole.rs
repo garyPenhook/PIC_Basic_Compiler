@@ -2326,6 +2326,137 @@ fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// Whether the RAM byte `sym` cannot be read again from item `from` on before it is written (or the routine
+/// returns): follows both sides of every branch and skip, through statement ends (a value held in a temporary may be
+/// reused across one, see `pass_load_reuse`). A call, raw assembly, anything it cannot follow, or a long search counts
+/// as a read.
+fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
+    let label_at = |target: &str| items.iter().position(|x| matches!(x, Item::Label(l) if l == target));
+    let mut work = vec![from];
+    let mut seen = std::collections::HashSet::new();
+    let mut budget = 400usize;
+    while let Some(mut k) = work.pop() {
+        if !seen.insert(k) {
+            continue;
+        }
+        loop {
+            if budget == 0 {
+                return false;
+            }
+            budget -= 1;
+            let Some(it) = items.get(k) else { return false };
+            match it {
+                Item::Comment(_) | Item::Label(_) | Item::Fence => {}
+                Item::Br(cc, target) => {
+                    let Some(p) = label_at(target) else { return false };
+                    if *cc == Cc::Always {
+                        k = p;
+                        continue;
+                    }
+                    work.push(p);
+                }
+                Item::Ins(t) => {
+                    if matches!(parse(t), Some((m, _)) if m == "return" || m == "retlw" || m == "retfie") {
+                        break;
+                    }
+                    let Some(e) = effect(t) else { return false };
+                    if e.rmem.iter().any(|m| same_byte(env, m, sym)) {
+                        return false;
+                    }
+                    let written = e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same_byte(env, x, sym)));
+                    if is_skip(t) {
+                        let mut n = k + 1;
+                        while matches!(items.get(n), Some(Item::Comment(_) | Item::Fence)) {
+                            n += 1;
+                        }
+                        if !matches!(items.get(n), Some(Item::Ins(_) | Item::Br(..))) {
+                            return false;
+                        }
+                        work.push(n + 1);
+                    } else if written {
+                        break;
+                    }
+                }
+                _ => return false,
+            }
+            k += 1;
+        }
+    }
+    true
+}
+
+/// `movf X, w` + `movwf T` (or `movff X, T`), a few instructions that set up an index in `WREG` / an FSR, then
+/// `movff T, <indirect>`: the value is staged in `T` only because `WREG` is needed for the index. When nothing in
+/// between writes `X` or touches `T`, the flags the `movf` sets are dead, the first instruction after it overwrites
+/// `WREG`, and `T` is not read again before it is written, the store reads `X` itself (2 words, or 4 for `movff`).
+fn pass_stage_store(items: &mut Vec<Item>, env: &Env) -> bool {
+    let mut keep = protected(items);
+    let mut changed = false;
+    let mut i = 0;
+    while i + 2 < items.len() {
+        let ins = |k: usize| -> Option<(String, Vec<String>)> {
+            match items.get(k) {
+                Some(Item::Ins(t)) if !keep[k] => parse(t).map(|(m, o)| (m, o.iter().map(|x| x.trim().to_string()).collect())),
+                _ => None,
+            }
+        };
+        // The staging: (source, temporary, items it takes).
+        let stage = match (ins(i), ins(i + 1)) {
+            (Some((m1, o1)), Some((m2, o2))) if m1 == "movf" && o1.len() >= 2 && o1[1] == "w" && m2 == "movwf" && !o2.is_empty() => Some((o1[0].clone(), o2[0].clone(), 2)),
+            (Some((m1, o1)), _) if m1 == "movff" && o1.len() == 2 => Some((o1[0].clone(), o1[1].clone(), 1)),
+            _ => None,
+        };
+        let Some((x, t, used)) = stage else {
+            i += 1;
+            continue;
+        };
+        // `TABLAT` too: reading it has no side effect, and only a table read (which ends the window) changes it.
+        let source_ok = env.is_plain(&x) || x.eq_ignore_ascii_case("TABLAT");
+        if !source_ok || !env.is_plain(&t) || scratch(&t).is_some() || same_byte(env, &x, &t) {
+            i += 1;
+            continue;
+        }
+        // The window: straight-line instructions up to the store.
+        let mut j = i + used;
+        let mut found = None;
+        let mut first = true;
+        while j < items.len() && j < i + used + 8 {
+            let Some((m, o)) = ins(j) else { break };
+            let Item::Ins(text) = &items[j] else { break };
+            if m == "movff" && o.len() == 2 && same_byte(env, &o[0], &t) && is_indirect(&o[1]) {
+                found = Some((j, o[1].clone()));
+                break;
+            }
+            let Some(e) = effect(text) else { break };
+            // A scratch byte's writes are tracked locations (`writes`), not untracked memory (`wmem`).
+            let x_scratch_written = scratch(&x).is_some_and(|k| e.writes.contains(&Loc::S(k)));
+            if is_skip(text) || x_scratch_written || e.rmem.iter().any(|r| same_byte(env, r, &t))
+                || e.wmem.iter().any(|w| matches!(w, Mem::Unknown) || matches!(w, Mem::Sym(s) if same_byte(env, s, &t) || same_byte(env, s, &x)))
+            {
+                break;
+            }
+            if first && used == 2 && !(e.writes.contains(&Loc::W) && !e.reads.contains(&Loc::W)) {
+                break;
+            }
+            first = false;
+            j += 1;
+        }
+        let Some((j, dst)) = found else {
+            i += 1;
+            continue;
+        };
+        if j == i + used || (used == 2 && flags_live(items, i, Z | N)) || !byte_dead_paths(items, j + 1, &t, env) {
+            i += 1;
+            continue;
+        }
+        items[j] = Item::Ins(format!("movff {x}, {dst}"));
+        items.drain(i..i + used);
+        keep = protected(items);
+        changed = true;
+    }
+    changed
+}
+
 /// One array element already copied into a byte of compiler RAM: `arr(idx + add)` is in `holder`.
 struct Held {
     arr: String,
@@ -3003,6 +3134,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_load_reuse(&mut items, env);
         changed |= pass_redundant_lfsr(&mut items);
         changed |= pass_copy_back(&mut items, env);
+        changed |= pass_stage_store(&mut items, env);
         changed |= pass_sum_share(&mut items, env);
         changed |= pass_known_sfr_bits(&mut items, env);
         changed |= pass_warg(&mut items);
@@ -3363,6 +3495,33 @@ mod tests {
         s.push(Item::Label("_L9".into()));
         s.extend(load("", "Y+1"));
         assert_eq!(reads(&run(&s)), 2);
+    }
+
+    #[test]
+    fn staged_byte_is_stored_from_its_source() {
+        let text = |v: &[Item]| v.iter().filter_map(|i| if let Item::Ins(t) = i { Some(t.clone()) } else { None }).collect::<Vec<_>>();
+        let go = |src: Vec<Item>| {
+            let mut v = src;
+            pass_stage_store(&mut v, &env());
+            text(&v)
+        };
+        // `movf X, w` / `movwf Y`, the index into W, then the store of Y: the store reads X itself.
+        let r = go(vec![ins("movf X, w, c"), ins("movwf Y, c"), ins("movf X+1, w, c"), ins("movff Y, PLUSW0"), ins("return")]);
+        assert_eq!(r, vec!["movf X+1, w, c", "movff X, PLUSW0", "return"]);
+        let r = go(vec![ins("movff X, Y"), ins("movff X+1, Y+1"), ins("movff Y, POSTINC0"), ins("return")]);
+        assert_eq!(r, vec!["movff X+1, Y+1", "movff X, POSTINC0", "return"]);
+        // Kept: the source is written in between (a scratch byte's writes are tracked apart from other memory), the
+        // staged byte is read later, or W is read before it is set again.
+        for src in [
+            vec![ins("movff __A0, Y"), ins("movff X, __A0"), ins("movff Y, POSTINC0"), ins("return")],
+            vec![ins("movff X, Y"), ins("clrf X, c"), ins("movff Y, POSTINC0"), ins("return")],
+            vec![ins("movff X, Y"), ins("movff Y, POSTINC0"), ins("movf Y, w, c"), ins("return")],
+            vec![ins("movff X, Y"), ins("movff Y, POSTINC0"), Item::Br(Cc::Z, "_L1".into()), ins("return"), Item::Label("_L1".into()), ins("movf Y, w, c"), ins("return")],
+            vec![ins("movf X, w, c"), ins("movwf Y, c"), ins("addlw 0x01"), ins("movff Y, PLUSW0"), ins("return")],
+        ] {
+            let before = text(&src);
+            assert_eq!(go(src), before);
+        }
     }
 
     #[test]

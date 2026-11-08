@@ -1250,7 +1250,11 @@ impl<'a> Lowerer<'a> {
             }
             let ty = var.ty.clone();
             let scalar = nat(&ty).is_some();
-            if (scalar || matches!(ty, Ty::Str(_))) && written_first(body, v, var.kind != VarKind::Local) {
+            let after_exit = var.kind != VarKind::Local;
+            if scalar && !var.volatile && !crate::ir::may_read_unset(body, v, var.bytes, after_exit) {
+                continue;
+            }
+            if matches!(ty, Ty::Str(_)) && written_first(body, v, after_exit) {
                 continue;
             }
             // A routine whose own `Asm` block stores into its `Result` sets it itself.

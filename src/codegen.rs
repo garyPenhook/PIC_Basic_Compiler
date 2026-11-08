@@ -420,6 +420,18 @@ fn src_calls(s: &StrSrc, out: &mut BTreeSet<FuncId>) {
     }
 }
 
+/// The variable `e` reads when it is a plain load of (part of) one, possibly converted.
+fn plain_var(e: &Ex) -> Option<VarId> {
+    match &e.k {
+        ExK::Conv(x) => plain_var(x),
+        ExK::Load(p) if p.idx.is_none() && p.dbit.is_none() => match p.base {
+            Base::Var(v) => Some(v),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn ex_calls(e: &Ex, out: &mut BTreeSet<FuncId>) {
     match &e.k {
         ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => {}
@@ -675,6 +687,16 @@ struct Gen<'p> {
     reach: Vec<BTreeSet<FuncId>>,
     /// The most bytes any recursive call site pushed on the software stack.
     soft_max: u32,
+    /// What each routine (with everything it calls) may write and read; `None` when unknown.
+    fx: Vec<Option<crate::ir::Effects>>,
+    /// The variables an interrupt handler may write or read (`None`: unknown, so any).
+    isr_vars: Option<BTreeSet<VarId>>,
+}
+
+/// One step of `Gen::spine`: a constant shift of the running value (left?, signed, amount) or `value op operand`.
+enum Step<'e> {
+    Shift(bool, bool, u32),
+    Op(BinKind, &'e Ex),
 }
 
 /// The second factor of a partial product in `mul_partials`: a literal byte or byte `j` of `__B`.
@@ -715,6 +737,9 @@ impl<'p> Gen<'p> {
     fn new(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, facts: Option<&'p Facts>) -> Gen<'p> {
         let nvars = p.vars.len();
         let nobj = nvars + 4 + p.funcs.len() + 1 + p.n_saves + p.isrs.len();
+        // Only the optimiser asks what a call may touch.
+        let fx = if tgt.opt { crate::ir::routine_effects(p) } else { Vec::new() };
+        let isr_vars = if tgt.opt { Self::isr_vars(p, &fx) } else { None };
         Gen {
             p,
             tgt,
@@ -746,7 +771,57 @@ impl<'p> Gen<'p> {
             warg: Self::warg_set(p, tgt),
             reach: Self::reach_sets(p),
             soft_max: 0,
+            fx,
+            isr_vars,
         }
+    }
+
+    fn isr_vars(p: &Program, fx: &[Option<crate::ir::Effects>]) -> Option<BTreeSet<VarId>> {
+        let mut out = BTreeSet::new();
+        for &(f, _) in &p.isrs {
+            let e = fx.get(f)?.as_ref()?;
+            out.extend(e.writes.iter().copied());
+            out.extend(e.reads.iter().copied());
+        }
+        Some(out)
+    }
+
+    /// True when the calls in `e` cannot change the variable `v` (nor read it, with `no_read`), so `v` may be read
+    /// after `e` is worked out instead of being saved first, or updated before `e` runs. A variable an interrupt
+    /// handler uses, or a `Volatile` one, never qualifies.
+    fn calls_spare(&self, e: &Ex, v: VarId, no_read: bool) -> bool {
+        if !self.var_private(v) {
+            return false;
+        }
+        // Only storage that cannot share an address with a callee's frame: a global, or a variable of the routine
+        // being generated (it reaches the callee, so the two frames are never overlaid). A variable of another
+        // routine, such as the result of a routine inlined here, may sit on the same bytes as the callee's.
+        let owner = self.p.vars[v].owner;
+        if !(owner.is_none() || owner == Some(self.cur)) {
+            return false;
+        }
+        let mut calls = BTreeSet::new();
+        ex_calls(e, &mut calls);
+        calls.iter().all(|&f| {
+            self.fx.get(f).and_then(|x| x.as_ref()).is_some_and(|x| !x.writes.contains(&v) && !(no_read && x.reads.contains(&v)))
+        })
+    }
+
+    /// Optimising, and `v` is neither `Volatile` nor used by an interrupt handler (an unknown handler counts as using
+    /// everything): nothing but the code being generated can see it change.
+    fn var_private(&self, v: VarId) -> bool {
+        self.tgt.opt && !self.p.vars[v].volatile && self.isr_vars.as_ref().is_some_and(|s| !s.contains(&v))
+    }
+
+    /// The left operand `l` of a binary operation as an operand that needs no code, when it may be read after the
+    /// right operand `r` is worked out: always when `r` has no call, otherwise only when `l` is a plain variable the
+    /// calls leave alone (else it must be saved first, and the caller gets `None`).
+    fn left_src(&self, l: &Ex, r: &Ex) -> Option<Src> {
+        let ls = self.simple(l);
+        if r.has_call() && matches!(ls, Some(Src::Mem(..))) && !plain_var(l).is_some_and(|v| self.calls_spare(r, v, false)) {
+            return None;
+        }
+        ls
     }
 
     /// For each routine, the routines it can reach through the call graph.
@@ -1948,11 +2023,8 @@ impl<'p> Gen<'p> {
 
     fn bin_byte(&mut self, op: BinKind, l: &Ex, r: &Ex) {
         let comm = op != BinKind::Sub;
-        let mut ls = self.simple(l);
+        let ls = self.left_src(l, r);
         let rs = self.simple(r);
-        if r.has_call() && matches!(ls, Some(Src::Mem(..))) {
-            ls = None;
-        }
         if let Some(rs) = rs {
             let rb = rs.byte(0);
             match (&ls, &rb) {
@@ -2039,11 +2111,8 @@ impl<'p> Gen<'p> {
     fn bin_multi(&mut self, op: BinKind, l: &Ex, r: &Ex, n: u32) {
         let comm = op != BinKind::Sub;
         let a_of = |g: &mut Self, i: u32| g.a(i);
-        let mut ls = self.simple(l);
+        let ls = self.left_src(l, r);
         let rs = self.simple(r);
-        if r.has_call() && matches!(ls, Some(Src::Mem(..))) {
-            ls = None;
-        }
         if let Some(rs) = rs {
             self.gen_to_acc(l);
             self.chain(op, &a_of, &rs, n);
@@ -2088,11 +2157,8 @@ impl<'p> Gen<'p> {
 
     /// Puts `l` in `__A` and `r` in `__B` (n bytes each).
     fn prep_ab(&mut self, l: &Ex, r: &Ex, n: u32) {
-        let mut ls = self.simple(l);
+        let ls = self.left_src(l, r);
         let rs = self.simple(r);
-        if r.has_call() && matches!(ls, Some(Src::Mem(..))) {
-            ls = None;
-        }
         if let Some(rs) = rs {
             self.gen_to_acc(l);
             self.src_to_reg(1, &rs, n);
@@ -2135,11 +2201,8 @@ impl<'p> Gen<'p> {
 
     /// An 8-bit multiply into PRODH:PRODL.
     fn mul8(&mut self, x: &Ex, y: &Ex) {
-        let mut xs = self.simple(x);
+        let xs = self.left_src(x, y);
         let ys = self.simple(y);
-        if y.has_call() && matches!(xs, Some(Src::Mem(..))) {
-            xs = None;
-        }
         let mulw = |g: &mut Self, s: &Bs| match s {
             Bs::Imm(k) => g.ins(format!("mullw 0x{k:02X}")),
             Bs::Mem(m) => g.fo("mulwf", m),
@@ -2228,16 +2291,21 @@ impl<'p> Gen<'p> {
                 self.shift_acc(true, false, k.trailing_zeros(), n);
             }
         } else {
-            let m = match narrow(var) {
-                Some(x) => {
-                    self.gen_to_acc(&x);
-                    1
-                }
-                None => {
-                    self.gen_to_acc(var);
-                    n
-                }
+            let nx = narrow(var);
+            let op = nx.as_ref().unwrap_or(var);
+            // A plain variable is read where it is: each byte may be read once per factor byte, so not a register,
+            // a `Volatile` one or one an interrupt handler uses (it could change between the reads).
+            let from = match (self.tgt.opt, self.simple(op), plain_var(op)) {
+                (true, Some(Src::Mem(mm, real)), Some(v)) if !mm.reg && self.var_private(v) => Some((mm, real)),
+                _ => None,
             };
+            let mut m = if nx.is_some() { 1 } else { n };
+            if from.is_none() {
+                self.gen_to_acc(op);
+            }
+            if let Some((_, real)) = &from {
+                m = m.min(*real);
+            }
             let mut pairs = Vec::new();
             for j in 0..n {
                 let kj = (k >> (8 * j)) as u8;
@@ -2247,16 +2315,27 @@ impl<'p> Gen<'p> {
                     }
                 }
             }
-            self.mul_partials(n, pairs);
+            self.mul_partials_from(n, pairs, from.as_ref().map(|f| &f.0));
         }
     }
 
     /// `__A = sum of the partial products` (mod 2^(8n)): each `(i, j, f)` is byte `i` of `__A` times
     /// factor byte `j`, added at byte `i + j`. The lowest pair is stored, the rest are added into `__C`.
-    fn mul_partials(&mut self, n: u32, mut pairs: Vec<(u32, u32, Fac)>) {
+    fn mul_partials(&mut self, n: u32, pairs: Vec<(u32, u32, Fac)>) {
+        self.mul_partials_from(n, pairs, None);
+    }
+
+    /// `mul_partials` with the first factor read from `src` (a variable) instead of `__A`: `__A` is then free, so
+    /// the sum is built there directly, not in `__C` and copied over (2 words a byte).
+    fn mul_partials_from(&mut self, n: u32, mut pairs: Vec<(u32, u32, Fac)>, src: Option<&Mem>) {
         pairs.sort_by_key(|p| p.0 + p.1);
+        let direct = src.is_some();
+        let acc = |g: &mut Self, t: u32| if direct { g.a(t) } else { g.c(t) };
         for (idx, (i, j, f)) in pairs.iter().enumerate() {
-            let ai = self.a(*i);
+            let ai = match src {
+                Some(m) => m.at(*i),
+                None => self.a(*i),
+            };
             self.fop("movf", &ai, "w");
             match f {
                 Fac::Lit(k) => self.ins(format!("mullw 0x{k:02X}")),
@@ -2268,7 +2347,7 @@ impl<'p> Gen<'p> {
             let s = i + j;
             if idx == 0 {
                 for t in 0..n {
-                    let c = self.c(t);
+                    let c = acc(self, t);
                     if t == s {
                         self.movff_sfr(&c, "PRODL");
                     } else if t == s + 1 {
@@ -2279,25 +2358,27 @@ impl<'p> Gen<'p> {
                 }
                 continue;
             }
-            let cs = self.c(s);
+            let cs = acc(self, s);
             self.ins("movf PRODL, w, c");
             self.fop("addwf", &cs, "f");
             if s + 1 < n {
-                let c1 = self.c(s + 1);
+                let c1 = acc(self, s + 1);
                 self.ins("movf PRODH, w, c");
                 self.fop("addwfc", &c1, "f");
                 if s + 2 < n {
                     self.ins("movlw 0");
                     for t in s + 2..n {
-                        let c = self.c(t);
+                        let c = acc(self, t);
                         self.fop("addwfc", &c, "f");
                     }
                 }
             }
         }
-        for t in 0..n {
-            let (a, c) = (self.a(t), self.c(t));
-            self.movff(&a, &c);
+        if !direct {
+            for t in 0..n {
+                let (a, c) = (self.a(t), self.c(t));
+                self.movff(&a, &c);
+            }
         }
     }
 
@@ -2856,11 +2937,8 @@ impl<'p> Gen<'p> {
     }
 
     fn eq_jump(&mut self, eq: bool, l: &Ex, r: &Ex, n: u32, target: &str) {
-        let mut ls = self.simple(l);
+        let mut ls = self.left_src(l, r);
         let mut rs = self.simple(r);
-        if r.has_call() && matches!(ls, Some(Src::Mem(..))) {
-            ls = None;
-        }
         let mut held = 0;
         if n == 1 {
             // `x = 0` and `x <> 0` need no W: movf sets Z.
@@ -3090,11 +3168,8 @@ impl<'p> Gen<'p> {
         // Reduce to `X < Y` or `X >= Y`, swapping the operands for > and <=.
         let swapped = matches!(kind, CmpKind::Gt | CmpKind::Le);
         let lt = matches!(kind, CmpKind::Lt | CmpKind::Gt);
-        let mut ls = self.simple(l);
+        let mut ls = self.left_src(l, r);
         let mut rs = self.simple(r);
-        if r.has_call() && matches!(ls, Some(Src::Mem(..))) {
-            ls = None;
-        }
         let mut held = 0;
         if ls.is_none() && rs.is_none() {
             // Both need code: evaluate `l` first and keep it.
@@ -3336,53 +3411,43 @@ impl<'p> Gen<'p> {
             self.store_src(&dst, n, &s);
             return;
         }
+        // `x = ((x op a) op b) …` and `x = (x >> k) op a`: each step is applied to `x` in place, in order, when no
+        // later step reads `x` (it has changed by then) and no call in a step can change it or, after the first
+        // change, read it.
+        if self.tgt.opt && !dst.reg
+            && let Some(steps) = self.spine(p, &dst, e)
+            && steps.len() >= 2
+        {
+            for st in steps {
+                match st {
+                    Step::Shift(left, signed, k) => {
+                        let done = self.shift_direct(&dst, &dst, left, signed, k, n);
+                        assert!(done, "internal error: an in-place shift the spine accepted was refused");
+                    }
+                    Step::Op(op, x) => self.fold_into(op, &dst, x, n),
+                }
+            }
+            return;
+        }
         // In-place read-modify-write: `x = x op operand` (or `operand op x` for a commutative op).
         if let ExK::Bin(op, l, r) = &e.k
             && matches!(op, BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor)
         {
-            let is_p = |g: &Self, x: &Ex| {
-                matches!(&x.k, ExK::Load(lp) if lp.bit.is_none() && !lp.indirect() && lp.base == p.base && lp.off == p.off && g.place_mem(lp, false).sym == dst.sym) && x.w == e.w
-            };
-            let operand = if is_p(self, l) {
+            let operand = if self.is_load_of(p, &dst, l, e.w) {
                 Some(&**r)
-            } else if *op != BinKind::Sub && self.tgt.opt && is_p(self, r) {
+            } else if *op != BinKind::Sub && self.tgt.opt && self.is_load_of(p, &dst, r, e.w) {
                 Some(&**l)
             } else {
                 None
             };
-            if let Some(x) = operand {
-                let d2 = dst.clone();
-                if let Some(xs) = self.simple(x) {
-                    // `x = x + 1` and `x = x - 1` on 16 bits are the same code as `Inc(x)` and `Dec(x)`.
-                    if n == 2 && self.tgt.opt && let Src::Imm(c) = xs && matches!(op, BinKind::Add | BinKind::Sub) {
-                        let c = c & 0xFFFF;
-                        let delta = if *op == BinKind::Add { c } else { c.wrapping_neg() };
-                        if delta & 0xFFFF == 1 || delta & 0xFFFF == 0xFFFF {
-                            self.add_const_mem(&d2, n, delta);
-                            return;
-                        }
-                    }
-                    self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &xs, n);
-                    return;
-                } else if self.tgt.opt && !x.has_call() && Self::nb(x) == n {
-                    // The operand is worked out first (it cannot change `x`: no call), then folded
-                    // into `x` in place, without a round trip through the accumulator.
-                    self.gen_val(x);
-                    if n == 1 {
-                        let name = match op {
-                            BinKind::Add => "addwf",
-                            BinKind::Sub => "subwf",
-                            BinKind::And => "andwf",
-                            BinKind::Or => "iorwf",
-                            _ => "xorwf",
-                        };
-                        self.fop(name, &d2, "f");
-                    } else {
-                        let a = self.a(0);
-                        self.chain(*op, &move |_g: &mut Self, i| d2.at(i), &Src::Mem(a, n), n);
-                    }
-                    return;
-                }
+            // The operand is worked out first, then folded into `x`: a call in it must leave `x` alone, since `x`
+            // is read after it.
+            if let Some(x) = operand
+                && (self.simple(x).is_some()
+                    || (self.tgt.opt && Self::nb(x) == n && (!x.has_call() || matches!(p.base, Base::Var(v) if self.calls_spare(x, v, false)))))
+            {
+                self.fold_into(*op, &dst, x, n);
+                return;
             }
         }
         // `w = hi * 256 + lo`, `(hi << 8) Or lo` with Byte `hi` and `lo`: one move per byte.
@@ -3511,6 +3576,27 @@ impl<'p> Gen<'p> {
         if self.min_max_store(&dst, e, n) {
             return;
         }
+        // A zero-extended value (`sink = Crc16(48)`, `t = data(i)`): its own bytes are stored, the rest cleared, not
+        // built in `__A` with cleared upper bytes and copied out.
+        if self.tgt.opt && n > 1 && !dst.reg && let ExK::Conv(inner) = &e.k
+            && !inner.signed
+            && inner.w < e.w
+        {
+            let m = Self::nb(inner);
+            self.gen_val(inner);
+            if m == 1 {
+                self.fo("movwf", &dst);
+            } else {
+                for i in 0..m {
+                    let a = self.a(i);
+                    self.put_byte(&dst.at(i), &Bs::Mem(a));
+                }
+            }
+            for i in m..n {
+                self.fo("clrf", &dst.at(i));
+            }
+            return;
+        }
         self.gen_val(e);
         if n == 1 {
             self.fo("movwf", &dst);
@@ -3519,6 +3605,142 @@ impl<'p> Gen<'p> {
                 let a = self.a(i);
                 self.put_byte(&dst.at(i), &Bs::Mem(a));
             }
+        }
+    }
+
+    /// Whether `x` loads the whole of the scalar place `p` (held at `dst`) at width `w`.
+    fn is_load_of(&self, p: &Place, dst: &Mem, x: &Ex, w: u8) -> bool {
+        matches!(&x.k, ExK::Load(lp) if lp.bit.is_none() && !lp.indirect() && lp.base == p.base && lp.off == p.off && self.place_mem(lp, false).sym == dst.sym)
+            && x.w == w
+    }
+
+    /// The steps that turn `p` into `e` when `e` is a left-leaning chain over `p` itself: `((p op a) op b) …`, with
+    /// constant shifts of the running value allowed (`(p >> k) + a`). Every step is `p`'s width. Each operand is
+    /// one that `fold_into` takes; after the first change to `p` no operand may read it, and a call in any
+    /// operand must leave `p` alone (and not read it once it has changed). `None` when `e` has another shape.
+    fn spine<'e>(&self, p: &Place, dst: &Mem, e: &'e Ex) -> Option<Vec<Step<'e>>> {
+        let Base::Var(v) = p.base else { return None };
+        if p.idx.is_some() || p.bit.is_some() || p.dbit.is_some() || !self.var_private(v) {
+            return None;
+        }
+        let n = p.bytes();
+        let mut out = Vec::new();
+        if !self.spine_walk(p, dst, e, e.w, &mut out) {
+            return None;
+        }
+        for (i, st) in out.iter().enumerate() {
+            match st {
+                Step::Shift(_, _, k) => {
+                    if n < 2 || *k == 0 || *k >= n * 8 {
+                        return None;
+                    }
+                }
+                Step::Op(_, x) => {
+                    let changed = i > 0;
+                    if self.simple(x).is_none() && Self::nb(x) != n {
+                        return None;
+                    }
+                    // Once `x` has changed, an operand must not see it: not by name, nor through a pointer that may
+                    // hold its address.
+                    if changed && (x.touches(v, true) || crate::ir::reads_through_pointer(x)) {
+                        return None;
+                    }
+                    if x.has_call() && !self.calls_spare(x, v, changed) {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
+    fn spine_walk<'e>(&self, p: &Place, dst: &Mem, e: &'e Ex, w: u8, out: &mut Vec<Step<'e>>) -> bool {
+        if e.w != w {
+            return false;
+        }
+        if self.is_load_of(p, dst, e, w) {
+            return true;
+        }
+        let mark = out.len();
+        match &e.k {
+            ExK::Bin(op @ (BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor), l, r) => {
+                if self.spine_walk(p, dst, l, w, out) {
+                    out.push(Step::Op(*op, r));
+                    return true;
+                }
+                out.truncate(mark);
+                // `a op (x …)`: taking the right side first moves `a` after everything in it, so only when that cannot
+                // change what anything sees: `a` is a constant, or neither side has a call.
+                let reorder_ok = l.as_const().is_some() || (!l.has_call() && !r.has_call());
+                if *op != BinKind::Sub && reorder_ok && self.spine_walk(p, dst, r, w, out) {
+                    out.push(Step::Op(*op, l));
+                    return true;
+                }
+                out.truncate(mark);
+                false
+            }
+            ExK::Bin(op @ (BinKind::Shl | BinKind::Shr), l, k) => {
+                let Some(k) = k.as_const() else { return false };
+                if self.spine_walk(p, dst, l, w, out) {
+                    out.push(Step::Shift(*op == BinKind::Shl, e.signed, k));
+                    return true;
+                }
+                out.truncate(mark);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// `dst op= x` over `n` bytes, `x` worked out first: an operand that needs no code is used as it is, one of `n`
+    /// bytes is built in `__A` (WREG for one byte), and a zero-extended narrower one is built at its own width with
+    /// the missing bytes taken as zero.
+    fn fold_into(&mut self, op: BinKind, dst: &Mem, x: &Ex, n: u32) {
+        let d2 = dst.clone();
+        if let Some(xs) = self.simple(x) {
+            // `x = x + 1` and `x = x - 1` on 16 bits are the same code as `Inc(x)` and `Dec(x)`.
+            if n == 2 && self.tgt.opt && let Src::Imm(c) = xs && matches!(op, BinKind::Add | BinKind::Sub) {
+                let c = c & 0xFFFF;
+                let delta = if op == BinKind::Add { c } else { c.wrapping_neg() };
+                if delta & 0xFFFF == 1 || delta & 0xFFFF == 0xFFFF {
+                    self.add_const_mem(&d2, n, delta);
+                    return;
+                }
+            }
+            self.chain(op, &move |_g: &mut Self, i| d2.at(i), &xs, n);
+            return;
+        }
+        let (v, m) = match &x.k {
+            ExK::Conv(inner) if !inner.signed && inner.w < x.w && n > 1 => (&**inner, Self::nb(inner)),
+            _ => (x, n),
+        };
+        self.gen_val(v);
+        if m == 1 {
+            let name = match op {
+                BinKind::Add => "addwf",
+                BinKind::Sub => "subwf",
+                BinKind::And => "andwf",
+                BinKind::Or => "iorwf",
+                _ => "xorwf",
+            };
+            self.fop(name, &dst.at(0), "f");
+            match op {
+                BinKind::Add | BinKind::Sub if n > 1 => {
+                    self.ins("movlw 0");
+                    for i in 1..n {
+                        self.fop(if op == BinKind::Add { "addwfc" } else { "subwfb" }, &dst.at(i), "f");
+                    }
+                }
+                BinKind::And => {
+                    for i in 1..n {
+                        self.fo("clrf", &dst.at(i));
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            let a = self.a(0);
+            self.chain(op, &move |_g: &mut Self, i| d2.at(i), &Src::Mem(a, m), n);
         }
     }
 
@@ -4415,11 +4637,16 @@ impl<'p> Gen<'p> {
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
         self.store(var, from);
         let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
-        // Skip the entry test when both ends are constants that make the loop run.
+        // Skip the entry test when both ends are constants that make the loop run, or when the start is the
+        // lowest value of the type counting up (the highest counting down): no limit of that type can fail it.
+        let v = |x: u32| if sg { sign_ext(x, w) } else { x as i64 };
         let runs = match (from.as_const(), limit.as_const()) {
             (Some(f), Some(l)) => {
-                let v = |x: u32| if sg { sign_ext(x, w) } else { x as i64 };
                 if step > 0 { v(f) <= v(l) } else { v(f) >= v(l) }
+            }
+            (Some(f), None) if self.tgt.opt && limit.w == w && limit.signed == sg => {
+                let (lo, hi) = if sg { (-(1i64 << (w - 1)), (1i64 << (w - 1)) - 1) } else { (0, mask(w) as i64) };
+                if step > 0 { v(f) == lo } else { v(f) == hi }
             }
             _ => false,
         };
