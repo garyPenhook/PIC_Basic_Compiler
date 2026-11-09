@@ -182,7 +182,9 @@ overflows (STATUS read back as 0x67; the same instruction with `W = 1` or with n
 silicon matches the simulator is not known; hardware verification (or an erratum search) is needed before any
 multi-byte signed compare uses the flags. The sign-bit and constant-folding changes above do not depend on it.
 The single-byte case that was checked (`-128 - 127` with `SUBWF`, no borrow in) sets OV correctly in the simulator, and the
-existing signed exec tests exercise `flag_branch`, so the 8-bit `bov/bn/bra/bnn` tail is left alone.
+existing signed exec tests exercise `flag_branch`, so the 8-bit `bov/bn/bra/bnn` tail was left alone (replaced in 0.1.162, below).
+
+**0.1.162.** The N/OV form was tried for every width (`subwf..subwfb; btfsc STATUS,OV; xorlw 0x80; bn`) and `tests/exec/signed_ov_cmp.bas` (`scripts/gen-signed-ov-tests.py`: ShortInt, Integer and LongInt at the edges of their ranges, `< <= > >=`, variable/variable, variable/constant and constant/variable) passes in basil-sim but fails in MDB on every Integer and LongInt sum, and no erratum mentions it, so the multi-byte compare keeps the bias. What changed: Y's top byte is biased in W right before the last `SUBWFB` (`XORLW` changes only N and Z, DS40002043F p.629, so the borrow survives) instead of through `__D3`: 2 words fewer for a variable/variable compare, and `__D3` is no longer used by compares. The single-byte compare (no borrow in; MDB agrees) now flips W's sign when OV is set and branches once on N: `btfsc STATUS,3; xorlw 0x80; bn` replaces `bov; bn; bra; bnn` (1 word fewer). b_dsp 2714 → 2690 bytes.
 
 ## 5. Float
 

@@ -3051,20 +3051,9 @@ impl<'p> Gen<'p> {
         }
     }
 
-    /// Branches on the flags of `X - Y` (already computed) for `X < Y` / `X >= Y`.
-    fn flag_branch(&mut self, lt: bool, signed: bool, target: &str) {
-        if !signed {
-            self.br(if lt { Cc::Nc } else { Cc::C }, target);
-            return;
-        }
-        // Signed order is N xor OV.
-        let (lov, fall) = (self.fresh(), self.fresh());
-        self.br(Cc::Ov, &lov);
-        self.br(if lt { Cc::N } else { Cc::Nn }, target);
-        self.br(Cc::Always, &fall);
-        self.label(&lov);
-        self.br(if lt { Cc::Nn } else { Cc::N }, target);
-        self.label(&fall);
+    /// Branches on the carry of `X - Y` (already computed) for unsigned `X < Y` / `X >= Y`.
+    fn flag_branch(&mut self, lt: bool, target: &str) {
+        self.br(if lt { Cc::Nc } else { Cc::C }, target);
     }
 
     fn ord_jump(&mut self, kind: CmpKind, l: &Ex, r: &Ex, n: u32, signed: bool, target: &str) {
@@ -3241,40 +3230,47 @@ impl<'p> Gen<'p> {
                     self.b(0)
                 }
             };
-            // Signed: add 0x80 to both top bytes and compare unsigned, so only the carry chain
-            // matters (the overflow flag of a multi-byte subtract is not relied on).
-            if signed {
-                let (d2, d3) = (self.d(2), self.d(3));
+            // Signed: add 0x80 to both top bytes and compare unsigned, so only the carry chain matters. The overflow
+            // flag of a multi-byte subtract is not relied on: the MDB simulator gives OV = 0 for `SUBWFB` of
+            // 0x80 - 0x7F with borrow (docs/DECISIONS.md D34, docs/EFFICIENCY.md section 4). X's biased top byte is
+            // staged in __D2; Y's is biased in W just before the last subtract (XORLW changes only N and Z, so the
+            // borrow survives), which needs no second register.
+            // Only a signed compare takes a scratch register (an unsigned one must not reserve __D0..__D2).
+            let d2 = signed.then(|| self.d(2));
+            if let Some(d2) = &d2 {
                 self.fop("movf", &xm.at(n - 1), "w");
                 self.ins("xorlw 0x80");
-                self.fo("movwf", &d2);
-                // A constant's biased byte needs no register: it is loaded just before the last subtract.
-                if let Bs::Mem(_) = ys.byte(n - 1) {
-                    let yb = ys.byte(n - 1);
-                    self.src_to_w(&yb);
-                    self.ins("xorlw 0x80");
-                    self.fo("movwf", &d3);
-                }
+                self.fo("movwf", d2);
             }
             for i in 0..n {
-                if signed && i + 1 == n {
-                    let d2 = self.d(2);
-                    match ys.byte(n - 1) {
+                let yb = ys.byte(i);
+                if let Some(d2) = d2.as_ref().filter(|_| i + 1 == n) {
+                    match yb {
                         Bs::Imm(k) => self.ins(format!("movlw 0x{:02X}", k ^ 0x80)),
                         Bs::Mem(_) => {
-                            let d3 = self.d(3);
-                            self.fop("movf", &d3, "w");
+                            self.src_to_w(&yb);
+                            self.ins("xorlw 0x80");
                         }
                     }
-                    self.fop("subwfb", &d2, "w");
+                    self.fop("subwfb", d2, "w");
                 } else {
-                    let yb = ys.byte(i);
                     self.src_to_w(&yb);
                     self.fop(if i == 0 { "subwf" } else { "subwfb" }, &xm.at(i), "w");
                 }
             }
+            self.flag_branch(lt, target);
+            return;
         }
-        self.flag_branch(lt, signed && n == 1, target);
+        if signed {
+            // One byte: W holds X - Y from SUBWF or SUBLW, both of which set N and OV, and signed X < Y is N xor OV.
+            // Flipping W's sign bit when OV is set (XORLW sets N) leaves N alone as the answer: one branch instead
+            // of `bov`/`bn`/`bra`/`bnn`.
+            self.ins("btfsc STATUS, 3, c");
+            self.ins("xorlw 0x80");
+            self.br(if lt { Cc::N } else { Cc::Nn }, target);
+            return;
+        }
+        self.flag_branch(lt, target);
     }
 
     // ---- statements -----------------------------------------------------------------------
