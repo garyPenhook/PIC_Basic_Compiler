@@ -186,6 +186,8 @@ existing signed exec tests exercise `flag_branch`, so the 8-bit `bov/bn/bra/bnn`
 
 **0.1.162.** The N/OV form was tried for every width (`subwf..subwfb; btfsc STATUS,OV; xorlw 0x80; bn`) and `tests/exec/signed_ov_cmp.bas` (`scripts/gen-signed-ov-tests.py`: ShortInt, Integer and LongInt at the edges of their ranges, `< <= > >=`, variable/variable, variable/constant and constant/variable) passes in basil-sim but fails in MDB on every Integer and LongInt sum, and no erratum mentions it, so the multi-byte compare keeps the bias. What changed: Y's top byte is biased in W right before the last `SUBWFB` (`XORLW` changes only N and Z, DS40002043F p.629, so the borrow survives) instead of through `__D3`: 2 words fewer for a variable/variable compare, and `__D3` is no longer used by compares. The single-byte compare (no borrow in; MDB agrees) now flips W's sign when OV is set and branches once on N: `btfsc STATUS,3; xorlw 0x80; bn` replaces `bov; bn; bra; bnn` (1 word fewer). b_dsp 2714 → 2690 bytes.
 
+**0.1.163.** The `K < y` → `y >= K + 1` fold (constant moved to the right so it goes in through `movlw` instead of `__B`) now covers signed compares too, for a variable `y` and for a computed one; it is skipped when K is the largest value of the type (`0x7F..FF` signed). Integer `x > 100`: 14 → 8 words. A signed compare that ends up against 0 (`x > -1`) is a sign-bit test, 2 words. b_dsp 2690 → 2672 bytes.
+
 ## 5. Float
 
 Library routines measured (simulator, `3.14159` and `2.71828`, one call):

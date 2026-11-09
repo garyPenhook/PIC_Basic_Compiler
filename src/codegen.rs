@@ -3175,20 +3175,22 @@ impl<'p> Gen<'p> {
         }
         let (mut lt, mut xs, mut ys) = (lt, xs.unwrap(), ys);
         // `K < y` is `y >= K + 1` and `K >= y` is `y < K + 1`: the constant then sits on the right, where it
-        // folds into the compare instead of being staged in memory.
-        if !signed && n >= 2 && self.tgt.opt && let (Src::Imm(k), Some(Src::Mem(..))) = (&xs, &ys) && u64::from(*k) + 1 < 1u64 << (8 * n) {
-            let k = *k + 1;
+        // folds into the compare instead of being staged in memory. K + 1 must not wrap: K is not the largest
+        // value of the type (0xFF..FF unsigned, 0x7F..FF signed).
+        let mask = if n >= 4 { u32::MAX } else { (1u32 << (8 * n)) - 1 };
+        let top = if signed { mask >> 1 } else { mask };
+        let bump = |k: u32| (k & mask != top).then(|| (k & mask).wrapping_add(1) & mask);
+        if n >= 2 && self.tgt.opt && let (Src::Imm(k), Some(Src::Mem(..))) = (&xs, &ys) && let Some(k) = bump(*k) {
             xs = ys.take().unwrap();
             ys = Some(Src::Imm(k));
             lt = !lt;
         }
         // The same when `y` needs code (`x - 2000 <= 1000` of a range test): it is computed into __A first and the
         // constant folds into the compare instead of being staged in __B (4 words fewer for a Word).
-        if !signed && n >= 2 && self.tgt.opt && ys.is_none() && let Src::Imm(k) = &xs && u64::from(*k) + 1 < 1u64 << (8 * n) {
-            let k = *k + 1;
+        if n >= 2 && self.tgt.opt && ys.is_none() && let Src::Imm(k) = &xs && let Some(k) = bump(*k) {
             self.gen_val(ye);
             let a = Src::Mem(self.a(0), n);
-            self.ord_core(!lt, false, n, a, Some(Src::Imm(k)), None, target);
+            self.ord_core(!lt, signed, n, a, Some(Src::Imm(k)), None, target);
             if held > 0 {
                 self.free(held);
             }
@@ -3204,6 +3206,12 @@ impl<'p> Gen<'p> {
     /// (evaluated here, after which `X` must not live in `__A`/`__B`).
     #[allow(clippy::too_many_arguments)]
     fn ord_core(&mut self, lt: bool, signed: bool, n: u32, xs: Src, mut ys: Option<Src>, ye: Option<&Ex>, target: &str) {
+        // A signed `X < 0` / `X >= 0` is X's sign bit: what the K + 1 fold makes of `x > -1` or `-1 < x`.
+        if signed && n >= 2 && self.tgt.opt && matches!(ys, Some(Src::Imm(0))) && let Src::Mem(m, real) = &xs && *real == n {
+            self.fbit(if lt { "btfsc" } else { "btfss" }, &m.at(n - 1), 7);
+            self.br(Cc::Always, target);
+            return;
+        }
         if n == 1 {
             match ys.take() {
                 Some(s) => {
