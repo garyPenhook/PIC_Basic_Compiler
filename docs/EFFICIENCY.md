@@ -188,6 +188,8 @@ existing signed exec tests exercise `flag_branch`, so the 8-bit `bov/bn/bra/bnn`
 
 **0.1.163.** The `K < y` → `y >= K + 1` fold (constant moved to the right so it goes in through `movlw` instead of `__B`) now covers signed compares too, for a variable `y` and for a computed one; it is skipped when K is the largest value of the type (`0x7F..FF` signed). Integer `x > 100`: 14 → 8 words. A signed compare that ends up against 0 (`x > -1`) is a sign-bit test, 2 words. b_dsp 2690 → 2672 bytes.
 
+**0.1.164.** The fold moved to the top of `ord_jump` (`const_right`), so every compare with a constant reaches the special cases in one form, and a computed value against a constant is compared in `__A` instead of through a temporary. Benchmarks unchanged; `signed_ov_cmp` 16154 → 15342 bytes.
+
 ## 5. Float
 
 Library routines measured (simulator, `3.14159` and `2.71828`, one call):

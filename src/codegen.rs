@@ -3056,17 +3056,61 @@ impl<'p> Gen<'p> {
         self.br(if lt { Cc::Nc } else { Cc::C }, target);
     }
 
+    /// An ordered compare with one constant side, as `x op K` with the constant on the right, and `x > K` /
+    /// `x <= K` as `x >= K + 1` / `x < K + 1`, so the cases below see one form: the constant folds into the
+    /// subtract instead of being staged in `__B`, and `x > -1` reaches the sign-bit test. K + 1 is not taken when
+    /// it would wrap (K the largest value of the type), when `x > 0` / `x <= 0` has the OR test below (a signed
+    /// multi-byte variable), or for one byte when `x` needs code (W - K has no single instruction; `sublw` gives
+    /// K - W, which is the `>` / `<=` form). `None` when neither side, or both, is a constant.
+    fn const_right<'e>(&self, kind: CmpKind, l: &'e Ex, r: &'e Ex, n: u32, signed: bool) -> Option<(CmpKind, &'e Ex, Ex)> {
+        let imm = |e: &Ex| match self.simple(e) {
+            Some(Src::Imm(k)) => Some(k),
+            _ => None,
+        };
+        let (kind, x, k) = match (imm(l), imm(r)) {
+            (None, Some(k)) => (kind, l, k),
+            (Some(k), None) => {
+                let flipped = match kind {
+                    CmpKind::Lt => CmpKind::Gt,
+                    CmpKind::Gt => CmpKind::Lt,
+                    CmpKind::Le => CmpKind::Ge,
+                    _ => CmpKind::Le,
+                };
+                (flipped, r, k)
+            }
+            _ => return None,
+        };
+        // `simple` masks a constant to the operand's width, so K + 1 only has to stay below the top value.
+        let top = if signed { mask(x.w) >> 1 } else { mask(x.w) };
+        let xs = self.simple(x);
+        let or_test = signed && n >= 2 && k == 0 && matches!(xs, Some(Src::Mem(_, real)) if real == n);
+        let bump = matches!(kind, CmpKind::Gt | CmpKind::Le) && k != top && !or_test && (n >= 2 || xs.is_some());
+        let (kind, k) = match kind {
+            CmpKind::Gt if bump => (CmpKind::Ge, k.wrapping_add(1) & mask(x.w)),
+            CmpKind::Le if bump => (CmpKind::Lt, k.wrapping_add(1) & mask(x.w)),
+            _ => (kind, k),
+        };
+        Some((kind, x, Ex::konst(k, x.w, x.signed)))
+    }
+
     fn ord_jump(&mut self, kind: CmpKind, l: &Ex, r: &Ex, n: u32, signed: bool, target: &str) {
-        // A signed value against zero is a test of its sign bit: `x < 0` and `x >= 0` (`0 > x`, `0 <= x`).
+        let norm;
+        let (kind, l, r) = match self.const_right(kind, l, r, n, signed).filter(|_| self.tgt.opt) {
+            Some((kind, x, k)) => {
+                norm = k;
+                (kind, x, &norm)
+            }
+            None => (kind, l, r),
+        };
+        // A signed value against zero is a test of its sign bit: `x < 0` and `x >= 0`.
         if signed && self.tgt.opt {
             let zero = |g: &Self, e: &Ex| matches!(g.simple(e), Some(Src::Imm(0)));
             let sign = match kind {
                 CmpKind::Lt | CmpKind::Ge if zero(self, r) => Some(l),
-                CmpKind::Gt | CmpKind::Le if zero(self, l) => Some(r),
                 _ => None,
             };
             if let Some(x) = sign {
-                let neg = matches!(kind, CmpKind::Lt | CmpKind::Gt);
+                let neg = kind == CmpKind::Lt;
                 if let Some(Src::Mem(m, real)) = self.simple(x)
                     && real == n
                 {
@@ -3083,15 +3127,13 @@ impl<'p> Gen<'p> {
                 }
             }
         }
-        // `x > 0` and `x <= 0` (`0 < x`, `0 >= x`) on a signed multi-byte variable: the sign bit decides a negative
-        // value, and an OR of the bytes in W tells zero from positive.
+        // `x > 0` and `x <= 0` on a signed multi-byte variable: the sign bit decides a negative value, and an OR of
+        // the bytes in W tells zero from positive.
         if signed && n >= 2 && self.tgt.opt {
             let zero = |g: &Self, e: &Ex| matches!(g.simple(e), Some(Src::Imm(0)));
             let pos = match kind {
                 CmpKind::Gt if zero(self, r) => Some((l, true)),
-                CmpKind::Lt if zero(self, l) => Some((r, true)),
                 CmpKind::Le if zero(self, r) => Some((l, false)),
-                CmpKind::Ge if zero(self, l) => Some((r, false)),
                 _ => None,
             };
             if let Some((x, gt)) = pos
@@ -3120,39 +3162,27 @@ impl<'p> Gen<'p> {
                 return;
             }
         }
-        // An unsigned 16-bit compare against a multiple of 256 (`x >= 256`, `x > 255`, `x < 512`, `x <= 511`) only
-        // looks at the high byte.
-        if !signed && n == 2 && self.tgt.opt {
-            let (var, c, k) = match (self.simple(l), self.simple(r)) {
-                (Some(Src::Mem(m, 2)), Some(Src::Imm(c))) => (Some(m), c, kind),
-                (Some(Src::Imm(c)), Some(Src::Mem(m, 2))) => {
-                    let flipped = match kind {
-                        CmpKind::Lt => CmpKind::Gt,
-                        CmpKind::Gt => CmpKind::Lt,
-                        CmpKind::Le => CmpKind::Ge,
-                        _ => CmpKind::Le,
-                    };
-                    (Some(m), c, flipped)
-                }
-                _ => (None, 0, kind),
-            };
-            if let Some(m) = var {
-                // `x >= b` for b = c, or c + 1 when the operator is > or <=.
-                let b = if matches!(k, CmpKind::Gt | CmpKind::Le) { c + 1 } else { c };
-                if b % 256 == 0 && (256..=255 * 256).contains(&b) {
-                    let hi = m.at(1);
-                    let lt = matches!(k, CmpKind::Lt | CmpKind::Le);
-                    if b == 256 {
-                        self.fop("movf", &hi, "f");
-                        self.br(if lt { Cc::Z } else { Cc::Nz }, target);
-                    } else {
-                        self.ins(format!("movlw {}", b >> 8));
-                        self.fop("subwf", &hi, "w");
-                        self.br(if lt { Cc::Nc } else { Cc::C }, target);
-                    }
-                    return;
-                }
+        // An unsigned 16-bit compare against a multiple of 256 (`x >= 256`, `x < 512`, and so `x > 255`, `x <= 511`)
+        // only looks at the high byte.
+        if !signed
+            && n == 2
+            && self.tgt.opt
+            && matches!(kind, CmpKind::Lt | CmpKind::Ge)
+            && let (Some(Src::Mem(m, 2)), Some(Src::Imm(b))) = (self.simple(l), self.simple(r))
+            && b % 256 == 0
+            && (256..=255 * 256).contains(&b)
+        {
+            let hi = m.at(1);
+            let lt = kind == CmpKind::Lt;
+            if b == 256 {
+                self.fop("movf", &hi, "f");
+                self.br(if lt { Cc::Z } else { Cc::Nz }, target);
+            } else {
+                self.ins(format!("movlw {}", b >> 8));
+                self.fop("subwf", &hi, "w");
+                self.br(if lt { Cc::Nc } else { Cc::C }, target);
             }
+            return;
         }
         // Reduce to `X < Y` or `X >= Y`, swapping the operands for > and <=.
         let swapped = matches!(kind, CmpKind::Gt | CmpKind::Le);
@@ -3167,36 +3197,19 @@ impl<'p> Gen<'p> {
             ls = Some(Src::Mem(t, n));
         }
         let (xe, ye, mut xs, ys) = if swapped { (r, l, rs.take(), ls.take()) } else { (l, r, ls.take(), rs.take()) };
-        // X must be constant or memory.
+        // X must be constant or memory. Against a constant Y (`x - 2000 < 1001` of a range test), X is computed
+        // into __A: Y needs no code, so nothing overwrites it, and the constant folds into the subtract.
         if xs.is_none() {
-            let t = self.spill(xe);
-            held += n;
-            xs = Some(Src::Mem(t, n));
-        }
-        let (mut lt, mut xs, mut ys) = (lt, xs.unwrap(), ys);
-        // `K < y` is `y >= K + 1` and `K >= y` is `y < K + 1`: the constant then sits on the right, where it
-        // folds into the compare instead of being staged in memory. K + 1 must not wrap: K is not the largest
-        // value of the type (0xFF..FF unsigned, 0x7F..FF signed).
-        let mask = if n >= 4 { u32::MAX } else { (1u32 << (8 * n)) - 1 };
-        let top = if signed { mask >> 1 } else { mask };
-        let bump = |k: u32| (k & mask != top).then(|| (k & mask).wrapping_add(1) & mask);
-        if n >= 2 && self.tgt.opt && let (Src::Imm(k), Some(Src::Mem(..))) = (&xs, &ys) && let Some(k) = bump(*k) {
-            xs = ys.take().unwrap();
-            ys = Some(Src::Imm(k));
-            lt = !lt;
-        }
-        // The same when `y` needs code (`x - 2000 <= 1000` of a range test): it is computed into __A first and the
-        // constant folds into the compare instead of being staged in __B (4 words fewer for a Word).
-        if n >= 2 && self.tgt.opt && ys.is_none() && let Src::Imm(k) = &xs && let Some(k) = bump(*k) {
-            self.gen_val(ye);
-            let a = Src::Mem(self.a(0), n);
-            self.ord_core(!lt, signed, n, a, Some(Src::Imm(k)), None, target);
-            if held > 0 {
-                self.free(held);
+            if self.tgt.opt && n >= 2 && matches!(ys, Some(Src::Imm(_))) {
+                self.gen_val(xe);
+                xs = Some(Src::Mem(self.a(0), n));
+            } else {
+                let t = self.spill(xe);
+                held += n;
+                xs = Some(Src::Mem(t, n));
             }
-            return;
         }
-        self.ord_core(lt, signed, n, xs, ys, Some(ye), target);
+        self.ord_core(lt, signed, n, xs.unwrap(), ys, Some(ye), target);
         if held > 0 {
             self.free(held);
         }
@@ -3206,7 +3219,7 @@ impl<'p> Gen<'p> {
     /// (evaluated here, after which `X` must not live in `__A`/`__B`).
     #[allow(clippy::too_many_arguments)]
     fn ord_core(&mut self, lt: bool, signed: bool, n: u32, xs: Src, mut ys: Option<Src>, ye: Option<&Ex>, target: &str) {
-        // A signed `X < 0` / `X >= 0` is X's sign bit: what the K + 1 fold makes of `x > -1` or `-1 < x`.
+        // A signed `X < 0` / `X >= 0` is X's sign bit (X computed into __A; a variable is caught in `ord_jump`).
         if signed && n >= 2 && self.tgt.opt && matches!(ys, Some(Src::Imm(0))) && let Src::Mem(m, real) = &xs && *real == n {
             self.fbit(if lt { "btfsc" } else { "btfss" }, &m.at(n - 1), 7);
             self.br(Cc::Always, target);
