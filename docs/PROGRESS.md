@@ -1293,6 +1293,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Compiler: 16F constant-left commutative operations, 16F `w = F(...)` from the result variable, both back ends: a Boolean from a bit test or flag is `movlw 0` / skip / `movlw 1`, and `(x And m) * 16` / `<< 4` with `m` below 16 is a `swapf`.
 - Sizes: 110 programs, 66 smaller, none larger, 82283 -> 80421 words against 0.1.167. Probe (all routines) 16F17146 464 -> 393, 16F18346 408 -> 332, 18F27Q10 332 -> 300. New `timer_read.bas`, `bool_bit.bas`, `nibble_swap.bas`.
 
+## Module review 9: flashwrite (done 2026-11-10, 0.1.172)
+- `docs/MODULE-REVIEWS.md` section 9. Module: `FlashEraseSector` loads NVMADR straight from the sector number.
+- Compiler: `Byte(x >> k)` / `Byte(x << k)` of a 16-bit variable from byte operations (both back ends), a Word against a wider constant compared as a Word, constant propagation through byte-part loads, and a 16F `eq_jump` crash with a constant on the left.
+- Sizes: 102 programs, 14 smaller, none larger, 80421 -> 80062 words against 0.1.171. Probe 18F27Q10 352 -> 320, 16F17146 553 -> 516. New `narrow_shift.bas` (`tests/exec`).
+
 ## Random library programs against XC8 (done 2026-11-10, 0.1.167, no compiler change)
 - `bench/random/` (`gen.py`, `lib.h`, `run.py`): seeded random programs over 2-3 of `adc`, `serial`, `eeprom`, `bits`, `delay` plus core statements, in BASIC and in C (a port of the same library routines), built with basil and XC8 v4.00 `-Os`/`-O2` for the PIC18F27Q10 and PIC16F18346.
 - Seeds 1-12: PIC18 10626 bytes against 10310 (`-Os`, +3.1%) and 11700 (`-O2`, −9.2%); 16F 6905 words against 6028 (+14.5%) and 7130 (−3.2%). `adc` + `serial` programs are smaller than `-Os`; `eeprom` + `delay` ones 22-48% larger.

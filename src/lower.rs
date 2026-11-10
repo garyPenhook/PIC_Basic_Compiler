@@ -84,6 +84,37 @@ pub fn minmax_expand(max: bool, a: Ex, b: Ex) -> Ex {
     Ex::new(ExK::Bin(BinKind::Add, Box::new(b), Box::new(pick)), w, s)
 }
 
+/// The low byte of a shift of a 16-bit variable by a constant, built from byte operations: `Byte(x << k)` is
+/// `Byte(x) << k`, and `Byte(x >> k)` is `Byte(x) >> k Or Byte(x >> 8) << (8 - k)` (or the high byte shifted
+/// by `k - 8`), so no 16-bit shift runs. Only for a plain variable, which is read twice.
+fn narrow_shift(ex: &Ex, w: u8, signed: bool) -> Option<Ex> {
+    let ExK::Bin(op @ (BinKind::Shl | BinKind::Shr), a, k) = &ex.k else { return None };
+    let k = k.as_const()?;
+    let ExK::Load(p) = &a.k else { return None };
+    // A program variable only: a device register pair (TMR0, TMR1) is read low byte first, whatever the shift.
+    if w != 8 || ex.w != 16 || a.w != 16 || !matches!(p.base, Base::Var(_)) || p.idx.is_some() || p.dbit.is_some() || p.indirect() || p.bit.is_some() {
+        return None;
+    }
+    // Byte `n` of the variable (little-endian), read in place.
+    let part = |n: u32, s: bool| Ex::new(ExK::Load(Place { off: p.off + n, ty: Ty::Int(8, s), ..p.clone() }), 8, s);
+    let sh = |op: BinKind, x: Ex, n: u32, s: bool| Ex::new(ExK::Bin(op, Box::new(x), Box::new(Ex::konst(n, 8, false))), 8, s);
+    let out = match op {
+        BinKind::Shl if (1..8).contains(&k) => sh(BinKind::Shl, part(0, false), k, false),
+        // Below 4 places the 16-bit shift (one rotate per place per byte) is no longer than the two byte shifts and the Or.
+        BinKind::Shr if (4..8).contains(&k) => {
+            let lo = sh(BinKind::Shr, part(0, false), k, false);
+            let hi = sh(BinKind::Shl, part(1, false), 8 - k, false);
+            Ex::new(ExK::Bin(BinKind::Or, Box::new(lo), Box::new(hi)), 8, false)
+        }
+        BinKind::Shr if (8..16).contains(&k) => {
+            let s = a.signed;
+            if k == 8 { part(1, s) } else { sh(BinKind::Shr, part(1, s), k - 8, s) }
+        }
+        _ => return None,
+    };
+    Some(if out.signed == signed { out } else if matches!(out.k, ExK::Load(_)) { Ex { signed, ..out } } else { Ex::new(ExK::Conv(Box::new(out)), 8, signed) })
+}
+
 /// Converts `ex` to `w`/`signed`, extending by the operand's own signedness.
 pub fn conv(ex: Ex, w: u8, signed: bool) -> Ex {
     if ex.w == w && ex.signed == signed {
@@ -95,6 +126,9 @@ pub fn conv(ex: Ex, w: u8, signed: bool) -> Ex {
     }
     if ex.w == w && matches!(ex.k, ExK::Load(_)) {
         return Ex { signed, ..ex };
+    }
+    if let Some(n) = narrow_shift(&ex, w, signed) {
+        return n;
     }
     Ex::new(ExK::Conv(Box::new(ex)), w, signed)
 }
@@ -1872,6 +1906,28 @@ impl<'a> Lowerer<'a> {
                 BinOp::Gt => CmpKind::Gt,
                 BinOp::Le => CmpKind::Le,
                 _ => CmpKind::Ge,
+            };
+            // An unsigned value against a constant that fits its own width (a Word against `16384` that was typed
+            // as a wider integer) is compared at its own width, not widened to the constant's.
+            let fits = |c: &Ex, x: &Ex| match c.k {
+                ExK::Const(v) => !x.signed && x.w < c.w && v <= mask(x.w) && (!c.signed || v & (1 << (c.w - 1)) == 0),
+                _ => false,
+            };
+            // The unsigned value under the widening conversion the checker put round it.
+            let inner = |x: &Ex| match &x.k {
+                ExK::Conv(i) if !i.signed && i.w < x.w => (**i).clone(),
+                _ => x.clone(),
+            };
+            let (lv, rv) = if fits(&rv, &inner(&lv)) {
+                let l = inner(&lv);
+                let r = Ex::konst(rv.as_const().unwrap_or(0), l.w, false);
+                (l, r)
+            } else if fits(&lv, &inner(&rv)) {
+                let r = inner(&rv);
+                let l = Ex::konst(lv.as_const().unwrap_or(0), r.w, false);
+                (l, r)
+            } else {
+                (lv, rv)
             };
             let cw = lv.w.max(rv.w);
             let sg = lv.signed || rv.signed;

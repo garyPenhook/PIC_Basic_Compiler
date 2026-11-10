@@ -29,7 +29,8 @@ fixed in the module.
 | 6 | `dma` | reviewed (0.1.170) | `lib_dma` 284 → 226, `lib_dma_trig` 360 → 295, `lib_dma_move` 195 → 168 words (Q41) |
 | 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 189 (every 16F part, 197 in 0.1.168), 128 → 125 (Q41) |
 | 8 | `timer` | reviewed (0.1.171) | all-routines probe 464 → 393 words (16F17146), 408 → 332 (16F18346), 332 → 300 (18F27Q10); `lib_timer_f152` 324 → 300 |
-| … | `flashwrite` … `x10` | not started | |
+| 9 | `flashwrite` | reviewed (0.1.172) | all-routines probe 352 → 320 (18F27Q10), 353 → 322 (18F16Q41), 553 → 516 (16F17146); `lib_flashwrite` 343 → 311, 361 → 330, 607 → 566 |
+| … | `floatlib` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -400,6 +401,53 @@ Left as opportunities:
 - **Parameters copied twice when a routine is inlined** (as in module 6).
 - `Timer2Start` and `Timer2StartLimit` repeat the same register writes; sharing them costs words in programs that use only one.
 
+## 9. `flashwrite`
+
+The module is the program-flash self-write of the 18F27Q10 (NVMADRU, sector erase and read), the 18F-Q41 (NVMCMD) and the
+PIC16F171xx / 183xx / 1805x / 131xx / 152xx (row of 32 words with write latches). A probe calls every routine on 18F27Q10,
+18F16Q41, 16F17146, 16F18326 and 16F15244 with the address and value read from ports. Tests: `lib_flashwrite` on all six
+families (`exec`, `exec_q41`, `exec_p16`, `exec_p13`, `exec_p152`, `exec_p183`); new `narrow_shift.bas`.
+
+Correctness: no defect found by reading. Checked: interrupts are restored as found on every exit, the two NOPs after each
+self-write instruction on the Q10, NVMERR / WRERR cleared before and read after each operation, a read-back verifies each
+write, and the 16F row modify (row to a RAM image, erase, 32 latch loads, write). The register facts, unlock bytes and
+errata notes in the module were not re-derived from the data sheets in this review.
+
+Changed in the module:
+
+- `FlashEraseSector` loads NVMADR from the sector number (`NVMADRU/H = sector`, `NVMADRL = 0` on the PIC18, since a sector
+  starts at byte address 256 × s; `NVMADRH/L` from `sector >> 3` and `sector << 5` on the 16F) instead of shifting it to a
+  word address and shifting that back apart in `SetAddr`.
+
+Compiler changes found by reading the probe code:
+
+1. **Low byte of a 16-bit shift by a constant (both back ends, `lower::narrow_shift`).** `Byte(x << k)` is `Byte(x) << k`;
+   `Byte(x >> k)` is the high byte shifted by `k - 8` for `k` of 8 or more, and for `k` of 4 to 7 the low byte shifted right
+   Or the high byte shifted left by `8 - k`. The bytes are read in place. `SetAddr` on the PIC18 was three shift loops (34
+   words), now 16. Only a program variable (a device register pair such as TMR1 is read low byte first, whatever the
+   shift), and below 4 places the 16-bit shift is shorter, so it stays. Signed `>>` keeps its arithmetic shift of the high byte.
+2. **A Word against a constant of a wider type (both back ends, `lower::binary`).** `addr >= _FlashBytes` (a LongWord
+   constant) compared four bytes (16 words on the 16F); an unsigned value against a constant that fits its width is now
+   compared at its own width.
+3. **Constant propagation through byte-part loads (`opt.rs`, `byte_part`).** Item 1 turns `Byte(count >> 8)` into a load of
+   byte 1 of `count`; a parameter or variable with a known value now gives that byte's value too, or calls such as
+   `DmaCopy(.., 5)` would no longer fold (the first version made `lib_dma_srcmove` 118 → 134).
+4. **16F `eq_jump` with a constant on the left and a computed right side** (`70000 = x` for a Word `x`) hit an
+   `unreachable!` and stopped the compiler; the operands are swapped first. Found by `narrow_shift.bas`.
+
+Probe, words: 18F27Q10 352 → 320, 18F16Q41 353 → 322, 16F17146 553 → 516, 16F18326 554 → 517, 16F15244 558 → 521.
+`narrow_shift.bas` checks `Byte(x >> k)` and `Byte(x << k)` for every `k` (Word and Integer) and the Word-against-constant
+compares in both operand orders against the same value computed through a Word or LongWord variable. Over the 102 library
+programs against 0.1.171: 14 smaller, none larger, 80 421 → 80 062 words (−359).
+
+Left as opportunities:
+
+- **Copies on the 16F.** `SetAddr` still copies its argument twice and `FlashWriteWord` moves `value` to a temporary for
+  the read-back compare (the missing 16F copy forwarding, as in earlier modules).
+- **`FlashUpdateWord` on the 16F** loads each latch through `SetAddr` (a call and two stores per word); writing NVMADRL
+  alone in the loop would be shorter, at the cost of a second copy of the address set-up.
+- A right shift by 1 to 3 places of a Word still runs as a 16-bit shift on both back ends.
+
 ## Next
 
-Module 9, `flashwrite`, then on through the list in alphabetical order.
+Module 10, `floatlib`, then on through the list in alphabetical order.

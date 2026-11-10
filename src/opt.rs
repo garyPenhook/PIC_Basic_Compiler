@@ -467,6 +467,15 @@ fn whole_var(p: &Place, vars: &[Var]) -> Option<VarId> {
     }
 }
 
+/// One byte of a multi-byte variable (`Byte(w >> 8)` reads byte 1 of `w` in place): the variable and the bit
+/// position of the byte, so a known value of the whole variable gives the byte's value.
+fn byte_part(p: &Place, vars: &[Var]) -> Option<(VarId, u32)> {
+    match p.base {
+        Base::Var(v) if p.bit.is_none() && p.idx.is_none() && p.dbit.is_none() && !vars[v].by_ref && p.width() == 8 && p.bytes() == 1 && p.off < vars[v].bytes && vars[v].bytes > 1 => Some((v, p.off * 8)),
+        _ => None,
+    }
+}
+
 fn all_bodies(p: &mut Program) -> impl Iterator<Item = (Option<FuncId>, &mut Vec<S>)> {
     p.funcs.iter_mut().enumerate().map(|(i, f)| (Some(i), &mut f.body)).chain(std::iter::once((None, &mut p.main.body)))
 }
@@ -531,6 +540,13 @@ fn propagate_params(p: &mut Program) -> bool {
                     && e.w == value.w
                 {
                     *e = Ex::konst(k, e.w, e.signed);
+                    hit = true;
+                } else if let ExK::Load(pl) = &e.k
+                    && let Some((v, sh)) = byte_part(pl, vars)
+                    && v == pv
+                    && e.w == 8
+                {
+                    *e = Ex::konst((k >> sh) & 0xFF, 8, e.signed);
                     hit = true;
                 }
             });
@@ -787,6 +803,13 @@ fn subst_known(e: &mut Ex, env: &HashMap<VarId, u32>, vars: &[Var]) -> bool {
         {
             *x = Ex::konst(k, x.w, x.signed);
             hit = true;
+        } else if let ExK::Load(pl) = &x.k
+            && let Some((v, sh)) = byte_part(pl, vars)
+            && let Some(&k) = env.get(&v)
+            && x.w == 8
+        {
+            *x = Ex::konst((k >> sh) & 0xFF, 8, x.signed);
+            hit = true;
         }
         fold(x);
     });
@@ -1002,6 +1025,13 @@ fn propagate_locals(p: &mut Program) -> bool {
                         && e.w == pl.width()
                     {
                         *e = Ex::konst(k, e.w, e.signed);
+                        hit = true;
+                    } else if let ExK::Load(pl) = &e.k
+                        && let Some((v, sh)) = byte_part(pl, &vars)
+                        && let Some(&k) = known.get(&v)
+                        && e.w == 8
+                    {
+                        *e = Ex::konst((k >> sh) & 0xFF, 8, e.signed);
                         hit = true;
                     }
                     fold(e);

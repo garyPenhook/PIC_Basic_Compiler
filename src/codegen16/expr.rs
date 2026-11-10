@@ -1167,6 +1167,10 @@ impl<'p> G<'p> {
     }
 
     fn eq_jump(&mut self, a: &Ex, b: &Ex, target: &str, eq: bool) {
+        // A constant on the left and a value that needs the accumulator on the right: compare the other way round.
+        if a.as_const().is_some() && b.as_const().is_none() && !self.simple(b) {
+            return self.eq_jump(b, a, target, eq);
+        }
         let n = (a.w / 8) as u32;
         let bo = self.operand(b);
         // The left side: a plain variable is compared in place, anything else goes through A.

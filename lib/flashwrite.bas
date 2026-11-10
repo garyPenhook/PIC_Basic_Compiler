@@ -147,9 +147,14 @@ Public Function FlashEraseSector(ByVal sector As Word) As Byte
         ie = IntEn
         IntEn = 0
 #if _has(PRODL)
-        SetAddr(sector << 7)
+        ' Sector s starts at byte address 256 * s, so NVMADRL = 0 and the sector number is NVMADRH (NVMADRU).
+        NVMADRU = Byte(sector >> 8)
+        NVMADRH = Byte(sector)
+        NVMADRL = 0
 #else
-        SetAddr(sector << 5)
+        ' Sector s starts at word address 32 * s.
+        NVMADRH = Byte(sector >> 3)
+        NVMADRL = Byte(sector << 5)
 #endif
 #if _has(NVMLOCK)
         NVMCON1 = 6
