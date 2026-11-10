@@ -59,7 +59,7 @@ impl<'p> G<'p> {
     }
 
     /// Constant data address (as an FSR sees it) of a place with no run-time part.
-    fn const_fsr_addr(&mut self, p: &Place) -> Option<u32> {
+    pub(crate) fn const_fsr_addr(&mut self, p: &Place) -> Option<u32> {
         match (&p.base, &p.idx) {
             (Base::Var(v), None) => {
                 let m = self.var_mem(*v, p.off);

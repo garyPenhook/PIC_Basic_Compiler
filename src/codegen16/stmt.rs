@@ -183,6 +183,14 @@ impl<'p> G<'p> {
         let n = (w / 8) as u32;
         let e = fit(e, w);
         if let Some(m) = self.place_mem(p) {
+            // `w = @x`: the address of a variable or register is a constant, written straight into the destination.
+            let e = match &e.k {
+                ExK::Addr(q) => match self.const_fsr_addr(q) {
+                    Some(a) => Ex::konst(a & 0xFFFF, e.w, false),
+                    None => e,
+                },
+                _ => e,
+            };
             if let ExK::Const(v) = e.k {
                 let mut last: Option<u32> = None;
                 for k in 0..n {

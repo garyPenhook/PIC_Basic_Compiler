@@ -3486,6 +3486,26 @@ impl<'p> Gen<'p> {
             self.store_src(&dst, n, &s);
             return;
         }
+        // `w = @x` (the address of a variable or SFR, a Word): the two address bytes are written straight into the
+        // destination, not built in `__A` and copied out.
+        if n == 2 && e.w == 16 && self.tgt.opt && let ExK::Addr(q) = &e.k && !q.indirect() {
+            let sym = match &q.base {
+                Base::Var(v) => {
+                    self.uses[*v] += weight(self.depth);
+                    Some(self.p.vars[*v].asm.clone())
+                }
+                Base::Abs { name, .. } => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(sym) = sym {
+                let at = if q.off == 0 { sym } else { format!("{sym}+{}", q.off) };
+                self.ins(format!("movlw low({at})"));
+                self.fo("movwf", &dst.at(0));
+                self.ins(format!("movlw high({at})"));
+                self.fo("movwf", &dst.at(1));
+                return;
+            }
+        }
         // `x = ((x op a) op b) …` and `x = (x >> k) op a`: each step is applied to `x` in place, in order, when no
         // later step reads `x` (it has changed by then) and no call in a step can change it or, after the first
         // change, read it.

@@ -26,7 +26,7 @@ fixed in the module.
 | 3 | `bits` | reviewed (0.1.165) | `lib_bits` 588 → 566; probe 860 → 787 (−8.5%) |
 | 4 | `buttons` | reviewed (0.1.166) | `lib_buttons` 300 → 262; probe 342 → 296 (18F27Q10), 437 → 388 (16F18346) |
 | 5 | `delay` | reviewed (0.1.167) | `DelaySeconds` 34 → 21 words (18F27Q10), 36 → 22 (16F18346); `delay_var` 36 → 23 / 36 → 21 |
-| 6 | `dma` | next | |
+| 6 | `dma` | reviewed (0.1.170) | `lib_dma` 284 → 226, `lib_dma_trig` 360 → 295, `lib_dma_move` 195 → 168 words (Q41) |
 | 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 189 (every 16F part, 197 in 0.1.168), 128 → 125 (Q41) |
 | … | `flashwrite` … `x10` | not started | |
 
@@ -249,6 +249,45 @@ Left as opportunities:
 - `DelaySeconds`' loop is tested at the top (`movf s, f` / `bnz`) after a jump in; a `decfsz` at the bottom with one
   guard would save a word. The compiler's `While` shape decides this.
 
+## 6. `dma`
+
+Done after `eeprom` (module 7). Tests: the nine `tests/exec_q41/lib_dma*.bas` programs (registers left behind in
+MDB, bytes moved against the DMA model of `scripts/dma_sim.py`), all passing; new `addr_store.bas` for the compiler change.
+
+Measured first: the module is already close to what the source can give. Every routine validates its arguments, picks
+the channel, writes about twenty registers and starts, and the set-up of `DmaCopy`, `DmaCopyFlash`, `DmaCopyEeprom`
+and `DmaOnTrigger` is similar. A shared private `Arm` routine did shrink a probe that calls all four (908 → 884 bytes,
+852 with cheaper range checks) but made the programs people write larger: a test that calls one or two of them grew by
+25 to 40 words (`lib_dma_abort` 150 → 190), because the single-call routine is inlined with its parameters copied
+twice. **Dropped.** The module keeps one body per routine.
+
+Changed in the module:
+
+- `channel >= 1` / `channel <= DmaChannels` are one `And` test in every routine that has both (1 to 4 words each).
+  The same for the byte count was tried and is worse: the compiler turns `count >= 1 And count <= 4095` into
+  `count - 1 <= 4094` (a 16-bit subtract) where the two nested tests were a zero test and a high-byte test.
+
+Compiler change found by reading `DmaCopy`'s call sites (both back ends): **`w = @x` and ByRef arguments**. The address
+of a variable or register is a constant, but it was built in `__A` and copied out (`movlw low(x)` / `movwf __A0` /
+`movlw high(x)` / `movwf __A1` / `movff __A0, p` / `movff __A1, p+1`: 6 words). The PIC18 now writes the two bytes
+straight into the destination (4 words); the PIC16 does the same through its constant path (the 16F18346 ByRef call
+was 37 words, now 28). Every ByRef call and every `@x` assignment gains.
+
+Over the 110 library programs against 0.1.167: 37 smaller, none larger, 82 283 → 81 323 words (this step −415 after
+0.1.169). `lib_dma` 284 → 226, `lib_dma_trig` 360 → 295, `lib_dma_trigmove` 321 → 285, `lib_dma_move` 195 → 168,
+`lib_dma_eeprom` 201 → 177, `lib_dma_flash` 190 → 174; outside the DMA module `lib_buttons` 255 → 223,
+`lib_strings` 165 → 145, `lib_aht30` 704 → 680, `lib_glcd` 2872 → 2848, `library_all.bas` 7081 → 7045,
+`library_q41.bas` 5346 → 5316.
+
+Left as opportunities:
+
+- **Parameters copied twice when a routine is inlined.** An inlined single-call routine still copies each argument into
+  its parameter and then on into the next routine's parameters (`DmaCopy` → `Arm` above). Forwarding the caller's
+  value (a constant, or a variable not written in between) into the callee's uses would let a layered module cost
+  nothing for its layers; it is the same gap as X6 in `EFFICIENCY.md`.
+- The `PRLOCK` unlock is inlined in every routine that arms a channel (11 words each); a shared routine pays only from
+  the second use. The data sheet's sequence (DS40002214G Example 7-1) is unchanged.
+
 ## 7. `eeprom`
 
 Reviewed ahead of `dma`, which the random-program comparison against XC8 pointed to (`EepromWrite` / `EepromRead` on the
@@ -301,4 +340,4 @@ Left as opportunities, worked in 0.1.169:
 
 ## Next
 
-Module 6, `dma`, then on through the list in alphabetical order.
+Module 8, `flashwrite`, then on through the list in alphabetical order.

@@ -91,29 +91,27 @@ End Sub
 ' destination object: a count larger than the array overwrites whatever follows it.
 Public Function DmaCopy(ByVal channel As Byte, ByVal src As Word, ByVal dst As Word, ByVal count As Word) As Byte
     Result = 0
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            If count >= 1 Then
-                If count <= DmaMaxBytes Then
-                    PickChannel(channel)
-                    If (DMAnCON0 And 96) = 0 Then
-                        DMAnCON0 = 0
-                        DMAnSSAU = 0
-                        DMAnSSAH = Byte(src >> 8)
-                        DMAnSSAL = Byte(src)
-                        DMAnDSAH = Byte(dst >> 8)
-                        DMAnDSAL = Byte(dst)
-                        DMAnSSZH = Byte(count >> 8)
-                        DMAnSSZL = Byte(count)
-                        DMAnDSZH = Byte(count >> 8)
-                        DMAnDSZL = Byte(count)
-                        DMAnCON1 = 66
-                        LockPriority()
-                        If PrLocked = 1 Then
-                            DMAnCON0 = 128
-                            DMAnCON0 = 160
-                            Result = 1
-                        End If
+    If channel >= 1 And channel <= DmaChannels Then
+        If count >= 1 Then
+            If count <= DmaMaxBytes Then
+                PickChannel(channel)
+                If (DMAnCON0 And 96) = 0 Then
+                    DMAnCON0 = 0
+                    DMAnSSAU = 0
+                    DMAnSSAH = Byte(src >> 8)
+                    DMAnSSAL = Byte(src)
+                    DMAnDSAH = Byte(dst >> 8)
+                    DMAnDSAL = Byte(dst)
+                    DMAnSSZH = Byte(count >> 8)
+                    DMAnSSZL = Byte(count)
+                    DMAnDSZH = Byte(count >> 8)
+                    DMAnDSZL = Byte(count)
+                    DMAnCON1 = 66
+                    LockPriority()
+                    If PrLocked = 1 Then
+                        DMAnCON0 = 128
+                        DMAnCON0 = 160
+                        Result = 1
                     End If
                 End If
             End If
@@ -127,29 +125,27 @@ End Function
 ' the results of DmaCopy. Nothing checks that `count` bytes fit the destination object.
 Public Function DmaCopyFlash(ByVal channel As Byte, ByVal src As LongWord, ByVal dst As Word, ByVal count As Word) As Byte
     Result = 0
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            If count >= 1 Then
-                If count <= DmaMaxBytes Then
-                    PickChannel(channel)
-                    If (DMAnCON0 And 96) = 0 Then
-                        DMAnCON0 = 0
-                        DMAnSSAU = Byte(src >> 16)
-                        DMAnSSAH = Byte(src >> 8)
-                        DMAnSSAL = Byte(src)
-                        DMAnDSAH = Byte(dst >> 8)
-                        DMAnDSAL = Byte(dst)
-                        DMAnSSZH = Byte(count >> 8)
-                        DMAnSSZL = Byte(count)
-                        DMAnDSZH = Byte(count >> 8)
-                        DMAnDSZL = Byte(count)
-                        DMAnCON1 = 74
-                        LockPriority()
-                        If PrLocked = 1 Then
-                            DMAnCON0 = 128
-                            DMAnCON0 = 160
-                            Result = 1
-                        End If
+    If channel >= 1 And channel <= DmaChannels Then
+        If count >= 1 Then
+            If count <= DmaMaxBytes Then
+                PickChannel(channel)
+                If (DMAnCON0 And 96) = 0 Then
+                    DMAnCON0 = 0
+                    DMAnSSAU = Byte(src >> 16)
+                    DMAnSSAH = Byte(src >> 8)
+                    DMAnSSAL = Byte(src)
+                    DMAnDSAH = Byte(dst >> 8)
+                    DMAnDSAL = Byte(dst)
+                    DMAnSSZH = Byte(count >> 8)
+                    DMAnSSZL = Byte(count)
+                    DMAnDSZH = Byte(count >> 8)
+                    DMAnDSZL = Byte(count)
+                    DMAnCON1 = 74
+                    LockPriority()
+                    If PrLocked = 1 Then
+                        DMAnCON0 = 128
+                        DMAnCON0 = 160
+                        Result = 1
                     End If
                 End If
             End If
@@ -164,31 +160,29 @@ End Function
 ' the Q41 in particular, and this has not been run on a Q41. Returns at once, with the results of DmaCopy.
 Public Function DmaCopyEeprom(ByVal channel As Byte, ByVal src As Word, ByVal dst As Word, ByVal count As Word) As Byte
     Result = 0
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            If count >= 1 Then
-                If count <= DmaMaxBytes Then
-                    If src < _EepromBytes Then
-                        If count <= _EepromBytes - src Then
-                            PickChannel(channel)
-                            If (DMAnCON0 And 96) = 0 Then
-                                DMAnCON0 = 0
-                                DMAnSSAU = 0
-                                DMAnSSAH = Byte(src >> 8)
-                                DMAnSSAL = Byte(src)
-                                DMAnDSAH = Byte(dst >> 8)
-                                DMAnDSAL = Byte(dst)
-                                DMAnSSZH = Byte(count >> 8)
-                                DMAnSSZL = Byte(count)
-                                DMAnDSZH = Byte(count >> 8)
-                                DMAnDSZL = Byte(count)
-                                DMAnCON1 = 90
-                                LockPriority()
-                                If PrLocked = 1 Then
-                                    DMAnCON0 = 128
-                                    DMAnCON0 = 160
-                                    Result = 1
-                                End If
+    If channel >= 1 And channel <= DmaChannels Then
+        If count >= 1 Then
+            If count <= DmaMaxBytes Then
+                If src < _EepromBytes Then
+                    If count <= _EepromBytes - src Then
+                        PickChannel(channel)
+                        If (DMAnCON0 And 96) = 0 Then
+                            DMAnCON0 = 0
+                            DMAnSSAU = 0
+                            DMAnSSAH = Byte(src >> 8)
+                            DMAnSSAL = Byte(src)
+                            DMAnDSAH = Byte(dst >> 8)
+                            DMAnDSAL = Byte(dst)
+                            DMAnSSZH = Byte(count >> 8)
+                            DMAnSSZL = Byte(count)
+                            DMAnDSZH = Byte(count >> 8)
+                            DMAnDSZL = Byte(count)
+                            DMAnCON1 = 90
+                            LockPriority()
+                            If PrLocked = 1 Then
+                                DMAnCON0 = 128
+                                DMAnCON0 = 160
+                                Result = 1
                             End If
                         End If
                     End If
@@ -211,49 +205,47 @@ Public Function DmaOnTrigger(ByVal channel As Byte, ByVal trigger As Byte, ByVal
     Dim ssz As Word
     Dim dsz As Word
     Result = 0
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            If trigger >= 1 Then
-                If trigger <= 93 Then
-                    If count >= 1 Then
-                        If count <= DmaMaxBytes Then
-                            PickChannel(channel)
-                            If (DMAnCON0 And 96) = 0 Then
-                                con1 = 0
-                                ssz = 1
-                                dsz = 1
-                                If (options And 1) = 0 Then
-                                    con1 = 2
-                                    ssz = count
+    If channel >= 1 And channel <= DmaChannels Then
+        If trigger >= 1 Then
+            If trigger <= 93 Then
+                If count >= 1 Then
+                    If count <= DmaMaxBytes Then
+                        PickChannel(channel)
+                        If (DMAnCON0 And 96) = 0 Then
+                            con1 = 0
+                            ssz = 1
+                            dsz = 1
+                            If (options And 1) = 0 Then
+                                con1 = 2
+                                ssz = count
+                            End If
+                            If (options And 2) = 0 Then
+                                con1 = con1 + 64
+                                dsz = count
+                            End If
+                            If (options And 4) <> 0 Then
+                                If (options And 1) = 0 Or (options And 2) <> 0 Then
+                                    con1 = con1 + 1
+                                Else
+                                    con1 = con1 + 32
                                 End If
-                                If (options And 2) = 0 Then
-                                    con1 = con1 + 64
-                                    dsz = count
-                                End If
-                                If (options And 4) <> 0 Then
-                                    If (options And 1) = 0 Or (options And 2) <> 0 Then
-                                        con1 = con1 + 1
-                                    Else
-                                        con1 = con1 + 32
-                                    End If
-                                End If
-                                DMAnCON0 = 0
-                                DMAnSSAU = 0
-                                DMAnSSAH = Byte(src >> 8)
-                                DMAnSSAL = Byte(src)
-                                DMAnDSAH = Byte(dst >> 8)
-                                DMAnDSAL = Byte(dst)
-                                DMAnSSZH = Byte(ssz >> 8)
-                                DMAnSSZL = Byte(ssz)
-                                DMAnDSZH = Byte(dsz >> 8)
-                                DMAnDSZL = Byte(dsz)
-                                DMAnCON1 = con1
-                                DMAnSIRQ = trigger
-                                LockPriority()
-                                If PrLocked = 1 Then
-                                    DMAnCON0 = 192
-                                    Result = 1
-                                End If
+                            End If
+                            DMAnCON0 = 0
+                            DMAnSSAU = 0
+                            DMAnSSAH = Byte(src >> 8)
+                            DMAnSSAL = Byte(src)
+                            DMAnDSAH = Byte(dst >> 8)
+                            DMAnDSAL = Byte(dst)
+                            DMAnSSZH = Byte(ssz >> 8)
+                            DMAnSSZL = Byte(ssz)
+                            DMAnDSZH = Byte(dsz >> 8)
+                            DMAnDSZL = Byte(dsz)
+                            DMAnCON1 = con1
+                            DMAnSIRQ = trigger
+                            LockPriority()
+                            If PrLocked = 1 Then
+                                DMAnCON0 = 192
+                                Result = 1
                             End If
                         End If
                     End If
@@ -269,16 +261,14 @@ End Function
 ' The abort is one-shot: the hardware clears AIRQEN when it fires, so call DmaAbortOn again after DmaAborted.
 Public Function DmaAbortOn(ByVal channel As Byte, ByVal trigger As Byte) As Byte
     Result = 0
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            If trigger >= 1 Then
-                If trigger <= 93 Then
-                    PickChannel(channel)
-                    If (DMAnCON0 And 128) <> 0 Then
-                        DMAnAIRQ = trigger
-                        AirqEn = 1
-                        Result = 1
-                    End If
+    If channel >= 1 And channel <= DmaChannels Then
+        If trigger >= 1 Then
+            If trigger <= 93 Then
+                PickChannel(channel)
+                If (DMAnCON0 And 128) <> 0 Then
+                    DMAnAIRQ = trigger
+                    AirqEn = 1
+                    Result = 1
                 End If
             End If
         End If
@@ -309,22 +299,18 @@ End Function
 ' A channel outside 1..4 reports 1.
 Public Function DmaDone(ByVal channel As Byte) As Byte
     Result = 1
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            PickChannel(channel)
-            If (DMAnCON0 And 96) <> 0 Then
-                Result = 0
-            End If
+    If channel >= 1 And channel <= DmaChannels Then
+        PickChannel(channel)
+        If (DMAnCON0 And 96) <> 0 Then
+            Result = 0
         End If
     End If
 End Function
 
 ' Stops `channel` and returns its registers to their reset values; a copy in progress is cut short.
 Public Sub DmaStop(ByVal channel As Byte)
-    If channel >= 1 Then
-        If channel <= DmaChannels Then
-            PickChannel(channel)
-            DMAnCON0 = 0
-        End If
+    If channel >= 1 And channel <= DmaChannels Then
+        PickChannel(channel)
+        DMAnCON0 = 0
     End If
 End Sub
