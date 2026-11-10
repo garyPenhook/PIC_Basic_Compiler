@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.166**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.167**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -1845,9 +1845,11 @@ DelayUS(microseconds)
 **Overview** Cycle-counted delays computed from `Clock`. The compiler works out the loop counts at
 compile time. With a constant argument the achieved error is reported.
 
-**Parameters** A constant, or a variable of any integer type. A negative constant is an error. A
+**Parameters** A constant, or a variable of up to 16 bits (`Byte`, `Word`, ...). A negative constant is an error. A
 **variable** delay needs an integral number of instruction cycles per unit at the given `Clock`;
-otherwise the build fails rather than rounding silently.
+otherwise the build fails rather than rounding silently. A variable delay loop costs 3 cycles a
+pass for a `Byte` and 5 for a `Word`, so a variable `DelayUS` needs a `Clock` of at least 12 MHz
+(`Byte`) or 20 MHz (`Word`).
 
 **Example**
 ```basic
@@ -2380,7 +2382,8 @@ DelaySeconds(5)
 ```basic
 DelayNop()
 ```
-**Overview** Waits exactly one instruction cycle.
+**Overview** A short fixed pause of 5 instruction cycles: the call, one `nop` and the return.
+Where exactly one cycle is wanted, write `Asm nop End Asm` in place.
 
 **Example**
 ```basic

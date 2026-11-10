@@ -25,8 +25,9 @@ fixed in the module.
 | 2 | `aht30` | reviewed (0.1.165) | 796 → 712 words (−84, −11%) |
 | 3 | `bits` | reviewed (0.1.165) | `lib_bits` 588 → 566; probe 860 → 787 (−8.5%) |
 | 4 | `buttons` | reviewed (0.1.166) | `lib_buttons` 300 → 262; probe 342 → 296 (18F27Q10), 437 → 388 (16F18346) |
-| 5 | `delay` | next | |
-| … | `dma` … `x10` | not started | |
+| 5 | `delay` | reviewed (0.1.167) | `DelaySeconds` 34 → 21 words (18F27Q10), 36 → 22 (16F18346); `delay_var` 36 → 23 / 36 → 21 |
+| 6 | `dma` | next | |
+| … | `eeprom` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -100,6 +101,23 @@ New test: `tests/exec/cmp_zero_one.bas` (every zero test and its mirror forms on
 255, 256, 0x01FF, 0xFF01, 0xFFFF; byte and word equality with 1, 255, 0xFFFF, 0x01FF, 0xFF01; a ByRef countdown stepped
 and tested in place). Checked on 18F27Q10, 18F16Q41, 16F18346, 16F17146, 16F15244 and 16F13145. New unit tests:
 `peephole::tests::byref_pointer_reload_is_dropped`, `step_then_test_and_incdec_compares`.
+
+## Compiler changes found through the reviews (0.1.167)
+
+1. **Variable delays (both back ends, `delay`).** `DelayMS(v)` / `DelayUS(v)` set a 16-bit counter to `v − 1` with a
+   zero guard, copied it from `__A` to `__D`, and counted down with `movlw`/`subwf`/`movlw`/`subwfb`/branch: 17
+   words around the timed body for a Byte. The counter now stays in `__A`, starts at the complement of the value
+   and is stepped at the top of the loop, so a value of 0 runs no pass and needs no separate test. A Byte steps with
+   `incfsz`/`bra` (3 cycles a pass, 5 words with the set-up); a Word with an `incfsz` chain (`incfsz lo` / `bra back` /
+   `incfsz hi` / `back: bra top`) whose two paths back both take 5 cycles (7 words). A variable `DelayUS` now needs
+   12 MHz (Byte) or 20 MHz (Word) instead of 24 MHz (PIC18) and 28 MHz (16F).
+2. **Constant delays (`emit_cycles`, both back ends).** A counter of 256 is set with `clrf` (1 word, 1 cycle) instead
+   of `movlw 0` / `movwf`. (A counter loop would also be a word shorter than the `bra`s for 10 to 12 cycles, but it takes a `__D` byte, which a handler then has to save; left as is.)
+   Checked against a model of the emitted code for every count up to 3 000 000.
+
+New tests: `tests/exec/delay_var_word.bas` and `tests/exec_p16/delay_var_word.bas` (Word counts 256, 511, 300 and 0,
+Byte counts 200 and 0), `tests/exec/delay_seconds.bas` and `tests/exec_p16/delay_seconds.bas` (`DelaySeconds` of 0
+and 2, `DelayNop`); cycle counts checked in basil-sim (18F27Q10) and MDB (16F17146).
 
 ## 1. `adc`
 
@@ -200,6 +218,36 @@ Left as opportunities:
 - The 10 ms debounce wait is a cycle-counted delay; a timer would let the main loop run on. That is a design choice of
   the module, not a size issue.
 
+## 5. `delay`
+
+The module is two routines; most of what `Include "delay"` stands for is the `DelayMS`/`DelayUS` intrinsics, so the
+review covered their code as well (compiler changes 0.1.167).
+
+Changed in the module:
+
+- `DelaySeconds` was `For i = 1 To s`: a loop variable, a hidden copy of the limit, and a compare and an increment
+  each pass. It now counts `s` down (`While s <> 0 ... s = s - 1`): 34 → 21 words on the 18F27Q10, 36 → 22 on the
+  16F18346, two bytes of RAM fewer.
+- `DelayNop` was documented (manual, `LIBRARY.md`, the module) as one instruction cycle. It is a call: `rcall`/`call`
+  2, `nop` 1, `return` 2, so 5 cycles on both cores (DS40002043F Table 38-2 p.626-628; DS40001839E Table 34-3 p.399).
+  The documentation now says so and points to `Asm nop End Asm` for a single cycle.
+
+Over the programs measured (112 with the delay tests): 18 smaller, none larger, 82 725 → 82 417 words (−308):
+`library_all.bas` 7140 → 7081, `lib_lcd` 721 → 701, `lib_glcd` 2888 → 2872, `lib_i2c` (Q41) 435 → 421.
+
+Left as opportunities:
+
+- **`DelayNop` as one cycle.** A routine whose body is raw `Asm` is never inlined (`inline_single_calls` skips
+  `Item::Raw`), so the call stays even when it is longer than the body. Inlining a routine whose body is no longer than
+  its call would make `DelayNop` the single cycle its name suggests and save its 2 words.
+- **For loop limit.** `For i = 1 To s` keeps a hidden copy of `s` although the body cannot write it (a `ByVal`
+  parameter, no calls). Using the limit in place when nothing in the body can change it would save the copy in every
+  such loop.
+- **Byte value in W.** A Byte delay of a plain variable is `movf v, w` / `xorlw 0xFF`; `comf v, w` is one word
+  shorter, with the same W and flags. A peephole would serve `Not v` in general as well.
+- `DelaySeconds`' loop is tested at the top (`movf s, f` / `bnz`) after a jump in; a `decfsz` at the bottom with one
+  guard would save a word. The compiler's `While` shape decides this.
+
 ## Next
 
-Module 5, `delay`, then on through the list in alphabetical order.
+Module 6, `dma`, then on through the list in alphabetical order.

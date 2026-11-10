@@ -926,37 +926,43 @@ impl<'p> G<'p> {
             return;
         }
         let per = unit.round() as i64;
-        // The loop adds seven cycles of its own per pass (the branch back is a flag test and a `bra`).
-        let body = per - 7;
+        // The counter starts at the complement of the value and steps up to zero, the step at the top: a value of 0
+        // runs no pass. A Byte steps with `incfsz` (3 cycles a pass); a Word with an `incfsz` chain whose two
+        // paths back are both 5 cycles (the low byte not wrapping goes through a second `bra`).
+        let byte = e.w <= 8;
+        let overhead = if byte { 3 } else { 5 };
+        let body = per - overhead;
         if body < 0 {
-            self.err("a variable DelayUS needs a Clock of at least 28 MHz; use a constant");
+            // `overhead` cycles per unit at four clocks a cycle.
+            let mhz = 4.0 * overhead as f64 / if ms { 1000.0 } else { 1.0 };
+            self.err(format!("a variable {} of a {} needs a Clock of at least {mhz} MHz; use a constant", if ms { "DelayMS" } else { "DelayUS" }, if byte { "Byte" } else { "Word" }));
             return;
         }
-        let e16 = fit(&Ex { signed: false, ..e.clone() }, 16);
-        self.ev(&e16);
-        self.items.push(Item::Keep(true));
         let (a0, a1) = (self.a(0), self.a(1));
-        let (d0, d1) = (self.d(0), self.d(1));
-        let skip = self.fresh();
-        self.fop("movf", &a0, "w");
-        self.fop("iorwf", &a1, "w");
-        self.br(Cc::Z, &skip);
-        // counter = value - 1
-        self.ins("movlw 1");
-        self.fop("subwf", &a0, "f");
-        self.ins("movlw 0");
-        self.fop("subwfb", &a1, "f");
-        self.copy_bytes(&d0, &a0, 1);
-        self.copy_bytes(&d1, &a1, 1);
-        let lp = self.fresh();
-        self.label(&lp);
-        self.emit_cycles(body as u64, 2);
-        self.ins("movlw 1");
-        self.fop("subwf", &d0, "f");
-        self.ins("movlw 0");
-        self.fop("subwfb", &d1, "f");
-        self.br(Cc::C, &lp);
-        self.label(&skip);
+        self.ev(&Ex { signed: false, ..e.clone() });
+        self.items.push(Item::Keep(true));
+        if byte {
+            self.ins("xorlw 0xFF");
+            self.fo("movwf", &a0);
+        } else {
+            self.fop("comf", &a0, "f");
+            self.fop("comf", &a1, "f");
+        }
+        let (lp, step) = (self.fresh(), self.fresh());
+        self.ins(format!("bra {step}"));
+        self.items.push(Item::Label(lp.clone()));
+        self.emit_cycles(body as u64, 0);
+        self.items.push(Item::Label(step));
+        self.fop("incfsz", &a0, "f");
+        if byte {
+            self.items.push(Item::Ins(format!("bra {lp}")));
+        } else {
+            let back = self.fresh();
+            self.items.push(Item::Ins(format!("bra {back}")));
+            self.fop("incfsz", &a1, "f");
+            self.items.push(Item::Label(back));
+            self.items.push(Item::Ins(format!("bra {lp}")));
+        }
         self.items.push(Item::Keep(false));
     }
 
@@ -965,6 +971,8 @@ impl<'p> G<'p> {
         if n == 0 {
             return;
         }
+        // Up to 12 cycles, branches to the next word and a `nop`: no counter byte, so no RAM and nothing for a handler
+        // to save (a counter loop would be a word shorter from 10 cycles up).
         if n <= 12 {
             for _ in 0..n / 2 {
                 let l = self.fresh();
@@ -979,10 +987,15 @@ impl<'p> G<'p> {
         if n <= 769 {
             // One counter loop costs 3c + 1 cycles for c in 1..=256.
             let c = ((n - 1) / 3).clamp(1, 256);
-            let used = 3 * c + 1;
+            // A count of 256 is set with `clrf`, one cycle less.
+            let used = 3 * c + 1 - u64::from(c == 256);
             let ctr = self.d(first);
-            self.ins(format!("movlw {}", c & 0xFF));
-            self.fo("movwf", &ctr);
+            if c == 256 {
+                self.fo("clrf", &ctr);
+            } else {
+                self.ins(format!("movlw {c}"));
+                self.fo("movwf", &ctr);
+            }
             let l = self.fresh();
             self.items.push(Item::Label(l.clone()));
             self.items.push(Item::Ins(format!("decfsz {}, f", ctr.text())));
@@ -990,13 +1003,13 @@ impl<'p> G<'p> {
             self.emit_cycles(n - used, first);
             return;
         }
-        // M passes of an exact inner block of P cycles cost M * (P + 3) + 1.
+        // M passes of an exact inner block of P cycles, the last falling through its `decfsz`.
         let m = 256u64;
-        let p = ((n - 1) / m).saturating_sub(3);
-        let used = m * (p + 3) + 1;
+        // The count (256) is set with `clrf`: M * (P + 3) in all.
+        let p = (n / m).saturating_sub(3);
+        let used = m * (p + 3);
         let ctr = self.d(first);
-        self.ins("movlw 0");
-        self.fo("movwf", &ctr);
+        self.fo("clrf", &ctr);
         let l = self.fresh();
         self.items.push(Item::Label(l.clone()));
         self.emit_cycles(p, first + 1);

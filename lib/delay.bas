@@ -3,13 +3,15 @@ Module Delay
 ' intrinsics: cycle-counted from `Clock`, so they run longer when an interrupt hits them.
 
 Public Sub DelaySeconds(ByVal s As Byte)
-    Dim i As Byte
-    For i = 1 To s
+    ' Counts s down to 0: no loop variable and no copy of the limit.
+    While s <> 0
         DelayMs(1000)
-    Next
+        s = s - 1
+    Wend
 End Sub
 
-' One instruction cycle.
+' A short fixed pause: the call, one `nop` and the return (5 instruction cycles). Inline
+' `Asm nop End Asm` where exactly one cycle is wanted.
 Public Sub DelayNop()
     Asm
         nop

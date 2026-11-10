@@ -155,7 +155,7 @@ make), never fall through to the Q10 registers.
 | Routine | Effect |
 |---|---|
 | `DelaySeconds(s)` | `s` x `DelayMs(1000)` |
-| `DelayNop()` | one instruction cycle |
+| `DelayNop()` | a 5-cycle pause (call, `nop`, return) |
 
 ## timer (Timer0, Timer1, Timer2; FOSC/4 clock)
 | Routine | Effect |
