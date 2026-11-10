@@ -475,3 +475,45 @@ Word stores).
   0.1.161: a basil-sim fault, not the compiler's (see `docs/PROGRESS.md`).
 
 Program bytes: total 7124 to 7092. Test: `tests/exec/partial_write_clear.bas`.
+
+## 11. Random library programs against XC8 (0.1.167, 2026-11-10)
+
+`bench/random/`: `gen.py` writes a seeded random program in BASIC and in C. Each program takes 2 or 3 of the library
+modules `adc`, `serial`, `eeprom`, `bits` and `delay`, plus core statements (Word arithmetic, a 32-bit multiply, a
+divide, array loops, port writes), 16 operations in an endless loop; every input is read from a port, so nothing folds.
+The C side calls `lib.h`, a port of the library routines used (same logic, same register writes, the library's `Const`
+values as `#define`s, taken from basil's own output), for the PIC18F27Q10 at 64 MHz and the PIC16F18346 at 32 MHz.
+`run.py` builds each pair with basil and XC8 v4.00 `-Os` and `-O2`. Sizes only: the pairs were not run, so behaviour is
+not checked to be identical (C's integer promotions differ slightly from BASIC's).
+
+Seeds 1-12. Flash in bytes on the PIC18 and in words on the 16F (each tool's own unit):
+
+| Part | basil | XC8 -Os | XC8 -O2 | basil vs -Os | basil vs -O2 |
+|---|---|---|---|---|---|
+| 18F27Q10 | 10626 | 10310 | 11700 | +3.1% | −9.2% |
+| 16F18346 | 6905 | 6028 | 7130 | +14.5% | −3.2% |
+
+By module: `adc` + `serial` programs are 14-17% smaller than `-Os` on the PIC18 (about 1-2% on the 16F); `bits`,
+`serial`, `adc` + `delay` 3-8% larger on the PIC18 and 3-23% on the 16F; `eeprom` + `delay` programs (seeds 6-8) 22-35%
+larger on the PIC18 and 31-48% on the 16F. RAM: basil 46-56 bytes in every program, XC8 32-62 (less without `adc`).
+
+### What needs to improve
+
+Found by comparing routine sizes in seed 8 (`eeprom` + `delay`), XC8 sizes from its `.sym` start/end symbols:
+
+| # | Where | basil | XC8 -Os | Change |
+|---|---|---|---|---|
+| X1 | Repeated statement sequences | each copy in full | identical sequences moved into shared blocks (`PL1`..`PL14`, procedural abstraction) | an outlining pass over the final items for repeated runs of 4+ words; the generator repeats statements, so this weighs more here than in real programs |
+| X2 | `LongWord(a) * b`, both operands 16 bits | `__mul4`, a 32 × 32 helper of 67 words (PIC18) | `__lmul` 38 words | multiply zero-extended Word operands as 16 × 16 → 32 (four `mulwf` partials); a smaller `__mul4` when speed is not asked for |
+| X3 | `buf(i) = buf(i) + i * x` | 15 words: element to `__main__TMP`, add, `movff` back through `PLUSW0` | in `-Os` shared via X1 | add into the element in place (FSR0 to the element, `addwf INDF0, f`), about 8 words; related to M8 and M10 |
+| X4 | `EepromWrite` / `EepromRead` on the 16F | 75 / 40 words | 48 / 31 | the 16F result and argument copies through `__A` (open in the module reviews); review `eeprom` as module 7 |
+| X5 | 16F program body | 453 words in seed 8 | 148 plus its shared blocks | the 16F back end lacks the PIC18's result coalescing, copy forwarding and staging passes (M1-M3, M8 have no 16F counterpart) |
+| X6 | Argument set-up for `EepromWrite(k + (PORTB And 15), y)` | computed in `__A`, then 2 × `movff` into the parameter | built in the parameter | compute a parameter in place when nothing else in the call's arguments reads it |
+| X7 | RAM | 46-56 bytes whatever the program | 32-62 | scratch `__A..__D` and per-module state are reserved whether or not used much; check the overlay of scratch with locals |
+
+Where basil already wins: `serial` and `adc` routines (constant baud and clock arithmetic folded, short polling
+loops), `__div2` (28 words against `__lwdiv` 37), and `EepromRead` on the PIC18 (21 words against 17 + `SetAddr` 7).
+
+**Order.** X2 and X3 are small, general and safe; X5 is the largest gap and belongs with the 16F half of M1-M3; X1 is a
+new pass and should come last, measured on `bench/large` and the library tests as well as here so the random
+programs' repetition does not overstate it.
