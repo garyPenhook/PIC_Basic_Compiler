@@ -481,7 +481,9 @@ Function Wait(ByVal what As Byte, ByVal nack As Boolean) As Byte
         End If
         If FlagBcl = 1 Then
             Result = 2
-        ElseIf nack And FlagNack = 1 And (Result = 1 Or what <> 3) Then
+        ElseIf nack And FlagNack = 1 And (what <> 3 Or BitRxbf = 0) Then
+            ' Waiting for a byte, RXBF is read again here: the byte (RXBF, 8th clock) and the module's own not
+            ' acknowledge of it (NACKIF, 9th) can both land between the read above and this one.
             Result = 3
         End If
         If Result = 1 Then

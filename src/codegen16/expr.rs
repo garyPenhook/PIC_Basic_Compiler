@@ -994,6 +994,25 @@ impl<'p> G<'p> {
         let w = a.w.max(b.w);
         let signed = a.signed && b.signed;
         let (a, b) = (fit(a, w), fit(b, w));
+        // Unsigned against 0 or 1 where the answer is "is it zero": `x > 0`, `x >= 1`, `0 < x`, `1 <= x` are `x <> 0`,
+        // and the negations `x = 0`; `movf x, f` and a branch per byte, not the value copied to __A and subtracted.
+        if !signed {
+            let k = |e: &Ex| e.as_const().map(|c| c & mask(w));
+            let zero_test = match (kind, k(&a), k(&b)) {
+                (CmpKind::Gt, None, Some(0)) | (CmpKind::Ge, None, Some(1)) => Some((&a, false)),
+                (CmpKind::Le, None, Some(0)) | (CmpKind::Lt, None, Some(1)) => Some((&a, true)),
+                (CmpKind::Lt, Some(0), None) | (CmpKind::Le, Some(1), None) => Some((&b, false)),
+                (CmpKind::Ge, Some(0), None) | (CmpKind::Gt, Some(1), None) => Some((&b, true)),
+                _ => None,
+            };
+            if let Some((x, eq)) = zero_test
+                && self.simple(x)
+            {
+                let z = Ex::konst(0, x.w, false);
+                self.eq_jump(x, &z, target, eq);
+                return;
+            }
+        }
         match kind {
             CmpKind::Eq | CmpKind::Ne => self.eq_jump(&a, &b, target, kind == CmpKind::Eq),
             _ if w == 8 && !signed => self.cmp8(kind, a, b, target),
@@ -1098,6 +1117,11 @@ impl<'p> G<'p> {
             match &s {
                 Sb::K(0) => {
                     self.fop("movf", &am.at(i), "f");
+                }
+                // `incf` / `decf` into W sets Z exactly when the byte is 0xFF / 1 (one word, not `movlw` + `xorwf`).
+                Sb::K(k @ (1 | 0xFF)) => {
+                    let op = if *k == 1 { "decf" } else { "incf" };
+                    self.fop(op, &am.at(i), "w");
                 }
                 _ => {
                     self.ld_w(&s);

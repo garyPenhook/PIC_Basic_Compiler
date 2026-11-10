@@ -42,37 +42,37 @@ End Function
 ' then every `rate` calls (0 = every call). With `delay` 0 or 255 there is no repeat. `state` is the button's memory:
 ' a Byte of the caller's, one per button, that must be 0 at the start and must not be changed in between.
 Public Function Button(ByVal pin As Byte, ByVal down As Boolean, ByVal delay As Byte, ByVal rate As Byte, ByRef state As Byte) As Boolean
+    ' The state is worked on in `s` and written back once: `state` is reached through a pointer.
+    Dim s As Byte
     Result = False
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
     Pinio.BindData(pin)
     Pinio.PinInput(pin)
-    If Pinio.DataRead() <> down Then
-        state = 0
-        Exit
-    End If
-    If state = 0 Then
-        ' A new press: wait out the bounce.
-        DelayMS(10)
-        If Pinio.DataRead() <> down Then
-            Exit
-        End If
-        Result = True
-        If delay = 0 Then
-            state = 255
-        Else
-            state = delay
-        End If
-    ElseIf state <> 255 Then
-        state = state - 1
-        If state = 0 Then
-            Result = True
-            If rate = 0 Then
-                state = 1
-            Else
-                state = rate
+    s = 0
+    If Pinio.DataRead() = down Then
+        s = state
+        If s = 0 Then
+            ' A new press: wait out the bounce (a bounce leaves the state 0).
+            DelayMS(10)
+            If Pinio.DataRead() = down Then
+                Result = True
+                s = delay
+                If s = 0 Then
+                    s = 255
+                End If
+            End If
+        ElseIf s <> 255 Then
+            s = s - 1
+            If s = 0 Then
+                Result = True
+                s = rate
+                If s = 0 Then
+                    s = 1
+                End If
             End If
         End If
     End If
+    state = s
 End Function

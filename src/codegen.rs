@@ -1409,6 +1409,19 @@ impl<'p> Gen<'p> {
                 return;
             }
         }
+        // The pointee of a `ByRef` parameter itself (no index, no offset): the pointer goes straight to FSRn, not
+        // through `__A`, so `pass_redundant_lfsr` can see a second access to it and drop the reload.
+        if let Base::Ptr(v) = &p.base
+            && p.idx.is_none()
+            && p.off == 0
+            && self.tgt.opt
+        {
+            let m = self.mem_obj(*v, self.p.vars[*v].asm.clone());
+            let (fl, fh) = (self.sfr_mem(&format!("FSR{n}L")), self.sfr_mem(&format!("FSR{n}H")));
+            self.movff(&fl, &m);
+            self.movff(&fh, &m.at(1));
+            return;
+        }
         self.point_fsr_a(n, p);
     }
 
@@ -2954,6 +2967,18 @@ impl<'p> Gen<'p> {
                     return;
                 }
             }
+            // `x = 255` and `x = 1`: `incf` / `decf x, w` leaves Z set exactly then (2 words, not 3). When `x` was
+            // just stored from W, `pass_incdec_w` turns it into `addlw` on W.
+            if self.tgt.opt {
+                for (a, b) in [(&ls, &rs), (&rs, &ls)] {
+                    if let (Some(Src::Mem(m, _)), Some(Src::Imm(k @ (1 | 0xFF)))) = (a, b) {
+                        let (m, op) = (m.clone(), if *k == 1 { "decf" } else { "incf" });
+                        self.fop(op, &m, "w");
+                        self.br(if eq { Cc::Z } else { Cc::Nz }, target);
+                        return;
+                    }
+                }
+            }
             let other = match (&ls, &rs) {
                 (Some(a), Some(b)) => {
                     // Start from a memory operand so a constant folds into the xor.
@@ -3022,6 +3047,12 @@ impl<'p> Gen<'p> {
         for i in 0..n {
             let (lb, rb) = (ls.byte(i), rs.byte(i));
             match (&lb, &rb) {
+                // A byte against 0xFF or 1: `incf` / `decf` it into W sets Z exactly when it matches.
+                (Bs::Imm(k @ (1 | 0xFF)), Bs::Mem(m)) | (Bs::Mem(m), Bs::Imm(k @ (1 | 0xFF))) if self.tgt.opt => {
+                    let op = if *k == 1 { "decf" } else { "incf" };
+                    let m = m.clone();
+                    self.fop(op, &m, "w");
+                }
                 (Bs::Imm(_), Bs::Mem(_)) => {
                     self.src_to_w(&rb);
                     if let Bs::Imm(k) = lb {
@@ -3106,6 +3137,17 @@ impl<'p> Gen<'p> {
             }
             None => (kind, l, r),
         };
+        // Unsigned `x >= 1` and `x < 1` (so also `x > 0`, `x <= 0`, `0 < x`) on a variable are `x <> 0` and `x = 0`:
+        // `movf`/`iorwf` and one branch instead of a subtract per byte.
+        if !signed
+            && self.tgt.opt
+            && matches!(kind, CmpKind::Lt | CmpKind::Ge)
+            && matches!(self.simple(r), Some(Src::Imm(1)))
+            && matches!(self.simple(l), Some(Src::Mem(_, real)) if real == n)
+        {
+            self.eq_jump(kind == CmpKind::Lt, l, &Ex::konst(0, l.w, l.signed), n, target);
+            return;
+        }
         // A signed value against zero is a test of its sign bit: `x < 0` and `x >= 0`.
         if signed && self.tgt.opt {
             let zero = |g: &Self, e: &Ex| matches!(g.simple(e), Some(Src::Imm(0)));
@@ -3346,6 +3388,18 @@ impl<'p> Gen<'p> {
             };
             if let Some(src) = operand.and_then(|x| self.simple(x)) {
                 let n = p.bytes();
+                // One byte, plus or minus 1: `incf` / `decf` on the byte, no constant in W.
+                let step = match (op, &src) {
+                    (BinKind::Add, Src::Imm(1)) | (BinKind::Sub, Src::Imm(255)) => Some("incf"),
+                    (BinKind::Sub, Src::Imm(1)) | (BinKind::Add, Src::Imm(255)) => Some("decf"),
+                    _ => None,
+                };
+                if let Some(step) = step.filter(|_| n == 1) {
+                    self.point_fsr0(p);
+                    let ind = self.sfr_mem("INDF0");
+                    self.fop(step, &ind, "f");
+                    return;
+                }
                 self.point_fsr0(p);
                 let (post, ind) = (self.sfr_mem("POSTINC0"), self.sfr_mem("INDF0"));
                 for i in 0..n {

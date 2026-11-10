@@ -24,12 +24,16 @@ fixed in the module.
 | 1 | `adc` | reviewed (0.1.165) | 18F27Q10 119 → 113 words; every 16F part −5 |
 | 2 | `aht30` | reviewed (0.1.165) | 796 → 712 words (−84, −11%) |
 | 3 | `bits` | reviewed (0.1.165) | `lib_bits` 588 → 566; probe 860 → 787 (−8.5%) |
-| 4 | `buttons` | next | |
-| … | `delay` … `x10` | not started | |
+| 4 | `buttons` | reviewed (0.1.166) | `lib_buttons` 300 → 262; probe 342 → 296 (18F27Q10), 437 → 388 (16F18346) |
+| 5 | `delay` | next | |
+| … | `dma` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
 `tests/exec_p180_parts/small.bas` 1692 → 1635, and `lib_i2c` on every 16F part −30.
+
+Module 4 (0.1.166) adds: 102 programs, 69 smaller, none larger, 82 955 → 82 547 words (−408). `library_all.bas` 7187 → 7140,
+`lib_pulse` 875 → 851, `lib_oled_text` (16F13) 1438 → 1423, `lib_pwm` (16F16) 1455 → 1443.
 
 ## Compiler changes found through the reviews (0.1.165)
 
@@ -63,6 +67,39 @@ run-time arguments, byte shifts by 4..7 both ways, signed byte shifts, and a loo
 Left for later (from the review of these changes): `pass_skipbr_over_branch` and the PIC18 `pass_skip_over_branch` do
 the same inversion and could be one pass that takes both item kinds; `pass_overwritten_store` scans one straight run,
 where `byte_dead_paths` follows both sides of a branch (it would need a flag to treat a `return` as a read for globals).
+
+## Compiler changes found through the reviews (0.1.166)
+
+1. **Unsigned compares with 0 and 1 are zero tests (both back ends).** `x > 0`, `x >= 1`, `0 < x`, `1 <= x` on an unsigned
+   variable are `x <> 0`, and `x <= 0`, `x < 1` are `x = 0`. The PIC18 had turned `x > 0` into `x >= 1` and subtracted
+   (`movlw 1`/`subwf`/`movlw 0`/`subwfb`/`bc`, 5 words for a Word); it is now the OR test (`movf`/`iorwf`/`bnz`, 3), and
+   one byte is `movf x, f` and a branch (2, was 3). On the enhanced mid-range core the value had been copied to `__A`
+   and subtracted. Found in `Counter`'s `While ms > 0`.
+2. **ByRef pointer straight to FSR, and its reload dropped (PIC18).** Reaching a `ByRef` parameter's byte copied the
+   pointer to `__A` and then to FSR0 (`point_fsr_a`); a plain pointer (no index, no offset) now goes straight to FSRn.
+   `pass_redundant_lfsr` treats `movff S, FSRnL` / `movff S+1, FSRnH` as it treats `lfsr`: a second pair while FSRn still
+   holds S goes. The value is forgotten at a label, a call, a taken branch, any other mention of the FSR, and any
+   instruction that may write S or S+1 (an inlined second call stores a new pointer).
+3. **`p = p ± 1` on an indirect byte is `incf`/`decf INDF0, f`** (was `movlw 1` / `subwf INDF0, f`).
+4. **Step then test (`pass_repeat_test`).** `decf x, f` (or `incf`, `addwf`, `andwf`, ... with `x` as destination) followed
+   by `movf x, f`: the first already set Z (and N) from x, so the test goes (`s = s - 1 : If s = 0`).
+5. **`x = 1` and `x = 255` on a byte are `decf`/`incf x, w`** and one branch (2 words, was `movf`/`xorlw`/branch); in a
+   wide equality each byte that is compared with 0x01 or 0xFF gets the same (both back ends). On the PIC18 two
+   peepholes keep this from costing where W already holds the byte: `movwf x` / `incf x, w` becomes `addlw 0x01` (same
+   W and flags; the store may then go), and `movf x, w` / `xorlw 1` / `bz` from other code becomes `decf x, w` when W and
+   the carry are dead on both sides of the branch (not in a `Select Case` chain that goes on with `xorlw`).
+
+A driver race these changes brought out: `i2c` (hardware driver) `Wait` read RXBF, then NACKIF, and reported a not
+acknowledge (status 3) when the byte had not yet arrived at the first read. A one-byte read's byte (RXBF, 8th clock) and
+the module's own not acknowledge of it (NACKIF, 9th) can both land between the two reads, which the shorter loop made
+happen in `scripts/test_i2chw.py` at 8 MHz and 4 MHz with a 400 kHz bus (`rd1`, `rdOne` returned 3). `Wait` now reads
+RXBF again when it sees NACKIF while waiting for a byte, so received data wins over NACKIF as its comment intends. The
+old code was open to the same race at other timings.
+
+New test: `tests/exec/cmp_zero_one.bas` (every zero test and its mirror forms on Byte, Word and LongWord over 0, 1, 2,
+255, 256, 0x01FF, 0xFF01, 0xFFFF; byte and word equality with 1, 255, 0xFFFF, 0x01FF, 0xFF01; a ByRef countdown stepped
+and tested in place). Checked on 18F27Q10, 18F16Q41, 16F18346, 16F17146, 16F15244 and 16F13145. New unit tests:
+`peephole::tests::byref_pointer_reload_is_dropped`, `step_then_test_and_incdec_compares`.
 
 ## 1. `adc`
 
@@ -136,6 +173,33 @@ Left as opportunities (compiler):
 - `LoadBit` inlines a call of `SetBit` and of `ClearBit` and copies the arguments and the result through both frames
   (about 30 words for the LongWord form); not measured against an alternative yet.
 
+## 4. `buttons`
+
+Probe program (`Button` twice and `Counter` twice, every argument read from a port): 18F27Q10 342 → 296 words
+(`Button` 110 → 66), 16F18346 437 → 388 (`Button` 128 → 81).
+
+Changed in the module:
+
+- `Button` read and wrote the caller's `state` through its pointer at every step (eight pointer loads, and the
+  `ElseIf` re-read it after the decrement). It now copies `state` into a local `s` once the button is seen down, works
+  on `s`, and writes it back once at the end; a button that is up, or a press that turns out to be a bounce, writes 0
+  as before. `If delay = 0 Then state = 255 Else state = delay` became `s = delay : If s = 0 Then s = 255` (and the same
+  for `rate`), which keeps the value in `s`. The behaviour is the same in every case; `lib_buttons` checks the held,
+  released and no-repeat paths.
+- `Counter` is unchanged; its `While ms > 0` gained from compiler change 1.
+
+Left as opportunities:
+
+- **`pinio` calls.** `Button` and `Counter` spend more in `pinio` than in themselves: `PinOk` is 20 words of three
+  range compares where `pin < 24` would do on a part with ports B and C; `BindData` and `PinInput` each build
+  `1 << (pin And 7)` with the `__shl1` loop; on the 16F `DataRead` is 64 words. For the `pinio` review.
+- **16F `ByRef`.** The enhanced mid-range core reaches `state` through FSR with no reuse of the loaded pointer; the PIC18
+  change 2 has no 16F counterpart yet.
+- **Indirect step then test.** `decf INDF0, f` / `movf INDF0, w` / `bnz` (a `ByRef` byte stepped and tested): the
+  `movf` is redundant, but `pass_repeat_test` only reasons about compiler-placed RAM, and W is live at the `return`.
+- The 10 ms debounce wait is a cycle-counted delay; a timer would let the main loop run on. That is a design choice of
+  the module, not a size issue.
+
 ## Next
 
-Module 4, `buttons`, then on through the list in alphabetical order.
+Module 5, `delay`, then on through the list in alphabetical order.

@@ -1568,11 +1568,37 @@ fn pass_hoist_movlb(items: &mut Vec<Item>) -> bool {
 }
 
 /// `movf s,w` / `movwf x` / `movf x,f`: the flags the first load set still describe `x`, so the
-/// test of `x` repeats them. Only for compiler-placed RAM, whose read has no side effect.
+/// test of `x` repeats them. Likewise `decf x,f` / `movf x,f` (`s = s - 1 : If s = 0`): an arithmetic or logic
+/// instruction that writes `x` has set Z (and on the PIC18 N) from the value `movf` would test, and leaves C alone
+/// no differently. Only for compiler-placed RAM, whose read has no side effect.
 fn pass_repeat_test(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
     let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Fence | Item::Comment(_))).collect();
     let mut dead = vec![false; items.len()];
+    for w in real.windows(2) {
+        let (i, j) = (w[0], w[1]);
+        let (Item::Ins(a), Item::Ins(b)) = (&items[i], &items[j]) else { continue };
+        if keep[i] || keep[j] {
+            continue;
+        }
+        let (Some((ma, oa)), Some((mb, ob))) = (parse(a), parse(b)) else { continue };
+        let sets_zn = matches!(
+            ma.as_str(),
+            "incf" | "decf" | "addwf" | "addwfc" | "subwf" | "subwfb" | "subfwb" | "andwf" | "iorwf" | "xorwf" | "comf" | "movf"
+        );
+        if sets_zn
+            && oa.len() >= 2
+            && matches!(oa[1], "f" | "1")
+            && mb == "movf"
+            && ob.len() >= 2
+            && matches!(ob[1], "f" | "1")
+            && oa[0] == ob[0]
+            && oa.get(2) == ob.get(2)
+            && env.is_plain(ob[0])
+        {
+            dead[j] = true;
+        }
+    }
     for w in real.windows(3) {
         let (i, j, k) = (w[0], w[1], w[2]);
         let (Item::Ins(a), Item::Ins(b), Item::Ins(c)) = (&items[i], &items[j], &items[k]) else { continue };
@@ -1593,6 +1619,67 @@ fn pass_repeat_test(items: &mut Vec<Item>, env: &Env) -> bool {
             k += 1;
             !dead[k - 1]
         });
+    }
+    changed
+}
+
+/// `movf x, w` / `xorlw 1` (or `0xFF`) / `bz` or `bnz`: `decf x, w` (or `incf`) sets Z exactly when `x` is 1 (or 255),
+/// one word fewer, when nothing reads `WREG` (now `x - 1` instead of `x ^ 1`), N (now from `x - 1`) or the carry and
+/// overflow flags the `decf` also writes, on either side of the branch. Not in a chain of compares that goes on with `xorlw` on `WREG`.
+fn pass_incdec_test(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Comment(_))).collect();
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for w in real.windows(3) {
+        let (i, j, k) = (w[0], w[1], w[2]);
+        let (Item::Ins(a), Item::Ins(b), Item::Br(Cc::Z | Cc::Nz, _)) = (&items[i], &items[j], &items[k]) else { continue };
+        if keep[i] || keep[j] || keep[k] {
+            continue;
+        }
+        let (Some((ma, oa)), Some((mb, ob))) = (parse(a), parse(b)) else { continue };
+        if ma != "movf" || oa.len() < 2 || !matches!(oa[1], "w" | "0") || mb != "xorlw" || ob.len() != 1 {
+            continue;
+        }
+        let op = match parse_lit(ob[0]) {
+            Some(1) => "decf",
+            Some(0xFF) => "incf",
+            _ => continue,
+        };
+        if oa[0].eq_ignore_ascii_case("WREG") || !dead_paths(items, k, true, C | OV | N) {
+            continue;
+        }
+        edits.push((i, j, format!("{op} {}", oa.join(", "))));
+    }
+    let changed = !edits.is_empty();
+    for (i, j, t) in edits.into_iter().rev() {
+        items[i] = Item::Ins(t);
+        items.remove(j);
+    }
+    changed
+}
+
+/// `movwf x` / `incf x, w` (or `decf`): W already holds `x`, so `addlw 1` (or `addlw 0xFF`) gives the same W and the
+/// same Z, N, C and OV without reading `x` again, and the store may then go (`pass_write_only`, `pass_dead_stores`).
+fn pass_incdec_w(items: &mut [Item], env: &Env) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Comment(_))).collect();
+    let mut changed = false;
+    for w in real.windows(2) {
+        let (i, j) = (w[0], w[1]);
+        let (Item::Ins(a), Item::Ins(b)) = (&items[i], &items[j]) else { continue };
+        if keep[i] || keep[j] {
+            continue;
+        }
+        let (Some((ma, oa)), Some((mb, ob))) = (parse(a), parse(b)) else { continue };
+        if ma != "movwf" || oa.is_empty() || !matches!(mb.as_str(), "incf" | "decf") || ob.len() < 2 || !matches!(ob[1], "w" | "0") {
+            continue;
+        }
+        if oa[0] != ob[0] || oa.get(1) != ob.get(2) || !env.is_plain(oa[0]) {
+            continue;
+        }
+        let k = if mb == "incf" { "0x01" } else { "0xFF" };
+        items[j] = Item::Ins(format!("addlw {k}"));
+        changed = true;
     }
     changed
 }
@@ -2252,16 +2339,45 @@ fn pass_redundant_movlb(items: &mut Vec<Item>) -> bool {
 /// run and nothing since has written it. `PLUSW`/`INDF` accesses leave the pointer alone, so a second access to the
 /// same array (the swap in a bubble sort) reloads nothing. Any other mention of an FSR, the auto-increment forms, a
 /// label, a branch taken, a call or raw text forgets what is known. Interrupt handlers save and restore FSR0..2.
+///
+/// The same holds for a pointer copied in from RAM, `movff S, FSRnL` / `movff S+1, FSRnH` (the pointer of a `ByRef`
+/// parameter): the pair goes when FSR n already holds S, and is forgotten when anything may write S or S+1. S is
+/// matched by name: a `ByRef` pointer slot has no other name in a straight run (an overlaid frame byte cannot be
+/// written while S is still to be read), and routines are not reentrant, so an interrupt does not change it either.
 fn pass_redundant_lfsr(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
     let mut known: [Option<String>; 3] = [None, None, None];
     let mut dead = vec![false; items.len()];
+    let mut pair_second = usize::MAX;
     for (i, it) in items.iter().enumerate() {
+        if i == pair_second {
+            continue;
+        }
         match it {
             Item::Comment(_) | Item::Fence => {}
             Item::Br(cc, _) if *cc != Cc::Always => {}
             Item::Ins(t) => {
                 let low = t.trim().to_ascii_lowercase();
+                if let Some((n, s)) = fsr_pair(items, i) {
+                    let v = format!("@{s}");
+                    pair_second = i + 1;
+                    if keep[i] || keep[i + 1] {
+                        known[n] = None;
+                    } else if known[n].as_deref() == Some(v.as_str()) {
+                        dead[i] = true;
+                        dead[i + 1] = true;
+                    } else {
+                        known[n] = Some(v);
+                    }
+                    continue;
+                }
+                for k in known.iter_mut() {
+                    if let Some(s) = k.as_deref().and_then(|v| v.strip_prefix('@'))
+                        && may_write_sym(&low, s)
+                    {
+                        *k = None;
+                    }
+                }
                 if let Some(rest) = low.strip_prefix("lfsr ") {
                     let (n, v) = rest.split_once(',').map(|(a, b)| (a.trim(), b.trim())).unwrap_or(("", ""));
                     match (n.parse::<usize>(), v.is_empty()) {
@@ -2295,6 +2411,41 @@ fn pass_redundant_lfsr(items: &mut Vec<Item>) -> bool {
         });
     }
     changed
+}
+
+/// `movff S, FSRnL` at `i` and `movff S+1, FSRnH` right after it: `(n, S)`, with S in lower case.
+fn fsr_pair(items: &[Item], i: usize) -> Option<(usize, String)> {
+    let ops = |k: usize| -> Option<(String, String)> {
+        let Some(Item::Ins(t)) = items.get(k) else { return None };
+        let (mn, o) = parse(t)?;
+        (mn == "movff" && o.len() == 2).then(|| (o[0].to_ascii_lowercase(), o[1].to_ascii_lowercase()))
+    };
+    let (s, d) = ops(i)?;
+    let (s1, d1) = ops(i + 1)?;
+    let n = d.strip_prefix("fsr")?.strip_suffix('l')?.parse::<usize>().ok().filter(|&n| n < 3)?;
+    let ok = d1 == format!("fsr{n}h") && s1 == format!("{s}+1") && !s.contains("fsr") && !s.contains('+') && !s.contains("ind")
+        && !s.contains("inc") && !s.contains("dec") && !s.contains("plusw");
+    ok.then_some((n, s))
+}
+
+/// Whether the instruction `low` (lower case) may write the byte `s` or `s+1`: it names `s` anywhere except as the
+/// operand an instruction only reads (`movff s, x`, `movf s, w`, a test or compare). Unknown forms count as writes.
+fn may_write_sym(low: &str, s: &str) -> bool {
+    if !low.contains(s) {
+        return false;
+    }
+    let Some((mn, o)) = parse(low) else { return true };
+    match mn.as_str() {
+        "movff" | "movffl" => o.get(1).is_none_or(|d| d.contains(s)),
+        "tstfsz" | "cpfseq" | "cpfsgt" | "cpfslt" | "btfsc" | "btfss" => false,
+        // A byte instruction with a destination writes its file operand unless the result goes to W. (Not the bit
+        // instructions: their second operand is a bit number, so `bcf s, 0` is a write.)
+        "addwf" | "addwfc" | "andwf" | "comf" | "decf" | "decfsz" | "dcfsnz" | "incf" | "incfsz" | "infsnz" | "iorwf"
+        | "movf" | "rlcf" | "rlncf" | "rrcf" | "rrncf" | "subfwb" | "subwf" | "subwfb" | "swapf" | "xorwf" => {
+            !(o.len() >= 2 && matches!(o[1], "w" | "0"))
+        }
+        _ => true,
+    }
 }
 
 fn same_byte(env: &Env, a: &str, b: &str) -> bool {
@@ -3260,6 +3411,8 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_xor_chain(&mut items, env);
         changed |= pass_repeat_test(&mut items, env);
+        changed |= pass_incdec_test(&mut items);
+        changed |= pass_incdec_w(&mut items, env);
         changed |= pass_forward(&mut items, env);
         changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);
@@ -3706,6 +3859,55 @@ mod tests {
         // `X+0+1` is the byte `X+1` spelled another way (an array element's word alias): a read of it keeps the store.
         let r = run(&[ins("movwf X+1, c"), ins("movff X+0+1, Y"), ins("movff S, X+1"), ins("movf Y, w, c"), ins("movwf T, c"), Item::Fence]);
         assert_eq!(r[0], "movwf X+1, c", "{r:?}");
+    }
+
+    fn texts(v: &[Item]) -> Vec<String> {
+        v.iter()
+            .map(|i| match i {
+                Item::Ins(t) => t.clone(),
+                Item::Label(l) => format!("{l}:"),
+                Item::Br(cc, l) => format!("br{cc:?} {l}"),
+                Item::Fence => "--".into(),
+                _ => "?".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn byref_pointer_reload_is_dropped() {
+        let pair = || [ins("movff P, FSR0L"), ins("movff P+1, FSR0H")];
+        let mut v: Vec<Item> = pair().into_iter().chain([ins("decf INDF0, f, c"), ins("movf P, w, c")]).chain(pair()).chain([ins("movf INDF0, w, c")]).collect();
+        pass_redundant_lfsr(&mut v);
+        assert_eq!(texts(&v), ["movff P, FSR0L", "movff P+1, FSR0H", "decf INDF0, f, c", "movf P, w, c", "movf INDF0, w, c"]);
+        // A write to the pointer (an inlined second call), a label or a call in between keeps the reload.
+        for mid in [ins("movwf P+1, c"), ins("movff Y, P"), ins("bcf P, 0, c"), ins("incf P+1, f, c"), Item::Label("L".into()), ins("rcall F")] {
+            let mut v: Vec<Item> = pair().into_iter().chain([mid]).chain(pair()).collect();
+            pass_redundant_lfsr(&mut v);
+            assert_eq!(v.len(), 5, "{:?}", texts(&v));
+        }
+    }
+
+    #[test]
+    fn step_then_test_and_incdec_compares() {
+        // `decf X, f` has set Z from X: the `movf X, f` test goes.
+        let mut v = vec![ins("decf X, f, c"), ins("movf X, f, c"), Item::Br(Cc::Nz, "L".into())];
+        pass_repeat_test(&mut v, &env());
+        assert_eq!(texts(&v), ["decf X, f, c", "brNz L"]);
+        // W just stored to X: `incf X, w` is `addlw 0x01`.
+        let mut v = vec![ins("movwf X, c"), ins("incf X, w, c"), Item::Br(Cc::Z, "L".into())];
+        pass_incdec_w(&mut v, &env());
+        assert_eq!(texts(&v), ["movwf X, c", "addlw 0x01", "brZ L"]);
+        // `movf X, w ; xorlw 1 ; bnz` with W and the carry dead on both paths: `decf X, w`.
+        let tail = || vec![ins("movlw 5"), ins("movwf Y, c"), Item::Label("L".into()), ins("movlw 6"), ins("movwf Y, c"), Item::Fence];
+        let mut v = vec![ins("movf X, w, c"), ins("xorlw 0x01"), Item::Br(Cc::Nz, "L".into())];
+        v.extend(tail());
+        pass_incdec_test(&mut v);
+        assert_eq!(texts(&v)[..2], ["decf X, w, c", "brNz L"]);
+        // A chain of compares that goes on with W (`xorlw` again) keeps the xor.
+        let mut v = vec![ins("movf X, w, c"), ins("xorlw 0xFF"), Item::Br(Cc::Z, "L".into()), ins("xorlw 0xFD"), Item::Br(Cc::Z, "L".into())];
+        v.extend(tail());
+        pass_incdec_test(&mut v);
+        assert_eq!(texts(&v)[1], "xorlw 0xFF");
     }
 
     #[test]
