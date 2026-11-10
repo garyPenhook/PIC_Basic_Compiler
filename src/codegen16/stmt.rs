@@ -209,6 +209,31 @@ impl<'p> G<'p> {
                 self.in_place(p, &m, *op, &fit(r, w));
                 return;
             }
+            // A plain variable (or an unsigned narrower one, zero-extended) stored to memory byte by byte through WREG,
+            // not evaluated into __A and copied from there. A source that shares storage with the destination at another
+            // offset (an array element's alias) still goes through __A, which reads every byte before the first store.
+            if n > 1 {
+                let src = match &e.k {
+                    ExK::Conv(x) if !x.signed && x.w < e.w && matches!(x.k, ExK::Load(_)) => x,
+                    _ => &e,
+                };
+                if let ExK::Load(rp) = &src.k
+                    && self.simple(src)
+                    && !(rp != p && rp.base == p.base)
+                {
+                    let o = self.operand(&e);
+                    for k in 0..n {
+                        match self.opd_byte(&o, k) {
+                            Sb::K(0) => self.fo("clrf", &m.at(k)),
+                            sb => {
+                                self.ld_w(&sb);
+                                self.fo("movwf", &m.at(k));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
             self.ev(&e);
             if n == 1 {
                 self.fo("movwf", &m);

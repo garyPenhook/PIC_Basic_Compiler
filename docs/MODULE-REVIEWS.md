@@ -27,7 +27,7 @@ fixed in the module.
 | 4 | `buttons` | reviewed (0.1.166) | `lib_buttons` 300 → 262; probe 342 → 296 (18F27Q10), 437 → 388 (16F18346) |
 | 5 | `delay` | reviewed (0.1.167) | `DelaySeconds` 34 → 21 words (18F27Q10), 36 → 22 (16F18346); `delay_var` 36 → 23 / 36 → 21 |
 | 6 | `dma` | next | |
-| 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 197 (every 16F part), 128 → 125 (Q41) |
+| 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 189 (every 16F part, 197 in 0.1.168), 128 → 125 (Q41) |
 | … | `flashwrite` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -285,12 +285,19 @@ rest of the changes pay for). Over the 110 library programs: 18 smaller, none la
 Tried and dropped: a private `ReadAt` (the read without the address set-up) for the read-back after a write; the extra
 call costs more than the 7 words of address set-up it saves (+2 words PIC18, +3 on the 16F).
 
-Left as opportunities:
+Left as opportunities, worked in 0.1.169:
 
-- **Word arguments through `__A` (16F).** `EepromWrite` copies `addr` to `__A0/__A1`, then into `EepromRead`'s
-  parameter, twice. A call whose argument is a plain variable could copy the bytes straight (X4 / X6 in `EFFICIENCY.md`).
-- **`ie` as a byte.** The saved global interrupt enable is stored in a byte and tested with `decf` / `btfss` (7 words on
-  the 16F); a bit variable would be shorter if the compiler kept one in a flag.
+- **Word arguments through `__A` (16F), done.** `store` (`codegen16/stmt.rs`) evaluated a plain variable into `__A` and
+  copied `__A` to the destination, so every `Word` argument to a routine (and any `w2 = w1`, `l = w`, `l = b`) cost
+  four extra instructions per two bytes. A plain variable, or an unsigned narrower one zero-extended, now goes byte
+  by byte through WREG (`clrf` for the upper bytes). A source that shares storage with the destination at another offset
+  still goes through `__A`. Probe: 16F18346 285 → 241 words, 16F17146 282 → 238; `lib_eeprom` 197 → 189; the PIC18 had
+  this already. Over the 110 library programs against 0.1.167: 21 smaller, none larger, 82 283 → 81 738 words (−545):
+  `lib_flashwrite` −44, `lib_pwm` −26..−44 on every 16F part, `exec_p180_parts/small.bas` 1628 → 1595. New test
+  `store_copy.bas` (`tests/exec` and `tests/exec_p16`); leaving out the `clrf` makes it fail.
+- **`ie` as a bit, dropped.** A `Bit` variable is stored as a whole byte, so it saves nothing (285 words both ways);
+  an alias `Dim ieb As ie.0` costs 2 words more, and restoring with `IntEn = ie` 3 more. Only a flag-bit allocation in the
+  compiler would change this.
 
 ## Next
 

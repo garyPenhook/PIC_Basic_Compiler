@@ -1279,6 +1279,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Compiler (16F): an unsigned Word variable against a multiple of 256 (or one less) tests the high byte only, as the PIC18 has done since 0.1.164.
 - Sizes: 110 programs, 18 smaller, none larger, 82283 -> 82062 words; `lib_eeprom` 229 -> 197 on every 16F part. New tests `cmp_hibyte.bas` (`tests/exec`, `tests/exec_p16`) and `tests/exec_p16/eeprom_word_edge.bas`.
 
+## Module review 7 follow-up: multi-byte stores on the 16F (done 2026-11-10, 0.1.169)
+- `codegen16` `store`: a plain variable (or an unsigned narrower one, zero-extended) stored to memory goes byte by byte through WREG instead of into `__A` and out again. 110 programs, 21 smaller, none larger, 82283 -> 81738 words against 0.1.167; `lib_eeprom` 229 -> 189, `lib_flashwrite` -44, `lib_pwm` -26..-44. New `store_copy.bas` (`tests/exec`, `tests/exec_p16`).
+- `ie` as a `Bit` variable tried in `eeprom` and dropped (no saving; bits are stored as bytes).
+
 ## Random library programs against XC8 (done 2026-11-10, 0.1.167, no compiler change)
 - `bench/random/` (`gen.py`, `lib.h`, `run.py`): seeded random programs over 2-3 of `adc`, `serial`, `eeprom`, `bits`, `delay` plus core statements, in BASIC and in C (a port of the same library routines), built with basil and XC8 v4.00 `-Os`/`-O2` for the PIC18F27Q10 and PIC16F18346.
 - Seeds 1-12: PIC18 10626 bytes against 10310 (`-Os`, +3.1%) and 11700 (`-O2`, −9.2%); 16F 6905 words against 6028 (+14.5%) and 7130 (−3.2%). `adc` + `serial` programs are smaller than `-Os`; `eeprom` + `delay` ones 22-48% larger.
