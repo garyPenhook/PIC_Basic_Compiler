@@ -314,7 +314,7 @@ Dim Tmr2On As T2CON.7
 ' 8-bit periodic timer. period = 0..255.
 Public Sub Timer0Start(ByVal prescale As Byte, ByVal period As Byte)
     T0CON0 = 0
-    T0CON1 = 64 + (prescale And 15)
+    T0CON1 = (prescale And 15) Or 64
     TMR0H = period
     TMR0L = 0
     Tmr0If = 0
@@ -324,7 +324,7 @@ End Sub
 ' 16-bit free-running timer, read with Timer0Read.
 Public Sub Timer0Start16(ByVal prescale As Byte)
     T0CON0 = 0
-    T0CON1 = 64 + (prescale And 15)
+    T0CON1 = (prescale And 15) Or 64
     TMR0L = 0
     TMR0H = 0
     Tmr0If = 0
@@ -337,9 +337,8 @@ End Sub
 
 ' 16-bit count. TMR0L is read first, which latches TMR0H [19.1.2].
 Public Function Timer0Read() As Word
-    Dim lo As Byte
-    lo = TMR0L
-    Result = TMR0H * 256 + lo
+    Result = TMR0L
+    Result.Byte1 = TMR0H
 End Function
 
 ' True once per overflow; clears the flag when it reports it.
@@ -369,7 +368,8 @@ End Sub
 ' calls the handler once. An unassigned Timer0OnExpire does nothing.
 Public Dim Timer0OnExpire As TTimerEvent
 Public Sub Timer0Service()
-    If Timer0Expired() Then
+    If Tmr0If = 1 Then
+        Tmr0If = 0
         Timer0OnExpire()
     End If
 End Sub
@@ -425,21 +425,16 @@ End Sub
 ' cleared after the gate writes (erratum 1.7.1, DS80001009E: writing the gate source can set it).
 Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean)
     T1CON = 0
-#if _has(T1CON.TMR1CS)
-    If activeHigh Then
-        T1GCON = 192 + (source And 3)
-    Else
-        T1GCON = 128 + (source And 3)
-    End If
-#else
+#if Not _has(T1CON.TMR1CS)
     T1CLK = clk And 31
     T1GATE = source And 31
-    If activeHigh Then
-        T1GCON = 192
-    Else
-        T1GCON = 128
-    End If
+    T1GCON = 128
+#else
+    T1GCON = 128 + (source And 3)
 #endif
+    If activeHigh Then
+        T1GCON = T1GCON Or 64
+    End If
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
@@ -459,25 +454,19 @@ End Sub
 ' time is a whole period of the source instead of its high (or low) time [20.7.3, 20.7.4].
 Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal source As Byte, ByVal activeHigh As Boolean, ByVal fullCycle As Boolean)
     T1CON = 0
-#if _has(T1CON.TMR1CS)
-    If activeHigh Then
-        T1GCON = 192 + (source And 3)
-    Else
-        T1GCON = 128 + (source And 3)
-    End If
-#else
+#if Not _has(T1CON.TMR1CS)
     T1CLK = clk And 31
     T1GATE = source And 31
-    If activeHigh Then
-        T1GCON = 192
-    Else
-        T1GCON = 128
-    End If
+    T1GCON = 144
+#else
+    T1GCON = 144 + (source And 3)
 #endif
+    If activeHigh Then
+        T1GCON = T1GCON Or 64
+    End If
     If fullCycle Then
         T1GCON = T1GCON Or 32
     End If
-    T1GCON = T1GCON Or 16
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
@@ -494,18 +483,12 @@ End Sub
 
 ' True once the pulse started by Timer1StartPulse has ended (GGO/DONE cleared by hardware).
 Public Function Timer1PulseDone() As Boolean
-    Result = False
-    If T1GoDone = 0 Then
-        Result = True
-    End If
+    Result = T1GoDone = 0
 End Function
 
 ' The current state of the gate [GVAL]; it is not affected by the gate enable.
 Public Function Timer1GateState() As Boolean
-    Result = False
-    If T1GateVal = 1 Then
-        Result = True
-    End If
+    Result = T1GateVal = 1
 End Function
 
 Public Sub Timer1Stop()
@@ -513,8 +496,8 @@ Public Sub Timer1Stop()
 End Sub
 
 Public Function Timer1Read() As Word
-    Dim lo As Byte
 #if _has(T1CON.TMR1CS)
+    Dim lo As Byte
     ' No RD16 buffer: read the high byte before and after the low byte; when it changed the low byte wrapped in between, so read it again.
     Dim hi As Byte
     Dim hi2 As Byte
@@ -524,10 +507,11 @@ Public Function Timer1Read() As Word
     If hi2 <> hi Then
         lo = TMR1L
     End If
-    Result = hi2 * 256 + lo
+    Result.Byte0 = lo
+    Result.Byte1 = hi2
 #else
-    lo = TMR1L
-    Result = TMR1H * 256 + lo
+    Result = TMR1L
+    Result.Byte1 = TMR1H
 #endif
 End Function
 
@@ -558,7 +542,8 @@ End Sub
 ' calls the handler once. An unassigned Timer1OnExpire does nothing.
 Public Dim Timer1OnExpire As TTimerEvent
 Public Sub Timer1Service()
-    If Timer1Expired() Then
+    If Tmr1If = 1 Then
+        Tmr1If = 0
         Timer1OnExpire()
     End If
 End Sub
@@ -610,10 +595,7 @@ End Sub
 
 ' True while the timer is on; a one-shot timer clears ON after its period [Table 21-3 note 2].
 Public Function Timer2Running() As Boolean
-    Result = False
-    If Tmr2On = 1 Then
-        Result = True
-    End If
+    Result = Tmr2On = 1
 End Function
 
 ' Turning the timer off also resets its counters [21.9.3].
@@ -656,7 +638,8 @@ End Sub
 ' calls the handler once. An unassigned Timer2OnExpire does nothing.
 Public Dim Timer2OnExpire As TTimerEvent
 Public Sub Timer2Service()
-    If Timer2Expired() Then
+    If Tmr2If = 1 Then
+        Tmr2If = 0
         Timer2OnExpire()
     End If
 End Sub

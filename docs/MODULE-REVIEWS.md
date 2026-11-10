@@ -28,6 +28,7 @@ fixed in the module.
 | 5 | `delay` | reviewed (0.1.167) | `DelaySeconds` 34 → 21 words (18F27Q10), 36 → 22 (16F18346); `delay_var` 36 → 23 / 36 → 21 |
 | 6 | `dma` | reviewed (0.1.170) | `lib_dma` 284 → 226, `lib_dma_trig` 360 → 295, `lib_dma_move` 195 → 168 words (Q41) |
 | 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 189 (every 16F part, 197 in 0.1.168), 128 → 125 (Q41) |
+| 8 | `timer` | reviewed (0.1.171) | all-routines probe 464 → 393 words (16F17146), 408 → 332 (16F18346), 332 → 300 (18F27Q10); `lib_timer_f152` 324 → 300 |
 | … | `flashwrite` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -338,6 +339,67 @@ Left as opportunities, worked in 0.1.169:
   an alias `Dim ieb As ie.0` costs 2 words more, and restoring with `IntEn = ie` 3 more. Only a flag-bit allocation in the
   compiler would change this.
 
+## 8. `timer`
+
+Reviewed on request, ahead of `flashwrite`. The module is Timer0, Timer1 and Timer2 over seven register layouts
+(18F27Q10, 18F-Q41, PIC16F171xx, 16F183xx, 16F152xx, 16F1805x, 16F131xx). A probe calls every routine on all seven
+parts (`TimerNOnExpire` hooks included, arguments read from ports). Tests: `lib_timer`, `lib_timer12`,
+`lib_timer_event`, `lib_timer_hw` on 18F27Q10, 18F16Q41 and 16F17146, `lib_timer` and `lib_timer_event` on 16F18346,
+16F15244, 16F13145 and 16F18056; new `timer_read.bas`, `bool_bit.bas`, `nibble_swap.bas`.
+
+Correctness: no defects found. Checked: Timer0 reads TMR0L first (it latches TMR0H), Timer1 on the 16F183xx has no RD16
+and rereads TMR1L when TMR1H moved, the flags are cleared only after the one-shot `Expired` sees them, the gate
+registers are written with the timer off and TMR1GIF is cleared after them, Timer2's `T2CON` is written last. The
+register facts and bit positions in the module are unchanged and were not re-derived from the data sheets in this review.
+
+Changed in the module:
+
+- `Timer0Read` and `Timer1Read` build the word with `Result = TMR1L` / `Result.Byte1 = TMR1H` instead of
+  `TMR1H * 256 + lo` through a local (the low byte is still read first). 11 words each on the 16F, 2 on the PIC18.
+- `TimerNService` tests and clears its flag itself instead of calling `TimerNExpired`: a program that uses only the
+  event hook no longer links `Expired` and saves the call and the result copy (`lib_timer_event` 31 → 26 words).
+- `Timer1PulseDone`, `Timer1GateState` and `Timer2Running` are `Result = bit = value`; with the compiler change below
+  that is 3 words, was 5 to 6.
+- `Timer1StartGated` / `Timer1StartPulse` write the gate register once (`T1GCON = 128` or `144`, `Or 64` for active
+  high, `Or 32` for full cycle) instead of two stores in an If/Else and three read-modify-writes.
+- `Timer0Start` / `Timer0Start16` build `T0CON1` as `(prescale And 15) Or 64`.
+
+Tried and dropped:
+
+- `TimerNExpired` as `Result = (flag = 1)` then one unconditional clear: shorter, but an overflow that sets the flag
+  between the test and the clear is lost; the conditional clear keeps it for the next call.
+- `Timer1Start(prescale)` as a call of `Timer1StartSource(T1ClkFosc4, prescale)`: 9 to 10 words less when both are used,
+  2 words more in the usual program that uses one of them (`lib_timer_f152` 300 → 302).
+- `((prescale << 4) And 48)` for `(prescale And 3) * 16`: no change before the compiler fix below, no gain after it.
+
+Compiler changes found by reading the probe code:
+
+1. **Constant on the left of `+`, `And`, `Or`, `Xor` (16F).** `64 + (x And 15)` copied the value to a temporary and
+   added it (`movwf TMP` / `movlw` / `addwf`); the constant now goes to the right and takes `addlw` / `andlw` /
+   `iorlw` / `xorlw`. The PIC18 already did this.
+2. **A Boolean from a bit test or a flag (both back ends).** `r = (bit = 1)`, `r = (x = 3)` on the 16F, and the bit
+   tests on both, were a branch, `movlw 0`, `bra`, `movlw 1` (5 to 6 words); they are `movlw 0` / skip / `movlw 1`
+   (3 words, no branch). Test `bool_bit.bas` compares 10 forms (with `Not`, `And`, `Or`) against the same test as an If.
+3. **`w = F(...)` of a Word or LongWord result (16F).** The result was copied to `__A` and then to the destination;
+   it is copied from the result variable straight to the destination (the PIC18 did this).
+4. **`(x And m) * 16` and `(x And m) << 4` with `m` below 16 (both back ends).** The high nibble is clear, so the
+   result is `swapf` alone: the PIC18 had `mullw 0x10` / `movf PRODL, w` (3 words with the mask, now 2), the 16F `swapf`
+   and a redundant `andlw 0xF0`. `nibble_swap.bas` checks every byte against a Word computation, and that a mask of 31
+   or 240 keeps its `andlw`.
+
+Probe, words: 16F17146 464 → 393 (−15%), 16F18346 408 → 332 (−19%), 18F27Q10 332 → 300 (−10%), 18F16Q41 329 → 300.
+In the timer tests: `lib_timer_f152` and `f180` 324 → 300, `f183` 204 → 185, `lib_timer_event` 31 → 26, `lib_timer` 75 → 72.
+Over the 110 library programs against 0.1.167: 66 smaller, none larger, 82 283 → 80 421 words (−1 862).
+
+Left as opportunities:
+
+- **Bank switching on the 16F.** Each parameter lives in bank 0 and each timer register in bank 3 to 7, so a routine
+  that copies parameters to registers alternates `movlb 0` / `movlb n` (about a third of `Timer1StartPulse`). Placing
+  parameters and locals of small routines in common RAM (70h to 7Fh) would remove most of them.
+- **Constant multiply on the 16F.** `x * 3` is the eight-pass shift-and-add loop; two shifts and an add would be 4 words.
+- **Parameters copied twice when a routine is inlined** (as in module 6).
+- `Timer2Start` and `Timer2StartLimit` repeat the same register writes; sharing them costs words in programs that use only one.
+
 ## Next
 
-Module 8, `flashwrite`, then on through the list in alphabetical order.
+Module 9, `flashwrite`, then on through the list in alphabetical order.

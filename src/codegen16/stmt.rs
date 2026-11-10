@@ -217,6 +217,24 @@ impl<'p> G<'p> {
                 self.in_place(p, &m, *op, &fit(r, w));
                 return;
             }
+            // `w = F(...)` of a routine that leaves its value in its result variable: copied from there byte by byte,
+            // not into __A first.
+            if n > 1
+                && let ExK::Call(f, args) = &e.k
+                && e.w == w
+                && !self.recursive_call(*f)
+                && !self.p.funcs[*f].reg
+                && let Some(r) = self.p.funcs[*f].result
+                && self.p.vars[r].bytes == n
+            {
+                self.call_func(*f, args, true);
+                for k in 0..n {
+                    let rm = self.var_mem(r, k);
+                    self.fop("movf", &rm, "w");
+                    self.fo("movwf", &m.at(k));
+                }
+                return;
+            }
             // A plain variable (or an unsigned narrower one, zero-extended) stored to memory byte by byte through WREG,
             // not evaluated into __A and copied from there. A source that shares storage with the destination at another
             // offset (an array element's alias) still goes through __A, which reads every byte before the first store.

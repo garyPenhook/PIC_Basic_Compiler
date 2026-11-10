@@ -1278,10 +1278,27 @@ impl<'p> Gen<'p> {
                     },
                     _ => None,
                 };
+                // A bit test ends in a skip instruction and `bra`: `movlw 0` / the opposite skip / `movlw 1`.
+                let bit_skip = match (self.items.len() >= 2).then(|| (&self.items[self.items.len() - 2], &self.items[self.items.len() - 1])) {
+                    Some((Item::Ins(i), Item::Br(Cc::Always, t))) if *t == lf && refs == 1 && self.tgt.opt => {
+                        if let Some(rest) = i.strip_prefix("btfsc ") {
+                            Some(format!("btfss {rest}"))
+                        } else {
+                            i.strip_prefix("btfss ").map(|rest| format!("btfsc {rest}"))
+                        }
+                    }
+                    _ => None,
+                };
                 if let Some((bit, skip)) = flag {
                     self.items.pop();
                     self.ins("movlw 0");
                     self.ins(format!("{skip} STATUS, {bit}, c"));
+                    self.ins("movlw 1");
+                } else if let Some(op) = bit_skip {
+                    self.items.pop();
+                    self.items.pop();
+                    self.ins("movlw 0");
+                    self.ins(op);
                     self.ins("movlw 1");
                 } else {
                     self.ins("movlw 1");
@@ -2250,6 +2267,15 @@ impl<'p> Gen<'p> {
         };
         let n = Self::nb(e);
         if n == 1 {
+            // `(x And 3) * 16`: the high nibble is clear, so `swapf` alone is the product (`mullw` and `movf PRODL`).
+            let nib = |x: &Ex| matches!(&x.k, ExK::Bin(BinKind::And, a, b) if [a, b].iter().any(|v| v.as_const().is_some_and(|m| m & 0xF0 == 0)));
+            for (x, k) in [(l, r), (r, l)] {
+                if k.as_const() == Some(16) && nib(x) && self.tgt.opt {
+                    self.gen_val(x);
+                    self.ins("swapf WREG, w, c");
+                    return;
+                }
+            }
             self.mul8(l, r);
             self.ins("movf PRODL, w, c");
             return;
@@ -2737,6 +2763,9 @@ impl<'p> Gen<'p> {
                 for _ in 0..k {
                     self.ins("addwf WREG, w, c");
                 }
+            } else if k == 4 && matches!(&l.k, ExK::Bin(BinKind::And, x, y) if [x, y].iter().any(|v| v.as_const().is_some_and(|m| m & 0xF0 == 0))) {
+                // `(x And 3) << 4`: the high nibble is clear, so `swapf` alone gives the result (`mullw` and `movf PRODL`: 2 words).
+                self.ins("swapf WREG, w, c");
             } else {
                 self.ins(format!("mullw {}", 1u32 << k));
                 self.ins("movf PRODL, w, c");

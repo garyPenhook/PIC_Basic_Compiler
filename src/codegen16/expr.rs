@@ -5,6 +5,14 @@ use super::*;
 use crate::asm::Cc;
 
 /// The expression converted to `w` bits (its own signedness decides how it is extended).
+/// A byte expression whose high nibble is known to be clear: `x And m` with `m` below 16.
+pub(crate) fn hi_nibble_clear(e: &Ex) -> bool {
+    match &e.k {
+        ExK::Bin(BinKind::And, x, y) => [x, y].iter().any(|v| v.as_const().is_some_and(|m| m & 0xF0 == 0)),
+        _ => false,
+    }
+}
+
 pub(crate) fn fit(e: &Ex, w: u8) -> Ex {
     if e.w == w {
         e.clone()
@@ -345,7 +353,29 @@ impl<'p> G<'p> {
             ExK::Conv(x) => self.conv(x, e),
             ExK::Cmp(..) | ExK::AndAlso(..) | ExK::OrElse(..) | ExK::NotB(..) => {
                 let (t, end) = (self.fresh(), self.fresh());
+                let start = self.items.len();
                 self.cond_jump(e, &t, true);
+                // A test that ends in one bit skip or one flag branch sets the value with a skip: `movlw 0` / skip /
+                // `movlw 1` (3 words) instead of the branch, `movlw 0`, `bra`, `movlw 1` (5). `movlw` leaves the flags alone.
+                let refs = self.items[start..].iter().filter(|i| matches!(i, Item::Br(_, l) | Item::SkipBr(_, l) if *l == t)).count();
+                let skip = match self.items.last() {
+                    Some(Item::SkipBr(op, l)) if *l == t && refs == 1 => Some(op.clone()),
+                    Some(Item::Br(cc, l)) if *l == t && refs == 1 => match cc {
+                        Cc::Z => Some("btfsc STATUS, 2".to_string()),
+                        Cc::Nz => Some("btfss STATUS, 2".to_string()),
+                        Cc::C => Some("btfsc STATUS, 0".to_string()),
+                        Cc::Nc => Some("btfss STATUS, 0".to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(op) = skip {
+                    self.items.pop();
+                    self.ins("movlw 0");
+                    self.ins(op);
+                    self.ins("movlw 1");
+                    return;
+                }
                 self.ins("movlw 0");
                 self.br(Cc::Always, &end);
                 self.label(&t);
@@ -575,6 +605,16 @@ impl<'p> G<'p> {
     fn alu(&mut self, k: BinKind, a: &Ex, b: &Ex, e: &Ex) {
         let n = (e.w / 8) as u32;
         let (a, b) = (fit(a, e.w), fit(b, e.w));
+        // A constant on the left of a commutative operation goes to the right, where `addlw` / `andlw` / `iorlw` /
+        // `xorlw` take it (`64 + x` was a copy to a temporary, `movlw`, `addwf`).
+        let (a, b) = if matches!(k, BinKind::Add | BinKind::And | BinKind::Or | BinKind::Xor)
+            && matches!(a.k, ExK::Const(_))
+            && !matches!(b.k, ExK::Const(_))
+        {
+            (b, a)
+        } else {
+            (a, b)
+        };
         let bo = self.operand_nz(&b);
         if n == 1 {
             // a - b with a plain: load b, then subtract it from a in place.
@@ -710,7 +750,10 @@ impl<'p> G<'p> {
                     }
                     if c >= 4 && !e.signed {
                         self.ins("swapf WREG, w");
-                        self.ins(if left { "andlw 0xF0" } else { "andlw 0x0F" });
+                        // `(x And 3) << 4`: the high nibble of the operand is clear, so the swap leaves a clear low nibble.
+                        if !(left && hi_nibble_clear(&a)) {
+                            self.ins(if left { "andlw 0xF0" } else { "andlw 0x0F" });
+                        }
                         c -= 4;
                     }
                     let op = if left { "addwf" } else if e.signed { "asrf" } else { "lsrf" };
