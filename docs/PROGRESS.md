@@ -1298,6 +1298,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Compiler: `Byte(x >> k)` / `Byte(x << k)` of a 16-bit variable from byte operations (both back ends), a Word against a wider constant compared as a Word, constant propagation through byte-part loads, and a 16F `eq_jump` crash with a constant on the left.
 - Sizes: 102 programs, 14 smaller, none larger, 80421 -> 80062 words against 0.1.171. Probe 18F27Q10 352 -> 320, 16F17146 553 -> 516. New `narrow_shift.bas` (`tests/exec`).
 
+## Random library programs against XC8, again (done 2026-11-10, 0.1.172, no compiler change)
+- `docs/EFFICIENCY.md` section 11, "Measured again with 0.1.172" and "Priority to fix". Seeds 1-12: PIC18 10534 bytes against 10310 (`-Os`, +2.2%) and 11700 (`-O2`, -10.0%); 16F 6446 words against 6028 (+6.9%) and 7130 (-9.6%). At 0.1.167 the gaps were +3.1% and +14.5%.
+- Priority: 1 X5 (16F copy forwarding and result coalescing), 2 X3 and X6 (in-place array update, parameters built in place), 3 X4 (re-measure after 1), 4 X2 (16 x 16 -> 32 multiply), 5 X7 (RAM), 6 X1 (outlining).
+
 ## Random library programs against XC8 (done 2026-11-10, 0.1.167, no compiler change)
 - `bench/random/` (`gen.py`, `lib.h`, `run.py`): seeded random programs over 2-3 of `adc`, `serial`, `eeprom`, `bits`, `delay` plus core statements, in BASIC and in C (a port of the same library routines), built with basil and XC8 v4.00 `-Os`/`-O2` for the PIC18F27Q10 and PIC16F18346.
 - Seeds 1-12: PIC18 10626 bytes against 10310 (`-Os`, +3.1%) and 11700 (`-O2`, −9.2%); 16F 6905 words against 6028 (+14.5%) and 7130 (−3.2%). `adc` + `serial` programs are smaller than `-Os`; `eeprom` + `delay` ones 22-48% larger.

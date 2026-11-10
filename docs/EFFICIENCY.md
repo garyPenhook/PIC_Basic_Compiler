@@ -517,3 +517,38 @@ loops), `__div2` (28 words against `__lwdiv` 37), and `EepromRead` on the PIC18 
 **Order.** X2 and X3 are small, general and safe; X5 is the largest gap and belongs with the 16F half of M1-M3; X1 is a
 new pass and should come last, measured on `bench/large` and the library tests as well as here so the random
 programs' repetition does not overstate it.
+
+### Measured again with 0.1.172 (2026-11-10)
+
+The same 12 programs (seeds 1-12, `gen.py OUT $s 16`), XC8 v4.00, after module reviews 1-9 and their compiler changes. Flash in
+bytes on the PIC18, in words on the 16F:
+
+| Part | basil | XC8 -Os | XC8 -O2 | basil vs -Os | basil vs -O2 | at 0.1.167, vs -Os |
+|---|---|---|---|---|---|---|
+| 18F27Q10 | 10534 | 10310 | 11700 | +2.2% | −10.0% | +3.1% |
+| 16F18346 | 6446 | 6028 | 7130 | +6.9% | −9.6% | +14.5% |
+
+Per program, basil against `-Os` (PIC18 / 16F): smaller in r01 (−14.0% / −7.3%), r02 (−17.2% / −6.6%) and r12 (−4.7% / −1.5%), and
+on the 16F in r05 (−1.7%); about level in r10 (+0.3% / +4.3%); larger in r03-r05, r09, r11 (+2% to +8% / +7% to +17%); and well
+larger in r06 (+18.2% / +20.3%), r07 (+22.0% / +22.3%) and r08 (+33.6% / +35.5%), the `eeprom` + `delay` programs. RAM is
+46-52 bytes (PIC18) and 48-56 (16F) against XC8 32-59 on most programs; basil is lower only in the `adc` + `serial` ones
+(r01, r02, r12).
+
+The 16F gap halved (+14.5% to +6.9%) and the PIC18 one fell by a third. What is left is concentrated in three programs:
+r06-r08 are 18-36% larger on both parts, and without them basil is within a few percent of `-Os` on the PIC18 and about +6% on the 16F.
+
+### Priority to fix
+
+Ranked by words recovered across these programs and by how many real programs the change reaches:
+
+| Priority | Item | Why this order |
+|---|---|---|
+| 1 | **X5, 16F copy forwarding and result coalescing** (the 16F half of M1-M3 and M8) | The whole remaining 16F gap (+6.9%, +17% in r09, +35% in r08) and the largest cost in every 16F module review (`SetAddr`, `FlashWriteWord`, `EepromWrite`). Every 16F program gains, library or not. |
+| 2 | **X3 and X6, in-place array update and parameters built in place** (PIC18) | The `eeprom` + `delay` programs are +18% to +34% on the PIC18 and these two are the statements they repeat. General, small, safe. |
+| 3 | **X4, 16F `EepromWrite` / `EepromRead`** | 75 / 40 words against 48 / 31; mostly closed by item 1, so re-measure after it before doing anything module-specific. |
+| 4 | **X2, 16 × 16 → 32 multiply** | 67 words for `__mul4` against 38; the saving is in any program that multiplies two Words into a LongWord, one helper at a time. |
+| 5 | **X7, RAM** | basil is above XC8 on most programs (49 against 36 in r07). Smaller effect on flash, but every program pays it and the small parts have little RAM. |
+| 6 | **X1, outlining repeated sequences** | A new pass, and the generator repeats statements on purpose, so these programs overstate it. Last, and measured on `bench/large` and the library tests first. |
+
+The next module reviews (`floatlib` onward) will keep finding gaps of the item 1 kind; fixing it first means their measurements start from the
+better 16F baseline.
