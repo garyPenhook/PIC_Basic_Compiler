@@ -1,7 +1,7 @@
 Module Bits
 ' Bit, rotate and small-math helpers. Every routine is a function of its arguments: it
 ' returns the new value and leaves the argument alone, so write `x = SetBit(x, 3)`.
-' Bit numbers count from 0 at the least significant sq; a number past the top of the type
+' Bit numbers count from 0 at the least significant bit; a number past the top of the type
 ' changes nothing (and reads as 0).
 ' Byte, Word and LongWord forms are overloads of the same name.
 
@@ -9,9 +9,10 @@ Private Dim rndState As Word
 
 ' ---- Bit tests and changes --------------------------------------------------------------
 
-' True when sq n of v is 1.
+' True when bit n of v is 1.
 Public Function GetBit(ByVal v As LongWord, ByVal n As Byte) As Boolean
-    Result = ((v >> n) And 1) <> 0
+    ' One byte of the shifted value is enough for the test.
+    Result = (Byte(v >> n) And 1) <> 0
 End Function
 
 Public Function SetBit(ByVal v As Byte, ByVal n As Byte) As Byte
@@ -83,13 +84,17 @@ End Function
 
 ' ---- Rotates and swaps ------------------------------------------------------------------
 
-' Rotate left / right by one sq, the sq shifted out re-entering at the other end.
+' Rotate left / right by one bit, the bit shifted out re-entering at the other end.
 Public Function Rol(ByVal v As Byte) As Byte
     Result = (v << 1) Or (v >> 7)
 End Function
 
 Public Function Rol(ByVal v As Word) As Word
-    Result = (v << 1) Or (v >> 15)
+    ' The top bit re-enters as bit 0: a bit test, not a 15-place word shift.
+    Result = v << 1
+    If v.15 = 1 Then
+        Result.0 = 1
+    EndIf
 End Function
 
 Public Function Ror(ByVal v As Byte) As Byte
@@ -97,7 +102,10 @@ Public Function Ror(ByVal v As Byte) As Byte
 End Function
 
 Public Function Ror(ByVal v As Word) As Word
-    Result = (v >> 1) Or (v << 15)
+    Result = v >> 1
+    If v.0 = 1 Then
+        Result.15 = 1
+    EndIf
 End Function
 
 ' The two nibbles of a byte exchanged ($3C becomes $C3).
@@ -107,7 +115,8 @@ End Function
 
 ' The two bytes of a word exchanged ($12AB becomes $AB12).
 Public Function SwapBytes(ByVal v As Word) As Word
-    Result = (v << 8) Or (v >> 8)
+    Result.Byte0 = v.Byte1
+    Result.Byte1 = v.Byte0
 End Function
 
 ' ---- Decoding ---------------------------------------------------------------------------
@@ -120,7 +129,7 @@ Public Function Dcd(ByVal n As Byte) As LongWord
     EndIf
 End Function
 
-' Ncd: the number of bits needed for v, that is the position of its highest 1 sq plus one
+' Ncd: the number of bits needed for v, that is the position of its highest 1 bit plus one
 ' (0 when v is 0): Ncd(1) = 1, Ncd(%1000) = 4, Ncd($FFFF) = 16.
 Public Function Ncd(ByVal v As LongWord) As Byte
     Dim k As Byte
@@ -172,7 +181,7 @@ Public Sub Seed(ByVal s As Word)
     rndState = s
 End Sub
 
-' Random: the next pseudo-random Word (16-sq xorshift, period 65535, never 0).
+' Random: the next pseudo-random Word (16-bit xorshift, period 65535, never 0).
 ' Without a call to Seed the sequence starts from the same place every run.
 Public Function Random() As Word
     If rndState = 0 Then

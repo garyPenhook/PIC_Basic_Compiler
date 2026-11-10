@@ -1340,6 +1340,45 @@ fn skip_over_branch_once(items: &mut Vec<Item>) -> bool {
     false
 }
 
+/// Enhanced mid-range: a bit skip that branches over an unconditional branch (`btfss f,b` + `bra L1`, `bra L2`, `L1:`, the
+/// empty `While bit` loop) becomes the opposite skip branching to `L2` (`btfsc f,b` + `bra L2`, `L1:`).
+fn pass_skipbr_over_branch(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let mut out = Vec::with_capacity(items.len());
+    let mut inside = false;
+    let mut changed = false;
+    let mut i = 0;
+    while i < items.len() {
+        if let Item::Keep(on) = &items[i] {
+            inside = *on;
+        }
+        if i + 2 < items.len()
+            && !keep[i]
+            && !inside
+            && let (Item::SkipBr(t, l1), Item::Br(Cc::Always, l2), Item::Label(l)) = (&items[i], &items[i + 1], &items[i + 2])
+            && l1 == l
+            && l2 != l1
+            && let Some((m, o)) = parse(t)
+            && let Some(inv) = match m.as_str() {
+                "btfsc" => Some("btfss"),
+                "btfss" => Some("btfsc"),
+                _ => None,
+            }
+        {
+            out.push(Item::SkipBr(format!("{inv} {}", o.join(", ")), l2.clone()));
+            changed = true;
+            i += 2; // the label stays
+            continue;
+        }
+        out.push(items[i].clone());
+        i += 1;
+    }
+    if changed {
+        *items = out;
+    }
+    changed
+}
+
 fn pass_branch_to_next(items: &mut Vec<Item>) -> bool {
     let mut dead = vec![false; items.len()];
     let keep = protected(items);
@@ -2385,6 +2424,79 @@ fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
     true
 }
 
+/// The RAM byte a pure store writes: `clrf X`, `setf X`, `movwf X` or `movff s, X` (the instruction does not read `X`).
+fn pure_store_target(t: &str, env: &Env) -> Option<String> {
+    let (m, o) = parse(t)?;
+    let d = match (m.as_str(), o.len()) {
+        ("clrf" | "setf" | "movwf", 1..=2) => o[0].trim(),
+        ("movff", 2) if !same_byte(env, o[0].trim(), o[1].trim()) => o[1].trim(),
+        _ => return None,
+    };
+    (env.is_plain(d) && scratch(d).is_none()).then(|| d.to_string())
+}
+
+/// A store to compiler-placed RAM that the same straight run stores to again before anything can read the byte
+/// (`clrf R+1` from widening `Result = ADRESL`, then `movff ADRESH, R+1`): the first store is deleted. The run ends at
+/// a branch, a skip, a call, raw assembly or anything the pass does not understand, which keep the store; an
+/// indirect read or write keeps it too (it could reach the byte). An interrupt handler that reads the variable in
+/// between would have seen the first value: that ordering is not one the program relies on (see the module notes).
+fn pass_overwritten_store(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut dead = vec![false; items.len()];
+    for i in 0..items.len() {
+        if keep[i] {
+            continue;
+        }
+        let Item::Ins(t) = &items[i] else { continue };
+        let Some(sym) = pure_store_target(t, env) else { continue };
+        let Some(e0) = effect(t) else { continue };
+        // The store's own read must have no side effect: `movff SSP1BUF, X` reads a FIFO and `movff POSTINC0, X` steps FSR0.
+        if !e0.rmem.iter().all(|m| env.is_plain(m)) {
+            continue;
+        }
+        if e0.flags_w != 0 && flags_live(items, i, e0.flags_w) {
+            continue;
+        }
+        let mut over = false;
+        for (k, it) in items.iter().enumerate().skip(i + 1) {
+            match it {
+                Item::Comment(_) | Item::Fence | Item::Label(_) => {}
+                Item::Ins(u) => {
+                    if keep[k] {
+                        break;
+                    }
+                    let Some(e) = effect(u) else { break };
+                    // A read the address lookup cannot place (`X+1+1`, an absolute address) may be the byte itself.
+                    let may_read = |m: &String| {
+                        is_indirect(m) || same_byte(env, m, &sym) || (env.addr(m).is_none() && (m.contains('+') || m.starts_with(|c: char| c.is_ascii_digit())))
+                    };
+                    if is_skip(u) || e.wmem.contains(&Mem::Unknown) || e.rmem.iter().any(may_read) {
+                        break;
+                    }
+                    if pure_store_target(u, env).is_some_and(|d| same_byte(env, &d, &sym)) {
+                        over = true;
+                        break;
+                    }
+                    if e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same_byte(env, x, &sym))) {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        dead[i] = over;
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// `movf X, w` + `movwf T` (or `movff X, T`), a few instructions that set up an index in `WREG` / an FSR, then
 /// `movff T, <indirect>`: the value is staged in `T` only because `WREG` is needed for the index. When nothing in
 /// between writes `X` or touches `T`, the flags the `movf` sets are dead, the first instruction after it overwrites
@@ -3134,6 +3246,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_load_reuse(&mut items, env);
         changed |= pass_redundant_lfsr(&mut items);
         changed |= pass_copy_back(&mut items, env);
+        changed |= pass_overwritten_store(&mut items, env);
         changed |= pass_stage_store(&mut items, env);
         changed |= pass_sum_share(&mut items, env);
         changed |= pass_known_sfr_bits(&mut items, env);
@@ -3192,6 +3305,7 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_unreachable(&mut items);
         changed |= pass_halt_loop(&mut items);
         changed |= pass_branch_to_next(&mut items);
+        changed |= pass_skipbr_over_branch(&mut items);
         changed |= pass_branch_over_branch(&mut items);
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
@@ -3565,7 +3679,33 @@ mod tests {
         // W is read at the target: unchanged.
         let mut s = seq("xorlw 0x00", Cc::Nz);
         s[9] = ins("movwf Y, c");
-        assert_eq!(run(&s).len(), s.len() - 0, "{:?}", run(&s));
+        // (Then `Y` is read, so the store is not one a later store overwrites.)
+        s[10] = ins("addwf Y, f, c");
+        assert_eq!(run(&s).len(), s.len(), "{:?}", run(&s));
+    }
+
+    #[test]
+    fn overwritten_store_is_deleted() {
+        // `clrf X` then `movff S, X` in a straight run: the clear goes.
+        let r = run(&[ins("clrf X, c"), ins("movff S, X"), Item::Fence]);
+        assert_eq!(r, ["movff S, X", "--"], "{r:?}");
+        // A read in between, a branch, a skip or an indirect access keeps it.
+        let r = run(&[ins("clrf X, c"), ins("movf X, w, c"), ins("movwf Y, c"), ins("movff S, X"), Item::Fence]);
+        assert_eq!(r[0], "clrf X, c", "{r:?}");
+        let r = run(&[ins("clrf X, c"), Item::Br(Cc::Z, "L".into()), ins("movff S, X"), Item::Label("L".into()), ins("movf X, w, c"), ins("movwf Y, c"), Item::Fence]);
+        assert_eq!(r[0], "clrf X, c", "{r:?}");
+        let r = run(&[ins("clrf X, c"), ins("btfsc R, 1, c"), ins("movff S, X"), Item::Fence]);
+        assert_eq!(r[0], "clrf X, c", "{r:?}");
+        let r = run(&[ins("clrf X, c"), ins("movf INDF0, w, c"), ins("movwf Y, c"), ins("movff S, X"), Item::Fence]);
+        assert_eq!(r[0], "clrf X, c", "{r:?}");
+        // A store that reads a device register or steps an FSR is kept: the read itself matters.
+        let r = run(&[ins("movff SSP1BUF, X"), ins("movff SSP1BUF, X"), ins("movf X, w, c"), ins("movwf Y, c"), Item::Fence]);
+        assert_eq!(&r[..2], ["movff SSP1BUF, X", "movff SSP1BUF, X"], "{r:?}");
+        let r = run(&[ins("movff POSTINC0, X"), ins("movff S, X"), ins("movf X, w, c"), ins("movwf Y, c"), Item::Fence]);
+        assert_eq!(r[0], "movff POSTINC0, X", "{r:?}");
+        // `X+0+1` is the byte `X+1` spelled another way (an array element's word alias): a read of it keeps the store.
+        let r = run(&[ins("movwf X+1, c"), ins("movff X+0+1, Y"), ins("movff S, X+1"), ins("movf Y, w, c"), ins("movwf T, c"), Item::Fence]);
+        assert_eq!(r[0], "movwf X+1, c", "{r:?}");
     }
 
     #[test]

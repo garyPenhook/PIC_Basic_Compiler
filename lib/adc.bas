@@ -311,19 +311,16 @@ End Sub
 
 ' One conversion on the currently selected channel; returns the result (0..AdcMax).
 Function Convert() As Word
-    Dim lo As Byte
     AdcGo = 1
     While AdcGo = 1
     Wend
-    lo = ADRESL
-    Result = ADRESH * 256 + lo
+    ' ADRESL first, then ADRESH, straight into Result (no temporary).
+    Result = ADRESL
+    Result.Byte1 = ADRESH
 End Function
 
 ' Converts channel `ch` (0..63, see the AdcCh constants) and returns 0..AdcMax.
 Public Function AdcRead(ByVal ch As Byte) As Word
-#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
-    Dim dummy As Word
-#endif
     ch = ch And 63
     If ch <> lastCh Then
 #if _has(ADCON0.CHS)
@@ -333,7 +330,8 @@ Public Function AdcRead(ByVal ch As Byte) As Word
         ADPCH = ch
 #endif
 #if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
-        dummy = Convert()
+        ' The first conversion after a channel change is dropped (erratum 1.4.4).
+        Convert()
 #endif
         lastCh = ch
     End If

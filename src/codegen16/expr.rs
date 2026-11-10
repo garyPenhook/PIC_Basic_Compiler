@@ -694,23 +694,29 @@ impl<'p> G<'p> {
                 return;
             }
             if n == 1 {
-                if left {
-                    if c >= 8 {
-                        self.ins("movlw 0");
-                    } else {
-                        for _ in 0..c {
-                            self.ins("addwf WREG, w");
-                        }
-                    }
-                } else if !e.signed && c >= 8 {
+                // In WREG itself (a core register in every bank): `swapf` + a mask for the first four places of an
+                // unsigned shift, then one `addwf`/`lsrf`/`asrf WREG, w` per place.
+                if (left || !e.signed) && c >= 8 {
                     self.ins("movlw 0");
                 } else {
-                    let a0 = self.a(0);
-                    self.fo("movwf", &a0);
-                    for _ in 0..c.min(7) {
-                        self.ins(format!("{} {}, f", if e.signed { "asrf" } else { "lsrf" }, a0.text()));
+                    let mut c = c.min(7);
+                    if c == 7 && !e.signed {
+                        // Two rotates through carry move the end bit round to the other end: 3 words, not 5.
+                        let op = if left { "rrf" } else { "rlf" };
+                        self.ins(format!("{op} WREG, w"));
+                        self.ins(format!("{op} WREG, w"));
+                        self.ins(if left { "andlw 0x80" } else { "andlw 0x01" });
+                        return;
                     }
-                    self.fop("movf", &a0, "w");
+                    if c >= 4 && !e.signed {
+                        self.ins("swapf WREG, w");
+                        self.ins(if left { "andlw 0xF0" } else { "andlw 0x0F" });
+                        c -= 4;
+                    }
+                    let op = if left { "addwf" } else if e.signed { "asrf" } else { "lsrf" };
+                    for _ in 0..c {
+                        self.ins(format!("{op} WREG, w"));
+                    }
                 }
                 return;
             }
@@ -928,7 +934,14 @@ impl<'p> G<'p> {
                     self.label(&skip);
                 }
             }
-            ExK::Cmp(k, a, b) => self.cmp_jump(*k, a, b, target, sense),
+            // `bit = 1`, `bit <> 0` and the like: one bit skip on the bit itself, not the bit turned into a byte and compared.
+            ExK::Cmp(k, a, b) => match self.bit_vs_const(a, b) {
+                Some((bit, c)) if matches!(k, CmpKind::Eq | CmpKind::Ne) => {
+                    let s = if (c == 1) == (*k == CmpKind::Eq) { sense } else { !sense };
+                    self.cond_jump(&bit, target, s);
+                }
+                _ => self.cmp_jump(*k, a, b, target, sense),
+            },
             ExK::Load(p) if p.bit.is_some() && p.dbit.is_none() && self.place_mem(p).is_some() => {
                 let m = self.place_mem(p).expect("checked");
                 self.sel(&m);
@@ -951,6 +964,28 @@ impl<'p> G<'p> {
                 self.br(if sense { Cc::Nz } else { Cc::Z }, target);
             }
         }
+    }
+
+    /// A bit-test operand (a one-bit load the bit-skip arm of [`Self::cond_jump`] takes, perhaps zero-extended) compared with the
+    /// constant 0 or 1, either way round: the load and the constant.
+    fn bit_vs_const(&mut self, a: &Ex, b: &Ex) -> Option<(Ex, u32)> {
+        fn bit_load(e: &Ex) -> Option<&Ex> {
+            match &e.k {
+                ExK::Load(p) if p.bit.is_some() && p.dbit.is_none() && !e.signed => Some(e),
+                ExK::Conv(x) if !x.signed => bit_load(x),
+                _ => None,
+            }
+        }
+        for (x, y) in [(a, b), (b, a)] {
+            if let (Some(l), ExK::Const(c)) = (bit_load(x), &y.k)
+                && *c <= 1
+                && let ExK::Load(p) = &l.k
+                && self.place_mem(p).is_some()
+            {
+                return Some((l.clone(), *c));
+            }
+        }
+        None
     }
 
     /// Branches to `target` when `a <kind> b` equals `sense`.

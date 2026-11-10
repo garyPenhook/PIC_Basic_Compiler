@@ -2729,15 +2729,19 @@ impl<'p> Gen<'p> {
                 self.ins("movf PRODL, w, c");
             }
         } else if !signed {
-            if k == 4 {
+            // A right rotate by k then a mask; the rotate is the shortest of `rrncf` k times, `rlncf` 8 - k times, or
+            // `swapf` (a rotate by 4) and the rest (x >> 7 is `rlncf` + `andlw 1`).
+            let (swap, n, right) = [(false, k, true), (false, 8 - k, false), (true, k.abs_diff(4), k >= 4)]
+                .into_iter()
+                .min_by_key(|&(sw, n, _)| n + sw as u32)
+                .expect("three choices");
+            if swap {
                 self.ins("swapf WREG, w, c");
-                self.ins("andlw 0x0F");
-            } else {
-                for _ in 0..k {
-                    self.ins("rrncf WREG, w, c");
-                }
-                self.ins(format!("andlw 0x{:02X}", 0xFFu32 >> k));
             }
+            for _ in 0..n {
+                self.ins(if right { "rrncf WREG, w, c" } else { "rlncf WREG, w, c" });
+            }
+            self.ins(format!("andlw 0x{:02X}", 0xFFu32 >> k));
         } else {
             let a0 = self.a(0);
             self.fo("movwf", &a0);

@@ -113,10 +113,16 @@ Public Function Aht30Fetch(ByRef temp As Integer, ByRef rh As Word) As Byte
     End If
     If Result = 0 Then
         ' RH x 100 = S_RH * 10000 / 2^20 = S_RH * 625 / 2^16 (rounded; S_RH * 625 fits 32 bits).
-        raw = (LongWord(frame(1)) << 12) Or (LongWord(frame(2)) << 4) Or LongWord(frame(3) >> 4)
+        ' S_RH = frame(1) << 12 | frame(2) << 4 | frame(3) >> 4, put together a byte at a time (no 32-bit shifts).
+        raw.Byte3 = 0
+        raw.Byte2 = frame(1) >> 4
+        raw.Byte1 = (frame(1) << 4) Or (frame(2) >> 4)
+        raw.Byte0 = (frame(2) << 4) Or (frame(3) >> 4)
         rh = Word((raw * 625 + 32768) >> 16)
-        ' T x 100 = S_T * 20000 / 2^20 - 5000 = S_T * 1250 / 2^16 - 5000.
-        raw = (LongWord(frame(3) And 15) << 16) Or (LongWord(frame(4)) << 8) Or LongWord(frame(5))
+        ' T x 100 = S_T * 20000 / 2^20 - 5000 = S_T * 1250 / 2^16 - 5000; S_T = (frame(3) And 15) << 16 | frame(4) << 8 | frame(5).
+        raw.Byte2 = frame(3) And 15
+        raw.Byte1 = frame(4)
+        raw.Byte0 = frame(5)
         temp = Integer((raw * 1250 + 32768) >> 16) - 5000
     End If
 End Function
