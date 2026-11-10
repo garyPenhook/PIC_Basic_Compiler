@@ -27,7 +27,8 @@ fixed in the module.
 | 4 | `buttons` | reviewed (0.1.166) | `lib_buttons` 300 → 262; probe 342 → 296 (18F27Q10), 437 → 388 (16F18346) |
 | 5 | `delay` | reviewed (0.1.167) | `DelaySeconds` 34 → 21 words (18F27Q10), 36 → 22 (16F18346); `delay_var` 36 → 23 / 36 → 21 |
 | 6 | `dma` | next | |
-| … | `eeprom` … `x10` | not started | |
+| 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 197 (every 16F part), 128 → 125 (Q41) |
+| … | `flashwrite` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -247,6 +248,49 @@ Left as opportunities:
   shorter, with the same W and flags. A peephole would serve `Not v` in general as well.
 - `DelaySeconds`' loop is tested at the top (`movf s, f` / `bnz`) after a jump in; a `decfsz` at the bottom with one
   guard would save a word. The compiler's `While` shape decides this.
+
+## 7. `eeprom`
+
+Reviewed ahead of `dma`, which the random-program comparison against XC8 pointed to (`EepromWrite` / `EepromRead` on the
+16F, `docs/EFFICIENCY.md` X4). Tests: `lib_eeprom` on every family that has data EEPROM (18F27Q10 and 18F16Q41 in
+basil-sim, 16F17146 and 16F18346 in MDB), `lib_dma_eeprom`, and the new `tests/exec_p16/eeprom_word_edge.bas` (16F17146,
+16F18346, 16F18056 in MDB; the same program with the Q41 addresses on the 18F16Q41).
+
+Bug fixed:
+
+- **A word access at 65535 wrapped to byte 0.** `EepromWriteWord(65535, v)` wrote byte 65535 (refused) and then
+  `addr + 1`, which is 0 as a Word, so it overwrote byte 0 and returned 0; `EepromReadWord(65535)` mixed in byte 0 as
+  the high byte. Both now test `addr < 65535` before the second byte. At the last real byte the behaviour is as before
+  (the first byte is stored, the second does not exist, the write returns 0).
+
+Changed in the module:
+
+- `EepromWrite` no longer reads the byte a second time when it already held the value: it starts with `Result = 1`
+  and clears it only when the read-back after a real write differs. The skipped-write case is one read, was two.
+- `SetAddr` (called from one place, with a Word argument copied through `__A` on the 16F) is part of `EepromRead`.
+
+Compiler change (`codegen16`, `cmp_jump`): an unsigned 16-bit variable compared with a multiple of 256, or one less
+(`x < 256`, `x >= 512`, `x > 255`, `x <= 511`, either way round), tests only the high byte: `movf hi, f` and a branch for
+256, `movlw` / `subwf hi, w` and a branch for the others. The PIC18 had this since 0.1.164; the 16F subtracted all 16
+bits through `__A` (14 words saved in `EepromRead` and `EepromWrite` together, since the module's range check is
+`addr < 256` on a 256-byte part). New tests `tests/exec/cmp_hibyte.bas` (18F27Q10) and `tests/exec_p16/cmp_hibyte.bas`
+(16F17146 and 16F18346): every form against 9 constants and 17 values, each answer checked against the same compare on
+a LongWord copy; a one-byte change to the emitted `movlw` makes it fail with 144 wrong answers.
+
+Probe (all five routines, values read from ports): 18F27Q10 328 → 328 bytes, 18F16Q41 332 → 332, 16F18346 291 → 285
+words, 16F17146 288 → 282, with the word fix included (it costs 4 words on the PIC18 and about 19 on the 16F, which the
+rest of the changes pay for). Over the 110 library programs: 18 smaller, none larger, 82 283 → 82 062 words (−221):
+`lib_eeprom` 229 → 197 on every 16F part, `library_all.bas` 7081 → 7065, `exec_p183_parts/small.bas` 812 → 788.
+
+Tried and dropped: a private `ReadAt` (the read without the address set-up) for the read-back after a write; the extra
+call costs more than the 7 words of address set-up it saves (+2 words PIC18, +3 on the 16F).
+
+Left as opportunities:
+
+- **Word arguments through `__A` (16F).** `EepromWrite` copies `addr` to `__A0/__A1`, then into `EepromRead`'s
+  parameter, twice. A call whose argument is a plain variable could copy the bytes straight (X4 / X6 in `EFFICIENCY.md`).
+- **`ie` as a byte.** The saved global interrupt enable is stored in a byte and tested with `decf` / `btfss` (7 words on
+  the 16F); a bit variable would be shorter if the compiler kept one in a flag.
 
 ## Next
 

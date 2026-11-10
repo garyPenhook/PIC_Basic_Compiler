@@ -878,7 +878,7 @@ const P13_PARTS: [&str; 9] = ["16F13113", "16F13114", "16F13115", "16F13123", "1
 
 /// Programs of the PIC16F171xx sets that cannot run on the PIC16F13145: too big for its 1 KB of RAM or 8K words of flash, or about a
 /// peripheral it lacks (second EUSART, data EEPROM, the 16-bit PWM); `tests/exec_p13` has the 13145 versions of the last few.
-const P13_SKIP: &[&str] = &["arith_integer", "arith_word", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_eeprom", "lib_serial2", "lib_pwm", "lib_adc", "lib_flashwrite"];
+const P13_SKIP: &[&str] = &["arith_integer", "arith_word", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_eeprom", "eeprom_word_edge", "lib_serial2", "lib_pwm", "lib_adc", "lib_flashwrite"];
 
 /// The programs for the PIC16F13145: the portable ones and `tests/exec_p16` that fit and apply, then `tests/exec_p13`.
 fn p13_programs() -> Vec<PathBuf> {
@@ -1049,7 +1049,7 @@ const P152_PARTS: [&str; 6] = ["16F15213", "16F15214", "16F15223", "16F15224", "
 
 /// Programs of the PIC16F171xx sets that do not apply to the PIC16F152xx (or do not fit its 512 bytes of RAM and 4K words of flash): the library
 /// modules whose registers differ (`tests/exec_p152` has the PIC16F152xx versions) and the programs that are too big.
-const P152_SKIP: &[&str] = &["arith_byte", "arith_integer", "arith_shortint", "arith_word", "agg_byval", "arrays_full", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_adc", "lib_eeprom", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_serial2", "lib_serial", "lib_spi"];
+const P152_SKIP: &[&str] = &["arith_byte", "arith_integer", "arith_shortint", "arith_word", "agg_byval", "arrays_full", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_adc", "lib_eeprom", "eeprom_word_edge", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_serial2", "lib_serial", "lib_spi"];
 
 /// The programs for the PIC16F152xx: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p152`.
 fn p152_programs() -> Vec<PathBuf> {

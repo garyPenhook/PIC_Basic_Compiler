@@ -58,37 +58,30 @@ Dim NvmDone As PIR7.5
 ' Number of bytes of data EEPROM (1024 on the Q10, 512 on the Q41).
 Public Const EepromSize = _EepromBytes
 
-Sub SetAddr(ByVal addr As Word)
-#if _has(NVMLOCK)
-    NVMADRU = 56
-#elseif Not _has(PRODL)
-    NVMADRH = 112
-#else
-    NVMADRU = 49
-#endif
-#if _has(PRODL)
-    NVMADRH = Byte(addr >> 8)
-#endif
-    NVMADRL = Byte(addr)
-End Sub
-
 ' One byte, 0..255; 255 for an address outside 0..1023.
 Public Function EepromRead(ByVal addr As Word) As Byte
     Result = 255
     If addr < EepromSize Then
-        SetAddr(addr)
 #if _has(NVMLOCK)
+        NVMADRU = 56
+        NVMADRH = Byte(addr >> 8)
+        NVMADRL = Byte(addr)
         NVMCON1 = 0
         NvmGo = 1
         While NvmGo = 1
         Wend
 #elseif Not _has(PRODL)
+        NVMADRH = 112
+        NVMADRL = Byte(addr)
         NVMCON1 = 64
         NvmRd = 1
         While NvmRd = 1
         Wend
         NVMCON1 = 0
 #else
+        NVMADRU = 49
+        NVMADRH = Byte(addr >> 8)
+        NVMADRL = Byte(addr)
         NvmRd = 1
         While NvmRd = 1
         Wend
@@ -103,6 +96,7 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
     Dim ie As Byte
     Result = 0
     If addr < EepromSize Then
+        Result = 1
         If EepromRead(addr) <> value Then
             NVMDATL = value
             ie = IntEn
@@ -146,9 +140,9 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
             NvmEn = 0
             NvmDone = 0
 #endif
-        End If
-        If EepromRead(addr) = value Then
-            Result = 1
+            If EepromRead(addr) <> value Then
+                Result = 0
+            End If
         End If
 #if _has(PRODL) And Not _has(NVMLOCK)
         NvmErr = 0
@@ -156,12 +150,22 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
     End If
 End Function
 
-' Little-endian 16-bit value at addr, addr + 1.
+' Little-endian 16-bit value at addr, addr + 1 (the high byte is 255 when addr + 1 is outside the array).
 Public Function EepromReadWord(ByVal addr As Word) As Word
-    Result = EepromRead(addr) + EepromRead(addr + 1) * 256
+    Result = EepromRead(addr)
+    If addr < 65535 Then
+        Result.Byte1 = EepromRead(addr + 1)
+    Else
+        Result.Byte1 = 255
+    End If
 End Function
 
-' Returns 1 when both bytes were stored.
+' Returns 1 when both bytes were stored; a write at 65535 does not wrap round to byte 0.
 Public Function EepromWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
-    Result = EepromWrite(addr, Byte(value)) And EepromWrite(addr + 1, Byte(value >> 8))
+    Result = EepromWrite(addr, Byte(value))
+    If addr < 65535 Then
+        Result = Result And EepromWrite(addr + 1, Byte(value >> 8))
+    Else
+        Result = 0
+    End If
 End Function

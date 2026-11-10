@@ -1013,6 +1013,47 @@ impl<'p> G<'p> {
                 return;
             }
         }
+        // An unsigned 16-bit variable against a multiple of 256 (`x >= 256`, `x < 512`, and so `x > 255`, `x <= 511`) only
+        // needs its high byte: `movf hi, f` and a branch for 256, `movlw`/`subwf hi, w` and a branch for the others.
+        if !signed
+            && w == 16
+            && matches!(kind, CmpKind::Lt | CmpKind::Ge | CmpKind::Gt | CmpKind::Le)
+        {
+            let (kind, x, c) = match (&a.k, &b.k) {
+                (ExK::Load(_), ExK::Const(c)) if self.simple(&a) => (kind, &a, *c & 0xFFFF),
+                (ExK::Const(c), ExK::Load(_)) if self.simple(&b) => (
+                    match kind {
+                        CmpKind::Lt => CmpKind::Gt,
+                        CmpKind::Gt => CmpKind::Lt,
+                        CmpKind::Le => CmpKind::Ge,
+                        _ => CmpKind::Le,
+                    },
+                    &b,
+                    *c & 0xFFFF,
+                ),
+                _ => (kind, &a, u32::MAX),
+            };
+            // `x > K` is `x >= K + 1` and `x <= K` is `x < K + 1`; the limit is then the multiple of 256.
+            let (lt, lim) = match kind {
+                CmpKind::Lt => (true, c),
+                CmpKind::Ge => (false, c),
+                CmpKind::Le => (true, c.wrapping_add(1)),
+                _ => (false, c.wrapping_add(1)),
+            };
+            if c <= 0xFFFF && lim % 256 == 0 && (256..=255 * 256).contains(&lim) {
+                let ExK::Load(p) = &x.k else { unreachable!() };
+                let hi = self.place_mem(p).expect("simple place").at(1);
+                if lim == 256 {
+                    self.fop("movf", &hi, "f");
+                    self.br(if lt { Cc::Z } else { Cc::Nz }, target);
+                } else {
+                    self.ins(format!("movlw {}", lim >> 8));
+                    self.fop("subwf", &hi, "w");
+                    self.br(if lt { Cc::Nc } else { Cc::C }, target);
+                }
+                return;
+            }
+        }
         match kind {
             CmpKind::Eq | CmpKind::Ne => self.eq_jump(&a, &b, target, kind == CmpKind::Eq),
             _ if w == 8 && !signed => self.cmp8(kind, a, b, target),

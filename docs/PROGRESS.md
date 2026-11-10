@@ -1274,6 +1274,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Compiler (both back ends): a variable `DelayMS`/`DelayUS` keeps its counter in `__A`, starting at the complement of the value and stepping at the top of the loop (`incfsz`, 3 cycles a pass for a Byte; an `incfsz` chain with two 5-cycle paths back for a Word), with no zero test and no copy to `__D`. A Byte delay went from 17 words around the body (after loading the value) to 5. A variable `DelayUS` now needs 12 MHz (Byte) or 20 MHz (Word). `emit_cycles` sets a count of 256 with `clrf`; exact for every count up to 3 000 000 in a model of the emitted code.
 - Sizes: 112 programs (the 102 of the earlier reviews and the delay tests), 18 smaller, none larger, 82725 → 82417 words. New tests `delay_var_word.bas` and `delay_seconds.bas` in `tests/exec` (basil-sim, 18F27Q10) and `tests/exec_p16` (MDB, 16F17146).
 
+## Module review 7: eeprom (done 2026-11-10, 0.1.168)
+- `docs/MODULE-REVIEWS.md` section 7. Bug: a word read or write at 65535 wrapped `addr + 1` to 0 and touched byte 0; both now stop at `addr < 65535`. `EepromWrite` reads once when the byte already holds the value; `SetAddr` is inside `EepromRead`.
+- Compiler (16F): an unsigned Word variable against a multiple of 256 (or one less) tests the high byte only, as the PIC18 has done since 0.1.164.
+- Sizes: 110 programs, 18 smaller, none larger, 82283 -> 82062 words; `lib_eeprom` 229 -> 197 on every 16F part. New tests `cmp_hibyte.bas` (`tests/exec`, `tests/exec_p16`) and `tests/exec_p16/eeprom_word_edge.bas`.
+
 ## Random library programs against XC8 (done 2026-11-10, 0.1.167, no compiler change)
 - `bench/random/` (`gen.py`, `lib.h`, `run.py`): seeded random programs over 2-3 of `adc`, `serial`, `eeprom`, `bits`, `delay` plus core statements, in BASIC and in C (a port of the same library routines), built with basil and XC8 v4.00 `-Os`/`-O2` for the PIC18F27Q10 and PIC16F18346.
 - Seeds 1-12: PIC18 10626 bytes against 10310 (`-Os`, +3.1%) and 11700 (`-O2`, −9.2%); 16F 6905 words against 6028 (+14.5%) and 7130 (−3.2%). `adc` + `serial` programs are smaller than `-Os`; `eeprom` + `delay` ones 22-48% larger.

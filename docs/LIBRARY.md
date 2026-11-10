@@ -249,7 +249,7 @@ PIC16F152xx: 10 bits (`AdcMax` 1023) on `ADCON0.CHS` / `ADCON1.CS` / `ADCON1.PRE
 |---|---|
 | `EepromRead(addr)` | byte at 0..1023 (0..511 on the Q41, 0..255 on the PIC16F17126/46); 255 for a larger address |
 | `EepromWrite(addr, value)` | skips the write when the byte already holds `value`; otherwise unlock sequence, waits for the write to finish. Returns 1 when the byte reads back as `value`, 0 for an invalid address or a failed write |
-| `EepromReadWord(addr)` / `EepromWriteWord(addr, value)` | 16-bit value, low byte first, at addr and addr + 1 (the write returns 1 only if both bytes were stored) |
+| `EepromReadWord(addr)` / `EepromWriteWord(addr, value)` | 16-bit value, low byte first, at addr and addr + 1 (the write returns 1 only if both bytes were stored). Both bytes must be inside the array: a word write at the last byte or beyond stores nothing and returns 0, a word read there gives 255 in each byte that does not exist (65535 from 65535). Before 0.1.168 the address wrapped at 65535 and a word write there overwrote byte 0 |
 | `EepromSize` | constant 1024 (512 on the Q41; the device's `_EepromBytes`) |
 
 `NVMEN` is set only around the write and global interrupts are off for the unlock sequence (the previous
