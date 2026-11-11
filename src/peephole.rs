@@ -2762,7 +2762,7 @@ fn pass_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
             match &items[c] {
                 Item::Comment(_) => {}
                 Item::Ins(u) if !keep[c] => {
-                    found_load = parse(u).and_then(|(m, o)| (m == "movf" && o.len() == 2 && matches!(o[1], "w" | "0")).then(|| o[0].to_string()));
+                    found_load = parse(u).and_then(|(m, o)| (m == "movf" && o.len() == 2 && matches!(dest(o[1]), Some(Dest::W))).then(|| o[0].to_string()));
                     break;
                 }
                 _ => break,
@@ -2778,7 +2778,7 @@ fn pass_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
         let mut def = None;
         let mut m = c;
         let mut ok = true;
-        while m > 0 && window.len() < 40 {
+        while m > 0 && window.len() < 40 && c - m < 120 {
             m -= 1;
             match &items[m] {
                 Item::Comment(_) => {}

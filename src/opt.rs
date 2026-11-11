@@ -1375,30 +1375,14 @@ fn flash_walk(p: &mut Program) -> bool {
 
 /// The variables an interrupt handler, a routine C calls, or anything they call reads or writes: another flow of control
 /// can see these between two instructions of the main program, so a pass must not park a half-computed value in one.
-/// `None` when such code holds raw assembly (it may name any variable).
+/// `None` when that is unknown for any of them (raw assembly, access through a pointer or `ByRef`, C or register-call
+/// routines, see `ir::routine_effects`): then every variable counts.
 pub fn interrupt_vars(p: &Program) -> Option<HashSet<VarId>> {
-    struct Calls(HashSet<FuncId>);
-    impl Visit for Calls {
-        fn call(&mut self, f: FuncId, _: &[(Place, Ex)]) {
-            self.0.insert(f);
-        }
-    }
-    let mut todo: Vec<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).collect();
-    let mut seen: HashSet<FuncId> = todo.iter().copied().collect();
-    let mut vars: HashSet<VarId> = HashSet::new();
-    while let Some(f) = todo.pop() {
-        let facts = scan(&p.funcs[f].body);
-        if facts.asm || facts.save_func {
-            return None;
-        }
-        vars.extend(facts.read.iter().chain(facts.written.iter()).copied());
-        let mut c = Calls(HashSet::new());
-        w_block(&mut c, &p.funcs[f].body);
-        for g in c.0 {
-            if seen.insert(g) {
-                todo.push(g);
-            }
-        }
+    let fx = crate::ir::routine_effects(p);
+    let mut vars = HashSet::new();
+    for f in p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)) {
+        let e = fx.get(f)?.as_ref()?;
+        vars.extend(e.writes.iter().chain(e.reads.iter()).copied());
     }
     Some(vars)
 }
