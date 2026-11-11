@@ -30,7 +30,8 @@ fixed in the module.
 | 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 189 (every 16F part, 197 in 0.1.168), 128 → 125 (Q41) |
 | 8 | `timer` | reviewed (0.1.171) | all-routines probe 464 → 393 words (16F17146), 408 → 332 (16F18346), 332 → 300 (18F27Q10); `lib_timer_f152` 324 → 300 |
 | 9 | `flashwrite` | reviewed (0.1.172) | all-routines probe 352 → 320 (18F27Q10), 353 → 322 (18F16Q41), 553 → 516 (16F17146); `lib_flashwrite` 343 → 311, 361 → 330, 607 → 566 |
-| … | `floatlib` … `x10` | not started | |
+| 10 | `floatlib` | partly reviewed (0.1.175) | all-operations probe 965 → 933 words (18F27Q10), 988 → 956 (16F18346) |
+| … | `fmath` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -448,6 +449,32 @@ Left as opportunities:
   alone in the loop would be shorter, at the cost of a second copy of the address set-up.
 - A right shift by 1 to 3 places of a Word still runs as a 16-bit shift on both back ends.
 
+## 10. `floatlib` (started 2026-11-11, 0.1.175)
+
+Probe: every Float operation (`FFromLong`, `Float(byte)`, `+ - * /`, `LongInt()`/`Byte()`/`Word()` of a Float, three
+compares, `-`, `Abs`) on values read from ports, so nothing folds. Baseline 965 words (18F27Q10) and 988 (16F18346).
+
+- **The library routines are already tight.** `FAdd`, `FMul` and the rest are hand-written assembly on the scratch
+  registers; reading the PIC18 output found nothing worth a change.
+- **Gap found, in the compiler:** after each Float call the result sits in `__A0..3`, is stored to the variable, and the
+  next statement (`c = c * b`) loads the same variable straight back into `__A0..3`: 4 `movff` words per chained
+  operation. `pass_copy_back` already removed this inside one statement but forgot every pair naming a scratch byte at a
+  statement end.
+- **Change (PIC18):** `pass_copy_back` keeps a pair across a statement end when its scratch byte was last written by a
+  call whose result is in the scratch registers. No peephole pass can delete a call's write, so the "no scratch value is
+  carried past a statement" rule of the module notes still holds for everything else. A write to the scratch byte or the
+  variable, a label, raw assembly, an unknown instruction or any other call drops the pair.
+- **Change (16F):** new `pass_copy_back16`, the same rule for the byte copy `movf s, w` / `movwf d`: the `movwf d` is deleted
+  when `d` already holds `s`; the `movf` is left to the `WREG` passes. It runs in `optimise16` before them.
+- **Sizes:** probe 965 → 933 words (−32, 18F27Q10), 988 → 956 (−32, 16F18346).
+  The 102-program size comparison of earlier reviews was not rerun for this change.
+- **Tests:** new `tests/exec/float_chain.bas` (a chain of `+ * / -` through one variable, bit patterns checked; basil-sim
+  and MDB on the 18F27Q10, MDB on the 16F17146 through `P16_PORTABLE`, at -O1 and -O0). Full `BASIL_MDB=1 cargo test --release` passes.
+
+Left as opportunities:
+
+- The remainder of the module (conversions, `FScale`, `FToLong`) has not been read for gaps yet.
+
 ## Next
 
-Module 10, `floatlib`, then on through the list in alphabetical order.
+Finish module 10, `floatlib` (the unread routines), then `fmath` and on through the list in alphabetical order.

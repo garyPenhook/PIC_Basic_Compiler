@@ -2459,6 +2459,10 @@ fn same_byte(env: &Env, a: &str, b: &str) -> bool {
 fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
     let mut pairs: Vec<(String, String)> = Vec::new();
+    // Scratch bytes whose value is a callee's result: no peephole pass can delete the write, so a copy of one may
+    // be carried past a statement end (`c = a * b` then `c = c / b`: the product stored to `c` and read back).
+    let mut from_call = [false; 16];
+    let mut carry: Vec<(String, String)> = Vec::new();
     let mut dead = vec![false; items.len()];
     for (i, it) in items.iter().enumerate() {
         if keep[i] {
@@ -2468,13 +2472,25 @@ fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
         match it {
             Item::Comment(_) => {}
             // No scratch value is carried past a statement, so a pair that names one is not either.
-            Item::Fence => pairs.retain(|(a, b)| scratch(a).is_none() && scratch(b).is_none()),
+            Item::Fence => pairs.retain(|p| carry.contains(p) || (scratch(&p.0).is_none() && scratch(&p.1).is_none())),
+            Item::Call(t) if env.reg_calls.contains(t) => {
+                pairs.clear();
+                carry.clear();
+                from_call = [true; 16];
+            }
             Item::Br(cc, _) if *cc != Cc::Always => {}
             Item::Ins(t) => {
                 let Some(e) = effect(t) else {
                     pairs.clear();
+                    carry.clear();
+                    from_call = [false; 16];
                     continue;
                 };
+                for l in &e.writes {
+                    if let Loc::S(k) = l {
+                        from_call[*k as usize] = false;
+                    }
+                }
                 let movff = parse(t).filter(|(m, o)| m == "movff" && o.len() == 2).map(|(_, o)| (o[0].trim().to_string(), o[1].trim().to_string()));
                 if let Some((s, d)) = &movff
                     && pairs.iter().any(|(a, b)| (same_byte(env, a, s) && same_byte(env, b, d)) || (same_byte(env, a, d) && same_byte(env, b, s)))
@@ -2494,15 +2510,129 @@ fn pass_copy_back(items: &mut Vec<Item>, env: &Env) -> bool {
                     };
                     !hit(a) && !hit(b)
                 });
+                carry.retain(|c| pairs.contains(c));
                 if let Some((s, d)) = movff
                     && s != d
                     && (scratch(&s).is_some() || env.is_plain(&s))
                     && (scratch(&d).is_some() || env.is_plain(&d))
                 {
+                    if let Some(k) = scratch(&s)
+                        && from_call[k as usize]
+                        && scratch(&d).is_none()
+                    {
+                        carry.push((s.clone(), d.clone()));
+                    }
                     pairs.push((s, d));
                 }
             }
-            _ => pairs.clear(),
+            _ => {
+                pairs.clear();
+                carry.clear();
+                from_call = [false; 16];
+            }
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// [`pass_copy_back`] for the enhanced mid-range core, where a byte copy is `movf s, w` / `movwf d`: the `movwf d`
+/// is deleted when `d` already holds the byte `s` (a result stored to its variable and read straight back into `__A`).
+/// The `movf` is left for the `WREG` passes. A pair whose scratch byte was last written by a call with its result in
+/// the scratch registers survives a statement end, as in [`pass_copy_back`].
+fn pass_copy_back16(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut carry: Vec<(String, String)> = Vec::new();
+    let mut from_call = [false; 16];
+    // The byte `WREG` is known to copy (`movf s, w`).
+    let mut wsrc: Option<String> = None;
+    let mut dead = vec![false; items.len()];
+    let tracked = |n: &str| scratch(n).is_some() || env.is_plain(n);
+    for (i, it) in items.iter().enumerate() {
+        if keep[i] {
+            pairs.clear();
+            carry.clear();
+            wsrc = None;
+            continue;
+        }
+        match it {
+            Item::Comment(_) => {}
+            Item::Fence => {
+                pairs.retain(|p| carry.contains(p) || (scratch(&p.0).is_none() && scratch(&p.1).is_none()));
+                if wsrc.as_deref().is_some_and(|w| scratch(w).is_some()) {
+                    wsrc = None;
+                }
+            }
+            Item::Call(t) if env.reg_calls.contains(t) => {
+                pairs.clear();
+                carry.clear();
+                wsrc = None;
+                from_call = [true; 16];
+            }
+            Item::Ins(t) => {
+                let Some(e) = effect(t) else {
+                    pairs.clear();
+                    carry.clear();
+                    wsrc = None;
+                    from_call = [false; 16];
+                    continue;
+                };
+                let (mn, ops) = parse(t).unwrap_or_default();
+                let movwf = (mn == "movwf" && ops.len() == 1).then(|| ops[0].trim().to_string());
+                if let (Some(d), Some(s)) = (&movwf, &wsrc)
+                    && pairs.iter().any(|(a, b)| (same_byte(env, a, s) && same_byte(env, b, d)) || (same_byte(env, a, d) && same_byte(env, b, s)))
+                {
+                    dead[i] = true;
+                    continue;
+                }
+                for l in &e.writes {
+                    if let Loc::S(k) = l {
+                        from_call[*k as usize] = false;
+                    }
+                }
+                if e.wmem.contains(&Mem::Unknown) {
+                    pairs.clear();
+                    wsrc = None;
+                }
+                let hit_by = |n: &str| {
+                    e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same_byte(env, x, n))) || scratch(n).is_some_and(|k| e.writes.contains(&Loc::S(k)))
+                };
+                pairs.retain(|(a, b)| !hit_by(a) && !hit_by(b));
+                carry.retain(|c| pairs.contains(c));
+                if wsrc.as_deref().is_some_and(hit_by) {
+                    wsrc = None;
+                }
+                if let (Some(d), Some(s)) = (&movwf, &wsrc)
+                    && !same_byte(env, s, d)
+                    && tracked(s)
+                    && tracked(d)
+                {
+                    if let Some(k) = scratch(s)
+                        && from_call[k as usize]
+                        && scratch(d).is_none()
+                    {
+                        carry.push((s.clone(), d.clone()));
+                    }
+                    pairs.push((s.clone(), d.clone()));
+                }
+                if e.writes.contains(&Loc::W) {
+                    wsrc = (mn == "movf" && ops.len() == 2 && matches!(ops[1].trim(), "w" | "0") && tracked(ops[0].trim())).then(|| ops[0].trim().to_string());
+                }
+            }
+            _ => {
+                pairs.clear();
+                carry.clear();
+                wsrc = None;
+                from_call = [false; 16];
+            }
         }
     }
     let changed = dead.iter().any(|&d| d);
@@ -3462,6 +3592,7 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_branch_over_branch(&mut items);
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
+        changed |= pass_copy_back16(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
         if !env.keep_writes {
