@@ -222,8 +222,8 @@ End Function
 
 ' Puts the part to sleep: the `sleep` instruction. It returns when an interrupt (a peripheral that runs in Sleep with its
 ' interrupt enabled, or the watchdog if the Config enables it) wakes the part; with interrupts disabled the program goes on at the next
-' statement, with them enabled the handler runs first. On the PIC16F13xxx parts only, two NOPs after it keep the instruction that follows a wake-up from being
-' fetched too early on the parts that need that (PIC16F13xxx, erratum 1.3.1). This is the plain instruction; Snooze and the timed Sleep(seconds) below use the watchdog as the wake-up timer.
+' statement, with them enabled the handler runs first. On the PIC16F13113 .. 13145 parts only, two NOPs after it keep the instruction that follows a wake-up from being
+' fetched too early on the parts that need that (erratum 1.3.1 of DS80001115F; the PIC16F13214 .. 13245 errata, DS80001213B, list no such erratum, so they get none). This is the plain instruction; Snooze and the timed Sleep(seconds) below use the watchdog as the wake-up timer.
 Public Sub Sleep()
 #if _device = 16F13113 or _device = 16F13114 or _device = 16F13115 or _device = 16F13123 or _device = 16F13124 or _device = 16F13125 or _device = 16F13143 or _device = 16F13144 or _device = 16F13145
     Asm

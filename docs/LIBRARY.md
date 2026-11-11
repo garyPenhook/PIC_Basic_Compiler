@@ -3,7 +3,7 @@
 Written in the language, found by `Include "name"` in the project's `lib/` folder (LANGUAGE.md §9).
 A routine is called as `Module.Routine(...)` or, when the name is unambiguous, by its own name.
 Only what a program calls is compiled in. Each module cites the data sheet pages its register
-values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F, PIC16F13113..13145 values from DS40002519D, PIC16F183xx values from DS40001799F / DS40001800E / DS40001795K / DS40001839E, PIC16F152xx values from DS40002195E, PIC16F18056/76 values from DS40002325C and PIC18F0x/1xQ41
+values come from (DS40002043F, PIC18F27/47Q10; PIC16F17126/46 values from DS40002343F, PIC16F13113..13145 values from DS40002519D, PIC16F13214..13245 values from DS40002686B, PIC16F183xx values from DS40001799F / DS40001800E / DS40001795K / DS40001839E, PIC16F152xx values from DS40002195E, PIC16F18056/76 values from DS40002325C and PIC18F0x/1xQ41
 values from DS40002214G / DS40002242F where the module is ported, see "Device support" below); the values were
 checked against those documents.
 
@@ -46,6 +46,32 @@ only. Nothing was run on a real part.
 | `aht30` | done | done (over the hardware `i2c`; set-up test passes in the simulator) | done (over the hardware `i2c`) | done (over the software `i2c`) | |
 | `dma` | not applicable (no DMA) | not checked (the 16F17126/46 data sheet has not been read for DMA) | `#error` (no DMA) | written for software-started RAM/SFR copies (`DmaCopy`) trigger-started feeds (`DmaOnTrigger`) with abort triggers (`DmaAbortOn`) and flash- and EEPROM-source copies (`DmaCopyFlash`, `DmaCopyEeprom`; the EEPROM address form comes from Microchip's TB3164, not the Q41 data sheet); builds, register set-up tested, bytes moved checked only against a DMA model of the data sheet (`scripts/dma_sim.py`); a part without `DMAnCON0` gets `#error` | interrupts, priorities; data movement not seen on a real part (MDB has no DMA; the tests use the model) |
 | `floatlib` | done | done, **written in Basic** on `LongWord` arithmetic (the PIC18 routines are assembly): the same results bit for bit (`tests/exec_p16/float_random.bas`), about 1.2K words for `+` against 200 on the PIC18 | done (as the PIC16F171xx; about 1.2K words for `+`, so 2K-word parts have little room left) | builds (no device registers); not run on the Q41 | hand-written assembly for the enhanced mid-range core would be several times smaller; run the float tests on the Q41 simulator |
+
+### PIC16F13214 / 13215 / 13224 / 13225 / 13244 / 13245 (DS40002686B, errata DS80001213B; facts in `FACTS-16F132xx.md`)
+
+A PIC16F17126/46-like peripheral set (16-bit PWM, two EUSART, Timer3/4, secondary oscillator, data EEPROM) with the PIC16F13145 family's CLB and 10-bit ADCC, in 8-, 14- and 20-pin packages. The modules choose
+their branch from the registers the part has (`_has`); the ones below were checked against the data sheet. The simulator tests run on the PIC16F13245 (`tests/exec_p16` and `tests/exec_p132`); `tests/exec_p132/pins8`,
+`pins14` and `pins20` check the pins each package accepts, and every part builds `tests/exec_p132_parts/small.bas`. The simulator has no ADC conversion and shows no bus traffic. Nothing was run on a real part.
+
+| Module | PIC16F132xx |
+|---|---|
+| `delay`, `strings`, `shift`, `floatlib`, `fmath` | portable (no device registers) and run in the simulator on the PIC16F13245 (`tests/exec_p16`, `tests/exec_p132/lib_fmath`); the Float routines are about 1.2K words, so the 4K-word parts have little room left |
+| `bits`, `buttons`, `pinio`, `pulse` | build for the part (`tests/exec/lib_bits`, `lib_buttons`, `lib_pinio`, `lib_pulse` retargeted); their tests are PIC18-only (`devices: 18F27Q10`), so they have not run on a PIC16F132xx |
+| `gpio` | done (`ANSELx`, `WPUx`, `ODCONx`, `_has` per port; the 8-pin parts have port A only, the 14-pin parts no port B) |
+| `intosc` | done (`OSCFRQ.FRQ` 1..32 MHz = 0..5; NOSC 110 = HFINTOSC, NDIV 1:1..1:512) |
+| `system` | done (`PCON0` with the window violation flag; no fetch erratum, so `Sleep` adds no NOPs) |
+| `timer` | done (Timer0/1/2; flags `PIR0.5`, `PIR1.6`, `PIR2.2`; Timer1 clocks 0..8 and, for this family only, 7 `T1ClkMfIntOsc32`, 9 `T1ClkExtOsc`, 10 `T1ClkRef`, 13 `T1ClkTmr3`; gates incl. `T1GateTmr4` and `T1GatePwm1P1`..`T1GatePwm2P2`; `T2RstPwm1P1`..`T2RstPwm2P2`) |
+| `serial` | done (EUSART1, TX RC4 = `13h`, RX RC5; RA4 and RA5 on the 8-pin parts) |
+| `serial2` | done (EUSART2, TX RC2 = `16h`, RX RC1, `TX2IF`/`RC2IF` are `PIR5` bits 0 and 1; **TX RA2 and RX RA1 on the 8-pin parts**) |
+| `adc` | done (10 bits, `AdcMax` = 1023, channels 0..2, 4, 5, 12..23, VSS 58, temperature 59, DAC1 60, FVR 62/63; **TAD >= 0.5 us**, `MinTadNs` = 500: the PIC16F13145 family's 2 us comes from its own erratum, which this family does not have; no charge pump write, CPON resets to 01) |
+| `eeprom` | done (256 bytes through `NVMREGS = 1`, `NVMADRH:NVMADRL` = `70h:addr`, 55h/AAh unlock; as the PIC16F17126/46) |
+| `flashwrite` | done (32-word row, 14-bit words, `FlashLastSector` from the size: 4K and 8K words) |
+| `spi` | done (MSSP1, `RxyPPS` 27 = SCK1 and 28 = SDO1; pins of the part only) |
+| `i2c` | done (MSSP1 hardware host, `RxyPPS` 27 = SCL1 and 28 = SDA1; `SSP1IF`/`BCL1IF` are `PIR5` bits 2 and 3; pins of the part only) |
+| `pwm` | done (the two 16-bit PWM modules: channels 1..4 = PWM1S1P1 .. PWM2S1P2, `RxyPPS` = 10 + channel = `0Bh`..`0Eh`; CCP1 and CCP2 are not offered; **pins of the part only**: the 8-pin parts have no port C) |
+| `lcd` | done (pins of the part only) |
+| `oled`, `aht30` | done over `i2c`/`spi`; the frame buffer (1 KB) does not fit the 1 KB RAM of the largest part, so text and `OledGoto`/`OledData`/`OledBitmap` build and a pixel command stops with `E-RAM` |
+| `dma` | `#error` (no DMA) |
 
 ### PIC16F18313 … 18346 (DS40001799F, DS40001800E, DS40001795K, DS40001839E; facts in `FACTS-16F183xx.md`)
 

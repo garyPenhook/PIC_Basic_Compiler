@@ -36,6 +36,9 @@ Module Pwm
 ' CCPTMRS0 and PWMTMRS0 reset to Timer2, so the module leaves them alone.
 ' PIC16F17126/46 (DS40002343F chapter 29): the same 16-bit PWM modules as the Q41 but two of them, so channels 1..4 (PWM1S1P1, PWM1S1P2, PWM2S1P1,
 ' PWM2S1P2) with RxyPPS = 10 + channel [Table 18-2: PWM1S1P1_OUT = 0Bh]; channels 5 and 6 are refused. Pins as on the Q41.
+' PIC16F13214/15/24/25/44/45 (DS40002686B chapter 27; chosen with `#if _has(PWMEN)` like the PIC16F17126/46): the same two 16-bit PWM modules, so channels 1..4 with RxyPPS = 10 + channel
+' [Table 18-2 p.207: PWM1S1P1_OUT = 0Bh .. PWM2S1P2_OUT = 0Eh]; PWMxCLK = 2 is FOSC, CPRE is n + 1, EN is PWMxCON bit 7 and LD bit 2, MODE 000 is left aligned [p.325-336]. Pins: any pin of the part
+' (RA0..RA5 except RA3, RB4..RB7 on the 20-pin parts, RC0..RC5 on the 14- and 20-pin parts, RC6 and RC7 on the 20-pin parts).
 ' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapters 18 and 29; chosen with `_has(PWM6DCL)` in the Timer2 branch below): the same four channels on Timer2 as the PIC16F13145
 ' family: channels 1 and 2 are CCP1 and CCP2 in PWM mode and channels 3 and 4 are the 10-bit modules PWM5 and PWM6 (CCP3, CCP4 and the other timers are not offered). RxyPPS = 0Ch CCP1, 0Dh CCP2,
 ' 02h PWM5, 03h PWM6 [Register 13-2]; any pin of the part. Timer2 is the old one: PR2, TMR2, T2CON = TMR2ON | T2CKPS with prescalers 1, 4, 16, 64 [Register 28-1] and no clock register (FOSC/4 only), so
@@ -115,9 +118,14 @@ Public Function PwmSteps() As Word
     End If
 End Function
 
-' Pins that exist: RA0..RA5 except RA3 (input only), RB4..RB7 on the 20-pin parts, RC0..RC7.
+' Pins that exist: RA0..RA5 except RA3 (input only), RB4..RB7 on the 20-pin parts, RC0..RC5 where there is a port C (not the 8-pin PIC16F13214/15), RC6 and RC7 on the 20-pin parts.
 Function PinOk(ByVal pin As Byte) As Boolean
-    Result = (pin <= 5 And pin <> 3) Or (pin >= 16 And pin <= 21)
+    Result = (pin <= 5 And pin <> 3)
+#if _has(TRISC)
+    If pin >= 16 And pin <= 21 Then
+        Result = True
+    End If
+#endif
 #if _has(RC6PPS)
     If pin = 22 Or pin = 23 Then
         Result = True
@@ -148,12 +156,14 @@ Sub PinInput(ByVal pin As Byte, ByVal asInput As Boolean)
             TRISB = TRISB And (m Xor 255)
         End If
 #endif
+#if _has(TRISC)
     Else
         If asInput Then
             TRISC = TRISC Or m
         Else
             TRISC = TRISC And (m Xor 255)
         End If
+#endif
     End If
 End Sub
 
@@ -166,8 +176,10 @@ Sub PinDigital(ByVal pin As Byte)
     ElseIf pin < 16 Then
         ANSELB = ANSELB And m
 #endif
+#if _has(TRISC)
     Else
         ANSELC = ANSELC And m
+#endif
     End If
 End Sub
 
@@ -217,6 +229,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
     ElseIf pin = 15 Then
         RB7PPS = code
 #endif
+#if _has(RC0PPS)
     ElseIf pin = 16 Then
         RC0PPS = code
     ElseIf pin = 17 Then
@@ -229,6 +242,7 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
         RC4PPS = code
     ElseIf pin = 21 Then
         RC5PPS = code
+#endif
 #if _has(RC6PPS)
     ElseIf pin = 22 Then
         RC6PPS = code

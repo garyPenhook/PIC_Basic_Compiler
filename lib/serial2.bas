@@ -16,6 +16,8 @@ Module Serial2
 ' selection of RX2PPS, Table 18-1]. TX2IF and RC2IF are PIR5 bits 0 and 1. The registers and the baud-rate formula are
 ' those of EUSART1.
 '
+' PIC16F13214/15/24/25/44/45 (DS40002686B, chapters 18 and 31): the same EUSART2 as the PIC16F17126/46, with the same codes (TX2/CK2 = 0x16 [Table 18-2 p.207];
+' TX2IF and RC2IF are PIR5 bits 0 and 1). RC2 and RC1 on the 14- and 20-pin parts; the 8-pin parts have port A only, so TX2 is RA2 and RX2 is RA1.
 ' PIC16F18056/76 (DS40002325C, chapters 18 and 30; chosen with `Not _has(OSCCON1)`): EUSART2 with TX on RB6 and RX on RB7, the Reset selections of CK2PPS and RX2PPS [Table 18-1 p.169]; both
 ' PPS tables allow port B on the 28- and the 40-pin part (the second port is C on the 28-pin and D on the 40-pin part). RB6PPS = 11h selects TX2/CK2 [Table 18-2 p.170]; RX2PPS = PORT[5:3] | PIN[2:0],
 ' RB7 = 001 111 = 15 [18.8.1 p.173]. TX2IF and RC2IF are PIR3 bits 4 and 5 [PIR3, p.111]. RB6 and RB7 are also the ICSP clock and data pins. The registers and the baud-rate formula are those of EUSART1.
@@ -57,9 +59,17 @@ Dim TxIf As PIR5.0
 Dim RxIf As PIR5.1
 Dim OverrunErr As RC2STA.1
 Dim RxEnable As RC2STA.4
+#if _has(TRISC)
 Dim TxPin As TRISC.2
 Dim RxPin As TRISC.1
 Dim RxAnalog As ANSELC.1
+#else
+' The 8-pin parts (PIC16F13214/13215) have port A only: TX2 on RA2, RX2 on RA1 (the reset selection of RX2PPS on an 8-pin part,
+' DS40002686B Table 18-1 p.206), clear of the RA4 / RA5 pair of module Serial.
+Dim TxPin As TRISA.2
+Dim RxPin As TRISA.1
+Dim RxAnalog As ANSELA.1
+#endif
 #endif
 Public Const FoscHz = LongWord(_Clock * 1000000)
 
@@ -95,8 +105,13 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     TX2STA = 36
     RC2STA = 144
 #else
+#if _has(TRISC)
     RC2PPS = 22
     RX2PPS = 17
+#else
+    RA2PPS = 22
+    RX2PPS = 1
+#endif
     SP2BRGL = Byte(n)
     SP2BRGH = Byte(n >> 8)
     BAUD2CON = 8

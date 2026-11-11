@@ -128,6 +128,13 @@ Public Const T1ClkSfIntOsc = 5
 Public Const T1ClkMfIntOsc = 6
 #if _has(OSCEN.SOSCEN)
 Public Const T1ClkSosc = 8
+#if _has(HLVDCON0)
+' PIC16F13214/15/24/25/44/45 (DS40002686B Table 23-4 p.271, Table 23-5 p.272): the codes the PIC16F17126/46 list leaves out.
+Public Const T1ClkMfIntOsc32 = 7
+Public Const T1ClkExtOsc = 9
+Public Const T1ClkRef = 10
+Public Const T1ClkTmr3 = 13
+#endif
 #else
 ' PIC16F13145 family (DS40002519D Table 22-4 p.245): no secondary oscillator; 7 is the 32 kHz MFINTOSC (6 is the 500 kHz one)
 ' and 9 is EXTOSC.
@@ -144,6 +151,14 @@ Public Const T1GateCcp1 = 7
 Public Const T1GateCcp2 = 8
 Public Const T1GateCmp1 = 18
 Public Const T1GateCmp2 = 19
+#if _has(HLVDCON0)
+' PIC16F13214/15/24/25/44/45 (DS40002686B Table 23-5 p.272): Timer4 and the outputs of the two 16-bit PWM modules (PWMNS1P1 / PWMNS1P2).
+Public Const T1GateTmr4 = 5
+Public Const T1GatePwm1P1 = 9
+Public Const T1GatePwm1P2 = 10
+Public Const T1GatePwm2P1 = 11
+Public Const T1GatePwm2P2 = 12
+#endif
 #else
 ' Timer1 clock sources, the CS field of T1CLK [Table 20-2]. T1ClkPin counts rising edges on the
 ' T1CKI pin (RC0 at reset, T1CKIPPS); T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise.
@@ -239,6 +254,13 @@ Public Const T2RstTmr4 = 2
 #endif
 Public Const T2RstCcp1 = 4
 Public Const T2RstCcp2 = 5
+#if _has(HLVDCON0)
+' PIC16F13214/15/24/25/44/45 (DS40002686B Table 24-4 p.294): the outputs of the two 16-bit PWM modules (PWMNS1P1 / PWMNS1P2).
+Public Const T2RstPwm1P1 = 6
+Public Const T2RstPwm1P2 = 7
+Public Const T2RstPwm2P1 = 8
+Public Const T2RstPwm2P2 = 9
+#endif
 Public Const T2RstCmp1 = 14
 Public Const T2RstCmp2 = 15
 #else

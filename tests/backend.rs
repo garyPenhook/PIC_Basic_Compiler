@@ -951,6 +951,9 @@ fn p13_fetch_nop_work_around() {
     assert_ne!(asm("16F13145", "16", "", "b").0, "nop");
     assert_ne!(asm("16F13145", "32", "#option FetchNop = false\n", "c").0, "nop");
     assert_ne!(asm("16F17146", "32", "", "d").0, "nop");
+    // The PIC16F13214/15/24/25/44/45 errata (DS80001213B) list no fetch erratum: no NOP at any clock.
+    assert_ne!(asm("16F13245", "32", "", "e").0, "nop");
+    assert_ne!(asm("16F13214", "32", "", "f").1, "nop");
 }
 
 /// With `BASIL_MDB=1` the PIC16F13145 programs run on the simulator's `PIC16F13145`.
@@ -965,6 +968,75 @@ fn p13_programs_in_simulator() {
         let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F13145").args(&files).output().unwrap();
         let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
         assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
+const P132_PARTS: [&str; 6] = ["16F13214", "16F13215", "16F13224", "16F13225", "16F13244", "16F13245"];
+
+/// Programs of the PIC16F171xx sets that cannot run on the PIC16F13245 (DS40002686B): too big for its 1 KB of RAM or 8K words of flash
+/// (`lib_oled` needs a 1 KB frame buffer); `tests/exec_p132` has the versions of `lib_adc` (10 bits, TAD from 0.5 us) and `lib_flashwrite`
+/// (8K words) for the part. The part has the data EEPROM, both EUSARTs and the 16-bit PWM, so those tests run as written for the PIC16F17146.
+const P132_SKIP: &[&str] = &["arith_integer", "arith_word", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_adc", "lib_flashwrite"];
+
+/// The programs for the PIC16F13245: the portable ones and `tests/exec_p16` that fit and apply, then `tests/exec_p132`.
+fn p132_programs() -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = P16_PORTABLE.iter().filter(|p| !P132_SKIP.contains(p)).map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
+    files.extend(bas_files(&root().join("tests/exec_p16")).into_iter().filter(|f| !P132_SKIP.contains(&f.file_stem().unwrap().to_str().unwrap())));
+    files.extend(bas_files(&root().join("tests/exec_p132")));
+    files
+}
+
+/// Every member of the PIC16F13214/15/24/25/44/45 family builds the small program (port A only on the 8-pin parts, 512 bytes of RAM and 4K words of
+/// flash on the smallest); the PIC16F13245 builds all of its programs.
+#[test]
+fn p132_parts_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("p132parts");
+    let mut failures = Vec::new();
+    let small = std::fs::read_to_string(root().join("tests/exec_p132_parts/small.bas")).unwrap();
+    let mut programs: Vec<(String, PathBuf)> = Vec::new();
+    for dev in P132_PARTS {
+        let f = out.join(format!("small_{dev}.bas"));
+        std::fs::write(&f, small.replace("16F13214", dev)).unwrap();
+        programs.push((dev.to_string(), f));
+    }
+    for src in p132_programs() {
+        let name = src.file_stem().unwrap().to_string_lossy().into_owned();
+        // `tests/exec_p132` programs already name their part and clock; the others are changed as for the PIC16F171xx.
+        let f = if src.starts_with(root().join("tests/exec_p132")) { src.clone() } else { for_p16(&src, "16F13245", &out.join(format!("{name}_16F13245.bas"))) };
+        programs.push(("16F13245".into(), f));
+    }
+    for (dev, src) in programs {
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        if !r.status.success() || text.contains("pic-as:") {
+            failures.push(format!("{} for {dev}:\n{text}", src.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// With `BASIL_MDB=1` the PIC16F13245 programs run on the simulator's `PIC16F13245`, and the pin tests on the 8-, 14- and 20-pin part each.
+#[test]
+fn p132_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files = p132_programs();
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F13245").args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+    // The pin tests name one part each (`devices:`), so they were skipped above.
+    for (dev, name) in [("16F13214", "pins8"), ("16F13224", "pins14"), ("16F13244", "pins20")] {
+        let f = root().join(format!("tests/exec_p132/{name}.bas"));
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg("--device").arg(dev).arg(&f).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "{name} on {dev}:\n{text}");
     }
 }
 

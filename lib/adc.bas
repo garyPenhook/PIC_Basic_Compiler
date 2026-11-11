@@ -26,6 +26,10 @@ Module Adc
 ' is 2 us, not the 1 us of AD20, so the conversion clock is chosen for TAD >= 2 us on this family (the limit is 9 us, AD20 p.557).
 ' CPON resets to 01 there (CPCON p.514), so no charge pump write is needed.
 '
+' PIC16F13214/15/24/25/44/45 (DS40002686B, chapter 32, 10 bits; also chosen with `#if _has(CLBCON)`, told from the PIC16F13145 family by `_has(HLVDCON0)`): the same registers and the same
+' channel numbers [ADPCH, Table 32-6 p.508: RA0..RA2 = 0..2, ADCG1 3, RA4 and RA5 = 4 and 5, RB4..RB7 = 12..15, RC0..RC7 = 16..23, VSS 58, temperature indicator 59, DAC1 60, FVR buffer 1 62 and
+' buffer 2 63; RB and RC6, RC7 on the 20-pin parts, RC0..RC5 on the 14-pin ones, port A only on the 8-pin]. ADCLK = FOSC / (2 (n + 1)), ADREF.PREF, ADACQ in FOSC clocks [p.506-510]. TAD is 0.5..9 us
+' with FOSC as the clock (AD20, p.610) and the errata (DS80001213B) list nothing for the ADC, so the 2 us of the PIC16F13145 family's erratum does not apply: MinTadNs = 500. CPON resets to 01 [CPCON p.565].
 ' PIC16F183xx (DS40001799F, DS40001800E, DS40001795K, DS40001839E, chapter 22, 10 bits; chosen with `#if _has(ADCON0.CHS)`): the older
 ' ADC without ADCC. ADCON0 holds CHS<5:0> (bits 7-2), GO/DONE (bit 1) and ADON; ADCON1 holds ADFM, ADCS<2:0>, ADNREF and ADPREF<1:0> [Registers 22-1, 22-2].
 ' Channels: RA0..RA2, RA4, RA5 = 0..2, 4, 5, RB4..RB7 = 12..15, RC0..RC7 = 16..23, VSS 60, temperature indicator 61, DAC1 62 and FVR 63 [Register 22-1].
@@ -117,10 +121,10 @@ Const AcqUs = 8
 Const AcqUs = 5
 #endif
 
-' Smallest TAD in nanoseconds: 1 us [AD20], 2 us on the PIC16F13145 family (erratum 1.1.1).
-#if _has(CLBCON)
+' Smallest TAD in nanoseconds: 1 us [AD20], 2 us on the PIC16F13145 family (erratum 1.1.1), 0.5 us on the PIC16F152xx and PIC16F132xx parts.
+#if _has(CLBCON) And Not _has(HLVDCON0)
 Const MinTadNs = 2000
-#elseif _has(ADCON1.PREF)
+#elseif _has(CLBCON) Or _has(ADCON1.PREF)
 Const MinTadNs = 500
 #else
 Const MinTadNs = 1000
