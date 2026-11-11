@@ -90,11 +90,12 @@ Sub Begin(ByVal isData As Boolean)
             s = I2c.I2cSend(addr7 << 1)
         End If
         If s = 0 Then
+            ' control byte: Co = 0, D/C# = isData (one send for both kinds)
+            s = 0
             If isData Then
-                s = I2c.I2cSend(64)
-            Else
-                s = I2c.I2cSend(0)
+                s = 64
             End If
+            s = I2c.I2cSend(s)
         End If
         If s <> 0 And err = 0 Then
             err = s
@@ -615,6 +616,9 @@ Public Sub OledBufChar(ByVal x As Byte, ByVal y As Byte, ByVal ch As Byte, ByVal
     Dim c As Byte
     Dim b As Byte
     Dim k As Byte
+    If x > 127 Or y > 63 Then
+        Exit
+    End If
     If ch < 32 Or ch > 126 Then
         ch = 63
     End If
@@ -636,7 +640,7 @@ End Sub
 Public Sub OledBufText(ByVal x As Byte, ByVal y As Byte, ByVal on As Boolean, ByRefConst s As String(80))
     Dim i As Byte
     i = 0
-    While s(i) <> #0
+    While s(i) <> #0 And x < 128
         OledBufChar(x, y, Byte(s(i)), on)
         x = x + 6
         Inc(i)

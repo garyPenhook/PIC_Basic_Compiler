@@ -1334,3 +1334,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## Module review 14: lcd (done 2026-11-11, 0.1.180)
 - `docs/MODULE-REVIEWS.md` section 14. The six pins are a `pins(6)` array checked with `Pinio.PinOk` instead of a 32-bit used-pin set; `Nibble` and the pin set-up are loops. All-routines probe 691 -> 609 words, typical use 554 -> 472 (18F27Q10), `lib_lcd` 693 -> 599; five bytes of RAM fewer. A refused `LcdInit` now disables the module. New test `lib_lcd_refuse` (exec).
+
+## Module review 15: oled (done 2026-11-11, 0.1.181)
+- `docs/MODULE-REVIEWS.md` section 15. No size gain worth taking (both transports and the font are always linked; an unused-transport option would change the API). Fixed: `OledBufText` and `OledBufChar` wrapped the Byte `x` past column 255 (a string over 42 characters drew its 43rd character at column 2); off-screen characters are now ignored. New test `tests/exec/lib_oled_text` (fails on the old module).

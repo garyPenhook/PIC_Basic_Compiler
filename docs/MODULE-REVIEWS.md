@@ -573,6 +573,20 @@ HD44780 4-bit driver on six pins through `Pinio`. Probes (18F27Q10): A calls eve
 - **Not changed:** `LcdWriteWord` (already subtraction by powers of ten, no divide linked), `LcdWrite`'s per-character `ready` test (the same one `LcdWriteChar` does), the `Send` waits. The
   module is still not interrupt-safe (read-modify-write of `LATx`), as documented in the header and the manual.
 
+## 15. `oled` (done 2026-11-11, 0.1.181)
+
+SSD1309 128 x 64 over I2C or 4-wire SPI, text, bitmaps and a 1 KB frame buffer for pixel drawing. Probes (18F27Q10): A calls every routine, B is typical text use (`OledInitSpi`,
+`OledClear`, `OledWrite`, `OledWriteWord`), C is the frame buffer (`OledLine`, `OledRect`, `OledBufText`, `OledUpdate`). Words before and after: A 1854 → 1862, B 871 → 869, C 1094 → 1099.
+
+- **Size: nothing worth taking.** The cost is structural: both transports are always linked (`Begin` / `Put` / `Finish` 134 words, plus `I2cSend` and its helpers, about 97 words, in a program that
+  only uses SPI), and the 475-byte font is 238 words. Removing the unused transport needs a compile-time choice (an `#option`), which is an API change; left as an opportunity. The pixel code is
+  already a multiply by 128 and one shift loop (47 words). `Begin` now sends the I2C control byte with one `I2cSend` call instead of two (−2 words in B).
+- **Bug fixed: `OledBufText` wrapped past column 255.** `x` is a Byte, so a string longer than 42 characters drew its 43rd character at column 2, and `OledBufChar` at `x` above 250 put its
+  columns on 0..4. `OledBufText` stops at column 128 and `OledBufChar` ignores a character whose `x` is above 127 or `y` above 63. `tests/exec/lib_oled_text` covers the long string, the
+  off-screen `x` (128 and 250) and `y` (250); it fails on the old module (`LT_WRAP: want 0 got 1`). A and C grow by 8 and 5 words for the guards.
+- **Not changed:** `OledRect`, `OledFillRect` and `OledBufBitmap` still wrap when `x + w` or `y + h` pass 255 (documented for the rectangles); the SSD1309 command values were not re-read
+  against the data sheet in this review.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `oled` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `pinio` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).
