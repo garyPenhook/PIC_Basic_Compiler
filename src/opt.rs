@@ -1373,6 +1373,36 @@ fn flash_walk(p: &mut Program) -> bool {
     changed
 }
 
+/// The variables an interrupt handler, a routine C calls, or anything they call reads or writes: another flow of control
+/// can see these between two instructions of the main program, so a pass must not park a half-computed value in one.
+/// `None` when such code holds raw assembly (it may name any variable).
+pub fn interrupt_vars(p: &Program) -> Option<HashSet<VarId>> {
+    struct Calls(HashSet<FuncId>);
+    impl Visit for Calls {
+        fn call(&mut self, f: FuncId, _: &[(Place, Ex)]) {
+            self.0.insert(f);
+        }
+    }
+    let mut todo: Vec<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).collect();
+    let mut seen: HashSet<FuncId> = todo.iter().copied().collect();
+    let mut vars: HashSet<VarId> = HashSet::new();
+    while let Some(f) = todo.pop() {
+        let facts = scan(&p.funcs[f].body);
+        if facts.asm || facts.save_func {
+            return None;
+        }
+        vars.extend(facts.read.iter().chain(facts.written.iter()).copied());
+        let mut c = Calls(HashSet::new());
+        w_block(&mut c, &p.funcs[f].body);
+        for g in c.0 {
+            if seen.insert(g) {
+                todo.push(g);
+            }
+        }
+    }
+    Some(vars)
+}
+
 /// Routines something other than a plain call can reach: their address is taken, or an `Asm`
 /// block names them. They keep the standard argument passing.
 pub fn reachable_otherwise(p: &Program) -> HashSet<FuncId> {

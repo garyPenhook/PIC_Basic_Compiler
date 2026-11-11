@@ -466,7 +466,12 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
                 plain.insert(name, (a, o.bytes));
             }
         }
-        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![] });
+        // Variables another flow of control can see; with raw assembly in a handler, every variable.
+        let shared: std::collections::HashSet<String> = match crate::opt::interrupt_vars(p) {
+            Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
+            None => plain.keys().cloned().collect(),
+        };
+        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![], shared });
         opt::drop_redundant_movlb(items)
     } else {
         items

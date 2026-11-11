@@ -44,6 +44,8 @@ pub struct Env {
     pub reg_calls: Vec<String>,
     /// Routines with a one-byte `Result`: (label, the result's symbol).
     pub byte_results: Vec<(String, String)>,
+    /// Variables an interrupt handler (or a routine C calls) can see: no pass may park a half-computed value in one.
+    pub shared: std::collections::HashSet<String>,
 }
 
 impl Env {
@@ -2727,6 +2729,130 @@ fn pass_forward16(items: &mut [Item], env: &Env) -> bool {
     changed
 }
 
+/// Enhanced mid-range result retargeting: a value built in a scratch byte `__An` and then copied
+/// (`movf __An, w` / `movwf D`) into a compiler-placed variable `D` is built in `D` instead. From the last pure write of
+/// `__An` (`movwf`, `clrf`) to the copy, every operand `__An` becomes `D` and the copy goes, so `t = x + y` is
+/// `movf x, w` / `addwf y, w` / `movwf t`-shaped work done in `t` with no staging (the 16F half of the PIC18 result
+/// coalescing). Only when the stretch is straight-line, nothing in it reads or writes `D` or reaches memory through an
+/// FSR, and `__An` is dead after the copy. The writes to `D` move up past the stretch, the same ordering the in-place
+/// `t = t + 3` already has.
+fn pass_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut dead = vec![false; items.len()];
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    let mut claimed = vec![false; items.len()];
+    for j in 1..items.len() {
+        if keep[j] || claimed[j] {
+            continue;
+        }
+        let Item::Ins(t) = &items[j] else { continue };
+        let Some((mn, ops)) = parse(t) else { continue };
+        if mn != "movwf" || ops.len() != 1 {
+            continue;
+        }
+        let d = ops[0].to_string();
+        if scratch(&d).is_some() || is_indirect(&d) || !env.is_plain(&d) || split_off(&d).is_none_or(|(n, _)| env.shared.contains(n)) {
+            continue;
+        }
+        // The load right before: `movf __An, w`.
+        let mut c = j;
+        let mut found_load = None;
+        while c > 0 {
+            c -= 1;
+            match &items[c] {
+                Item::Comment(_) => {}
+                Item::Ins(u) if !keep[c] => {
+                    found_load = parse(u).and_then(|(m, o)| (m == "movf" && o.len() == 2 && matches!(o[1], "w" | "0")).then(|| o[0].to_string()));
+                    break;
+                }
+                _ => break,
+            }
+        }
+        let Some(src) = found_load else { continue };
+        let Some(k) = scratch(&src) else { continue };
+        if claimed[c] {
+            continue;
+        }
+        // Back from the load to the last pure write of `__An`.
+        let mut window: Vec<usize> = vec![c];
+        let mut def = None;
+        let mut m = c;
+        let mut ok = true;
+        while m > 0 && window.len() < 40 {
+            m -= 1;
+            match &items[m] {
+                Item::Comment(_) => {}
+                Item::Ins(u) if !keep[m] && !claimed[m] => {
+                    let Some(e) = effect(u) else {
+                        ok = false;
+                        break;
+                    };
+                    // A bank or page select in the stretch: `D` may need a bank the scratch byte (common RAM) does not.
+                    if matches!(parse(u), Some((mm, _)) if mm == "movlb" || mm == "movlp") {
+                        ok = false;
+                        break;
+                    }
+                    let touches_d = e.rmem.iter().any(|r| same_byte(env, r, &d) || is_indirect(r))
+                        || e.wmem.iter().any(|w| match w {
+                            Mem::Unknown => true,
+                            Mem::Sym(w) => same_byte(env, w, &d),
+                        });
+                    if touches_d {
+                        ok = false;
+                        break;
+                    }
+                    let reads_s = e.reads.contains(&Loc::S(k));
+                    let writes_s = e.writes.contains(&Loc::S(k));
+                    if writes_s && !reads_s {
+                        // `movwf`/`clrf` only: another instruction form would need its own operand rewrite.
+                        let (wm, _) = parse(u).unwrap_or_default();
+                        if matches!(wm.as_str(), "movwf" | "clrf") {
+                            def = Some(m);
+                        } else {
+                            ok = false;
+                        }
+                        break;
+                    }
+                    if reads_s || writes_s {
+                        window.push(m);
+                    }
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        let (true, Some(def)) = (ok, def) else { continue };
+        window.push(def);
+        if !matches!(loc_live(items, j, Loc::S(k), env), Live::Dead) {
+            continue;
+        }
+        // `__An` must be read only inside the stretch between the def and the copy (anything else in it is `D`-free).
+        for &w in &window {
+            let Item::Ins(u) = &items[w] else { continue };
+            let (wm, wo) = parse(u).unwrap();
+            let new: Vec<String> = wo.iter().map(|o| if scratch(o) == Some(k) { d.clone() } else { o.to_string() }).collect();
+            edits.push((w, format!("{wm} {}", new.join(", "))));
+            claimed[w] = true;
+        }
+        claimed[j] = true;
+        dead[j] = true;
+    }
+    let changed = dead.iter().any(|&x| x);
+    for (i, t) in edits {
+        items[i] = Item::Ins(t);
+    }
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// Deletes `movwf T` to a compiler temporary that nothing reads before it is written again (or the routine returns).
 fn pass_dead_temp_stores(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
@@ -3701,6 +3827,7 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_copy_back16(&mut items, env);
         changed |= pass_forward16(&mut items, env);
         changed |= pass_dead_temp_stores(&mut items, env);
+        changed |= pass_retarget16(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
         if !env.keep_writes {
@@ -3726,7 +3853,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![] }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default() }
     }
 
     fn ins(t: &str) -> Item {
@@ -4378,6 +4505,60 @@ mod tests {
         let r = run16(&[ins("movf X, w"), ins("rlf Y, f"), Item::Br(Cc::Z, "L".into())]);
         assert!(r.contains(&"movf X, w".to_string()), "{r:?}");
     }
+    fn run16_keep(src: &[Item]) -> Vec<String> {
+        let mut e = env();
+        e.plain.insert("T".into(), (0x20, 2));
+        e.keep_writes = true;
+        optimise16(src.to_vec(), &e)
+            .iter()
+            .map(|i| match i {
+                Item::Ins(t) => t.clone(),
+                Item::Fence => "--".into(),
+                _ => "?".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn p16_value_built_in_scratch_is_built_in_its_destination() {
+        let r = run16_keep(&[ins("movf X, w"), ins("movwf __A0"), ins("movf Y, w"), ins("addwf __A0, f"), ins("movf __A0, w"), ins("movwf T"), Item::Fence]);
+        assert!(!r.iter().any(|t| t.contains("__A0")), "{r:?}");
+        assert!(r.contains(&"addwf T, f".to_string()) && r.contains(&"movwf T".to_string()), "{r:?}");
+    }
+
+    #[test]
+    fn p16_retarget_keeps_scratch_when_the_destination_is_read_in_between() {
+        // `T = T + X`-shaped: `T` is read after the scratch byte is first written.
+        let r = run16_keep(&[ins("movf X, w"), ins("movwf __A0"), ins("movf T, w"), ins("addwf __A0, f"), ins("movf __A0, w"), ins("movwf T"), Item::Fence]);
+        assert!(r.iter().any(|t| t.contains("__A0")), "{r:?}");
+    }
+
+    #[test]
+    fn p16_retarget_leaves_a_variable_an_interrupt_handler_sees() {
+        let mut e = env();
+        e.plain.insert("T".into(), (0x20, 2));
+        e.keep_writes = true;
+        e.shared.insert("T".into());
+        let src = [ins("movf X, w"), ins("movwf __A0"), ins("movf Y, w"), ins("addwf __A0, f"), ins("movf __A0, w"), ins("movwf T"), Item::Fence];
+        let r = optimise16(src.to_vec(), &e);
+        assert!(r.iter().any(|i| matches!(i, Item::Ins(t) if t.contains("__A0"))), "{r:?}");
+    }
+
+    #[test]
+    fn p16_retarget_keeps_scratch_across_a_bank_select() {
+        // The destination is in another bank: its stores must stay after the `movlb`.
+        let r = run16_keep(&[ins("movf X, w"), ins("movwf __A0"), ins("movf Y, w"), ins("addwf __A0, f"), ins("movf __A0, w"), ins("movlb 2"), ins("movwf T"), Item::Fence]);
+        assert!(r.iter().any(|t| t.contains("__A0")), "{r:?}");
+        let r = run16_keep(&[ins("movf X, w"), ins("movwf __A0"), ins("movlb 2"), ins("addwf __A0, f"), ins("movf __A0, w"), ins("movwf T"), Item::Fence]);
+        assert!(r.iter().any(|t| t.contains("__A0")), "{r:?}");
+    }
+
+    #[test]
+    fn p16_retarget_keeps_scratch_that_is_read_afterwards() {
+        let r = run16_keep(&[ins("movf X, w"), ins("movwf __A0"), ins("movf __A0, w"), ins("movwf T"), ins("movf __A0, w"), ins("movwf T+1")]);
+        assert!(r.iter().any(|t| t.contains("__A0")), "{r:?}");
+    }
+
     fn movlbs(r: &[String]) -> usize {
         r.iter().filter(|t| t.starts_with("movlb")).count()
     }

@@ -543,7 +543,7 @@ Ranked by words recovered across these programs and by how many real programs th
 
 | Priority | Item | Why this order |
 |---|---|---|
-| 1 | **X5, 16F copy forwarding and result coalescing** (the 16F half of M1-M3 and M8) | The whole remaining 16F gap (+6.9%, +17% in r09, +35% in r08) and the largest cost in every 16F module review (`SetAddr`, `FlashWriteWord`, `EepromWrite`). Every 16F program gains, library or not. |
+| 1 | **X5, 16F copy forwarding and result coalescing** (copy forwarding and result retargeting done in 0.1.175; in-place evaluation left) (the 16F half of M1-M3 and M8) | The whole remaining 16F gap (+6.9%, +17% in r09, +35% in r08) and the largest cost in every 16F module review (`SetAddr`, `FlashWriteWord`, `EepromWrite`). Every 16F program gains, library or not. |
 | 2 | **X3 and X6, in-place array update and parameters built in place** (PIC18) | The `eeprom` + `delay` programs are +18% to +34% on the PIC18 and these two are the statements they repeat. General, small, safe. |
 | 3 | **X4, 16F `EepromWrite` / `EepromRead`** | 75 / 40 words against 48 / 31; mostly closed by item 1, so re-measure after it before doing anything module-specific. |
 | 4 | **X2, 16 × 16 → 32 multiply** | 67 words for `__mul4` against 38; the saving is in any program that multiplies two Words into a LongWord, one helper at a time. |
