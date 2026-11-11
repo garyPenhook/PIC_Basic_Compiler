@@ -31,6 +31,7 @@ pub struct DebugInfo {
     pub funcs: Vec<DFunc>,
     /// Program size in bytes.
     pub end: u32,
+    pub structs: std::collections::HashMap<usize, crate::ir::StructDbg>,
 }
 
 fn uleb(out: &mut Vec<u8>, mut v: u64) {
@@ -58,6 +59,8 @@ const A_FUNC: u64 = 4;
 const A_ARRAY: u64 = 5;
 const A_RANGE: u64 = 6;
 const A_PARAM: u64 = 7;
+const A_STRUCT: u64 = 8;
+const A_MEMBER: u64 = 9;
 
 fn abbrevs() -> Vec<u8> {
     let mut o = Vec::new();
@@ -70,6 +73,8 @@ fn abbrevs() -> Vec<u8> {
         (A_ARRAY, 0x01, 1, &[(0x49, 0x13)]),
         (A_RANGE, 0x21, 0, &[(0x2f, 0x05)]),
         (A_PARAM, 0x05, 0, &[(0x03, 0x08), (0x49, 0x13), (0x02, 0x0a)]),
+        (A_STRUCT, 0x13, 1, &[(0x03, 0x08), (0x0b, 0x05)]),
+        (A_MEMBER, 0x0d, 0, &[(0x03, 0x08), (0x49, 0x13), (0x38, 0x0a)]),
     ];
     for (code, tag, children, attrs) in table {
         uleb(&mut o, *code);
@@ -86,13 +91,14 @@ fn abbrevs() -> Vec<u8> {
 }
 
 /// Emits the type DIEs into `buf` and returns each one's offset from the start of the unit.
-struct Types {
+struct Types<'a> {
+    structs: &'a std::collections::HashMap<usize, crate::ir::StructDbg>,
     buf: Vec<u8>,
     base: usize,
     seen: Vec<(String, usize)>,
 }
 
-impl Types {
+impl Types<'_> {
     fn base_type(&mut self, name: &str, size: u8, enc: u8) -> usize {
         if let Some((_, o)) = self.seen.iter().find(|(k, _)| k == name) {
             return *o;
@@ -147,11 +153,37 @@ impl Types {
                 let c = self.base_type("Char", 1, ENC_UCHAR);
                 self.array(c, n + 1, format!("String({n})"))
             }
-            Ty::Array(e, n) if *n > 0 && bytes % n == 0 && !matches!(**e, Ty::Array(..) | Ty::Struct(_)) => {
+            Ty::Array(e, n) if *n > 0 && bytes % n == 0 => {
                 let el = self.of(e, bytes / n);
-                self.array(el, *n, format!("{e}[{n}]"))
+                self.array(el, *n, format!("@{el}x{n}"))
             }
-            // Structures and nested arrays: shown as their bytes.
+            Ty::Struct(sid) if self.structs.get(sid).is_some_and(|s| s.size == bytes) => {
+                let key = format!("struct {sid}");
+                if let Some((_, o)) = self.seen.iter().find(|(k, _)| *k == key) {
+                    return *o;
+                }
+                let sd = &self.structs[sid];
+                // Member types first: they are DIEs of their own, and this one's children must follow it directly.
+                let members: Vec<(&str, u32, usize)> = sd.fields.iter().map(|(n, o, t)| (n.as_str(), *o, t)).map(|(n, o, t)| (n, o, self.of(t, t.size_bytes(&|s| self.structs.get(&s).map_or(0, |x| x.size))))).collect();
+                let off = self.base + self.buf.len();
+                uleb(&mut self.buf, A_STRUCT);
+                cstr(&mut self.buf, &sd.name);
+                self.buf.extend((sd.size.min(0xffff) as u16).to_le_bytes());
+                for (n, o, t) in members {
+                    uleb(&mut self.buf, A_MEMBER);
+                    cstr(&mut self.buf, n);
+                    self.buf.extend((t as u32).to_le_bytes());
+                    // DW_OP_plus_uconst <offset>
+                    let mut loc = vec![0x23];
+                    uleb(&mut loc, o as u64);
+                    self.buf.push(loc.len() as u8);
+                    self.buf.extend(loc);
+                }
+                self.buf.push(0);
+                self.seen.push((key, off));
+                off
+            }
+            // Anything else: shown as its bytes.
             _ => {
                 let b = self.base_type("Byte", 1, ENC_UNSIGNED);
                 self.array(b, bytes.max(1), format!("bytes[{bytes}]"))
@@ -169,7 +201,7 @@ fn unit(info: &DebugInfo, source: &str, abbrev_off: u32) -> Vec<u8> {
     head.extend(0x8001u16.to_le_bytes());
     head.extend(0u32.to_le_bytes());
     head.extend(info.end.to_le_bytes());
-    let mut types = Types { buf: Vec::new(), base: 11 + head.len(), seen: Vec::new() };
+    let mut types = Types { structs: &info.structs, buf: Vec::new(), base: 11 + head.len(), seen: Vec::new() };
     let tys: Vec<usize> = info.vars.iter().map(|v| types.of(&v.ty, v.bytes)).collect();
     let mut body = Vec::new();
     let var = |body: &mut Vec<u8>, v: &DVar, ty: usize, global: bool| {

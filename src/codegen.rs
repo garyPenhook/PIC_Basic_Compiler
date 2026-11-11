@@ -5997,7 +5997,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
         let end = starts.get(i + 1).map(|s| s.1).unwrap_or(asmd.words);
         func_words.push((n.clone(), end - a));
     }
-    let mut debug = crate::dwarf::DebugInfo::default();
+    let mut debug = crate::dwarf::DebugInfo { structs: p.structs.clone(), ..Default::default() };
     if !tgt.debug_files.is_empty() {
         debug.end = asmd.words * 2;
         // A routine runs up to the next routine, helper or interrupt handler (or the start-up code).
@@ -6015,6 +6015,13 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
                 debug.funcs.push(crate::dwarf::DFunc { name: func.name.clone(), low: low * 2, high: high * 2 });
             }
         }
+        // The runtime helpers (division, multiplication ...) are routines too: a stop inside one names it.
+        for h in &helpers {
+            if let Some(&low) = asmd.labels.get(&format!("__{h}")) {
+                let high = bounds.iter().copied().filter(|&b| b > low).min().unwrap_or(asmd.words);
+                debug.funcs.push(crate::dwarf::DFunc { name: format!("__{h}"), low: low * 2, high: high * 2 });
+            }
+        }
         // Where the program ends: an empty range, so a debugger can stop there (`__halt`).
         if let Some(&h) = asmd.labels.get("__halt") {
             debug.funcs.push(crate::dwarf::DFunc { name: "__halt".into(), low: h * 2, high: h * 2 });
@@ -6024,15 +6031,20 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             if v.bytes == 0 || matches!(v.kind, VarKind::Hidden) || objs[i].bytes == 0 {
                 continue;
             }
+            let mut name = v.name.clone();
             let scope = match (v.kind, v.owner) {
                 (VarKind::Global, _) | (_, None) => None,
                 (_, Some(o)) => match scope_of[o] {
                     Some(s) => Some(s),
-                    // A routine that was inlined has no range of its own: skip its locals.
-                    None => continue,
+                    // A routine that was inlined has no range of its own: its locals are listed with the globals as
+                    // `Routine.name` (their RAM may be shared with other routines').
+                    None => {
+                        name = format!("{}.{}", p.funcs[o].name, v.name);
+                        None
+                    }
                 },
             };
-            debug.vars.push(crate::dwarf::DVar { name: v.name.clone(), ty: if v.by_ref { crate::types::WORD } else { v.ty.clone() }, bytes: v.bytes, addr, scope, param: matches!(v.kind, VarKind::Param) });
+            debug.vars.push(crate::dwarf::DVar { name, ty: if v.by_ref { crate::types::WORD } else { v.ty.clone() }, bytes: v.bytes, addr, scope, param: matches!(v.kind, VarKind::Param) });
         }
     }
     (Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }, unreferenced)

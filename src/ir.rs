@@ -442,8 +442,19 @@ impl Program {
     }
 }
 
+/// A structure's layout, for the debug information (`-g`).
+#[derive(Clone, Debug, Default)]
+pub struct StructDbg {
+    pub name: String,
+    pub size: u32,
+    /// Field name, byte offset and type. Fields that are bits of a byte are left out.
+    pub fields: Vec<(String, u32, Ty)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
+    /// Layout of every structure, by symbol id.
+    pub structs: std::collections::HashMap<usize, StructDbg>,
     /// Routines C may call, and the `Extern` routines through which C runs (each may call any of them).
     pub exports: Vec<ExportSig>,
     pub ext_funcs: Vec<FuncId>,

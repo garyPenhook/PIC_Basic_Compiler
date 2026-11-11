@@ -440,11 +440,23 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         config.push((reg.name.clone(), reg.addr, v as u16));
     }
 
+    let mut structs = std::collections::HashMap::new();
+    for sid in 0..a.symbols.len() {
+        let SymKind::Struct { fields, size } = a.symbols[sid].kind.clone() else { continue };
+        let Some(lay) = lw.layout(sid) else { continue };
+        let fields = lay
+            .iter()
+            .filter(|l| l.bit.is_none() && !matches!(l.ty, Ty::BitField { .. }))
+            .map(|l| (fields.iter().find(|f| f.name.to_ascii_lowercase() == l.name).map_or(l.name.clone(), |f| f.name.clone()), l.off, l.ty.clone()))
+            .collect();
+        structs.insert(sid, crate::ir::StructDbg { name: a.symbols[sid].name.clone(), size, fields });
+    }
     let main = Func { asm: "__main".into(), name: "main".into(), params: vec![], result: None, body: main_body, span: Span::default(), reg: false, ext: false, no_inline: false };
     let mut funcs: Vec<Func> = lw.funcs.into_iter().map(|f| f.expect("every queued routine is lowered")).collect();
     let mut main = main;
     strip_unused_lengths(&mut lw.vars, &lw.len_used, &lw.len_fwd, &mut funcs, &mut main);
     Some(Program {
+        structs,
         exports: lw.exports,
         ext_funcs: lw.ext_funcs,
         externs: lw.externs,
