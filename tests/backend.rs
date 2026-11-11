@@ -971,6 +971,31 @@ fn p13_programs_in_simulator() {
     }
 }
 
+/// The start-up zeroing of globals (`clrf 0xNNN`) is dropped for a variable the first statement overwrites, and only then: a byte that is read
+/// before it is written, the other bytes of a partly written Word, and every variable of a program with an interrupt handler keep their clear.
+#[test]
+fn startup_clears_are_kept_where_a_read_can_see_zero() {
+    let out = scratch("startclr");
+    let clears = |name: &str, body: &str| -> usize {
+        let f = out.join(format!("{name}.bas"));
+        std::fs::write(&f, format!("Program P\nDevice = 18F27Q10\nClock = 64\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON\n{body}\nDo\nLoop\n")).unwrap();
+        let s = out.join(format!("{name}.S"));
+        let r = Command::new(basil()).arg("-S").arg(&f).arg("-o").arg(&s).output().unwrap();
+        assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
+        let text = std::fs::read_to_string(&s).unwrap();
+        let start = text.split("__reset:").nth(1).unwrap();
+        start.lines().take_while(|l| !l.trim().starts_with("_L1")).filter(|l| l.trim().starts_with("clrf 0x")).count()
+    };
+    // Assigned before any read: no clear.
+    assert_eq!(clears("a", "Dim a As Byte\na = PORTA\nPORTB = a"), 0);
+    // Only the low byte of the Word is written: the high byte is read as zero, so its clear stays.
+    assert_eq!(clears("w", "Dim w As Word\nw.Byte0 = PORTA\nPORTB = w.Byte1"), 1);
+    // Read before the write: the clear stays.
+    assert_eq!(clears("r", "Dim x As Byte\nPORTB = x\nx = PORTA"), 1);
+    // An interrupt handler can see a variable at any time: nothing is dropped.
+    assert_eq!(clears("i", "Dim cnt As Byte\nDim a As Byte\nInterrupt H()\n    Inc(cnt)\nEnd Interrupt\na = PORTA\ncnt = a"), 2);
+}
+
 const P132_PARTS: [&str; 6] = ["16F13214", "16F13215", "16F13224", "16F13225", "16F13244", "16F13245"];
 
 /// Programs of the PIC16F171xx sets that cannot run on the PIC16F13245 (DS40002686B): too big for its 1 KB of RAM or 8K words of flash

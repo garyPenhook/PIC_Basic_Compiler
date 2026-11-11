@@ -46,6 +46,9 @@ pub struct Env {
     pub byte_results: Vec<(String, String)>,
     /// Variables an interrupt handler (or a routine C calls) can see: no pass may park a half-computed value in one.
     pub shared: std::collections::HashSet<String>,
+    /// The program has no interrupt handler and no linked C code, so nothing can observe a variable between its start-up
+    /// clear and its first store: `pass_overwritten_store` may then delete a start-up `clrf 0xNNN` that the first store overwrites.
+    pub zero_abs: bool,
 }
 
 impl Env {
@@ -68,6 +71,13 @@ impl Env {
     fn is_access(&self, sym: &str) -> bool {
         self.addr(sym).is_some_and(|a| crate::codegen::in_access(self.access, self.access_sfr, a))
     }
+}
+
+/// The user variable byte (`name` or `name+off`) at the absolute operand `0xNNN` a start-up clear names, when there is one.
+/// Scratch registers, temporaries (`__`) and special registers are not named: only variables the program declared.
+fn abs_var(env: &Env, op: &str) -> Option<String> {
+    let a = u32::from_str_radix(op.trim().strip_prefix("0x")?, 16).ok()?;
+    env.plain.iter().find(|(n, v)| !n.starts_with("__") && !n.contains("__TMP") && n.as_str() != "PRODL" && n.as_str() != "PRODH" && a >= v.0 && a < v.0 + v.1).map(|(n, v)| if a == v.0 { n.clone() } else { format!("{n}+{}", a - v.0) })
 }
 
 fn split_off(sym: &str) -> Option<(&str, u32)> {
@@ -2961,7 +2971,12 @@ fn pass_overwritten_store(items: &mut Vec<Item>, env: &Env) -> bool {
             continue;
         }
         let Item::Ins(t) = &items[i] else { continue };
-        let Some(sym) = pure_store_target(t, env) else { continue };
+        // A start-up clear spells its byte as an absolute address; with no handler to see it, it is the variable's own byte.
+        let abs = |t: &str| -> Option<String> {
+            let (m, o) = parse(t)?;
+            (env.zero_abs && m == "clrf" && !o.is_empty()).then(|| abs_var(env, &o[0])).flatten()
+        };
+        let Some(sym) = pure_store_target(t, env).or_else(|| abs(t)) else { continue };
         let Some(e0) = effect(t) else { continue };
         // The store's own read must have no side effect: `movff SSP1BUF, X` reads a FIFO and `movff POSTINC0, X` steps FSR0.
         if !e0.rmem.iter().all(|m| env.is_plain(m)) {
@@ -2977,6 +2992,14 @@ fn pass_overwritten_store(items: &mut Vec<Item>, env: &Env) -> bool {
                 Item::Ins(u) => {
                     if keep[k] {
                         break;
+                    }
+                    // Another start-up clear is a write to its own byte: past it, or the same byte cleared twice.
+                    if let Some(other) = abs(u) {
+                        if same_byte(env, &other, &sym) {
+                            over = true;
+                            break;
+                        }
+                        continue;
                     }
                     let Some(e) = effect(u) else { break };
                     // A read the address lookup cannot place (`X+1+1`, an absolute address) may be the byte itself.
@@ -3853,7 +3876,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default() }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default(), zero_abs: false }
     }
 
     fn ins(t: &str) -> Item {
@@ -4225,6 +4248,32 @@ mod tests {
         // `X+0+1` is the byte `X+1` spelled another way (an array element's word alias): a read of it keeps the store.
         let r = run(&[ins("movwf X+1, c"), ins("movff X+0+1, Y"), ins("movff S, X+1"), ins("movf Y, w, c"), ins("movwf T, c"), Item::Fence]);
         assert_eq!(r[0], "movwf X+1, c", "{r:?}");
+    }
+
+    #[test]
+    fn startup_clear_is_deleted_only_when_nothing_can_see_it() {
+        let go = |zero_abs: bool, src: &[Item]| -> Vec<String> {
+            let mut e = env();
+            e.zero_abs = zero_abs;
+            let mut all = vec![Item::Raw("lfsr 0, X+Y+R".into())];
+            all.extend_from_slice(src);
+            all.push(Item::Fence);
+            texts(&optimise(all, &e)).split_off(1)
+        };
+        // X is at 0x10..0x12. The clear of X, then a store to X in the same run: the clear goes, but only with no handler.
+        assert_eq!(go(true, &[ins("clrf 0x10, c"), ins("movff S, X")]), ["movff S, X", "--"]);
+        assert_eq!(go(false, &[ins("clrf 0x10, c"), ins("movff S, X")]), ["clrf 0x10, c", "movff S, X", "--"]);
+        // The store reaches the low byte only: the clear of the high byte stays (it is read after).
+        let r = go(true, &[ins("clrf 0x11, c"), ins("movff S, X"), ins("movf X+1, w, c"), ins("movwf Y, c")]);
+        assert_eq!(r[0], "clrf 0x11, c", "{r:?}");
+        // A read of the cleared byte before the store keeps the clear.
+        let r = go(true, &[ins("clrf 0x10, c"), ins("movf X, w, c"), ins("movwf Y, c"), ins("movff S, X")]);
+        assert_eq!(r[0], "clrf 0x10, c", "{r:?}");
+        // A scratch byte (0x00 is __A0) and an address no variable has are never named, so their clears stay.
+        let r = go(true, &[ins("clrf 0x00, c"), ins("movff S, __A0")]);
+        assert_eq!(r[0], "clrf 0x00, c", "{r:?}");
+        let r = go(true, &[ins("clrf 0x7F, c"), ins("movff S, X")]);
+        assert_eq!(r[0], "clrf 0x7F, c", "{r:?}");
     }
 
     fn texts(v: &[Item]) -> Vec<String> {

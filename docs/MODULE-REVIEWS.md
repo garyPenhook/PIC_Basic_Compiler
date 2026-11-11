@@ -32,7 +32,8 @@ fixed in the module.
 | 9 | `flashwrite` | reviewed (0.1.172) | all-routines probe 352 → 320 (18F27Q10), 353 → 322 (18F16Q41), 553 → 516 (16F17146); `lib_flashwrite` 343 → 311, 361 → 330, 607 → 566 |
 | 10 | `floatlib` | partly reviewed (0.1.175) | all-operations probe 965 → 933 words (18F27Q10), 988 → 956 (16F18346) |
 | 11 | `fmath` | reviewed (0.1.177) | `FSqr` one Newton step fewer (same bits); `FLog` 9 % fewer cycles and 26 words fewer (error 2e-7 → 2.5e-7) |
-| … | `gpio` … `x10` | not started | |
+| 12 | `gpio` | reviewed (0.1.178) | module unchanged (three register-write routines); probe 32 → 29 words (18F27Q10) from a compiler change: dead start-up clears; 180 programs −31 words |
+| … | `i2c` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -499,6 +500,24 @@ Each candidate was first modelled in float32 on the host, then measured on the P
   one would cost more than two units of the last digit. `FTan` calls `FSin` twice by design; `FPow` and `FLog10` are one call plus a multiply.
 - `lib_fmath` (18F27Q10, and 16F13245 as `tests/exec_p132/lib_fmath.bas`) still passes at its 4e-6 bound.
 
+## 12. `gpio` (done 2026-11-11, 0.1.178)
+
+Three routines (`GpioAllDigital`, `GpioPullUps`, `GpioOpenDrain`), each a few `#if _has(REG)` register writes. Probe: every routine called with values read from ports
+(18F27Q10 32 words, 16F18346 29, 16F13245 27, 18F16Q41 32); a single call is inlined, so the routines cost exactly their register writes.
+
+- **The module has nothing to save:** the generated code is one `clrf` per `ANSELx` and one load and store per mask. No change.
+- **Gap found, in the compiler (PIC18): start-up clears the first statement overwrites.** Start-up zeroes every global with absolute-address `clrf 0xNNN`, so even
+  `Dim a As Byte : a = PORTA` began with `clrf 0x000` and then `movff PORTA, P_A`. `pass_overwritten_store` could not relate `0x000` to the symbol `P_A`, and treated an absolute
+  operand as a possible read. It now resolves such a `clrf` to the user variable that lives there (`abs_var`) and steps over the other start-up clears (they are writes to their own
+  byte). Only when `Env::zero_abs` holds: **the program has no interrupt handler and no linked C code**, because the zero start value is a guarantee of the language that a
+  handler could observe before the first store. Volatile variables are not in `plain`, so they keep their clears; so do a byte read before it is written and the untouched bytes
+  of a partly written Word (`tests/backend.rs`, `startup_clears_are_kept_where_a_read_can_see_zero`; unit test `startup_clear_is_deleted_only_when_nothing_can_see_it`).
+- **Sizes:** probe 32 → 29 words. `tests/exec` and `tests/programs`, 180 programs built with the previous and the new compiler: 251 881 → 251 850 words, 19 smaller, none larger.
+  The gain is a word or so per global that is assigned before it is read, in programs without a handler.
+- **Not done:** the same dead `clrf` exists on the enhanced mid-range core (`clrf 0x070` before `movwf P_A`); that core has no overwritten-store pass and its bank
+  selects make the byte identity harder, so it was left. An inlined routine still copies each `ByVal` argument into its parameter slot (`movff P_A, MASKA`, then
+  `movf MASKA, w`); substituting the argument for the parameter when a call is inlined would save the copy (6 words in the probe) but is a larger change.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `gpio` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `i2c` and on through the list in alphabetical order.

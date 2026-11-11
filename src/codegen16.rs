@@ -471,7 +471,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
             Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
             None => plain.keys().cloned().collect(),
         };
-        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![], shared });
+        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![], shared , zero_abs: false});
         opt::drop_redundant_movlb(items)
     } else {
         items

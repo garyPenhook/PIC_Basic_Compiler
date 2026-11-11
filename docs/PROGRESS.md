@@ -1325,3 +1325,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## Module review 11: fmath (done 2026-11-11, 0.1.177)
 - `docs/MODULE-REVIEWS.md` section 11. `FSqr` three Newton steps (same bits as four), `FLog` without the s^9 term (-9 % cycles, error 2e-7 -> 2.5e-7). New `tests/exec/fmath_sqrt3.bas`, `fmath_log_acc.bas`; `lib_fmath` passes on the 18F27Q10 and the 16F13245.
+
+## Module review 12: gpio (done 2026-11-11, 0.1.178)
+- `docs/MODULE-REVIEWS.md` section 12. The module is unchanged; the review found dead start-up clears: `pass_overwritten_store` now sees through the absolute `clrf 0xNNN` of start-up zeroing when the program has no interrupt handler or C code (`Env::zero_abs`). 180 programs 251 881 -> 251 850 words, none larger. New unit test and `startup_clears_are_kept_where_a_read_can_see_zero` in `tests/backend.rs`.
