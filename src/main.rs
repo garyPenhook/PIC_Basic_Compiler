@@ -263,6 +263,13 @@ fn main() -> ExitCode {
         eprintln!("basil: cannot write {}: {e}", asm_path.display());
         return ExitCode::from(1);
     }
+    // The readable form of the assembly, next to it: BASIC statements, addresses, BASIC variable names.
+    let lst_path = hex.with_extension("lst");
+    let texts: std::collections::HashMap<String, &str> = project.sources.names().zip(project.sources.texts()).map(|(n, t)| (std::fs::canonicalize(n).map(|p| p.display().to_string()).unwrap_or_else(|_| n.to_string()), t)).collect();
+    let lst = basil::listing::listing(&generated.out.text, &|f, n| texts.get(f).and_then(|t| t.lines().nth((n as usize).checked_sub(1)?)).map(str::to_string));
+    if let Err(e) = std::fs::write(&lst_path, lst) {
+        eprintln!("basil: cannot write {}: {e}", lst_path.display());
+    }
     if want_report {
         print!("{}", report(&program, &generated));
     }

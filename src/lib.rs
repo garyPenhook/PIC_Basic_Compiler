@@ -10,6 +10,7 @@ pub mod driver;
 pub mod embedded;
 pub mod ir;
 pub mod lexer;
+pub mod listing;
 pub mod lower;
 pub mod opt;
 pub mod parser;
