@@ -2646,6 +2646,112 @@ fn pass_copy_back16(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// Whether `sym` (`F__TMP` or `F__TMP+1`) is a compiler temporary: never address-taken, so only the named reads see it.
+fn is_temp(sym: &str) -> bool {
+    split_off(sym).is_some_and(|(n, _)| n.ends_with("__TMP"))
+}
+
+/// Enhanced mid-range copy forwarding: after `movf s, w` / `movwf d` (both bytes compiler-placed or scratch), a later
+/// `movf d, w` reads `s` instead while neither byte has been written. Chains collapse a step per round
+/// (`__A <- __C`, `TMP <- __A`, read `TMP` becomes a read of `__C`), and [`pass_dead_temp_stores`] then removes the
+/// copies that nothing reads.
+fn pass_forward16(items: &mut [Item], env: &Env) -> bool {
+    let keep = protected(items);
+    let mut pairs: Vec<(String, String)> = Vec::new(); // (d, s): d holds the byte s
+    let mut wsrc: Option<String> = None;
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    let tracked = |n: &str| scratch(n).is_some() || env.is_plain(n);
+    for (i, it) in items.iter().enumerate() {
+        if keep[i] {
+            pairs.clear();
+            wsrc = None;
+            continue;
+        }
+        match it {
+            Item::Comment(_) => {}
+            Item::Fence => {
+                pairs.retain(|(a, b)| scratch(a).is_none() && scratch(b).is_none());
+                if wsrc.as_deref().is_some_and(|w| scratch(w).is_some()) {
+                    wsrc = None;
+                }
+            }
+            Item::Ins(t) => {
+                let Some(e) = effect(t) else {
+                    pairs.clear();
+                    wsrc = None;
+                    continue;
+                };
+                let (mn, ops) = parse(t).unwrap_or_default();
+                let to_w = mn == "movf" && ops.len() == 2 && matches!(ops[1].trim(), "w" | "0");
+                let mut read = to_w.then(|| ops[0].trim().to_string());
+                if let Some(d) = &read
+                    && let Some((_, src)) = pairs.iter().find(|(a, _)| same_byte(env, a, d))
+                {
+                    edits.push((i, format!("movf {src}, w")));
+                    read = Some(src.clone());
+                }
+                if e.wmem.contains(&Mem::Unknown) {
+                    pairs.clear();
+                    wsrc = None;
+                }
+                let hit_by = |n: &str| {
+                    e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same_byte(env, x, n))) || scratch(n).is_some_and(|k| e.writes.contains(&Loc::S(k)))
+                };
+                pairs.retain(|(a, b)| !hit_by(a) && !hit_by(b));
+                if wsrc.as_deref().is_some_and(hit_by) {
+                    wsrc = None;
+                }
+                if mn == "movwf"
+                    && ops.len() == 1
+                    && let Some(s) = &wsrc
+                {
+                    let d = ops[0].trim().to_string();
+                    if !same_byte(env, s, &d) && tracked(s) && tracked(&d) {
+                        pairs.push((d, s.clone()));
+                    }
+                }
+                if e.writes.contains(&Loc::W) {
+                    wsrc = read.filter(|r| tracked(r));
+                }
+            }
+            _ => {
+                pairs.clear();
+                wsrc = None;
+            }
+        }
+    }
+    let changed = !edits.is_empty();
+    for (i, t) in edits {
+        items[i] = Item::Ins(t);
+    }
+    changed
+}
+
+/// Deletes `movwf T` to a compiler temporary that nothing reads before it is written again (or the routine returns).
+fn pass_dead_temp_stores(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut dead = vec![false; items.len()];
+    for (i, it) in items.iter().enumerate() {
+        let Item::Ins(t) = it else { continue };
+        if keep[i] {
+            continue;
+        }
+        let Some((m, o)) = parse(t) else { continue };
+        if m == "movwf" && o.len() == 1 && is_temp(o[0].trim()) && env.is_plain(o[0].trim()) && byte_dead_paths(items, i + 1, o[0].trim(), env) {
+            dead[i] = true;
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// Whether the RAM byte `sym` cannot be read again from item `from` on before it is written (or the routine
 /// returns): follows both sides of every branch and skip, through statement ends (a value held in a temporary may be
 /// reused across one, see `pass_load_reuse`). A call, raw assembly, anything it cannot follow, or a long search counts
@@ -3593,6 +3699,8 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_copy_back16(&mut items, env);
+        changed |= pass_forward16(&mut items, env);
+        changed |= pass_dead_temp_stores(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
         if !env.keep_writes {

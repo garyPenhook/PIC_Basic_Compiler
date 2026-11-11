@@ -471,9 +471,18 @@ compares, `-`, `Abs`) on values read from ports, so nothing folds. Baseline 965 
 - **Tests:** new `tests/exec/float_chain.bas` (a chain of `+ * / -` through one variable, bit patterns checked; basil-sim
   and MDB on the 18F27Q10, MDB on the 16F17146 through `P16_PORTABLE`, at -O1 and -O0). Full `BASIL_MDB=1 cargo test --release` passes.
 
+- **16F copy forwarding (general, found with `bench/random` seed 8):** `pass_forward16` reads `s` for `movf d, w` after
+  `movf s, w` / `movwf d` while neither byte has changed, and `pass_dead_temp_stores` deletes `movwf` to a compiler
+  temporary (`F__TMP`) that is not read again (temporaries are never address-taken). Random seeds 1-12 on the
+  16F18346: 6441 -> 6334 words (-107, -1.7%); the Float probe is unchanged.
+
+Read for gaps on the PIC18 side with nothing worth changing: `Pack`, `FromMag`, `FToLong`, the `FFrom*` entries, `Cmp`,
+`FSign`, `FScale`. One saving left unapplied: the two's-complement negate in `FFromLong`/`FToLong` could use `negf`
+(2 words each), but DS40002043F p.661 does not say how `NEGF` sets C, so it needs an MDB check before use.
+
 Left as opportunities:
 
-- The remainder of the module (conversions, `FScale`, `FToLong`) has not been read for gaps yet.
+- The 16F routines (second half of `lib/floatlib.bas`) were not read.
 
 ## Next
 

@@ -1309,3 +1309,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## Module review 10: floatlib, first part (done 2026-11-11, 0.1.175)
 - `docs/MODULE-REVIEWS.md` section 10. Compiler (PIC18): `pass_copy_back` keeps a store-then-reload pair across a statement end when the scratch byte holds a call's result, so a chained Float operation no longer reloads its result (4 words each). All-operations Float probe 965 -> 933 words (18F27Q10); the 16F probe 988 -> 956 with the new `pass_copy_back16` (`movf s,w` / `movwf d`). New `tests/exec/float_chain.bas` (also in `P16_PORTABLE`). The unread routines of the module are still to do.
+
+## 16F copy forwarding (done 2026-11-11, 0.1.175)
+- `src/peephole.rs`: `pass_forward16` and `pass_dead_temp_stores` in `optimise16` (X5 of `docs/EFFICIENCY.md`, first part). `bench/random` seeds 1-12 on the 16F18346: 6441 -> 6334 words (-107). Not yet done: result coalescing and in-place evaluation on the 16F.
