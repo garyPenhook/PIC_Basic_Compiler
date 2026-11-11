@@ -1223,7 +1223,7 @@ const P180_PARTS: [&str; 2] = ["16F18056", "16F18076"];
 /// PIC16F17146 model: in each, a 4-byte (or longer) variable that sits at data address 5A0h loses its first bytes (`float_compare`: `vGe`, `lib_floatlib_edge`: `r217`, and
 /// the last results of `arith_integer` and `arith_word`). Cause found: the simulator's PIC16F18056 and PIC16F18076 models ignore every write to 5A0h..5A3h
 /// (linear 2370h..2373h), direct or through an FSR; a hand-written fill of all RAM leaves only those four bytes unwritten. The generated code and the device files are not at fault.
-const P180_SKIP: &[&str] = &["arith_integer", "arith_word", "float_compare", "lib_floatlib_edge", "lib_adc", "lib_i2c", "lib_pwm", "lib_serial", "lib_serial2", "lib_spi"];
+const P180_SKIP: &[&str] = &["i2c_pps_edges", "arith_integer", "arith_word", "float_compare", "lib_floatlib_edge", "lib_adc", "lib_i2c", "lib_pwm", "lib_serial", "lib_serial2", "lib_spi"];
 
 /// The programs for the PIC16F18056/76: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p180`.
 fn p180_programs() -> Vec<PathBuf> {

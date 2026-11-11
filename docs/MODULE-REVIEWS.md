@@ -33,7 +33,8 @@ fixed in the module.
 | 10 | `floatlib` | partly reviewed (0.1.175) | all-operations probe 965 → 933 words (18F27Q10), 988 → 956 (16F18346) |
 | 11 | `fmath` | reviewed (0.1.177) | `FSqr` one Newton step fewer (same bits); `FLog` 9 % fewer cycles and 26 words fewer (error 2e-7 → 2.5e-7) |
 | 12 | `gpio` | reviewed (0.1.178) | module unchanged (three register-write routines); probe 32 → 29 words (18F27Q10) from a compiler change: dead start-up clears; 180 programs −31 words |
-| … | `i2c` … `x10` | not started | |
+| 13 | `i2c` | reviewed (0.1.179) | typical use (init + `I2cWriteReg` + `I2cReadReg`) 389 → 309 words (18F27Q10), 554 → 422 (PIC16F17146, 13245, 18346), 469 → 460 (Q41); all-routines probe 864 → 777, 1166 → 1012 |
+| … | `lcd` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -518,6 +519,31 @@ Three routines (`GpioAllDigital`, `GpioPullUps`, `GpioOpenDrain`), each a few `#
   selects make the byte identity harder, so it was left. An inlined routine still copies each `ByVal` argument into its parameter slot (`movff P_A, MASKA`, then
   `movf MASKA, w`); substituting the argument for the parameter when a call is inlined would save the copy (6 words in the probe) but is a larger change.
 
+## 13. `i2c` (done 2026-11-11, 0.1.179)
+
+Three implementations behind one API: the MSSP1 host (18F27Q10 and every PIC16F), a software host on two pins (PIC18-Q41) and, with `#option I2c = Hardware`, the Q41's I2C1
+peripheral (block routines only). Two probes per part: A calls every routine with values read from ports; B is typical use, `I2cInit(100000, ...)`, `I2cWriteReg`,
+`I2cReadReg` with constants. Words before and after:
+
+| Part | A before → after | B before → after |
+|---|---|---|
+| 18F27Q10 | 864 → 777 | 389 → 309 (−21 %) |
+| PIC16F17146, 13245 | 1166 → 1012 | 554 → 422 (−24 %) |
+| PIC16F18346 | 1162 → 1008 | 554 → 422 |
+| 18F16Q41 (software host) | 876 → 863 | 469 → 460 |
+
+- **`SetPps` was a quarter of probe B** (96 words on the Q10, 134 on the PIC16F17146): a comparison chain with one branch per pin. The `RxyPPS` registers are contiguous from `RA0PPS` in pin
+  order on every part (checked in all 48 device files that have them: 0E90h, 1D8Ch, 1F10h, 0201h, 0EE2h), so one write through an FSR does it. PIC18: FSR2 saved and restored, as module
+  `Pwm` already did (24 words). Enhanced mid-range: `Asm` block at FSR0, 12 words; the block clobbers W, STATUS and BSR (what the compiler assumes of every `Asm` block) and FSR0 is
+  compiler-owned, never live across a statement (ABI.md). `banksel` before each parameter read, as the two bytes may be in different banks.
+  Tests: `tests/exec_p16/i2c_pps_edges` (RA0, RA5, RC0, RC5), `tests/exec_p132/i2c_pps_edges20` (RB4, RB5, RC6, RC7), `tests/exec/i2c_pps_edges_q10` (RB0, RB7, RC0, RC7): the pin gets the SCL / SDA
+  code, its neighbours stay 0, `I2cOff` gives it back. With an off-by-one in the address each of them fails (checked), and they run on six PIC16 families.
+- **`I2cWriteReg` and `I2cReadReg` repeated the Start / address / register sequence of the block routines' `Open`**; they call it now (−9 words each on the Q10, −10 on the PIC16F17146; the Q41 software
+  host shares the code, −9). `I2cReadReg` does not call `I2cReadRegs`: that would allocate the 8-byte `I2cBuf` in programs that only read single registers.
+- **Left as opportunities:** `PinSetup` (43 words on the PIC16F17146: `TRISx` and `ANSELx` are contiguous too, so the same FSR scheme would take it to about 25) and `PinOk` (35 words, a mask test would be
+  shorter); about 3 % each of the typical program. **The same comparison chain is in `spi` (`SetPps`, both cores) and `pwm` (enhanced mid-range)**: the same change applies, to be measured in their reviews.
+  The software host's `Half` delay and the 16-bit bounded waits were left as they are: they set the bus timing and the timeout behaviour.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `i2c` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `lcd` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).

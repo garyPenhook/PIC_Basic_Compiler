@@ -770,59 +770,24 @@ Dim ready As Boolean
 Dim lastStatus As Byte
 
 #if Not _has(PRODL)
-' RxyPPS = code for pin 0..23 (a pin the part has).
+' RxyPPS = code for pin 0..23 (a pin PinOk accepted). The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers
+' (RA0..RC7 = 0..23; checked in the device files of every enhanced mid-range part: RA0PPS at 0E90h, 1D8Ch or 1F10h), so one write
+' through FSR0 replaces a comparison per pin. FSR0 is compiler-owned (nothing is live in it across a statement) and the block clobbers
+' W, STATUS and BSR, as the compiler assumes of every Asm block.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    If pin = 0 Then
-        RA0PPS = code
-    ElseIf pin = 1 Then
-        RA1PPS = code
-    ElseIf pin = 2 Then
-        RA2PPS = code
-    ElseIf pin = 4 Then
-        RA4PPS = code
-    ElseIf pin = 5 Then
-        RA5PPS = code
-#if _has(RB0PPS)
-    ElseIf pin = 8 Then
-        RB0PPS = code
-    ElseIf pin = 9 Then
-        RB1PPS = code
-    ElseIf pin = 10 Then
-        RB2PPS = code
-    ElseIf pin = 11 Then
-        RB3PPS = code
-#endif
-#if _has(RB4PPS)
-    ElseIf pin = 12 Then
-        RB4PPS = code
-    ElseIf pin = 13 Then
-        RB5PPS = code
-    ElseIf pin = 14 Then
-        RB6PPS = code
-    ElseIf pin = 15 Then
-        RB7PPS = code
-#endif
-#if _has(RC0PPS)
-    ElseIf pin = 16 Then
-        RC0PPS = code
-    ElseIf pin = 17 Then
-        RC1PPS = code
-    ElseIf pin = 18 Then
-        RC2PPS = code
-    ElseIf pin = 19 Then
-        RC3PPS = code
-    ElseIf pin = 20 Then
-        RC4PPS = code
-    ElseIf pin = 21 Then
-        RC5PPS = code
-#if _has(RC6PPS)
-    ElseIf pin = 22 Then
-        RC6PPS = code
-    ElseIf pin = 23 Then
-        RC7PPS = code
-#endif
-#endif
-    End If
+    Asm
+        banksel I2C_SETPPS__PIN
+        movlw low(RA0PPS)
+        addwf I2C_SETPPS__PIN, w
+        movwf FSR0L
+        movlw high(RA0PPS)
+        btfsc STATUS, 0
+        addlw 1
+        movwf FSR0H
+        banksel I2C_SETPPS__CODE
+        movf I2C_SETPPS__CODE, w
+        movwf INDF0
+    End Asm
 End Sub
 
 ' True for a pin the part has (RA3 is input only and refused).
@@ -869,41 +834,25 @@ Sub PinSetup(ByVal pin As Byte)
     End If
 End Sub
 #else
-' RxyPPS = code for pin 8..23.
+' RxyPPS = code for pin 8..23. The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23; 0EE2h..0EF9h on the
+' PIC18F27Q10, DS40002043F), so one write through FSR2 replaces a comparison per pin (as in module Pwm). FSR2 is saved and put back (it is the
+' stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the compiler keeps them.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    If pin = 8 Then
-        RB0PPS = code
-    ElseIf pin = 9 Then
-        RB1PPS = code
-    ElseIf pin = 10 Then
-        RB2PPS = code
-    ElseIf pin = 11 Then
-        RB3PPS = code
-    ElseIf pin = 12 Then
-        RB4PPS = code
-    ElseIf pin = 13 Then
-        RB5PPS = code
-    ElseIf pin = 14 Then
-        RB6PPS = code
-    ElseIf pin = 15 Then
-        RB7PPS = code
-    ElseIf pin = 16 Then
-        RC0PPS = code
-    ElseIf pin = 17 Then
-        RC1PPS = code
-    ElseIf pin = 18 Then
-        RC2PPS = code
-    ElseIf pin = 19 Then
-        RC3PPS = code
-    ElseIf pin = 20 Then
-        RC4PPS = code
-    ElseIf pin = 21 Then
-        RC5PPS = code
-    ElseIf pin = 22 Then
-        RC6PPS = code
-    ElseIf pin = 23 Then
-        RC7PPS = code
-    End If
+    Dim sl As Byte
+    Dim sh As Byte
+    sl = 0
+    sh = 0
+    Asm
+        movff FSR2L, I2C_SETPPS__SL
+        movff FSR2H, I2C_SETPPS__SH
+        lfsr 2, RA0PPS
+        movf I2C_SETPPS__PIN, w, c
+        addwf FSR2L, f, c
+        movf I2C_SETPPS__CODE, w, c
+        movwf INDF2, c
+        movff I2C_SETPPS__SL, FSR2L
+        movff I2C_SETPPS__SH, FSR2H
+    End Asm
 End Sub
 
 ' Both bus pins are inputs (the MSSP pulls them low as needed [28.6]) and digital.
@@ -1215,13 +1164,7 @@ End Function
 ' value, Stop. Returns the first status code that was not 0 (the Stop is always attempted).
 Public Function I2cWriteReg(ByVal addr As Byte, ByVal reg As Byte, ByVal value As Byte) As Byte
     Dim s As Byte
-    Result = I2cStart()
-    If Result = 0 Then
-        Result = I2cSend(addr << 1)
-    End If
-    If Result = 0 Then
-        Result = I2cSend(reg)
-    End If
+    Result = Open(addr << 1, reg)
     If Result = 0 Then
         Result = I2cSend(value)
     End If
@@ -1238,13 +1181,7 @@ Public Function I2cReadReg(ByVal addr As Byte, ByVal reg As Byte) As Byte
     Dim s As Byte
     Dim e As Byte
     Result = 0
-    e = I2cStart()
-    If e = 0 Then
-        e = I2cSend(addr << 1)
-    End If
-    If e = 0 Then
-        e = I2cSend(reg)
-    End If
+    e = Open(addr << 1, reg)
     If e = 0 Then
         e = I2cRestart()
     End If

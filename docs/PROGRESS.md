@@ -1328,3 +1328,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## Module review 12: gpio (done 2026-11-11, 0.1.178)
 - `docs/MODULE-REVIEWS.md` section 12. The module is unchanged; the review found dead start-up clears: `pass_overwritten_store` now sees through the absolute `clrf 0xNNN` of start-up zeroing when the program has no interrupt handler or C code (`Env::zero_abs`). 180 programs 251 881 -> 251 850 words, none larger. New unit test and `startup_clears_are_kept_where_a_read_can_see_zero` in `tests/backend.rs`.
+
+## Module review 13: i2c (done 2026-11-11, 0.1.179)
+- `docs/MODULE-REVIEWS.md` section 13. `SetPps` (a comparison chain per pin) is one indirect write at `RA0PPS + pin` through FSR2 (PIC18) or FSR0 (enhanced mid-range); `I2cWriteReg` / `I2cReadReg` share the block routines' `Open`. Typical use 389 -> 309 words (18F27Q10), 554 -> 422 (PIC16F17146, 13245, 18346). New edge-pin tests `i2c_pps_edges` (exec_p16), `i2c_pps_edges20` (exec_p132), `i2c_pps_edges_q10` (exec); `i2c_pps_edges` is in `P180_SKIP` (the PIC16F18056 has no port A).
