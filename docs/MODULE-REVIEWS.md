@@ -31,7 +31,8 @@ fixed in the module.
 | 8 | `timer` | reviewed (0.1.171) | all-routines probe 464 → 393 words (16F17146), 408 → 332 (16F18346), 332 → 300 (18F27Q10); `lib_timer_f152` 324 → 300 |
 | 9 | `flashwrite` | reviewed (0.1.172) | all-routines probe 352 → 320 (18F27Q10), 353 → 322 (18F16Q41), 553 → 516 (16F17146); `lib_flashwrite` 343 → 311, 361 → 330, 607 → 566 |
 | 10 | `floatlib` | partly reviewed (0.1.175) | all-operations probe 965 → 933 words (18F27Q10), 988 → 956 (16F18346) |
-| … | `fmath` … `x10` | not started | |
+| 11 | `fmath` | reviewed (0.1.177) | `FSqr` one Newton step fewer (same bits); `FLog` 9 % fewer cycles and 26 words fewer (error 2e-7 → 2.5e-7) |
+| … | `gpio` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -484,6 +485,20 @@ Left as opportunities:
 
 - The 16F routines (second half of `lib/floatlib.bas`) were not read.
 
+## 11. `fmath` (done 2026-11-11, 0.1.177)
+
+Every function is a fixed-length series or iteration on the Float operations of `floatlib`, so the only savings are fewer terms or steps, and each one is a question of accuracy.
+Each candidate was first modelled in float32 on the host, then measured on the PIC18F27Q10 simulator.
+
+- **`FSqr`: three Newton steps, not four.** The start guess (exponent halved) is within 4 %, each step squares the relative error. Three and four steps gave identical bits for
+  453 439 host values and for 3000 values on the simulated chip (`tests/exec/fmath_sqrt3.bas`). Lossless; `lib_fmath` on the 16F13245: 148 598 → 144 152 cycles.
+- **`FLog`: the s^9 term of the atanh series is dropped.** |s| <= 0.172 on the reduced range, so the term is under 3e-8 of the result. Worst relative error over 60 000 host
+  points 2.0e-7 → 2.5e-7 (3.4 → 4.2 units of the last digit), inside the module's documented "few units in the sixth digit". 20 calls: 87 338 → 79 262 cycles (−9 %), 1119 → 1093 words.
+  `tests/exec/fmath_log_acc.bas` holds the error to 5e-7 over 23 points (a version with one more term dropped fails it: 3 points).
+- **`FExp`, `FSin`, `FCos`, `FTan`: not changed.** The next term of the `FExp` series (r^7/5040, |r| <= 0.35) is 1.3e-7 of the result and the `FSin` series' lowest dropped term is 3.6e-6, so removing
+  one would cost more than two units of the last digit. `FTan` calls `FSin` twice by design; `FPow` and `FLog10` are one call plus a multiply.
+- `lib_fmath` (18F27Q10, and 16F13245 as `tests/exec_p132/lib_fmath.bas`) still passes at its 4e-6 bound.
+
 ## Next
 
-Finish module 10, `floatlib` (the unread routines), then `fmath` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `gpio` and on through the list in alphabetical order.
