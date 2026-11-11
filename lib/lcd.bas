@@ -21,64 +21,33 @@ Include "pinio"
 ' cycle [Bus Timing Characteristics, write operation]. Address set-up (60 ns) is met by the
 ' instruction before the pulse. The display power supply must be stable (more than 15 ms after VCC
 ' rises to 4.5 V, more than 40 ms after 2.7 V [Figure 24]): LcdInit waits 50 ms first.
-Dim used As LongWord
-Dim pRs As Byte
-Dim pEn As Byte
-Dim pD4 As Byte
-Dim pD5 As Byte
-Dim pD6 As Byte
-Dim pD7 As Byte
+' The six pins: 0 = RS, 1 = E, 2..5 = DB4..DB7.
+Dim pins(6) As Byte
 Dim twoLines As Boolean
 Dim ready As Boolean
-Dim shown As Byte
-
-' True when `pin` is 0..23 and no other pin has claimed it yet.
-Function Claim(ByVal pin As Byte) As Boolean
-    Dim mask As LongWord
-    Result = False
-    If pin > 23 Then
-        Exit
-    End If
-#if not _has(LATB)
-    ' The 14-pin PIC18-Q41 parts have no port B (DS40002214G Table 3-1).
-    If pin >= 8 And pin < 16 Then
-        Exit
-    End If
-#endif
-#if not _has(LATC)
-    ' The 8-pin PIC16F13113 has port A only (DS40002519D Table 1).
-    If pin >= 16 Then
-        Exit
-    End If
-#endif
-    mask = LongWord(1) << pin
-    If (used And mask) = 0 Then
-        used = used Or mask
-        Result = True
-    End If
-End Function
 
 ' One enable pulse with the data nibble already on DB4..DB7.
 Sub Pulse()
-    Pinio.PinSet(pEn, True)
+    Pinio.PinSet(pins(1), True)
     DelayUS(1)
-    Pinio.PinSet(pEn, False)
+    Pinio.PinSet(pins(1), False)
     DelayUS(1)
 End Sub
 
 ' Puts the low four bits of `nib` on DB4..DB7 (bit 0 on DB4) and pulses E.
 Sub Nibble(ByVal nib As Byte)
-    Pinio.PinSet(pD4, (nib And 1) <> 0)
-    Pinio.PinSet(pD5, (nib And 2) <> 0)
-    Pinio.PinSet(pD6, (nib And 4) <> 0)
-    Pinio.PinSet(pD7, (nib And 8) <> 0)
+    Dim i As Byte
+    For i = 2 To 5
+        Pinio.PinSet(pins(i), (nib And 1) <> 0)
+        nib = nib >> 1
+    Next
     Pulse()
 End Sub
 
 ' A whole byte, high nibble first [4-bit interface, "data must be sent or received twice"]; rs = True
 ' for data (RS = 1), False for an instruction.
 Sub Send(ByVal b As Byte, ByVal rs As Boolean)
-    Pinio.PinSet(pRs, rs)
+    Pinio.PinSet(pins(0), rs)
     Nibble(b >> 4)
     Nibble(b And 15)
     DelayUS(50)
@@ -88,50 +57,39 @@ End Sub
 ' turns the display on with no cursor, clears it and selects "increment, no shift" [Entry mode set].
 ' `lines` is 1 or 2 (5 x 8 dot font; the data sheet does not allow two lines with the 5 x 10 font, and
 ' this module does not offer it). Returns 1, or 0 when `lines` is not 1 or 2, a pin is above 23 or a
-' pin is used twice. Takes about 55 ms.
+' pin is used twice (a pin the part lacks counts as above 23). A refused call leaves the
+' module disabled: every other Lcd routine does nothing until a call succeeds. Takes about 55 ms.
 Public Function LcdInit(ByVal rs As Byte, ByVal en As Byte, ByVal d4 As Byte, ByVal d5 As Byte, ByVal d6 As Byte, ByVal d7 As Byte, ByVal lines As Byte) As Byte
+    Dim i As Byte
+    Dim j As Byte
     Result = 0
+    ready = False
     If lines < 1 Or lines > 2 Then
         Exit
     End If
-    used = 0
-    If Not Claim(rs) Then
-        Exit
-    End If
-    If Not Claim(en) Then
-        Exit
-    End If
-    If Not Claim(d4) Then
-        Exit
-    End If
-    If Not Claim(d5) Then
-        Exit
-    End If
-    If Not Claim(d6) Then
-        Exit
-    End If
-    If Not Claim(d7) Then
-        Exit
-    End If
-    pRs = rs
-    pEn = en
-    pD4 = d4
-    pD5 = d5
-    pD6 = d6
-    pD7 = d7
+    pins(0) = rs
+    pins(1) = en
+    pins(2) = d4
+    pins(3) = d5
+    pins(4) = d6
+    pins(5) = d7
+    For i = 0 To 5
+        If Not Pinio.PinOk(pins(i)) Then
+            Exit
+        End If
+        j = 0
+        While j < i
+            If pins(j) = pins(i) Then
+                Exit
+            End If
+            Inc(j)
+        Wend
+    Next
     twoLines = (lines = 2)
-    Pinio.PinSet(rs, False)
-    Pinio.PinSet(en, False)
-    Pinio.PinSet(d4, False)
-    Pinio.PinSet(d5, False)
-    Pinio.PinSet(d6, False)
-    Pinio.PinSet(d7, False)
-    Pinio.PinOutput(rs)
-    Pinio.PinOutput(en)
-    Pinio.PinOutput(d4)
-    Pinio.PinOutput(d5)
-    Pinio.PinOutput(d6)
-    Pinio.PinOutput(d7)
+    For i = 0 To 5
+        Pinio.PinSet(pins(i), False)
+        Pinio.PinOutput(pins(i))
+    Next
     DelayMS(50)
     ' Function set (8-bit interface) three times, the waits are those of Figure 24.
     Nibble(3)
@@ -155,8 +113,7 @@ Public Function LcdInit(ByVal rs As Byte, ByVal en As Byte, ByVal d4 As Byte, By
     ' Entry mode set: I/D = 1, S = 0.
     Send(6, False)
     ' Display on/off: D = 1, C = 0, B = 0.
-    shown = 12
-    Send(shown, False)
+    Send(12, False)
     ready = True
     Result = 1
 End Function
@@ -185,17 +142,18 @@ End Sub
 
 ' Display on/off control: D = `on`, C = `cursor`, B = `blink` (character at the cursor blinks).
 Public Sub LcdDisplay(ByVal on As Boolean, ByVal cursor As Boolean, ByVal blink As Boolean)
-    shown = 8
+    Dim c As Byte
+    c = 8
     If on Then
-        shown = shown Or 4
+        c = c Or 4
     End If
     If cursor Then
-        shown = shown Or 2
+        c = c Or 2
     End If
     If blink Then
-        shown = shown Or 1
+        c = c Or 1
     End If
-    LcdCommand(shown)
+    LcdCommand(c)
 End Sub
 
 ' Cursor or display shift [Table 7]: shifts the whole display (`whole` = True) or only the cursor, one

@@ -1331,3 +1331,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## Module review 13: i2c (done 2026-11-11, 0.1.179)
 - `docs/MODULE-REVIEWS.md` section 13. `SetPps` (a comparison chain per pin) is one indirect write at `RA0PPS + pin` through FSR2 (PIC18) or FSR0 (enhanced mid-range); `I2cWriteReg` / `I2cReadReg` share the block routines' `Open`. Typical use 389 -> 309 words (18F27Q10), 554 -> 422 (PIC16F17146, 13245, 18346). New edge-pin tests `i2c_pps_edges` (exec_p16), `i2c_pps_edges20` (exec_p132), `i2c_pps_edges_q10` (exec); `i2c_pps_edges` is in `P180_SKIP` (the PIC16F18056 has no port A).
+
+## Module review 14: lcd (done 2026-11-11, 0.1.180)
+- `docs/MODULE-REVIEWS.md` section 14. The six pins are a `pins(6)` array checked with `Pinio.PinOk` instead of a 32-bit used-pin set; `Nibble` and the pin set-up are loops. All-routines probe 691 -> 609 words, typical use 554 -> 472 (18F27Q10), `lib_lcd` 693 -> 599; five bytes of RAM fewer. A refused `LcdInit` now disables the module. New test `lib_lcd_refuse` (exec).

@@ -4302,7 +4302,8 @@ display on with no cursor, clears it and selects increment, no shift. Takes abou
 
 **Parameters** `rs`, `en`, `d4`..`d7` pin numbers 0..23, all different; `lines` 1 or 2 (5 x 8 dot font).
 
-**Returns** `Byte`: 1, or 0 when `lines` is not 1 or 2, a pin is above 23 or a pin is used twice.
+**Returns** `Byte`: 1, or 0 when `lines` is not 1 or 2, a pin is above 23 (or missing on the part) or a pin is used twice.
+After a 0 the other `Lcd` routines do nothing until an `LcdInit` succeeds.
 
 **Example**
 ```basic

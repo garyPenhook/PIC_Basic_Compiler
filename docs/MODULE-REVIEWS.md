@@ -34,7 +34,8 @@ fixed in the module.
 | 11 | `fmath` | reviewed (0.1.177) | `FSqr` one Newton step fewer (same bits); `FLog` 9 % fewer cycles and 26 words fewer (error 2e-7 → 2.5e-7) |
 | 12 | `gpio` | reviewed (0.1.178) | module unchanged (three register-write routines); probe 32 → 29 words (18F27Q10) from a compiler change: dead start-up clears; 180 programs −31 words |
 | 13 | `i2c` | reviewed (0.1.179) | typical use (init + `I2cWriteReg` + `I2cReadReg`) 389 → 309 words (18F27Q10), 554 → 422 (PIC16F17146, 13245, 18346), 469 → 460 (Q41); all-routines probe 864 → 777, 1166 → 1012 |
-| … | `lcd` … `x10` | not started | |
+| 14 | `lcd` | reviewed (0.1.180) | all-routines probe 691 → 609 words, typical use 554 → 472 (18F27Q10); 885 → 789 / 689 → 608 (PIC16F17146); `lib_lcd` 693 → 599; 5 bytes of RAM |
+| … | `oled` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -544,6 +545,34 @@ peripheral (block routines only). Two probes per part: A calls every routine wit
   shorter); about 3 % each of the typical program. **The same comparison chain is in `spi` (`SetPps`, both cores) and `pwm` (enhanced mid-range)**: the same change applies, to be measured in their reviews.
   The software host's `Half` delay and the 16-bit bounded waits were left as they are: they set the bus timing and the timeout behaviour.
 
+## 14. `lcd` (done 2026-11-11, 0.1.180)
+
+HD44780 4-bit driver on six pins through `Pinio`. Probes (18F27Q10): A calls every routine with values read from ports, B is typical use (`LcdInit`, `LcdWrite("Hello")`, `LcdGoto`,
+`LcdWriteWord`). Words before and after:
+
+| Part | A before → after | B before → after | `lib_lcd` |
+|---|---|---|---|
+| 18F27Q10 | 691 → 609 | 554 → 472 (−15 %) | 693 → 599 |
+| PIC16F17146 | 885 → 789 | 689 → 608 | |
+
+`tests/programs/library_all` 6900 → 6776, `library_q41_small` 5002 → 4887.
+
+- **The pin-claim bookkeeping was the cost, not the display code.** `Claim` kept a 32-bit set of used pins (`LongWord(1) << pin`: a 4-byte mask, `__shl4`, 57 words), and `LcdInit` called it six
+  times. The six pins are now one `pins(6)` array: `LcdInit` checks each with `Pinio.PinOk` (the part's own port test, which replaces the two `#if _has(LATx)` copies in `Claim`) and compares it
+  with the pins before it; the set-up, and the four data pins of `Nibble`, are loops over the array instead of six and four unrolled `PinSet` calls (`Nibble` 47 → 39 words).
+  Five bytes of RAM fewer (`used`, `shown` and six pin variables → six bytes).
+- **`shown` was dead state**: `LcdDisplay` built the instruction in a module variable nothing else read; it is a local now, and `LcdInit` sends the literal 0CH.
+- **Behaviour change, deliberate: a refused `LcdInit` disables the module.** Before, a refused call (bad pin, shared pin, `lines` 3) left `ready` true and the old pins in place, but had already
+  overwritten the claimed-pin set; now `ready` is cleared first, so the other routines do nothing until a call succeeds rather than driving pins of a set-up the caller just tried to replace.
+  `tests/exec/lib_lcd_refuse` covers it, a pin above 23 in each of the six positions, a shared pin in seven pairs (including the last pin against each other one), and the disabled state afterwards;
+  it fails on the old module (the display pins are still driven after the refused call). Runs on 18F27Q10, 18F16Q41 and the PIC16F17146, 18346, 13245.
+- **A bug found in the first version of the change, kept in mind:** the duplicate loop `For j = 0 To i - 1` runs 255 times when `i` is 0 (a Byte); it is a `While j < i` loop. The 18F27Q10 run of
+  `lib_lcd` caught it, the 18F16Q41 run did not (the stray reads happened to match).
+- **Timing is unchanged where the data sheet constrains it**: the enable pulse, the 50 us / 2 ms / 5 ms / 150 us waits and the 50 ms power-up wait are the same; `Nibble`'s loop adds a few cycles
+  between data changes, which only lengthens the data set-up time.
+- **Not changed:** `LcdWriteWord` (already subtraction by powers of ten, no divide linked), `LcdWrite`'s per-character `ready` test (the same one `LcdWriteChar` does), the `Send` waits. The
+  module is still not interrupt-safe (read-modify-write of `LATx`), as documented in the header and the manual.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `lcd` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `oled` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).
