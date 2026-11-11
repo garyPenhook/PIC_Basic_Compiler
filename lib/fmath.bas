@@ -13,7 +13,8 @@ Const PosInf As LongWord = $7F800000
 Const NegInf As LongWord = $FF800000
 Const NaN As LongWord = $7FC00000
 
-' Square root: Newton steps from a guess made by halving the exponent.
+' Square root: Newton steps from a guess made by halving the exponent. The guess is within 4 % and each step squares the relative
+' error, so three steps reach the rounding limit of a Float; a fourth gave the same bits (checked on 3000 values, tests/exec/fmath_sqrt3.bas).
 Public Function FSqr(ByVal x As Float) As Float
     Dim xw As x.AsLongWord
     Dim g As Float
@@ -28,7 +29,7 @@ Public Function FSqr(ByVal x As Float) As Float
         End If
     Else
         gw = (xw >> 1) + $1FBD1DF5
-        For i = 1 To 4
+        For i = 1 To 3
             g = 0.5 * (g + x / g)
         Next
     End If
