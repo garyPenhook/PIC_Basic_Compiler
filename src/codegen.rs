@@ -130,7 +130,7 @@ fn bit_compare<'a>(k: CmpKind, l: &'a Ex, r: &'a Ex) -> Option<(&'a Place, bool)
 
 /// `(x And K) = 0` / `<> 0` where `x` is a directly addressed, zero-extended integer: the place,
 /// the bytes of `K` that are not zero as `(byte index, mask)`, and whether the test is `<> 0`.
-fn and_test<'a>(k: CmpKind, l: &'a Ex, r: &'a Ex) -> Option<(&'a Place, Vec<(u32, u8)>, bool)> {
+pub(crate) fn and_test<'a>(k: CmpKind, l: &'a Ex, r: &'a Ex) -> Option<(&'a Place, Vec<(u32, u8)>, bool)> {
     if !matches!(k, CmpKind::Eq | CmpKind::Ne) {
         return None;
     }
@@ -6049,7 +6049,12 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
                 plain.insert(n.to_string(), (a, 1));
             }
         }
-        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect(), shared: Default::default(), zero_abs: p.isrs.is_empty() && !p.c_link() })
+        // Variables another flow of control can see; with raw assembly in a handler, every variable.
+        let shared: std::collections::HashSet<String> = match crate::opt::interrupt_vars(p) {
+            Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
+            None => plain.keys().cloned().collect(),
+        };
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect(), shared, zero_abs: p.isrs.is_empty() && !p.c_link() })
     } else {
         items
     };

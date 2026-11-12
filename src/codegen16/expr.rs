@@ -983,7 +983,38 @@ impl<'p> G<'p> {
                     let s = if (c == 1) == (*k == CmpKind::Eq) { sense } else { !sense };
                     self.cond_jump(&bit, target, s);
                 }
-                _ => self.cmp_jump(*k, a, b, target, sense),
+                _ => {
+                    // `(x And K) <> 0` / `= 0` of a variable tests only the bytes K touches: a bit skip for one bit,
+                    // `movlw` / `andwf` for several, instead of the masked value built in __A and compared.
+                    if self.tgt.opt
+                        && let Some((p, bytes, ne)) = crate::codegen::and_test(*k, a, b)
+                        && let Some(m) = self.place_mem(p)
+                    {
+                        let on_set = ne == sense;
+                        let skip = self.fresh();
+                        let last = bytes.len() - 1;
+                        for (n, &(i, mask)) in bytes.iter().enumerate() {
+                            let mb = m.at(i);
+                            // The final byte decides the fall-through case itself; earlier ones leave on a set bit.
+                            let jump_if_set = on_set || n != last;
+                            let dest = if on_set || n == last { target.to_string() } else { skip.clone() };
+                            if mask.is_power_of_two() {
+                                self.sel(&mb);
+                                let op = if jump_if_set { "btfsc" } else { "btfss" };
+                                self.items.push(Item::SkipBr(format!("{op} {}, {}", mb.text(), mask.trailing_zeros()), dest));
+                            } else {
+                                self.ins(format!("movlw 0x{mask:02X}"));
+                                self.fop("andwf", &mb, "w");
+                                self.br(if jump_if_set { Cc::Nz } else { Cc::Z }, &dest);
+                            }
+                        }
+                        if !on_set && bytes.len() > 1 {
+                            self.label(&skip);
+                        }
+                        return;
+                    }
+                    self.cmp_jump(*k, a, b, target, sense)
+                }
             },
             ExK::Load(p) if p.bit.is_some() && p.dbit.is_none() && self.place_mem(p).is_some() => {
                 let m = self.place_mem(p).expect("checked");

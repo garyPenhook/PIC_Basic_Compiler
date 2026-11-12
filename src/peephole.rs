@@ -1824,6 +1824,587 @@ fn pass_branch_to_return(items: &mut [Item]) -> bool {
     changed
 }
 
+/// The variables whose address the program takes: named in raw assembly, in an `lfsr` or a literal instruction
+/// (`movlw low(X)`), or inside an expression. Only these can be reached through an FSR; any other compiler-placed
+/// variable is read and written by name alone.
+fn addr_taken(items: &[Item], env: &Env) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut add = |t: &str| {
+        for id in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|x| !x.is_empty()) {
+            if env.plain.contains_key(id) {
+                out.insert(id.to_string());
+            }
+        }
+    };
+    for it in items {
+        match it {
+            Item::Raw(t) => add(t),
+            Item::Ins(t) => match parse(t) {
+                Some((m, o)) => {
+                    let literal = matches!(m.as_str(), "lfsr" | "movlw" | "addlw" | "sublw" | "andlw" | "iorlw" | "xorlw" | "retlw" | "mullw");
+                    for x in &o {
+                        if literal || x.contains('(') {
+                            add(x);
+                        }
+                    }
+                }
+                None => add(t),
+            },
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The file operands instruction `t` writes, or `None` when the instruction is not one of the plain data forms
+/// (control flow, an unknown mnemonic). `PRODL`/`PRODH` and `TABLAT` are listed for the instructions that load them.
+fn written_files(t: &str) -> Option<Vec<String>> {
+    let (mn, o) = parse(t)?;
+    let first = || o.first().map(|x| vec![x.to_string()]);
+    match mn.as_str() {
+        "movlw" | "addlw" | "sublw" | "andlw" | "iorlw" | "xorlw" | "nop" | "lfsr" | "movlb" | "return" | "tstfsz" | "cpfseq" | "cpfsgt" | "cpfslt" | "btfsc" | "btfss" => Some(Vec::new()),
+        "mullw" | "mulwf" => Some(vec!["PRODL".into(), "PRODH".into()]),
+        "tblrd*" | "tblrd*+" | "tblrd*-" | "tblrd+*" => Some(vec!["TABLAT".into()]),
+        "movff" => o.get(1).map(|x| vec![x.to_string()]),
+        "movwf" | "clrf" | "setf" | "negf" | "bsf" | "bcf" | "btg" => first(),
+        "addwf" | "addwfc" | "andwf" | "comf" | "decf" | "decfsz" | "dcfsnz" | "incf" | "incfsz" | "infsnz" | "iorwf" | "movf" | "rlcf" | "rlncf" | "rrcf" | "rrncf" | "subfwb" | "subwf" | "subwfb" | "swapf" | "xorwf" => {
+            if o.len() >= 2 && matches!(o[1], "w" | "0") { Some(Vec::new()) } else { first() }
+        }
+        _ => None,
+    }
+}
+
+/// PIC18 result retargeting, the counterpart of [`pass_retarget16`]: a value built in a scratch byte `__Rk` and then
+/// copied with `movff __Rk, D` into a compiler-placed Access Bank byte `D` is built in `D` instead. From the last pure
+/// write of `__Rk` (`movwf`, `clrf`, `setf`, the destination of a `movff`) to the copy every operand `__Rk` becomes `D`
+/// and the copy goes. Only inside one statement and one straight line, when nothing in the stretch reads or writes `D`
+/// or reaches memory through an FSR, `__Rk` is dead after the copy, and no interrupt handler can see `D`, which holds
+/// half-computed values in between.
+fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let taken = addr_taken(items, env);
+    let mut dead = vec![false; items.len()];
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    let mut claimed = vec![false; items.len()];
+    for j in 1..items.len() {
+        if keep[j] || claimed[j] {
+            continue;
+        }
+        let Item::Ins(t) = &items[j] else { continue };
+        let Some((mn, ops)) = parse(t) else { continue };
+        if mn != "movff" || ops.len() != 2 {
+            continue;
+        }
+        let Some(k) = scratch(ops[0]) else { continue };
+        let d = ops[1].to_string();
+        if scratch(&d).is_some() || is_indirect(&d) || !env.is_access(&d) || split_off(&d).is_none_or(|(n, _)| env.shared.contains(n)) {
+            continue;
+        }
+        // An FSR can reach `D` only when the program takes the address of its variable.
+        let by_ptr = split_off(&d).is_none_or(|(n, _)| taken.contains(n));
+        let mut window: Vec<usize> = Vec::new();
+        let mut def = None;
+        let mut m = j;
+        let mut ok = true;
+        while m > 0 && window.len() < 40 && j - m < 120 {
+            m -= 1;
+            match &items[m] {
+                Item::Comment(_) => {}
+                Item::Ins(u) if !keep[m] && !claimed[m] => {
+                    let Some(e) = effect(u) else {
+                        ok = false;
+                        break;
+                    };
+                    let absolute = parse(u).is_some_and(|(_, o)| o.iter().take(2).any(|x| x.starts_with("0x")));
+                    let touches_d = absolute
+                        || e.rmem.iter().any(|r| may_alias(env, r, &d) || (by_ptr && is_indirect(r)))
+                        || e.wmem.iter().any(|w| match w {
+                            Mem::Unknown => by_ptr,
+                            Mem::Sym(w) => may_alias(env, w, &d),
+                        });
+                    if touches_d {
+                        ok = false;
+                        break;
+                    }
+                    let reads_s = e.reads.contains(&Loc::S(k));
+                    let writes_s = e.writes.contains(&Loc::S(k));
+                    if writes_s && !reads_s {
+                        let (wm, wo) = parse(u).unwrap_or_default();
+                        let pure = match wm.as_str() {
+                            "movwf" | "clrf" | "setf" => wo.first().is_some_and(|o| scratch(o) == Some(k)),
+                            "movff" => wo.len() == 2 && scratch(wo[1]) == Some(k) && scratch(wo[0]) != Some(k),
+                            _ => false,
+                        };
+                        if pure {
+                            def = Some(m);
+                        } else {
+                            ok = false;
+                        }
+                        break;
+                    }
+                    if reads_s || writes_s {
+                        // Every use must name the byte with the access bit, which `D` can take as well.
+                        let (_, wo) = parse(u).unwrap_or_default();
+                        if !wo.last().is_some_and(|a| a.eq_ignore_ascii_case("c")) && !matches!(parse(u), Some((mm, _)) if mm == "movff") {
+                            ok = false;
+                            break;
+                        }
+                        window.push(m);
+                    }
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        let (true, Some(def)) = (ok, def) else { continue };
+        window.push(def);
+        if !matches!(loc_live(items, j, Loc::S(k), env), Live::Dead) {
+            continue;
+        }
+        for &w in &window {
+            let Item::Ins(u) = &items[w] else { continue };
+            let (wm, wo) = parse(u).unwrap();
+            let new: Vec<String> = wo.iter().map(|o| if scratch(o) == Some(k) { d.clone() } else { o.to_string() }).collect();
+            edits.push((w, format!("{wm} {}", new.join(", "))));
+            claimed[w] = true;
+        }
+        claimed[j] = true;
+        dead[j] = true;
+    }
+    let changed = dead.iter().any(|&x| x);
+    for (i, t) in edits {
+        items[i] = Item::Ins(t);
+    }
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// Copy propagation for a variable that is only ever a copy of another: every byte of `D` the program names is written
+/// exactly once, by `movff S+i, D+i` (or `movf S+i, w` / `movwf D+i`), and everything else that names `D` only reads
+/// it. Then each read takes the source byte and the copies go. This is what an inlined routine leaves behind: a `ByVal`
+/// parameter the body never writes, or a result handed on to the variable it is assigned to.
+///
+/// The region from the first copy to the last read must keep the sources intact and be entered only at its top: no
+/// instruction in it writes a source byte (by address) or stores through a pointer, it has no call but to the `__`
+/// helpers (which write only scratch), no raw assembly, and no label that anything outside it branches to. `D` and the
+/// sources are compiler-placed, not `Volatile` and not visible to an interrupt handler. A read that is not a `movff`
+/// needs the access bit on both the old operand and the source.
+fn pass_copy_prop(items: &mut Vec<Item>, env: &Env) -> bool {
+    let mut changed = false;
+    for _ in 0..64 {
+        if !copy_prop_one(items, env) {
+            break;
+        }
+        changed = true;
+    }
+    changed
+}
+
+fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
+    fn idents(t: &str) -> impl Iterator<Item = &str> {
+        t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|s| !s.is_empty())
+    }
+    let keep = protected(items);
+    // Every item that names a symbol.
+    let mut named: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, it) in items.iter().enumerate() {
+        let t = match it {
+            Item::Ins(t) | Item::Raw(t) | Item::Call(t) | Item::Br(_, t) => t.as_str(),
+            Item::SkipBr(a, _) => a.as_str(),
+            _ => continue,
+        };
+        for id in idents(t) {
+            if env.plain.contains_key(id) {
+                let v = named.entry(id.to_string()).or_default();
+                if v.last() != Some(&i) {
+                    v.push(i);
+                }
+            }
+        }
+    }
+    let taken = addr_taken(items, env);
+    let usable = |sym: &str| -> bool {
+        scratch(sym).is_none() && !sym.starts_with("__") && !sym.starts_with("PROD") && !is_indirect(sym) && env.is_plain(sym) && split_off(sym).is_some_and(|(n, _)| !env.shared.contains(n) && env.plain.contains_key(n))
+    };
+    let mut bases: Vec<&String> = named.keys().collect();
+    bases.sort();
+    for base in bases {
+        let at = &named[base];
+        if base.starts_with("__") || env.shared.contains(base.as_str()) || at.len() < 2 {
+            continue;
+        }
+        // Classify every mention: a copy into a byte of the variable, or a pure read of one.
+        let mut defs: HashMap<String, (usize, String)> = HashMap::new(); // D byte -> (item, source byte)
+        let mut reads: Vec<(usize, usize)> = Vec::new(); // (item, operand index)
+        let mut ok = true;
+        for &i in at {
+            let Item::Ins(t) = &items[i] else {
+                ok = false;
+                break;
+            };
+            let Some((mn, ops)) = parse(t) else {
+                ok = false;
+                break;
+            };
+            if keep[i] {
+                ok = false;
+                break;
+            }
+            let mine = |o: &str| split_off(o).is_some_and(|(n, _)| n == base.as_str());
+            let hits: Vec<usize> = (0..ops.len()).filter(|&x| idents(ops[x]).any(|id| id == base.as_str())).collect();
+            if hits.len() != 1 || !mine(ops[hits[0]]) {
+                ok = false;
+                break;
+            }
+            let h = hits[0];
+            let d = ops[h].to_string();
+            match mn.as_str() {
+                "movff" if ops.len() == 2 && h == 1 => {
+                    if !usable(ops[0]) || defs.insert(d, (i, ops[0].to_string())).is_some() {
+                        ok = false;
+                    }
+                }
+                "movwf" if h == 0 => {
+                    // The load right before it names the source.
+                    let mut c = i;
+                    let mut src = None;
+                    while c > 0 {
+                        c -= 1;
+                        match &items[c] {
+                            Item::Comment(_) => {}
+                            Item::Ins(u) if !keep[c] => {
+                                src = parse(u).and_then(|(m, o)| (m == "movf" && o.len() == 3 && matches!(dest(o[1]), Some(Dest::W))).then(|| o[0].to_string()));
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    match src {
+                        Some(sb) if usable(&sb) && defs.insert(d, (i, sb.clone())).is_none() => {}
+                        _ => ok = false,
+                    }
+                }
+                "movff" if ops.len() == 2 && h == 0 => reads.push((i, h)),
+                "movf" | "addwf" | "addwfc" | "subwf" | "subwfb" | "subfwb" | "andwf" | "iorwf" | "xorwf" | "comf" | "incf" | "decf" | "rlcf" | "rrcf" | "rlncf" | "rrncf" | "swapf"
+                    if h == 0 && ops.len() == 3 && matches!(dest(ops[1]), Some(Dest::W)) =>
+                {
+                    reads.push((i, h))
+                }
+                "btfsc" | "btfss" if h == 0 && ops.len() == 3 => reads.push((i, h)),
+                "cpfseq" | "cpfsgt" | "cpfslt" | "tstfsz" | "mulwf" if h == 0 && ops.len() == 2 => reads.push((i, h)),
+                _ => ok = false,
+            }
+            if !ok {
+                break;
+            }
+        }
+        if !ok || defs.is_empty() || reads.is_empty() {
+            continue;
+        }
+        // Each read names a byte that has its copy, and can take the source in the same addressing.
+        let mut plan: Vec<(usize, usize, String)> = Vec::new();
+        for &(i, h) in &reads {
+            let Item::Ins(t) = &items[i] else { unreachable!() };
+            let (mn, ops) = parse(t).unwrap();
+            let Some((_, sb)) = defs.get(ops[h]) else {
+                ok = false;
+                break;
+            };
+            if mn != "movff" && !(ops.last().is_some_and(|a| a.eq_ignore_ascii_case("c")) && env.is_access(sb) && env.is_access(ops[h])) {
+                ok = false;
+                break;
+            }
+            plan.push((i, h, sb.clone()));
+        }
+        if !ok {
+            continue;
+        }
+        let first = defs.values().map(|d| d.0).min().unwrap();
+        let last_def = defs.values().map(|d| d.0).max().unwrap();
+        let last = reads.iter().map(|r| r.0).max().unwrap();
+        if reads.iter().any(|r| r.0 < last_def) || last - first > 600 {
+            continue;
+        }
+        // A source that is itself a byte of this variable, or is copied from two places, is not a plain copy.
+        let srcs: Vec<String> = defs.values().map(|d| d.1.clone()).collect();
+        if srcs.iter().any(|sb| split_off(sb).is_some_and(|(n, _)| n == base.as_str()) || defs.keys().any(|d| same_byte(env, d, sb))) {
+            continue;
+        }
+        let def_items: std::collections::HashSet<usize> = defs.values().map(|d| d.0).collect();
+        // A store through an FSR can change a source only when the program takes the address of its variable.
+        let src_by_ptr = srcs.iter().any(|sb| split_off(sb).is_none_or(|(n, _)| taken.contains(n)));
+        let mut labels: Vec<&str> = Vec::new();
+        for it in items.iter().take(last + 1).skip(first) {
+            match it {
+                Item::Comment(_) | Item::Fence | Item::Br(..) => {}
+                Item::Label(l) => {
+                    if !local_label(l) {
+                        ok = false;
+                    }
+                    labels.push(l);
+                }
+                Item::Call(c) => {
+                    if !c.starts_with("__") || env.reg_calls.contains(c) {
+                        ok = false;
+                    }
+                }
+                Item::Ins(t) => match written_files(t) {
+                    None => ok = false,
+                    Some(ws) => {
+                        for w in &ws {
+                            let hit = if is_indirect(w) {
+                                src_by_ptr
+                            } else if w.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                                true
+                            } else {
+                                srcs.iter().any(|sb| may_alias(env, w, sb))
+                            };
+                            if hit {
+                                ok = false;
+                            }
+                        }
+                    }
+                },
+                _ => ok = false,
+            }
+            if !ok {
+                break;
+            }
+        }
+        if !ok {
+            continue;
+        }
+        // No way into the region but through its top.
+        let outside_ref = items.iter().enumerate().any(|(i, it)| {
+            if (first..=last).contains(&i) {
+                return false;
+            }
+            match it {
+                Item::Br(_, t) | Item::Call(t) | Item::SkipBr(_, t) => labels.contains(&t.as_str()),
+                Item::Raw(t) | Item::Ins(t) => idents(t).any(|id| labels.contains(&id)),
+                _ => false,
+            }
+        });
+        if outside_ref {
+            continue;
+        }
+        for (i, h, sb) in plan {
+            let Item::Ins(t) = &items[i] else { unreachable!() };
+            let (mn, ops) = parse(t).unwrap();
+            let mut new: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
+            new[h] = sb;
+            items[i] = Item::Ins(format!("{mn} {}", new.join(", ")));
+        }
+        // With `--keep-vars` the copies stay (the variable keeps its value); nothing reads them any more.
+        if !env.keep_writes {
+            let mut gone: Vec<usize> = def_items.into_iter().collect();
+            gone.sort_unstable();
+            for i in gone.into_iter().rev() {
+                items.remove(i);
+            }
+        }
+        // One variable a call: the indices of everything after it have moved.
+        return true;
+    }
+    false
+}
+
+/// Loads and clears that later code makes useless, on either core:
+/// * `movf X, w` / `movlw k` whose `WREG` and flags nothing reads on any path (the straight-line dead-store pass stops
+///   at a branch).
+/// * `clrf X` right before `movwf X`, with Z dead: the store overwrites it.
+/// * `clrf T` / `movf T, w` / `xorwf X, f` (or `iorwf`): the operand is zero, so `X` keeps its value; the load and the
+///   operation go when `WREG` and the flags are dead.
+/// * A copy of a byte known to be zero (`clrf S` earlier in the same straight run, `S` not written since) is a `clrf`
+///   of the destination: `movff S, D` on the PIC18, `movf S, w` / `movwf D` on the mid-range core (with `WREG` dead).
+///   Z must be dead, since `clrf` sets it.
+/// * Enhanced mid-range: `movlw k` / `movwf FSRnH` when that register already holds `k` in the same straight run and
+///   `WREG` is dead afterwards (one array access after another in the same 256 bytes). An interrupt cannot change
+///   it in between: the FSRs are saved and restored with the automatic context (DS40002686B section 12.9).
+fn pass_dead_loads(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Comment(_))).collect();
+    let mut dead = vec![false; items.len()];
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    let is_w = |d: Option<&&str>| d.is_some_and(|d| matches!(*d, "w" | "0"));
+    let zf = zflags();
+    // Bytes known to be zero, and what each FSR's high byte holds, along the straight run.
+    let mut zero: Vec<String> = Vec::new();
+    let mut fsrh: [Option<u8>; 2] = [None, None];
+    let mut w_lit: Option<u8> = None;
+    for (n, &i) in real.iter().enumerate() {
+        let it = &items[i];
+        let Item::Ins(t) = it else {
+            match it {
+                Item::Fence | Item::Br(..) => {}
+                // A bit test changes nothing; a counted skip writes its operand.
+                Item::SkipBr(t, _) if matches!(parse(t), Some((m, _)) if m == "btfsc" || m == "btfss") => {}
+                _ => {
+                    zero.clear();
+                    fsrh = [None, None];
+                }
+            }
+            if !matches!(it, Item::Fence) {
+                w_lit = None;
+            }
+            continue;
+        };
+        let Some((mn, ops)) = parse(t) else {
+            zero.clear();
+            fsrh = [None, None];
+            w_lit = None;
+            continue;
+        };
+        if keep[i] {
+            zero.clear();
+            fsrh = [None, None];
+            w_lit = None;
+            continue;
+        }
+        let next = real.get(n + 1).copied();
+        let next_ins = |k: Option<usize>| k.and_then(|k| if let Item::Ins(u) = &items[k] { if keep[k] { None } else { parse(u).map(|(m, o)| (k, m, o.iter().map(|x| x.to_string()).collect::<Vec<_>>())) } } else { None });
+        // A copy of a known zero.
+        if !core16() && mn == "movff" && ops.len() == 2 && zero.iter().any(|z| z == ops[0]) && !is_indirect(ops[1]) && env.is_access(ops[1]) && dead_paths(items, i + 1, false, Z) {
+            edits.push((i, format!("clrf {}, c", ops[1])));
+            zero.retain(|z| !may_alias(env, z, ops[1]));
+            continue;
+        }
+        if core16() && mn == "movf" && is_w(ops.get(1)) && zero.iter().any(|z| z == ops[0])
+            && let Some((j, m2, o2)) = next_ins(next)
+            && m2 == "movwf"
+            && o2.len() == 1
+            && !is_indirect(&o2[0])
+            && !o2[0].to_ascii_uppercase().starts_with("FSR")
+            && env.is_plain(&o2[0])
+            && dead_paths(items, j + 1, true, Z)
+        {
+            dead[i] = true;
+            edits.push((j, format!("clrf {}", o2[0])));
+            // The run goes on from the store, handled as a clear on the next step.
+            continue;
+        }
+        // movlw k / movwf FSRnH with the register already holding k.
+        if core16() && mn == "movlw" && ops.len() == 1
+            && let Some(k) = parse_lit(ops[0])
+            && let Some((j, m2, o2)) = next_ins(next)
+            && m2 == "movwf"
+            && o2.len() == 1
+        {
+            let reg = match o2[0].to_ascii_uppercase().as_str() {
+                "FSR0H" => Some(0),
+                "FSR1H" => Some(1),
+                _ => None,
+            };
+            if let Some(r) = reg
+                && fsrh[r] == Some(k)
+                && dead_paths(items, j + 1, true, 0)
+            {
+                dead[i] = true;
+                dead[j] = true;
+            }
+        }
+        // A load nothing reads.
+        let loads_w = (mn == "movf" && is_w(ops.get(1)) && ops.first().is_some_and(|o| env.is_plain(o) || scratch(o).is_some())) || (mn == "movlw" && ops.len() == 1);
+        if loads_w && !dead[i] && dead_paths(items, i + 1, true, if mn == "movf" { zf } else { 0 }) {
+            dead[i] = true;
+            continue;
+        }
+        // clrf X / movwf X.
+        if mn == "clrf" && !ops.is_empty() && (env.is_plain(ops[0]) || scratch(ops[0]).is_some())
+            && let Some((j, m2, o2)) = next_ins(next)
+            && m2 == "movwf"
+            && o2.first().map(String::as_str) == ops.first().copied()
+            && o2.get(1).map(String::as_str) == ops.get(1).copied()
+            && dead_paths(items, j + 1, false, Z)
+        {
+            dead[i] = true;
+            continue;
+        }
+        // clrf T / movf T, w / xorwf X, f.
+        if mn == "clrf" && !ops.is_empty() && (env.is_plain(ops[0]) || scratch(ops[0]).is_some())
+            && let Some((j, m2, o2)) = next_ins(next)
+            && m2 == "movf"
+            && o2.first().map(String::as_str) == ops.first().copied()
+            && o2.get(1).is_some_and(|d| d == "w" || d == "0")
+            && let Some((k, m3, o3)) = next_ins(real.get(n + 2).copied())
+            && matches!(m3.as_str(), "xorwf" | "iorwf")
+            && o3.get(1).is_some_and(|d| d == "f" || d == "1")
+            && o3.first() != o2.first()
+            && dead_paths(items, k + 1, true, zf)
+        {
+            dead[j] = true;
+            dead[k] = true;
+        }
+        // Keep the facts up to date.
+        let fsr_touch = |r: usize| {
+            let u = t.to_ascii_uppercase();
+            u.contains(&format!("FSR{r}H")) || u.contains(&format!("FSR{r}++")) || u.contains(&format!("++FSR{r}")) || u.contains(&format!("FSR{r}--")) || u.contains(&format!("--FSR{r}")) || u.starts_with("ADDFSR")
+        };
+        let set_h = if mn == "movwf" && ops.len() == 1 {
+            match ops[0].to_ascii_uppercase().as_str() {
+                "FSR0H" => Some(0),
+                "FSR1H" => Some(1),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        for r in 0..2 {
+            if set_h == Some(r) {
+                fsrh[r] = w_lit;
+            } else if fsr_touch(r) {
+                fsrh[r] = None;
+            }
+        }
+        match effect(t) {
+            None => {
+                // A bit test or compare-and-skip changes nothing; anything else unknown forgets everything.
+                if !matches!(mn.as_str(), "btfsc" | "btfss" | "cpfseq" | "cpfsgt" | "cpfslt" | "tstfsz") {
+                    zero.clear();
+                    fsrh = [None, None];
+                    w_lit = None;
+                }
+            }
+            Some(e) => {
+                if e.wmem.contains(&Mem::Unknown) {
+                    zero.retain(|z| scratch(z).is_some());
+                }
+                zero.retain(|z| {
+                    !e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if may_alias(env, x, z))) && !scratch(z).is_some_and(|k| e.writes.contains(&Loc::S(k)))
+                });
+                if e.writes.contains(&Loc::W) {
+                    w_lit = e.w_imm;
+                }
+                if mn == "clrf" && !ops.is_empty() && !is_indirect(ops[0]) && (env.is_plain(ops[0]) || scratch(ops[0]).is_some()) {
+                    zero.push(ops[0].to_string());
+                }
+            }
+        }
+    }
+    let changed = dead.iter().any(|&d| d) || !edits.is_empty();
+    for (i, t) in edits {
+        if !dead[i] {
+            items[i] = Item::Ins(t);
+        }
+    }
+    if dead.iter().any(|&d| d) {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
 /// `bcc L1 / bra L2 / L1:` is `b!cc L2`.
 fn pass_branch_over_branch(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
@@ -2588,6 +3169,20 @@ fn may_write_sym(low: &str, s: &str) -> bool {
     }
 }
 
+/// Whether operands `a` and `b` may name the same byte: they do ([`same_byte`]), or one of them is written in a form
+/// whose address is not worked out here (`X+1+1`, a view of part of a variable) and both name the same variable.
+fn may_alias(env: &Env, a: &str, b: &str) -> bool {
+    if same_byte(env, a, b) {
+        return true;
+    }
+    if env.addr(a).is_some() && env.addr(b).is_some() {
+        return false;
+    }
+    let ids = |t: &str| -> Vec<String> { t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|x| !x.is_empty() && !x.chars().all(|c| c.is_ascii_digit())).map(str::to_string).collect() };
+    let (ia, ib) = (ids(a), ids(b));
+    ia.iter().any(|x| ib.contains(x))
+}
+
 fn same_byte(env: &Env, a: &str, b: &str) -> bool {
     a == b || env.addr(a).is_some_and(|x| env.addr(b) == Some(x))
 }
@@ -2937,10 +3532,10 @@ fn pass_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
                         ok = false;
                         break;
                     }
-                    let touches_d = e.rmem.iter().any(|r| same_byte(env, r, &d) || is_indirect(r))
+                    let touches_d = e.rmem.iter().any(|r| may_alias(env, r, &d) || is_indirect(r))
                         || e.wmem.iter().any(|w| match w {
                             Mem::Unknown => true,
-                            Mem::Sym(w) => same_byte(env, w, &d),
+                            Mem::Sym(w) => may_alias(env, w, &d),
                         });
                     if touches_d {
                         ok = false;
@@ -3934,10 +4529,13 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_incdec_test(&mut items);
         changed |= pass_incdec_w(&mut items, env);
         changed |= pass_small(&mut items, env);
+        changed |= pass_dead_loads(&mut items, env);
         changed |= pass_branch_to_return(&mut items);
         changed |= pass_forward(&mut items, env);
         changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);
+        changed |= pass_retarget_build(&mut items, env);
+        changed |= pass_copy_prop(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
         if !env.keep_writes {
@@ -3985,6 +4583,7 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_small(&mut items, env);
+        changed |= pass_dead_loads(&mut items, env);
         changed |= pass_branch_to_return(&mut items);
         changed |= pass_copy_back16(&mut items, env);
         changed |= pass_forward16(&mut items, env);
@@ -4094,9 +4693,9 @@ mod tests {
     fn dead_scratch_store_before_overwrite() {
         let r = run(&[ins("movff __C0, __A0"), ins("movff __A1, __A0"), Item::Fence]);
         assert_eq!(r, vec!["--"]);
-        // Read in between keeps it.
+        // The second store is read: it stays, built in the byte it was copied to (`pass_retarget_build`).
         let r = run(&[ins("movff X, __A0"), ins("movwf __A0, c"), ins("movff __A0, Y"), Item::Fence]);
-        assert_eq!(r.len(), 3, "{r:?}");
+        assert_eq!(r, vec!["movwf Y, c", "--"]);
     }
 
     #[test]
@@ -4931,5 +5530,68 @@ mod tests {
     fn branch_to_a_return_is_a_return() {
         let r = run(&[ins("movf X, f, c"), Item::Br(Cc::Z, "_L1".into()), ins("clrf Y, c"), Item::Br(Cc::Always, "_L2".into()), Item::Label("_L1".into()), ins("setf Y, c"), Item::Label("_L2".into()), ins("return")]);
         assert_eq!(r.iter().filter(|t| *t == "return").count(), 2, "{r:?}");
+    }
+    fn env2() -> Env {
+        let mut e = env();
+        for (n, a, b) in [("P", 0x20, 2), ("S", 0x22, 2), ("R", 0x24, 2), ("ARR", 0x30, 4)] {
+            e.plain.insert(n.to_string(), (a, b));
+        }
+        e
+    }
+
+    fn run2(src: &[Item], e: &Env) -> Vec<String> {
+        optimise(src.to_vec(), e)
+            .iter()
+            .map(|i| match i {
+                Item::Ins(t) => t.clone(),
+                Item::Label(l) => format!("{l}:"),
+                Item::Br(cc, l) => format!("br{cc:?} {l}"),
+                Item::Call(l) => format!("call {l}"),
+                Item::Fence => "--".into(),
+                _ => "?".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn value_built_in_scratch_is_built_in_its_destination() {
+        let mut e = env2();
+        e.keep_writes = true;
+        let src = [ins("movff X, __A0"), ins("movf Y, w, c"), ins("addwf __A0, f, c"), ins("movff __A0, R"), Item::Fence];
+        assert_eq!(run2(&src, &e), ["movff X, R", "movf Y, w, c", "addwf R, f, c", "--"]);
+        // The destination is read in between: the copy stays.
+        let src = [ins("movff X, __A0"), ins("movf R, w, c"), ins("addwf __A0, f, c"), ins("movff __A0, R"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movff __A0, R".to_string()));
+        // A variable an interrupt handler can see never holds the half-built value.
+        e.shared.insert("R".into());
+        let src = [ins("movff X, __A0"), ins("movf Y, w, c"), ins("addwf __A0, f, c"), ins("movff __A0, R"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movff __A0, R".to_string()));
+    }
+
+    #[test]
+    fn a_variable_that_is_only_a_copy_is_read_from_its_source() {
+        let e = env2();
+        let user = Item::Raw("lfsr 0, X+Y+R".into());
+        // P is a copy of S (an inlined ByVal parameter): its reads take S, the copies go.
+        let src = [user.clone(), ins("movff S, P"), ins("movff S+1, P+1"), Item::Fence, ins("movf P, w, c"), ins("addwf R, f, c"), ins("movf P+1, w, c"), ins("addwfc R+1, f, c"), Item::Fence];
+        let r = run2(&src, &e);
+        assert_eq!(r[1..], ["--", "movf S, w, c", "addwf R, f, c", "movf S+1, w, c", "addwfc R+1, f, c", "--"]);
+        // The source changes before the read: nothing moves.
+        let src = [user.clone(), ins("movff S, P"), Item::Fence, ins("incf S, f, c"), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movf P, w, c".to_string()));
+        // A user routine is called in between (it may write S): nothing moves.
+        let src = [user.clone(), ins("movff S, P"), Item::Fence, Item::Call("K_F".into()), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movf P, w, c".to_string()));
+        // A store through an FSR reaches S only when its address is taken somewhere.
+        let src = [user.clone(), ins("movff S, P"), Item::Fence, ins("clrf INDF0, c"), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movf S, w, c".to_string()));
+        let src = [user.clone(), ins("lfsr 1, S"), ins("movff S, P"), Item::Fence, ins("clrf INDF1, c"), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movf P, w, c".to_string()));
+        // P is written a second time: it is not a plain copy.
+        let src = [user.clone(), ins("movff S, P"), Item::Fence, ins("movf P, w, c"), ins("addwf R, f, c"), ins("clrf P, c"), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movff S, P".to_string()));
+        // A label inside the region that code outside it branches to is another way in.
+        let src = [user, Item::Br(Cc::Z, "_L9".into()), ins("movff S, P"), Item::Fence, Item::Label("_L9".into()), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movf P, w, c".to_string()));
     }
 }
