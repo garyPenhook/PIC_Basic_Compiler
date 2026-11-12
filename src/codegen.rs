@@ -2593,6 +2593,13 @@ impl<'p> Gen<'p> {
 
     fn gen_mul(&mut self, l: &Ex, r: &Ex, e: &Ex) {
         let narrow = |x: &Ex| -> Option<Ex> {
+            // A conversion that keeps the width only reinterprets the sign (`Integer(Byte)` is a zero-extend inside one).
+            let mut x = x;
+            while let ExK::Conv(i) = &x.k
+                && i.w == x.w
+            {
+                x = i;
+            }
             match &x.k {
                 ExK::Conv(i) if i.w == 8 && !i.signed => Some((**i).clone()),
                 ExK::Const(v) if *v <= 0xFF => Some(Ex::konst(*v, 8, false)),
@@ -2626,6 +2633,40 @@ impl<'p> Gen<'p> {
                 self.fo("clrf", &m);
             }
             return;
+        }
+        // A 16-bit value times a byte (zero-extended) into 16 bits: two hardware multiplies with the byte left in W
+        // (`mulwf` keeps it). The product mod 2^16 is the same signed or unsigned, so there is no correction:
+        // `lo = (x0 * b).lo`, `hi = (x0 * b).hi + (x1 * b).lo`. The wide operand's bytes are read once each, from
+        // where it is or from `__A`.
+        if n == 2 {
+            for (x, y) in [(l, r), (r, l)] {
+                let (Some(b), None) = (narrow(y), narrow(x)) else { continue };
+                if y.as_const().is_some() || x.as_const().is_some() || Self::nb(x) != 2 {
+                    continue;
+                }
+                let m = match self.left_src(x, &b) {
+                    Some(Src::Mem(m, 2)) => {
+                        self.gen_val(&b);
+                        m
+                    }
+                    Some(_) => continue,
+                    None => {
+                        // The byte is read after `x` is worked out, so `x` must not be able to change it.
+                        let Some(s) = self.simple(&b).filter(|_| !x.has_call()) else { continue };
+                        self.gen_to_acc(x);
+                        self.src_to_w(&s.byte(0));
+                        self.a(0)
+                    }
+                };
+                let (a0, a1) = (self.a(0), self.a(1));
+                self.fo("mulwf", &m.at(1));
+                self.movff_sfr(&a1, "PRODL");
+                self.fo("mulwf", &m);
+                self.movff_sfr(&a0, "PRODL");
+                self.ins("movf PRODH, w, c");
+                self.fop("addwf", &a1, "f");
+                return;
+            }
         }
         // Two sign-extended 16-bit values into 32 bits: one shared routine with four hardware multiplies, and
         // only the 16-bit operands are loaded.
