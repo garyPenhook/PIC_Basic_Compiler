@@ -664,6 +664,8 @@ struct Gen<'p> {
     /// Routines each routine calls directly (the last entry is the main program).
     calls: Vec<BTreeSet<FuncId>>,
     helpers: BTreeSet<String>,
+    /// Whether the program has a 16-bit division other than an unsigned one by a byte constant (worked out once).
+    div2_other: Option<bool>,
     /// A `For` loop walking a Byte array: (array, loop variable, byte offset of the element the variable picks). While
     /// it is set FSR0 points at that element and every access to it goes through `INDF0`.
     walk: Option<(VarId, VarId, u32)>,
@@ -874,6 +876,7 @@ impl<'p> Gen<'p> {
             calls: vec![BTreeSet::new(); p.funcs.len() + 1],
             helpers: BTreeSet::new(),
             tbl_last: None,
+            div2_other: None,
             walk: None,
             lits: Vec::new(),
             errors: Vec::new(),
@@ -2821,13 +2824,27 @@ impl<'p> Gen<'p> {
         }
         // An unsigned LongWord by a byte constant: the byte-divisor helper (a 32-step loop of about a quarter of the
         // cost, and far shorter than `__div4`). Under `Optimize = Speed` `__div4` keeps its fast path for small operands.
-        let byte_k = r.as_const().filter(|&k| n == 4 && !e.signed && !self.p.speed && self.tgt.opt && (3..=255).contains(&k) && !k.is_power_of_two());
+        // A Word by a byte constant uses the same kind of helper (`__divk2`, an 8-bit remainder: 17 words and about
+        // half the cycles of `__div2`) unless the program divides Words in some other way too: `__div2` is then
+        // linked anyway and a second helper would only add words.
+        let fits = |k: u32| (3..=255).contains(&k) && !k.is_power_of_two();
+        let word_ok = n == 2 && !self.p.speed && {
+            if self.div2_other.is_none() {
+                let other = crate::opt::any_ex(self.p, &|x: &Ex| match &x.k {
+                    ExK::Bin(BinKind::Div | BinKind::Mod, _, d) if x.w == 16 => x.signed || !d.as_const().is_some_and(fits),
+                    _ => false,
+                });
+                self.div2_other = Some(other);
+            }
+            self.div2_other == Some(false)
+        };
+        let byte_k = r.as_const().filter(|&k| (n == 4 || word_ok) && !e.signed && !self.p.speed && self.tgt.opt && fits(k));
         if let Some(k) = byte_k {
             self.gen_to_acc(l);
             let b0 = self.b(0);
             self.ins(format!("movlw {k}"));
             self.fo("movwf", &b0);
-            self.call_helper("divk4".to_string());
+            self.call_helper(format!("divk{n}"));
         } else {
             self.prep_ab(l, r, n);
             let s = if e.signed { "s" } else { "" };
@@ -5482,6 +5499,26 @@ impl<'p> Gen<'p> {
         self.label(&format!("__{name}"));
         self.bsr = None;
         match kind {
+            // 16 x 16 -> 16: the two cross products go into `__C1` first, then the low product, whose low byte is
+            // written over `__A0` only after `__A0` has been read for the last time. The result is finished in
+            // `__A` with no copy (15 words, not 18).
+            "mul" if n == 2 && self.tgt.opt => {
+                let (a0, a1, b0, b1, c1) = (self.a(0), self.a(1), self.b(0), self.b(1), self.c(1));
+                self.fop("movf", &a1, "w");
+                self.fo("mulwf", &b0);
+                self.movff_sfr(&c1, "PRODL");
+                self.fop("movf", &a0, "w");
+                self.fo("mulwf", &b1);
+                self.ins("movf PRODL, w, c");
+                self.fop("addwf", &c1, "f");
+                self.fop("movf", &a0, "w");
+                self.fo("mulwf", &b0);
+                self.movff_sfr(&a0, "PRODL");
+                self.ins("movf PRODH, w, c");
+                self.fop("addwf", &c1, "w");
+                self.fo("movwf", &a1);
+                self.ins("return");
+            }
             "mul" => {
                 let mut pairs = Vec::new();
                 for j in 0..n {

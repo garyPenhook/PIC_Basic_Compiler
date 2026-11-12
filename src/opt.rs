@@ -1897,6 +1897,23 @@ fn free_loop_ends(p: &mut Program) {
     }
 }
 
+/// Whether any expression of the program (in any routine, at any depth) satisfies `f`.
+pub fn any_ex(p: &Program, f: &dyn Fn(&Ex) -> bool) -> bool {
+    struct Any<'a>(&'a dyn Fn(&Ex) -> bool, bool);
+    impl Visit for Any<'_> {
+        fn ex(&mut self, e: &Ex) {
+            if (self.0)(e) {
+                self.1 = true;
+            }
+        }
+    }
+    let mut a = Any(f, false);
+    for b in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut a, b);
+    }
+    a.1
+}
+
 pub fn optimize(p: &mut Program) {
     for _ in 0..8 {
         fold_all(p);
