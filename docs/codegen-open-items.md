@@ -1,27 +1,30 @@
 # Code generation: open items (2026-11-12)
 
 Open items left after review 3 (`docs/EFFICIENCY.md` section 12.4, basil 0.1.190).
-Committed as 0.1.191; 0.1.192 adds unit tests, review fixes and the docs. The 16F gate and the unit tests now pass; the full `BASIL_MDB=1` suite was not run. Files: `src/peephole.rs`,
-`tests/exec/param_result.bas`, `docs/MANUAL.md`, new `scripts/gate.sh`, and this file.
+Committed as 0.1.191; 0.1.192 adds unit tests and review fixes; 0.1.193 and 0.1.194 are the IR-level items and their review fixes. Files: `src/peephole.rs`, `src/opt.rs`,
+`tests/exec/param_result.bas`, `abs_idiom.bas`, `narrow_result.bas`, `sub_reassoc.bas`, `docs/MANUAL.md`, `scripts/gate.sh`, and this file.
 
 ## Where it stands
 
-| | 0.1.190 | 0.1.191 |
-|---|---:|---:|
-| PIC18F27Q10, `bench/large`, four programs | 6180 bytes | 6118 bytes |
-| PIC16F18346, same sources | 4685 words | 4653 words |
+| | 0.1.190 | 0.1.191 | 0.1.194 |
+|---|---:|---:|---:|
+| PIC18F27Q10, `bench/large`, four programs | 6180 bytes | 6118 bytes | 6108 bytes |
+| PIC16F18346, same sources | 4685 words | 4653 words | 4642 words |
 
-Per program now: PIC18 a_algo 1338, b_dsp 2364, c_text 1296, d_ctrl 1120; 16F 960, 1738, 1017, 938.
+Per program now: PIC18 a_algo 1330, b_dsp 2364, c_text 1294, d_ctrl 1120; 16F 957, 1732, 1015, 938.
 
-**Checked:** `scripts/gate.sh` (PIC18 in basil-sim: `tests/exec`, `bench/large`, all library models, optimised
-and `-O0`) passes on the working tree.
+**Checked (0.1.194):** `scripts/gate.sh` (PIC18 optimised and `-O0`) and, at 0.1.193, `scripts/gate.sh 16`
+(PIC16F17146 in MDB) pass. `cargo test --release` passes. Self-review (`/code-review`) was run on the IR-level diff
+and its findings dealt with.
+
+**Full `BASIL_MDB=1 cargo test --release` (0.1.194):** 53 of 54 backend tests passed. `p180_programs_in_simulator`
+failed once on `static_local` (16F18056: values shifted between symbols, `SL_H` without a memory dump). The same
+program passes alone on that part, optimised and `-O0`, and the test passes when run by itself (684 s), so it is
+taken as an MDB fault under the parallel load, not a compiler fault; the cause is not found. No clean full-suite run
+yet.
 
 **Not checked yet:**
-- `scripts/gate.sh 16` (PIC16F17146 in MDB). The 16F output changed (32 words smaller, from the
-  `pass_write_only` change) and has not been run in a simulator.
-- `cargo test --release` (unit tests) and the full `BASIL_MDB=1 cargo test --release`.
-- No unit tests exist for the five new passes.
-- The self-review pass on the diff (`/code-review`) has not been run.
+- A second full `BASIL_MDB=1` run, to see whether the `static_local` failure comes back.
 
 ## Done
 
