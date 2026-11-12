@@ -404,6 +404,8 @@ fn effect16(t: &str) -> Option<Eff> {
             write(&mut e, ops[0]);
             if loc(ops[0]).is_none() && !is_indirect(ops[0]) {
                 e.w_mem = Some(ops[0].to_string());
+            } else if scratch(ops[0]).is_some() {
+                e.w_scr = Some(ops[0].trim().to_string());
             }
         }
         "clrf" if ops.len() == 1 => {
@@ -419,6 +421,8 @@ fn effect16(t: &str) -> Option<Eff> {
                     e.writes.push(Loc::W);
                     if loc(ops[0]).is_none() && !is_indirect(ops[0]) {
                         e.w_mem = Some(ops[0].to_string());
+                    } else if scratch(ops[0]).is_some() {
+                        e.w_scr = Some(ops[0].trim().to_string());
                     }
                 }
                 Dest::F => write(&mut e, ops[0]),
@@ -6520,6 +6524,17 @@ mod tests {
         let r = run16(&[ins("movf X, w"), ins("rlf Y, f"), Item::Br(Cc::Z, "L".into())]);
         assert!(r.contains(&"movf X, w".to_string()), "{r:?}");
     }
+    #[test]
+    fn p16_scratch_byte_just_stored_is_not_reloaded() {
+        // `movwf __A0` leaves W and `__A0` equal, so the reload goes; a later read of `__A0` is still a read.
+        let r = run16(&[ins("moviw 0[FSR0]"), ins("movwf __A0"), ins("movf __A0, w"), ins("movwf X"), ins("clrf X+1"), ins("movf __A0, w"), ins("xorwf Y, f"), Item::Fence]);
+        assert_eq!(r.iter().position(|t| t == "movf __A0, w"), Some(4), "{r:?}");
+        assert!(r.contains(&"movwf X".to_string()), "{r:?}");
+        // Something that writes W in between makes the reload real.
+        let r = run16(&[ins("movwf __A0"), ins("movlw 3"), ins("movwf Y"), ins("movf __A0, w"), ins("xorwf Y, f"), Item::Fence]);
+        assert!(r.contains(&"movf __A0, w".to_string()), "{r:?}");
+    }
+
     fn run16_keep(src: &[Item]) -> Vec<String> {
         let mut e = env();
         e.plain.insert("T".into(), (0x20, 2));

@@ -120,6 +120,10 @@ PIC18
   `__mul4` early exit outside `Optimize = Speed`.
 - 16F forms of `pass_shared_compare`, `pass_same_load` and `pass_forward_unary` (all return at once on
   that core).
+- Done in 0.1.199: `effect16` now carries the scratch-byte fact (`w_scr`) of the PIC18 model, so on the 16F
+  `movwf __A0; movf __A0, w` loses the reload (`bench/large` 16F 4624 to 4617 words). A scan of the four listings found
+  no other straight-run reload on the 16F, and only 3 loop-head `movf X, w` after a label on the PIC18 (all with a
+  back edge that reloads), so WREG facts across labels would save about 3 words: not worth the pass.
 
 Seen while reading the listings, not on the original list
 - `Isqrt`: both arms of the `If` hold the same `r = r >> 1` (5 words twice).
