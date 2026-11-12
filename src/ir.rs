@@ -300,7 +300,9 @@ pub enum St {
     Repeat(Vec<S>, Ex),
     /// `For`: `var` runs from `from` to the value held in `limit` (a constant, or a hidden
     /// variable evaluated once) in steps of the constant `step`.
-    For { var: Place, from: Ex, limit: Ex, step: i64, body: Vec<S> },
+    /// `free`: nothing reads the variable after the loop before writing it (`opt::free_loop_ends`), so it need not
+    /// keep the last value it took and the loop may step before it tests.
+    For { var: Place, from: Ex, limit: Ex, step: i64, body: Vec<S>, free: bool },
     /// A loop that runs `count` (1 to 255) times, counted down in the hidden Byte `counter` with
     /// `DECFSZ`. With `step` the loop variable is kept up to date (added to between passes); the
     /// body never writes it. Without, the body does not mention the variable at all.
@@ -964,7 +966,7 @@ fn rbw_block(body: &[S], var: VarId, bytes: u32, after_exit: bool, set: &mut boo
                 }
                 *set = s2;
             }
-            St::For { var: p, from, limit, step, body } => {
+            St::For { var: p, from, limit, step, body, .. } => {
                 if ex(from, *set) || ex(limit, *set) {
                     return true;
                 }

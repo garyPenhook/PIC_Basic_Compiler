@@ -3627,7 +3627,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        Self::push(out, St::For { var: vp, from: f, limit, step: step_v, body: b }, span);
+        Self::push(out, St::For { var: vp, from: f, limit, step: step_v, body: b, free: false }, span);
     }
 
     fn select(&mut self, subject: &'a Expr, cases: &'a [Case], otherwise: Option<&'a [Stmt]>, ui: usize, span: Span, out: &mut Vec<S>) {

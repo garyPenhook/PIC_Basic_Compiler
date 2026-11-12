@@ -1347,3 +1347,11 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - R7: `__div2`/`__div4` (PIC18) lose the carry test after the remainder shift and the second copy of the subtract (28 -> 23 and 46 -> 37 words).
 - R12, R11 (part): `pass_small` (`movf X,w; addlw 1` -> `incf X,w`; `op X,w; movwf X` -> `op X,f`; self-copies) and `pass_branch_to_return`, both back ends; `dead_paths` follows the 16F skip-and-branch item.
 - `bench/large`: PIC18 7014 -> 6940 bytes; 16F 5135 -> 4920 words.
+
+## Review 3, step 2: loop ends, unary operators, compares, sign-extended operands (done 2026-11-11, 0.1.183)
+- R3: `St::For::free`, set by `opt::free_loop_ends` when every mention of the loop variable in its routine is a `For` over it or inside one (a global: one routine only, not seen by a handler). Such a loop steps first: `movf i,w; incf i,f; xorlw K; bnz` (PIC18, also with a variable limit), `incfsz`/`decfsz` when the value after the limit is zero, step-then-compare for a constant limit on the 16F and for wider variables. A variable read after the loop keeps its last value as before.
+- R5: `y = Not x`, `y = 0 - x` through W (`comf x,w`, `sublw 0` / `subfwb`) or in `y` itself (PIC18 `store`).
+- R6: one unsigned byte with the left side in W: `cpfsgt Y` instead of a temporary (`ord_jump`).
+- R14: a compare with a constant starts at the constant's first non-zero byte; a signed one tests X's sign bit and then compares unsigned, with no `__D2` (`ord_core`).
+- R2: a sign-extended variable folds into a wider destination through W and a `movlw 0; btfsc; movlw 0xFF` fill (`fold_into`). R12: the arithmetic shift in scratch uses `rlcf top, w`.
+- `bench/large`: PIC18 6940 -> 6722 bytes; 16F 4920 -> 4882 words. New `tests/exec/loop_free_end.bas` (also in `P16_PORTABLE`), `tests/exec/unary_signext.bas`.

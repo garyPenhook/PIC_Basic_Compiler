@@ -1810,6 +1810,71 @@ fn share_counters(p: &mut Program) -> bool {
     changed
 }
 
+/// Marks the `For` loops whose variable nothing reads after the loop (`St::For::free`). The test is on mentions, not
+/// on paths: every mention of the variable in its routine is the loop variable of a `For` or lies in the body of one,
+/// so each use is preceded by that loop's own store of the start value. The variable is a whole scalar that is not
+/// `Volatile` or `ByRef`; a global must be named in one routine only and be invisible to interrupt handlers.
+fn free_loop_ends(p: &mut Program) {
+    fn is_for_over(st: &St, v: VarId, vars: &[Var]) -> bool {
+        matches!(st, St::For { var, .. } if whole_var(var, vars) == Some(v))
+    }
+    // A mention of `v` that is not covered by a `For` over it.
+    fn outside(body: &[S], v: VarId, vars: &[Var]) -> bool {
+        body.iter().any(|s| {
+            if let St::For { from, limit, body: b, .. } = &s.st
+                && is_for_over(&s.st, v, vars)
+            {
+                // A loop over the same variable inside would change what this one sees.
+                fn nested(b: &[S], v: VarId, vars: &[Var]) -> bool {
+                    b.iter().any(|s| is_for_over(&s.st, v, vars) || matches!(&s.st, St::Count { .. } if crate::ir::mentions(std::slice::from_ref(s), v) && !sub_blocks_of(&s.st).iter().any(|x| crate::ir::mentions(x, v))) || sub_blocks_of(&s.st).into_iter().any(|x| nested(x, v, vars)))
+                }
+                return from.touches(v, true) || limit.touches(v, true) || nested(b, v, vars);
+            }
+            let mut head = s.clone();
+            for b in blocks_mut(&mut head.st) {
+                b.clear();
+            }
+            crate::ir::mentions(std::slice::from_ref(&head), v) || sub_blocks_of(&s.st).into_iter().any(|b| outside(b, v, vars))
+        })
+    }
+    fn mark(body: &mut [S], ok: &HashSet<VarId>, vars: &[Var]) {
+        for s in body {
+            if let St::For { var, free, .. } = &mut s.st
+                && let Some(v) = whole_var(var, vars)
+            {
+                *free = ok.contains(&v);
+            }
+            for b in blocks_mut(&mut s.st) {
+                mark(b, ok, vars);
+            }
+        }
+    }
+    let vars = p.vars.clone();
+    let seen = interrupt_vars(p);
+    let n_bodies = p.funcs.len() + 1;
+    let named: Vec<Vec<bool>> = {
+        let bodies: Vec<&[S]> = p.funcs.iter().map(|f| f.body.as_slice()).chain(std::iter::once(p.main.body.as_slice())).collect();
+        (0..vars.len()).map(|v| bodies.iter().map(|b| crate::ir::mentions(b, v)).collect()).collect()
+    };
+    for bi in 0..n_bodies {
+        let body: &[S] = if bi < p.funcs.len() { &p.funcs[bi].body } else { &p.main.body };
+        let mut ok = HashSet::new();
+        for (v, var) in vars.iter().enumerate() {
+            if var.volatile || var.by_ref || !named[v][bi] || !matches!(var.kind, VarKind::Global | VarKind::Local | VarKind::Param) {
+                continue;
+            }
+            if var.kind == VarKind::Global && (named[v].iter().filter(|x| **x).count() != 1 || seen.as_ref().is_none_or(|s| s.contains(&v))) {
+                continue;
+            }
+            if !outside(body, v, &vars) {
+                ok.insert(v);
+            }
+        }
+        let body: &mut Vec<S> = if bi < p.funcs.len() { &mut p.funcs[bi].body } else { &mut p.main.body };
+        mark(body, &ok, &vars);
+    }
+}
+
 pub fn optimize(p: &mut Program) {
     for _ in 0..8 {
         fold_all(p);
@@ -1832,4 +1897,5 @@ pub fn optimize(p: &mut Program) {
     if flash_walk(p) {
         drop_dead(p);
     }
+    free_loop_ends(p);
 }

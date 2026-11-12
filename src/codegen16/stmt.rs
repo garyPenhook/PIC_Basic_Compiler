@@ -81,7 +81,7 @@ impl<'p> G<'p> {
                 self.depth -= 1;
                 self.label(&end);
             }
-            St::For { var, from, limit, step, body } => self.for_loop(var, from, limit, *step, body),
+            St::For { var, from, limit, step, body, free } => self.for_loop(var, from, limit, *step, body, *free),
             St::Count { counter, count, body, step } => {
                 let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
                 self.store(counter, &Ex::konst(*count as u32, 8, false));
@@ -509,7 +509,7 @@ impl<'p> G<'p> {
         self.store(p, &sum);
     }
 
-    fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S]) {
+    fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S], free: bool) {
         let (w, sg) = (var.width(), var.signed());
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
         self.store(var, from);
@@ -531,6 +531,17 @@ impl<'p> G<'p> {
         self.block(body);
         self.loops.pop();
         self.label(&cont);
+        // Nothing reads the variable after the loop: step first, then go round again unless the limit was just left.
+        if free && self.tgt.opt && (step == 1 || step == -1)
+            && let Some(l) = limit.as_const()
+        {
+            let m = if w >= 32 { u32::MAX } else { (1u32 << w) - 1 };
+            self.add_const(var, step as u32);
+            self.cmp_jump(CmpKind::Ne, &load(var), &Ex::konst(l.wrapping_add(step as u32) & m, w, sg), &top, true);
+            self.depth -= 1;
+            self.label(&end);
+            return;
+        }
         if step == 1 || step == -1 {
             self.cmp_jump(CmpKind::Eq, &load(var), limit, &end, true);
         } else {

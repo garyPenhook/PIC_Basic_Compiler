@@ -2851,9 +2851,9 @@ impl<'p> Gen<'p> {
                 }
             } else {
                 if signed {
+                    // The sign into the carry: `rlcf top, w` leaves `top` alone.
                     let top = g.a(n - 1);
-                    g.fop("movf", &top, "w");
-                    g.ins("rlcf WREG, w, c");
+                    g.fop("rlcf", &top, "w");
                 } else {
                     g.ins("bcf STATUS, 0, c");
                 }
@@ -3272,6 +3272,25 @@ impl<'p> Gen<'p> {
             ls = Some(Src::Mem(t, n));
         }
         let (xe, ye, mut xs, ys) = if swapped { (r, l, rs.take(), ls.take()) } else { (l, r, ls.take(), rs.take()) };
+        // One unsigned byte, X needing code and Y in memory: X is left in W and compared where it is. `cpfsgt Y`
+        // skips when Y > W, so the instruction after it runs exactly when X >= Y; no temporary, two words fewer.
+        if xs.is_none() && n == 1 && !signed && self.tgt.opt && held == 0
+            && let Some(Src::Mem(ym, 1)) = &ys
+            && !ym.reg
+        {
+            let ym = ym.clone();
+            self.gen_val(xe);
+            self.fo("cpfsgt", &ym);
+            if lt {
+                let over = self.fresh();
+                self.br(Cc::Always, &over);
+                self.br(Cc::Always, target);
+                self.label(&over);
+            } else {
+                self.br(Cc::Always, target);
+            }
+            return;
+        }
         // X must be constant or memory. Against a constant Y (`x - 2000 < 1001` of a range test), X is computed
         // into __A: Y needs no code, so nothing overwrites it, and the constant folds into the subtract.
         if xs.is_none() {
@@ -3326,6 +3345,44 @@ impl<'p> Gen<'p> {
                     self.b(0)
                 }
             };
+            // Against a constant: the low bytes of the constant that are zero cannot borrow, so the subtract starts
+            // at its first non-zero byte. A signed compare is decided by X's sign bit when the signs differ and is
+            // the unsigned compare when they agree, which needs no biased copy of the top byte.
+            if self.tgt.opt
+                && let Src::Imm(k) = &ys
+            {
+                let k = *k;
+                let first = (0..n).find(|i| (k >> (8 * i)) & 0xFF != 0).unwrap_or(n - 1).min(n - 1);
+                let core = |g: &mut Self| {
+                    for i in first..n {
+                        g.ins(format!("movlw 0x{:02X}", (k >> (8 * i)) & 0xFF));
+                        g.fop(if i == first { "subwf" } else { "subwfb" }, &xm.at(i), "w");
+                    }
+                };
+                if !signed {
+                    core(self);
+                    self.flag_branch(lt, target);
+                    return;
+                }
+                let kneg = (k >> (8 * n - 1)) & 1 == 1;
+                let top = xm.at(n - 1);
+                // The sign of X alone settles it when it differs from K's: a negative X is below a K >= 0, a
+                // non-negative X is not below a negative K.
+                let settled_true = lt != kneg;
+                self.fbit(if kneg { "btfss" } else { "btfsc" }, &top, 7);
+                if settled_true {
+                    self.br(Cc::Always, target);
+                    core(self);
+                    self.flag_branch(lt, target);
+                } else {
+                    let skip = self.fresh();
+                    self.br(Cc::Always, &skip);
+                    core(self);
+                    self.flag_branch(lt, target);
+                    self.label(&skip);
+                }
+                return;
+            }
             // Signed: add 0x80 to both top bytes and compare unsigned, so only the carry chain matters. The overflow
             // flag of a multi-byte subtract is not relied on: the MDB simulator gives OV = 0 for `SUBWFB` of
             // 0x80 - 0x7F with borrow (docs/DECISIONS.md D34, docs/EFFICIENCY.md section 4). X's biased top byte is
@@ -3514,6 +3571,65 @@ impl<'p> Gen<'p> {
         if let Some(s) = self.simple(e) {
             self.store_src(&dst, n, &s);
             return;
+        }
+        // `y = Not x` and `y = -x` (`0 - x`) of a variable as wide as `y`: byte by byte through W, or in `y` itself
+        // when `x` is `y`, instead of a copy into `__A`, the operation there and a copy out.
+        if self.tgt.opt && !dst.reg {
+            let (com, inner) = match &e.k {
+                ExK::Com(x) => (true, Some(&**x)),
+                ExK::Neg(x) => (false, Some(&**x)),
+                ExK::Bin(BinKind::Sub, z, x) if z.as_const() == Some(0) => (false, Some(&**x)),
+                _ => (false, None),
+            };
+            if let Some(x) = inner
+                && e.w as u32 == 8 * n
+                && let Some(Src::Mem(sm, real)) = self.simple(x)
+                && real == n
+                && !sm.reg
+            {
+                let same = (0..n).all(|i| same_mem(&dst.at(i), &sm.at(i)));
+                let apart = (0..n).all(|i| (0..n).all(|j| !same_mem(&dst.at(i), &sm.at(j))));
+                if same && com {
+                    for i in 0..n {
+                        self.fop("comf", &dst.at(i), "f");
+                    }
+                    return;
+                }
+                if same && n >= 2 {
+                    for i in (1..n).rev() {
+                        self.fop("comf", &dst.at(i), "f");
+                    }
+                    self.fo("negf", &dst);
+                    self.ins("movlw 0");
+                    for i in 1..n {
+                        self.fop("addwfc", &dst.at(i), "f");
+                    }
+                    return;
+                }
+                if same {
+                    self.fo("negf", &dst);
+                    return;
+                }
+                if apart && com {
+                    for i in 0..n {
+                        self.fop("comf", &sm.at(i), "w");
+                        self.fo("movwf", &dst.at(i));
+                    }
+                    return;
+                }
+                if apart && n >= 2 {
+                    // 0 - x: the low byte with `sublw`, each higher one as 0 - x - borrow (`subfwb`: W - f - borrow).
+                    self.fop("movf", &sm, "w");
+                    self.ins("sublw 0");
+                    self.fo("movwf", &dst);
+                    for i in 1..n {
+                        self.ins("movlw 0");
+                        self.fop("subfwb", &sm.at(i), "w");
+                        self.fo("movwf", &dst.at(i));
+                    }
+                    return;
+                }
+            }
         }
         // `w = @x` (the address of a variable or SFR, a Word): the two address bytes are written straight into the
         // destination, not built in `__A` and copied out.
@@ -3832,6 +3948,40 @@ impl<'p> Gen<'p> {
                 }
             }
             self.chain(op, &move |_g: &mut Self, i| d2.at(i), &xs, n);
+            return;
+        }
+        // A sign-extended variable: its own bytes go in through W, then the sign fill (0 or 0xFF, chosen without
+        // touching the carry) for the upper bytes of `dst`, instead of extending it in `__A` first.
+        if self.tgt.opt && n > 1
+            && let ExK::Conv(inner) = &x.k
+            && inner.signed
+            && inner.w < x.w
+            && let Some(Src::Mem(im, real)) = self.simple(inner)
+            && real == Self::nb(inner)
+            && real < n
+            && !im.reg
+            && !im.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile)
+            && (0..n).all(|i| (0..real).all(|j| !same_mem(&dst.at(i), &im.at(j))))
+        {
+            let name = |i: u32| match (op, i) {
+                (BinKind::Add, 0) => "addwf",
+                (BinKind::Add, _) => "addwfc",
+                (BinKind::Sub, 0) => "subwf",
+                (BinKind::Sub, _) => "subwfb",
+                (BinKind::And, _) => "andwf",
+                (BinKind::Or, _) => "iorwf",
+                _ => "xorwf",
+            };
+            for i in 0..real {
+                self.fop("movf", &im.at(i), "w");
+                self.fop(name(i), &dst.at(i), "f");
+            }
+            self.ins("movlw 0");
+            self.fbit("btfsc", &im.at(real - 1), 7);
+            self.ins("movlw 0xFF");
+            for i in real..n {
+                self.fop(name(i), &dst.at(i), "f");
+            }
             return;
         }
         let (v, m) = match &x.k {
@@ -4454,7 +4604,7 @@ impl<'p> Gen<'p> {
                 self.depth -= 1;
                 self.label(&end);
             }
-            St::For { var, from, limit, step, body } => self.for_loop(var, from, limit, *step, body),
+            St::For { var, from, limit, step, body, free } => self.for_loop(var, from, limit, *step, body, *free),
             St::Count { counter, count, body, step } => {
                 let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
                 self.store(counter, &Ex::konst(*count as u32, 8, false));
@@ -4756,7 +4906,7 @@ impl<'p> Gen<'p> {
         }
     }
 
-    fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S]) {
+    fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S], free: bool) {
         let (w, sg) = (var.width(), var.signed());
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
         self.store(var, from);
@@ -4784,6 +4934,11 @@ impl<'p> Gen<'p> {
         self.block(body);
         self.loops.pop();
         self.label(&cont);
+        if free && self.tgt.opt && (step == 1 || step == -1) && self.free_loop_end(var, limit, step, &top) {
+            self.depth -= 1;
+            self.label(&end);
+            return;
+        }
         if step == 1 || step == -1 {
             self.cmp_jump(CmpKind::Eq, &load(var), limit, &end);
         } else {
@@ -4797,6 +4952,36 @@ impl<'p> Gen<'p> {
         self.br(Cc::Always, &top);
         self.depth -= 1;
         self.label(&end);
+    }
+
+    /// The end of a `For` stepping by one whose variable nothing reads after the loop: step first, then go round
+    /// again unless the value just left was the limit. One word and one cycle a pass less than testing first.
+    fn free_loop_end(&mut self, var: &Place, limit: &Ex, step: i64, top: &str) -> bool {
+        let (w, sg) = (var.width(), var.signed());
+        let load = Ex::new(ExK::Load(var.clone()), w, sg);
+        let k = limit.as_const();
+        if w == 8
+            && let (Some(Src::Mem(vm, _)), Some(ls)) = (self.simple(&load), self.simple(limit))
+        {
+            // The value after the limit is zero: the stepping instruction is the test.
+            if k.map(|l| l.wrapping_add(step as u32) & 0xFF) == Some(0) {
+                self.fop(if step > 0 { "incfsz" } else { "decfsz" }, &vm, "f");
+                self.br(Cc::Always, top);
+                return true;
+            }
+            self.fop("movf", &vm, "w");
+            self.fop(if step > 0 { "incf" } else { "decf" }, &vm, "f");
+            match ls.byte(0) {
+                Bs::Imm(k) => self.ins(format!("xorlw 0x{k:02X}")),
+                Bs::Mem(m) => self.fop("xorwf", &m, "w"),
+            }
+            self.br(Cc::Nz, top);
+            return true;
+        }
+        let Some(l) = k else { return false };
+        self.add_const(var, step as u32);
+        self.cmp_jump(CmpKind::Ne, &load, &Ex::konst(l.wrapping_add(step as u32) & mask(w), w, sg), top);
+        true
     }
 
     // ---- delays ---------------------------------------------------------------------------
