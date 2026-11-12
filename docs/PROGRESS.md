@@ -1400,3 +1400,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `scripts/gate.sh` committed: PIC18 and (with `16`) PIC16F17146 simulator sets, optimised and `-O0`, plus sizes.
 - Unit tests for the new passes; a stale test of `pass_write_only` was updated to the new rule. Review fixes (0.1.192): a skip that moves an FSR hands its target the moved state; any `PCL` write makes every label an unknown entry; the gate stops on a failed build.
 - Open items: `docs/codegen-open-items.md`. Nothing has run on a real part.
+
+## Review 3, step 11: IR-level items (done 2026-11-12, 0.1.193)
+- `opt::fold`: `(x - c) - v` -> `x - (v + c)` for a plain variable `v`. `opt::coalesce_results`: `Result = r` with `r` wider, in a routine that calls nothing. The `Abs` idiom already compiled to the `Abs` sequence; test only (`abs_idiom`).
+- `bench/large`: PIC18 6118 -> 6108 bytes; 16F 4653 -> 4642 words. New tests `sub_reassoc`, `narrow_result`, `abs_idiom`.

@@ -53,6 +53,17 @@ and `-O0`) passes on the working tree.
 - `pass_write_only` (both cores): a store to a byte `v+k` of a variable nothing reads now goes, not only a
   one-byte variable. This is the whole of the 16F gain.
 
+### IR level (0.1.193)
+- `(n - 1) - i` (`opt::fold`): `(x - c) - v` becomes `x - (v + c)` when `v` is a plain variable, so the PIC18 emits
+  `incf i, w; subwf n, w` (2 words) instead of `decf n, w; subwf i, w; sublw 0`. `ToDec` -1 word PIC18; 16F -2 words.
+  `tests/exec/sub_reassoc.bas` (Byte, Word, Integer, LongInt, ShortInt, with wrap).
+- Narrow result (`opt::coalesce_results`): `Result = r` with `r` a wider local of a routine that calls nothing makes
+  `r` the result object; callers read its low bytes. `Isqrt` -4 words PIC18, 16F -9 words over `bench/large`.
+  `tests/exec/narrow_result.bas` (high bytes must not leak; a routine with a call is left alone).
+- `Abs` idiom: nothing to do. `If v < 0 Then v = 0 - v` already compiles to the 6-word `Abs` sequence
+  (`btfss v+1,7; bra; comf; negf; movlw 0; addwfc`), the same as `Abs(v)`; pinned by `tests/exec/abs_idiom.bas`.
+- `bench/large` now: PIC18 6108 bytes, 16F 4642 words.
+
 ## Still to do
 
 ### From the review list, not started
@@ -62,8 +73,6 @@ Both cores
   follow only the fall-through after an instruction that writes PCL. The PIC18 computed-goto rules and the
   16F `BRW` instruction must be confirmed in the data sheets first.
 - Peephole facts across labels for `WREG` and scratch contents (only the FSRs are done).
-- `(n - 1) - i` in 2 words.
-- Narrow result: `Result = r` with `r` wider (`Isqrt`, `Rms`).
 - Entry clear of a local array (`ToDec`).
 - Three-variable rotate (`Fib`, 28 words, 20 possible).
 
@@ -71,7 +80,6 @@ PIC18
 - Array walks for Word/Long elements, two arrays in one loop (FIR), `arr(i + k)`.
 - Overlaid results (`K_FIR__RESULT` under `K_PID__D`).
 - Operand that reads the destination (`sink + Isqrt(..) + Isqrt(sink)`).
-- `Abs` idiom (`If v < 0 Then v = 0 - v`).
 - `Integer * Byte` inline with two `mulwf`.
 
 16F
@@ -93,4 +101,4 @@ Seen while reading the listings, not on the original list
 ## To pick up again
 1. `scripts/gate.sh 16`, then `cargo test --release`.
 2. Unit tests for the five new passes, self-review of the diff, update the three docs.
-3. Continue with the list above; the IR-level items (narrow result, `Abs`, `(n - 1) - i`) are the smallest.
+3. Continue with the list above. The IR-level items are done (see below), except `Rms`, which calls a routine and so keeps its copy.

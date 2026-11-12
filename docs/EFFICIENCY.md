@@ -783,14 +783,14 @@ Measured, not counted: `bench/large` built with each version, sinks checked in b
 | R2 | done for a sign-extended variable folded into a wider one. Not done: an operand that reads the destination kept at its own width (`sink + Isqrt(..) + Isqrt(sink)`); a sum of two variables routed through W into `__A` was tried and dropped (it lost `pass_sum_share`, +4 words net) | `codegen.rs` `fold_into` |
 | R3 | done, both cores (`St::For::free`, `opt::free_loop_ends`) | `opt.rs`, `for_loop` |
 | R4 | done for one-byte elements `arr(var)`, both cores; the PIC18 also counts the passes down when the variable has no other use. Not done: wider elements, two arrays at once (the FIR), `arr(var + k)` | `walk_plan`, `pass_fold_postinc` |
-| R5 | done (PIC18). Not done: `If v < 0 Then v = 0 - v` as `Abs` | `store` |
+| R5 | done (PIC18). `If v < 0 Then v = 0 - v` already gives the `Abs` sequence (checked 0.1.193) | `store` |
 | R6 | done for an unsigned byte with the left side in W; one subtract shared by `If a = b ... ElseIf a < b` (`pass_shared_compare`); `cpfsgt` when the second operand is already in W (`pass_cpfs_held`; the bubble-sort compare still stores both elements for the swap) | `ord_jump` |
 | R7 | done: `__div2`/`__div4` without the carry path; `__mul2` finished in `__A`; a Word by a byte constant through `__divk2` when nothing else needs `__div2` | `emit_helper`, `gen_div` |
 | R8 | done: byte index for tables up to 256 bytes, `T(i)` then `T(i + 1)` | `point_tblptr`, `tbl_continues` |
 | R9 | done: mask tests, dead loads, known-zero copies, repeated `FSRnH` loads, array walks. Not done: load reuse and `moviw k[FSR0]` for neighbouring elements; variable placement by bank | `codegen16`, `pass_dead_loads` |
 | R10 | done: 16-bit constant multiply built in the destination; the 16F multiply loop ends with the multiplier. Not done: `Integer * Byte` inline with two `mulwf` | `mul_partials_from`, `mul_helper` |
 | R11 | done: whole `xorlw` chains, tail merging, `bra` to a `return`. Not done: a computed jump for a dense `Select` | `pass_xor_chain`, `pass_tail_merge` |
-| R12 | done: `incf X,w`, `op X,f`, self-copies, mask folding, bit add, nibble-swap shift tail, the shift-out conditional, `rlcf top,w`. FSR contents kept across labels, loops and skips (`fsr_flow`, `pass_lfsr_flow`), a repeated load of `WREG` dropped (`pass_same_load`), a unary result forwarded (`pass_forward_unary`). Not done: the same facts for `WREG` and scratch bytes; `(n - 1) - i` | `pass_small`, `pass_mask_fold`, `shift_out_shape` |
+| R12 | done: `incf X,w`, `op X,f`, self-copies, mask folding, bit add, nibble-swap shift tail, the shift-out conditional, `rlcf top,w`. FSR contents kept across labels, loops and skips (`fsr_flow`, `pass_lfsr_flow`), a repeated load of `WREG` dropped (`pass_same_load`), a unary result forwarded (`pass_forward_unary`). Done in 0.1.193: `(n - 1) - i` (`opt::fold`). Not done: the same facts for `WREG` and scratch bytes | `pass_small`, `pass_mask_fold`, `shift_out_shape` |
 | R13 | done | `pass_div_share` |
 | R14 | done | `ord_core` |
 | R15 | done: joined start-up zero runs, a `ByVal` parameter as the result of a leaf routine. Not done: a result that is the low bytes of a wider local, the entry clear of a local array, the three-variable rotate | `startup`, `coalesce_results` |

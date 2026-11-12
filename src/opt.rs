@@ -306,6 +306,18 @@ fn fold(e: &mut Ex) {
             *e = keep;
             return;
         }
+        // `(x - c) - v` is `x - (v + c)` in wrap-around arithmetic at one width, and `v + 1` is one instruction where the
+        // difference of two variables minus one takes a negate (`tmp(n - 1 - i)`: 2 words instead of 3).
+        ExK::Bin(BinKind::Sub, a, b) if b.w == w && b.as_const().is_none() && matches!(&b.k, ExK::Load(p) if !p.indirect() && p.idx.is_none() && p.dbit.is_none()) => {
+            let inner = match &a.k {
+                ExK::Bin(BinKind::Sub, x, c) if a.w == w && x.w == w && c.w == w && x.as_const().is_none() => c.as_const().map(|c| ((**x).clone(), c)),
+                _ => None,
+            };
+            let Some((x, c)) = inner else { return };
+            let plus = Ex::new(ExK::Bin(BinKind::Add, b.clone(), Box::new(Ex::konst(c, w, signed))), w, b.signed);
+            *e = Ex::new(ExK::Bin(BinKind::Sub, Box::new(x), Box::new(plus)), w, signed);
+            return;
+        }
         ExK::Bin(k, a, b) => match (a.as_const(), b.as_const()) {
             (Some(x), Some(y)) if a.w == w => {
                 let shift = matches!(k, BinKind::Shl | BinKind::Shr);
@@ -1629,6 +1641,27 @@ fn share_results(p: &mut Program) -> bool {
     changed
 }
 
+/// True when the routine calls nothing (no call, `GoSub` or `Asm` block), so it cannot run again while one of its
+/// own activations is still using its variables.
+fn leaf(body: &[S]) -> bool {
+    struct Calls(bool);
+    impl Visit for Calls {
+        fn ex(&mut self, e: &Ex) {
+            if matches!(e.k, ExK::Call(..)) {
+                self.0 = true;
+            }
+        }
+        fn stmt(&mut self, s: &S) {
+            if matches!(s.st, St::Call(..) | St::GoSub(_) | St::Asm(_)) {
+                self.0 = true;
+            }
+        }
+    }
+    let mut c = Calls(false);
+    w_block(&mut c, body);
+    !c.0
+}
+
 /// A routine that ends with `Result = v`, `v` a scalar local of the same type, keeps its value in `v` itself:
 /// `v` becomes the routine's result and the final copy goes (with it, a callee-side `movff` per byte). Only when
 /// nothing else in the routine touches `Result` but whole-object clears at its top level (which go too: `v` holds the
@@ -1694,9 +1727,26 @@ fn coalesce_results(p: &mut Program) -> bool {
         }
         let k = body.len() - 2;
         let St::Assign(pl, ex) = &body[k].st else { continue };
-        let ExK::Load(q) = &ex.k else { continue };
+        // `Result = r` with `r` wider than `Result` (`Isqrt`: LongWord into Word) also qualifies: the low bytes of `r`
+        // are the result, and the callers read them through places of the narrower type. Only in a routine that calls
+        // nothing (below), so `r` is not live in a second activation.
+        let (q, narrow) = match &ex.k {
+            ExK::Load(q) => (q, false),
+            ExK::Conv(inner) => match &inner.k {
+                ExK::Load(q) if inner.w > ex.w => (q, true),
+                _ => continue,
+            },
+            _ => continue,
+        };
         let Base::Var(v) = q.base else { continue };
-        if !whole(pl, rv, &rty) || !whole(q, v, &rty) || v == rv || ex.w != q.width() {
+        if !whole(pl, rv, &rty) || v == rv || ex.w != pl.width() {
+            continue;
+        }
+        if narrow {
+            if !matches!(q.ty, Ty::Int(..)) || !whole(q, v, &q.ty.clone()) || q.bytes() <= rvar.bytes {
+                continue;
+            }
+        } else if !whole(q, v, &rty) || ex.w != q.width() {
             continue;
         }
         let vvar = &p.vars[v];
@@ -1720,7 +1770,14 @@ fn coalesce_results(p: &mut Program) -> bool {
             w_block(&mut c, body);
             !c.0
         };
-        if !(vvar.kind == VarKind::Local || is_param) || vvar.owner != Some(fi) || vvar.by_ref || vvar.volatile || vvar.init.is_some() || vvar.bytes != rvar.bytes {
+        if !(vvar.kind == VarKind::Local || is_param) || vvar.owner != Some(fi) || vvar.by_ref || vvar.volatile || vvar.init.is_some() {
+            continue;
+        }
+        if narrow {
+            if vvar.bytes != q.bytes() || !leaf(&p.funcs[fi].body) {
+                continue;
+            }
+        } else if vvar.bytes != rvar.bytes {
             continue;
         }
         if named(&rvar.asm) || named(&vvar.asm) {
