@@ -4932,8 +4932,9 @@ mod tests {
         let r = run(&[ins("movlw 0x01"), ins("addwf X, f, c"), ins("movlw 0x01"), ins("addwf Y, f, c")]);
         assert_eq!(r, vec!["movlw 0x01", "addwf X, f, c", "addwf Y, f, c"]);
         // A label forgets W.
+        // (The load before the label is dead and goes; the one after it stays.)
         let r = run(&[ins("movlw 0x01"), Item::Label("L".into()), ins("movlw 0x01"), ins("addwf Y, f, c")]);
-        assert_eq!(r.len(), 4);
+        assert_eq!(r, vec!["L:", "movlw 0x01", "addwf Y, f, c"]);
         // Writing W in between forgets it.
         let r = run(&[ins("movlw 0x01"), ins("addlw 3"), ins("movlw 0x01"), ins("addwf Y, f, c")]);
         assert_eq!(r.len(), 4);
@@ -5294,10 +5295,11 @@ mod tests {
 
     #[test]
     fn a_boolean_whose_wreg_is_read_at_a_destination_keeps_its_value_in_wreg() {
-        // The rest of the code adds WREG to Y: the value must still be in WREG, so the loads stay.
+        // The rest of the code adds WREG to Y: the value must still be in WREG on that path, so its load stays. (The
+        // zero path goes straight to T, which overwrites WREG: `pass_dead_loads` drops that load.)
         let s = bool_seq(vec![ins("addwf Y, f, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
         let r = run_alone(&s);
-        assert!(r.iter().any(|l| l == "movlw 1") && r.iter().any(|l| l == "movlw 0"), "{r:?}");
+        assert!(r.iter().any(|l| l == "movlw 1"), "{r:?}");
         assert!(!r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
     }
 
@@ -5328,7 +5330,7 @@ mod tests {
 
     #[test]
     fn a_branch_to_a_branch_goes_to_the_final_target() {
-        let s = vec![Item::Br(Cc::Z, "A".into()), ins("movlw 1"), ins("movwf Y, c"), Item::Label("A".into()), Item::Br(Cc::Always, "B".into()), ins("nop"), Item::Label("B".into()), ins("movlw 2"), ins("movwf Y, c"), Item::Fence];
+        let s = vec![Item::Br(Cc::Z, "A".into()), ins("movlw 1"), ins("movwf X, c"), Item::Label("A".into()), Item::Br(Cc::Always, "B".into()), ins("nop"), Item::Label("B".into()), ins("movlw 2"), ins("movwf Y, c"), Item::Fence];
         let r = run(&s);
         assert_eq!(r[0], "brZ B", "{r:?}");
     }
