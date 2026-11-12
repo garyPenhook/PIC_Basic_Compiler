@@ -649,7 +649,7 @@ fn flags_live(items: &[Item], i: usize, mut needed: u8) -> bool {
                     }
                 }
             },
-            Item::Label(_) | Item::Raw(_) | Item::Data(_) | Item::Keep(_) | Item::Org(_) => return true,
+            Item::Label(_) | Item::Raw(_) | Item::Data(_) | Item::Keep(_) | Item::Org(_) | Item::Fit(_) => return true,
         }
     }
     true
@@ -2061,7 +2061,13 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
     };
     let mut inb: Vec<St3> = vec![[F::Top, F::Top, F::Top]; n + 1];
     // A computed jump can land on any label after it (a jump table), where no edge shows it.
-    let computed = items.iter().any(|it| matches!(it, Item::Ins(t) | Item::Raw(t) if t.to_ascii_lowercase().contains("pcl")));
+    let computed = items.iter().enumerate().any(|(i, it)| match it {
+        Item::Raw(t) => t.to_ascii_lowercase().contains("pcl"),
+        // The jump of a dense `Select` is modelled below (its table entries are edges), and the read of PCL before it
+        // only sets PCLATH and PCLATU.
+        Item::Ins(t) => t.to_ascii_lowercase().contains("pcl") && !is_pcl_latch(t) && jump_table(items, i).is_none(),
+        _ => false,
+    });
     for (i, it) in items.iter().enumerate() {
         if let Item::Label(l) = it && (computed || !local_label(l) || named.contains(l.as_str())) {
             inb[i] = unknown();
@@ -2085,7 +2091,7 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
             let mut edges: Vec<usize> = Vec::new();
             let mut skip_to: Option<usize> = None;
             match &items[i] {
-                Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) => {}
+                Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) | Item::Fit(_) => {}
                 Item::Call(_) | Item::Raw(_) | Item::Org(_) => out = unknown(),
                 Item::SkipBr(..) => return None,
                 Item::Data(_) => falls = false,
@@ -2109,6 +2115,10 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
                                 }
                             }
                             "return" | "retlw" | "retfie" | "reset" => falls = false,
+                            "addwf" | "brw" if jump_table(items, i).is_some() => {
+                                edges.extend(jump_table(items, i).unwrap_or_default());
+                                falls = false;
+                            }
                             "call" | "rcall" => out = unknown(),
                             m if is_branch(m) => {
                                 match ops.first().and_then(|o| label_at.get(*o)) {
@@ -2752,7 +2762,7 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
         let mut labels: Vec<&str> = Vec::new();
         for it in items.iter().take(last + 1).skip(first) {
             match it {
-                Item::Comment(_) | Item::Fence | Item::Br(..) => {}
+                Item::Comment(_) | Item::Fence | Item::Br(..) | Item::Fit(_) | Item::Keep(_) => {}
                 Item::Label(l) => {
                     if !local_label(l) {
                         ok = false;
@@ -3443,6 +3453,34 @@ impl Bank {
     }
 }
 
+/// The `bra` entries a computed jump chooses among: the run of `bra` instructions right after `addwf PCL, f` (PIC18)
+/// or `brw` (the 16F). The code generator writes a dense `Select` this way. Control reaches an entry by the jump, not
+/// by falling through from the one before, so a flow analysis must send the state to every entry.
+fn jump_table(items: &[Item], i: usize) -> Option<Vec<usize>> {
+    let Item::Ins(t) = items.get(i)? else { return None };
+    let (m, o) = parse(t)?;
+    let jump = m == "brw" || (m == "addwf" && o.first().is_some_and(|x| x.eq_ignore_ascii_case("PCL")) && o.get(1).is_some_and(|d| matches!(*d, "f" | "1")));
+    if !jump {
+        return None;
+    }
+    let mut entries = Vec::new();
+    for (k, it) in items.iter().enumerate().skip(i + 1) {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Ins(t) if matches!(parse(t), Some((m, _)) if m == "bra") => entries.push(k),
+            _ => break,
+        }
+    }
+    // The run must end where the code generator closes the table; anything else is not a table this knows.
+    let end = items.iter().skip(entries.last().map_or(0, |k| k + 1)).find(|it| !matches!(it, Item::Comment(_) | Item::Fence));
+    (!entries.is_empty() && matches!(end, Some(Item::Fit(false) | Item::Keep(false)))).then_some(entries)
+}
+
+/// `movf PCL, w`: reading PCL copies the upper program counter bytes to PCLATH and PCLATU (PIC18).
+fn is_pcl_latch(t: &str) -> bool {
+    matches!(parse(t), Some((m, o)) if m == "movf" && o.len() >= 2 && o[0].eq_ignore_ascii_case("PCL") && o[1].eq_ignore_ascii_case("w"))
+}
+
 /// A label the program wrote (`L_<number>_<name>`), as opposed to a routine's or a compiler-made one.
 fn user_label(l: &str) -> bool {
     l.strip_prefix("L_").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
@@ -3544,7 +3582,7 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
                 None => Bank::Unknown,
             };
             match &items[i] {
-                Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) => {}
+                Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) | Item::Fit(_) => {}
                 Item::Call(l) => out = callee(l, &exit),
                 Item::Br(cc, l) => {
                     match label_at.get(l.as_str()) {
@@ -3576,6 +3614,12 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
                             falls = false;
                         }
                         "retfie" | "reset" | "sleep" => falls = false,
+                        "addwf" | "brw" if jump_table(items, i).is_some() => {
+                            for k in jump_table(items, i).unwrap_or_default() {
+                                edges.push((k, s));
+                            }
+                            falls = false;
+                        }
                         "bra" | "goto" => {
                             match ops.first().and_then(|o| label_at.get(*o)) {
                                 Some(&k) if local_label(ops[0]) => edges.push((k, s)),
@@ -6706,5 +6750,42 @@ mod tests {
         ];
         let r = run2(&src, &e);
         assert_eq!(r.iter().filter(|t| *t == "movwf S, c").count(), 2, "{r:?}");
+    }
+
+    /// A dense `Select`: `addwf PCL` (or `brw`) then a run of `bra`. Control reaches each entry by the jump.
+    fn table(arm_a: Vec<Item>, arm_b: Vec<Item>, join: Vec<Item>) -> Vec<Item> {
+        let mut v = vec![ins("addwf PCL, f, c"), ins("bra _L1"), ins("bra _L2"), Item::Keep(false), Item::Label("_L1".into())];
+        v.extend(arm_a);
+        v.extend([Item::Br(Cc::Always, "_L3".into()), Item::Label("_L2".into())]);
+        v.extend(arm_b);
+        v.push(Item::Label("_L3".into()));
+        v.extend(join);
+        v
+    }
+
+    #[test]
+    fn a_bank_change_in_an_arm_only_the_table_reaches_is_seen_at_the_join() {
+        // Only entry 1 (not the fall-through) leads to `_L2`. If the second arm were taken for unreachable, `_L3` would
+        // be thought to hold bank 3 and the `movlb 3` there would go.
+        let mut s = vec![ins("movlb 2")];
+        s.extend(table(vec![ins("movlb 3")], vec![], vec![ins("movlb 3"), ins("movf X, w, b"), ins("return")]));
+        pass_redundant_movlb_flow(&mut s);
+        assert_eq!(s.iter().filter(|i| matches!(i, Item::Ins(t) if t == "movlb 3")).count(), 2, "{:?}", texts(&s));
+        // Both arms leave bank 3 (the second one is entered by the table too): the `movlb 3` at the join is redundant.
+        let mut s = vec![ins("movlb 2")];
+        s.extend(table(vec![ins("movlb 3")], vec![ins("movlb 3")], vec![ins("movlb 3"), ins("movf X, w, b"), ins("return")]));
+        assert!(pass_redundant_movlb_flow(&mut s));
+        assert_eq!(s.iter().filter(|i| matches!(i, Item::Ins(t) if t == "movlb 3")).count(), 2, "{:?}", texts(&s));
+    }
+
+    #[test]
+    fn a_pointer_changed_in_an_arm_only_the_table_reaches_is_seen_at_the_join() {
+        let mut s = vec![ins("lfsr 0, X")];
+        s.extend(table(vec![], vec![ins("lfsr 0, Y")], vec![ins("lfsr 0, X"), ins("movf INDF0, w, c"), ins("return")]));
+        assert!(!pass_lfsr_flow(&mut s), "{:?}", texts(&s));
+        // Neither arm touches it: the pointer is known at the join, and the table does not make every label unknown.
+        let mut s = vec![ins("lfsr 0, X")];
+        s.extend(table(vec![], vec![], vec![ins("lfsr 0, X"), ins("movf INDF0, w, c"), ins("return")]));
+        assert!(pass_lfsr_flow(&mut s), "{:?}", texts(&s));
     }
 }

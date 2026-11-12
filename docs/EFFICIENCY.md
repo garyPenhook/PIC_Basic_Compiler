@@ -789,7 +789,7 @@ Measured, not counted: `bench/large` built with each version, sinks checked in b
 | R8 | done: byte index for tables up to 256 bytes, `T(i)` then `T(i + 1)` | `point_tblptr`, `tbl_continues` |
 | R9 | done: mask tests, dead loads, known-zero copies, repeated `FSRnH` loads, array walks. Not done: load reuse and `moviw k[FSR0]` for neighbouring elements; variable placement by bank | `codegen16`, `pass_dead_loads` |
 | R10 | done: 16-bit constant multiply built in the destination; the 16F multiply loop ends with the multiplier. Not done: `Integer * Byte` inline with two `mulwf` | `mul_partials_from`, `mul_helper` |
-| R11 | done: whole `xorlw` chains, tail merging, `bra` to a `return`. Not done: a computed jump for a dense `Select` | `pass_xor_chain`, `pass_tail_merge` |
+| R11 | done: whole `xorlw` chains, tail merging, `bra` to a `return`, and (0.1.195) a computed jump for a dense Byte `Select` (`addwf PCL` on the PIC18, `brw` on the 16F) | `pass_xor_chain`, `pass_tail_merge`, `dense_shape`, `dense_switch` |
 | R12 | done: `incf X,w`, `op X,f`, self-copies, mask folding, bit add, nibble-swap shift tail, the shift-out conditional, `rlcf top,w`. FSR contents kept across labels, loops and skips (`fsr_flow`, `pass_lfsr_flow`), a repeated load of `WREG` dropped (`pass_same_load`), a unary result forwarded (`pass_forward_unary`). Done in 0.1.193: `(n - 1) - i` (`opt::fold`). Not done: the same facts for `WREG` and scratch bytes | `pass_small`, `pass_mask_fold`, `shift_out_shape` |
 | R13 | done | `pass_div_share` |
 | R14 | done | `ord_core` |

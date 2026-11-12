@@ -11,7 +11,7 @@
 //! addresses, hottest objects first into the Access Bank; the second run emits final code with
 //! exact bank-select decisions.
 
-use crate::asm::{Assembled, Cc, Item, assemble};
+use crate::asm::{Assembled, Cc, Item, assemble, words_of, words_of16};
 use crate::diag::Span;
 use crate::ir::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -110,6 +110,139 @@ struct Region {
     hi: u32,
     /// Placed blocks: start, length, owner.
     placed: Vec<(u32, u32, Option<usize>)>,
+}
+
+/// A chain of equality tests on one Byte that is dense enough for a jump table (see `Gen::dense_switch`).
+pub(crate) struct Dense<'a> {
+    pub subject: &'a Place,
+    pub signed: bool,
+    /// The lowest value as a byte: the table starts there.
+    pub lo_byte: u32,
+    /// Entries in the table: the span from the lowest value to the highest.
+    pub n: usize,
+    /// Entry `j` holds the first arm that names the value `lo + j`.
+    pub slots: Vec<Option<usize>>,
+}
+
+/// Whether the arms are a dense value dispatch on one Byte variable. `unfit` says which variables must not be read
+/// once (volatile ones, and those reached through a pointer). The cost is the code that would be written either way:
+/// the dispatch and the table against two words a test (`xorlw`, `bnz`) on the PIC18 and three on the 16F, where the
+/// branch is a skip and a `bra`; under `Optimize = Speed` the constant time is worth one more word a value.
+pub(crate) fn dense_shape<'a>(arms: &'a [(Ex, Vec<S>)], pic16: bool, speed: bool, unfit: &dyn Fn(VarId) -> bool) -> Option<Dense<'a>> {
+    let mut subject: Option<&Place> = None;
+    let mut vals: Vec<(usize, i32)> = Vec::new();
+    let mut signed = false;
+    for (a, (c, _)) in arms.iter().enumerate() {
+        let mut found = Vec::new();
+        if !eq_values(c, &mut subject, &mut signed, &mut found) {
+            return None;
+        }
+        vals.extend(found.into_iter().map(|v| (a, v)));
+    }
+    let subject = subject?;
+    let Base::Var(v) = subject.base else { return None };
+    if unfit(v) {
+        return None;
+    }
+    let lo = vals.iter().map(|x| x.1).min()?;
+    let hi = vals.iter().map(|x| x.1).max()?;
+    let n = (hi - lo + 1) as usize;
+    let mut distinct: Vec<i32> = vals.iter().map(|x| x.1).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let count = distinct.len();
+    let lo_byte = (lo & 0xFF) as u32;
+    let switch_words = n + if pic16 { 5 } else { 6 } + usize::from(lo_byte != 0);
+    let chain_words = count * if pic16 { 3 } else { 2 } + if speed { count } else { 0 };
+    if count < 4 || n > 100 || switch_words >= chain_words {
+        return None;
+    }
+    let mut slots: Vec<Option<usize>> = vec![None; n];
+    for &(a, v) in &vals {
+        let j = (v - lo) as usize;
+        if slots[j].is_none() {
+            slots[j] = Some(a);
+        }
+    }
+    Some(Dense { subject, signed, lo_byte, n, slots })
+}
+
+/// Words an item can occupy at most once the assembler has picked the long forms of its branches.
+pub(crate) fn largest_words(it: &Item, pic16: bool) -> u32 {
+    match it {
+        Item::Ins(t) | Item::Raw(t) => {
+            if pic16 {
+                words_of16(t)
+            } else {
+                words_of(t)
+            }
+        }
+        Item::Br(..) => 4,
+        Item::SkipBr(..) => 5,
+        Item::Call(_) => 2,
+        Item::Data(b) => b.len() as u32,
+        Item::Fit(_) => 128,
+        Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Org(_) => 0,
+    }
+}
+
+/// A `bra` of a jump table reaches only so far (16F: -256..255 words, PIC18: -1024..1023). `table..table_end` are the
+/// `bra` entries; the code from the table to a target is measured at its largest (`words`), with room for the stubs,
+/// and a target that may be out of reach is entered through a stub: a `Br` (which the assembler sizes) right after
+/// the table (after the `Keep(false)` that closes it). `fresh` makes the stubs' labels.
+pub(crate) fn add_table_stubs(items: &mut Vec<Item>, table: usize, table_end: usize, targets: &[String], reach: u32, words: &dyn Fn(&Item) -> u32, fresh: &mut dyn FnMut() -> String) {
+    let mut stubs: Vec<(String, String)> = Vec::new();
+    for target in targets {
+        let suffix = format!(" {target}");
+        if stubs.iter().any(|s| s.1 == *target) || !items[table..table_end].iter().any(|it| matches!(it, Item::Ins(t) if t.ends_with(&suffix))) {
+            continue;
+        }
+        let Some(at) = (table_end..items.len()).find(|&k| matches!(&items[k], Item::Label(l) if l == target)) else { continue };
+        let far: u32 = items[table..at].iter().map(words).sum::<u32>() + 4 * (targets.len() as u32 + 1);
+        if far > reach {
+            stubs.push((fresh(), target.clone()));
+        }
+    }
+    if stubs.is_empty() {
+        return;
+    }
+    for it in &mut items[table..table_end] {
+        if let Item::Ins(t) = it
+            && let Some(s) = stubs.iter().find(|s| t.ends_with(&format!(" {}", s.1)))
+        {
+            *t = format!("bra {}", s.0);
+        }
+    }
+    let code: Vec<Item> = stubs.iter().flat_map(|(stub, target)| [Item::Label(stub.clone()), Item::Br(Cc::Always, target.clone())]).collect();
+    let after = items[table_end..].iter().position(|it| matches!(it, Item::Keep(false))).map_or(table_end, |k| table_end + k + 1);
+    items.splice(after..after, code);
+}
+
+/// The values of an `Eq` test (or several, joined by `OrElse`) of one Byte place against constants, as the signed or
+/// unsigned values they stand for. False when the condition is anything else or tests another place.
+fn eq_values<'a>(e: &'a Ex, subject: &mut Option<&'a Place>, signed: &mut bool, out: &mut Vec<i32>) -> bool {
+    match &e.k {
+        ExK::OrElse(a, b) => eq_values(a, subject, signed, out) && eq_values(b, subject, signed, out),
+        ExK::Cmp(CmpKind::Eq, l, r) => {
+            let (load, c) = match (&l.k, &r.k) {
+                (ExK::Load(_), ExK::Const(c)) => (&**l, *c),
+                (ExK::Const(c), ExK::Load(_)) => (&**r, *c),
+                _ => return false,
+            };
+            let ExK::Load(p) = &load.k else { return false };
+            if load.w != 8 || p.bytes() != 1 || p.bit.is_some() || p.idx.is_some() || p.dbit.is_some() || p.indirect() {
+                return false;
+            }
+            if subject.is_some_and(|q| q != p) {
+                return false;
+            }
+            *subject = Some(p);
+            *signed = load.signed;
+            out.push(if load.signed { i32::from(c as u8 as i8) } else { (c & 0xFF) as i32 });
+            true
+        }
+        _ => false,
+    }
 }
 
 /// For `bit = c`, `c = bit` or `bit <> c` with `c` 0 or 1: the bit's place and whether the
@@ -298,6 +431,8 @@ impl Regs {
                     _ => self.fsr |= 7,
                 },
                 "TABLAT" => self.tablat = true,
+                // Reading PCL copies the program counter's high bytes to PCLATH and PCLATU (the dense `Select` does).
+                "PCL" | "PCLATH" | "PCLATU" => self.pclat = true,
                 "PRODL" => self.prod |= 1,
                 "PRODH" => self.prod |= 2,
                 "MULWF" | "MULLW" => self.prod = 3,
@@ -4809,6 +4944,7 @@ impl<'p> Gen<'p> {
                 self.point_tblptr(&at);
             }
             St::If(arms, otherwise) if self.tgt.opt && self.shift_out_if(arms, otherwise) => {}
+            St::If(arms, otherwise) if self.tgt.opt && self.dense_switch(arms, otherwise) => {}
             St::If(arms, otherwise) => {
                 let end = self.fresh();
                 let mut done = false;
@@ -5131,9 +5267,10 @@ impl<'p> Gen<'p> {
         if let Some(facts) = self.facts {
             let mut regs = facts.regs[f].clone();
             if shadow && self.tgt.hw_context {
-                // FSR0..2, PRODL/H are saved on entry and restored by `RETFIE, FAST` as well.
+                // FSR0..2, PRODL/H, PCLATH/U are saved on entry and restored by `RETFIE, FAST` as well [DS40002214G p.121].
                 regs.fsr = 0;
                 regs.prod = 0;
+                regs.pclat = false;
             }
             syms.extend(regs.syms());
         }
@@ -5260,6 +5397,85 @@ impl<'p> Gen<'p> {
         self.br(Cc::Always, &top);
         self.depth -= 1;
         self.label(&end);
+    }
+
+    /// A dense run of equality tests on one Byte (a `Select` with `Case` values, or an `If`/`ElseIf` chain) as a
+    /// computed jump: one `sublw` range test, then `addwf PCL` (PIC18) or `brw` (16F) into a table of `bra`, so the
+    /// time does not depend on the value and the table is a word per value of the range against two or three for
+    /// each test. The subject must be a plain non-volatile Byte variable (it is read once). Returns whether it
+    /// emitted the code; when not, nothing has been written.
+    ///
+    /// PIC18: `movf PCL, w` first copies the program counter's high bytes to PCLATH and PCLATU, which `addwf PCL`
+    /// writes back, so the table must lie in the 256-byte block of that read (`Item::Fit`) because the add wraps in
+    /// the low byte `[DS40002214G p.60, p.62]`. An interrupt between the two instructions is safe: a handler that
+    /// reads PCL saves PCLATH and PCLATU (`Regs::scan`), and the vectored controller saves them itself.
+    /// 16F: `brw` adds W (unsigned) to the program counter `[DS40002343F p.596]`.
+    fn dense_switch(&mut self, arms: &[(Ex, Vec<S>)], otherwise: &[S]) -> bool {
+        let pic16 = self.tgt.pic16.is_some();
+        // With a C link the linker places the code, so the 256-byte blocks `Item::Fit` pads for are not known.
+        if !pic16 && self.p.c_link() {
+            return false;
+        }
+        let Some(d) = dense_shape(arms, pic16, self.p.speed, &|v| self.p.vars[v].volatile || self.p.vars[v].by_ref) else { return false };
+        let (n, lo_byte, slots) = (d.n, d.lo_byte, d.slots);
+        let subj = Ex::new(ExK::Load(d.subject.clone()), 8, d.signed);
+        let end = self.fresh();
+        let arm_l: Vec<String> = arms.iter().map(|_| self.fresh()).collect();
+        let dflt = if otherwise.is_empty() { end.clone() } else { self.fresh() };
+        // PIC18: the latch first (it clobbers W), in a region of its own so that nothing deletes it as a dead load.
+        // From there to the end of the table the code must stay in one 256-byte block (`Fit`).
+        if !pic16 {
+            self.items.push(Item::Fit(true));
+            self.items.push(Item::Keep(true));
+            self.ins("movf PCL, w, c");
+            self.items.push(Item::Keep(false));
+        }
+        self.gen_val(&subj);
+        self.items.push(Item::Keep(true));
+        if lo_byte != 0 {
+            self.ins(format!("addlw 0x{:02X}", (256 - lo_byte) & 0xFF));
+        }
+        // W = (n - 1) - (value - lo): no borrow (C set) exactly inside the range, and W counts the table from its end.
+        self.ins(format!("sublw 0x{:02X}", n - 1));
+        self.br(Cc::Nc, &dflt);
+        if pic16 {
+            self.ins("brw");
+        } else {
+            self.ins("rlncf WREG, w, c");
+            self.ins("addwf PCL, f, c");
+        }
+        let table = self.items.len();
+        for j in 0..n {
+            let target = slots[n - 1 - j].map_or_else(|| dflt.clone(), |a| arm_l[a].clone());
+            self.ins(format!("bra {target}"));
+        }
+        let table_end = self.items.len();
+        if !pic16 {
+            self.items.push(Item::Fit(false));
+        }
+        self.items.push(Item::Keep(false));
+        self.bsr = None;
+        for (i, (_, body)) in arms.iter().enumerate() {
+            self.label(&arm_l[i]);
+            self.block(body);
+            if i + 1 != arms.len() || !otherwise.is_empty() {
+                self.br(Cc::Always, &end);
+            }
+        }
+        if !otherwise.is_empty() {
+            self.label(&dflt);
+            self.block(otherwise);
+        }
+        self.label(&end);
+        let mut targets = vec![dflt.clone()];
+        targets.extend(arm_l.iter().cloned());
+        let reach: u32 = if pic16 { 180 } else { 700 };
+        let words = |it: &Item| largest_words(it, pic16);
+        add_table_stubs(&mut self.items, table, table_end, &targets, reach, &words, &mut || {
+            self.lbl += 1;
+            format!("_L{}", self.lbl)
+        });
+        true
     }
 
     /// `If (x And top) <> 0 Then x = (x << 1) Xor K Else x = x << 1` (a CRC or LFSR step; also `>> 1` with bit 0, and

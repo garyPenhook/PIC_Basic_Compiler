@@ -1711,6 +1711,13 @@ EndSelect
 **Notes** The form `Select Case x` is **not** accepted: write `Select x`. Strings and
 `Float`s cannot be selected on.
 
+**Code generated** A `Select` on a plain Byte or ShortInt variable whose cases are all single values (or lists
+of values), at least four of them and packed close together (the table is one word per value from the lowest to the
+highest, so gaps cost a word each), is a computed jump: a range test, then a jump through a table, so the time does
+not depend on the value. On the PIC18 that is `addwf PCL` and on the PIC16F1 `brw`. It is chosen only when it is
+smaller than the chain of tests (the same for `On n GoTo` and for an `If`/`ElseIf` chain of `x = k` tests), and
+under `#option Optimize = Speed` when it is not much larger. Ranges, relations and wider subjects use the chain of tests.
+
 ## Terminate
 
 **Syntax**

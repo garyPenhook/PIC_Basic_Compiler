@@ -12,6 +12,55 @@ impl<'p> G<'p> {
         }
     }
 
+    /// A dense run of equality tests on one Byte as a computed jump: `brw` adds W (unsigned) to the program counter
+    /// `[DS40002343F p.596]`, so after a range test the table is a run of `bra`, one word per value of the range. See
+    /// `crate::codegen::dense_shape` for what qualifies. Returns whether it emitted the code.
+    fn dense_switch(&mut self, arms: &[(Ex, Vec<S>)], otherwise: &[S]) -> bool {
+        let Some(d) = crate::codegen::dense_shape(arms, true, self.p.speed, &|v| self.p.vars[v].volatile || self.p.vars[v].by_ref) else { return false };
+        let (n, lo_byte, slots) = (d.n, d.lo_byte, d.slots);
+        let subj = Ex::new(ExK::Load(d.subject.clone()), 8, d.signed);
+        let end = self.fresh();
+        let arm_l: Vec<String> = arms.iter().map(|_| self.fresh()).collect();
+        let dflt = if otherwise.is_empty() { end.clone() } else { self.fresh() };
+        self.ev(&subj);
+        self.items.push(Item::Keep(true));
+        if lo_byte != 0 {
+            self.ins(format!("addlw 0x{:02X}", (256 - lo_byte) & 0xFF));
+        }
+        // W = (n - 1) - (value - lo): no borrow (C set) exactly inside the range, and W counts the table from its end.
+        self.ins(format!("sublw 0x{:02X}", n - 1));
+        self.br(Cc::Nc, &dflt);
+        self.ins("brw");
+        let table = self.items.len();
+        for j in 0..n {
+            let target = slots[n - 1 - j].map_or_else(|| dflt.clone(), |a| arm_l[a].clone());
+            self.ins(format!("bra {target}"));
+        }
+        let table_end = self.items.len();
+        self.items.push(Item::Keep(false));
+        self.bsr = None;
+        for (i, (_, body)) in arms.iter().enumerate() {
+            self.label(&arm_l[i]);
+            self.block(body);
+            if i + 1 != arms.len() || !otherwise.is_empty() {
+                self.br(Cc::Always, &end);
+            }
+        }
+        if !otherwise.is_empty() {
+            self.label(&dflt);
+            self.block(otherwise);
+        }
+        self.label(&end);
+        let mut targets = vec![dflt.clone()];
+        targets.extend(arm_l.iter().cloned());
+        let words = |it: &Item| crate::codegen::largest_words(it, true);
+        crate::codegen::add_table_stubs(&mut self.items, table, table_end, &targets, 180, &words, &mut || {
+            self.lbl += 1;
+            format!("_L{}", self.lbl)
+        });
+        true
+    }
+
     /// `#line` for the statement about to be emitted (debug builds only; pic-as turns it into the line table).
     fn line_marker(&mut self, span: Span) {
         let Some(name) = self.tgt.debug_files.get(span.file as usize) else { return };
@@ -73,6 +122,7 @@ impl<'p> G<'p> {
                 }
                 self.label(&end);
             }
+            St::If(arms, other) if self.tgt.opt && self.dense_switch(arms, other) => {}
             St::If(arms, other) => {
                 let end = self.fresh();
                 for (i, (c, body)) in arms.iter().enumerate() {

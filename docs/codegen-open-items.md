@@ -1,7 +1,7 @@
 # Code generation: open items (2026-11-12)
 
 Open items left after review 3 (`docs/EFFICIENCY.md` section 12.4, basil 0.1.190).
-Committed as 0.1.191; 0.1.192 adds unit tests and review fixes; 0.1.193 and 0.1.194 are the IR-level items and their review fixes. Files: `src/peephole.rs`, `src/opt.rs`,
+Committed as 0.1.191; 0.1.192 adds unit tests and review fixes; 0.1.193 and 0.1.194 are the IR-level items and their review fixes; 0.1.195 is the dense `Select` as a computed jump. Files: `src/peephole.rs`, `src/opt.rs`,
 `tests/exec/param_result.bas`, `abs_idiom.bas`, `narrow_result.bas`, `sub_reassoc.bas`, `docs/MANUAL.md`, `scripts/gate.sh`, and this file.
 
 ## Where it stands
@@ -13,7 +13,7 @@ Committed as 0.1.191; 0.1.192 adds unit tests and review fixes; 0.1.193 and 0.1.
 
 Per program now: PIC18 a_algo 1330, b_dsp 2364, c_text 1294, d_ctrl 1120; 16F 957, 1732, 1015, 938.
 
-**Checked (0.1.194):** `scripts/gate.sh` (PIC18 optimised and `-O0`) and, at 0.1.193, `scripts/gate.sh 16`
+**Checked (0.1.194; 0.1.195 is under "Dense `Select`" below):** `scripts/gate.sh` (PIC18 optimised and `-O0`) and, at 0.1.193, `scripts/gate.sh 16`
 (PIC16F17146 in MDB) pass. `cargo test --release` passes. Self-review (`/code-review`) was run on the IR-level diff
 and its findings dealt with.
 
@@ -65,16 +65,46 @@ yet.
   `tests/exec/narrow_result.bas` (high bytes must not leak; a routine with a call is left alone).
 - `Abs` idiom: nothing to do. `If v < 0 Then v = 0 - v` already compiles to the 6-word `Abs` sequence
   (`btfss v+1,7; bra; comf; negf; movlw 0; addwfc`), the same as `Abs(v)`; pinned by `tests/exec/abs_idiom.bas`.
-- `bench/large` now: PIC18 6108 bytes, 16F 4642 words.
+- `bench/large` at 0.1.194: PIC18 6108 bytes, 16F 4642 words.
+
+### Dense `Select` as a computed jump (0.1.195, R11)
+- Data sheets read first: PIC18 `PCL` is read to latch PC[20:8] into PCLATU:PCLATH and any write of PCL loads them
+  back (DS40002214G 9.1.2 p.60; Q10 DS40002043F 11.1.3.1 p.113), the example puts the table at `nn00h` so the add of
+  W to PCL cannot overflow (p.62); 16F `BRW` is PC + 1 + W, W unsigned (DS40002343F p.596). No erratum names either.
+- Shape (`dense_shape`, shared by both generators): an `If` chain whose every test is `x = const` (or an `OrElse` of
+  them) on one non-volatile Byte/ShortInt variable, at least four values, table of at most 100 slots, chosen when
+  `n + 6` (PIC18; 5 on the 16F) is under 2 words (3 on the 16F) a value; `Optimize = Speed` adds a word a value. `Select`
+  and `On n GoTo` lower to such chains, as do hand-written `If`/`ElseIf` chains. The code: `[addlw -lo]; sublw n-1;
+  bnc default; (PIC18: rlncf; addwf PCL | 16F: brw)` then `bra` entries, in reverse order since W counts from the end.
+- PIC18 only: `movf PCL, w` first, then `Item::Fit(true)..Fit(false)` makes the assembler put `nop`s in front so that
+  latch, dispatch and table share one 256-byte block (sizes are those at assembly, so it follows branch relaxation).
+- Table `bra` reach (16F 256 words): `add_table_stubs` measures the code to each target at its largest and routes
+  far ones through a `Br` stub placed after the table.
+- Interrupts: a handler that reads PCL saves PCLATH/PCLATU (`Regs::scan`; the vectored controller does it itself).
+  An interrupt between the latch and the `addwf` would otherwise land on the handler's page.
+- Peephole: the dispatch and table are in `Keep` regions; `jump_table` lets `fsr_flow` and
+  `pass_redundant_movlb_flow` send state to every entry (control reaches an entry by the jump, not by falling
+  through); `pass_copy_prop` looks through `Fit`/`Keep` markers. Unit tests: both flows, `Fit` in `asm.rs`.
+- Tests: `tests/exec/select_dense.bas` (lo 0 and not 0, gap, list arm, duplicate in an `If` chain, signed, top of the
+  byte, arm that changes the subject), `select_dense_many.bas` (20 tables so some are moved to the next block),
+  `select_dense_far.bas` (stubs, both cores), `select_dense_isr.bas` (`engine: mdb`; fails there without the PCLATH
+  save, passes in basil-sim either way because basil-sim does not model PCLATH).
+- `bench/large` at 0.1.195: PIC18 6108 bytes (unchanged), 16F 4624 words (-18, all in `d_ctrl`).
+- Review (`/code-review high`) findings dealt with: with a C link on PIC18 the dense `Select` is not used (the linker
+  places the code, so the 256-byte blocks `Fit` pads for are unknown); `jump_table` returns nothing unless the run of
+  `bra` ends at `Fit(false)`/`Keep(false)`; `#line` written once per padding run; the PCLATH/U hardware save is cited
+  (DS40002214G p.121).
+- Left as is: `Fit` padding only grows during layout (a rare layout can keep more `nop`s than needed); the two
+  `dense_switch` methods (`codegen.rs`, `codegen16/stmt.rs`) are near copies; `largest_words` counts a `Raw` line as
+  one instruction (the reach margins cover it, untested with long inline-assembly arms).
+- Checked: `scripts/gate.sh 16` (PIC18 and PIC16F17146, optimised and `-O0`) and the library unit tests pass. Full
+  `BASIL_MDB=1 cargo test --release` not run for 0.1.195.
+- basil-sim and MDB differ in cycles on these programs (`select_dense_many` 14201 against 14052): not looked into.
 
 ## Still to do
 
 ### From the review list, not started
 Both cores
-- Dense `Select` (R11) as a computed jump. Design note: it needs its own `Item` (the dispatch and the table
-  together, sized in `asm.rs` relaxation), because `dead_paths`, `pass_redundant_movlb_flow` and `fsr_flow`
-  follow only the fall-through after an instruction that writes PCL. The PIC18 computed-goto rules and the
-  16F `BRW` instruction must be confirmed in the data sheets first.
 - Peephole facts across labels for `WREG` and scratch contents (only the FSRs are done).
 - Entry clear of a local array (`ToDec`).
 - Three-variable rotate (`Fib`, 28 words, 20 possible).

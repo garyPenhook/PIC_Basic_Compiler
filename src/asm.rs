@@ -75,7 +75,16 @@ pub enum Item {
     /// Continue at this word address (the interrupt vectors sit at fixed places). It must not be
     /// behind the current position.
     Org(u32),
+    /// PIC18 only: `Fit(true)` starts and `Fit(false)` ends a run of items that must lie inside one 256-byte block of
+    /// program memory; `nop`s are put at the start when the run would cross a block end. A computed jump
+    /// (`addwf PCL`) adds to the low byte of the program counter only, so the instruction that reads PCL and the
+    /// table it jumps into must share a block. Whatever lies between the markers counts, with the size it has at
+    /// assembly time.
+    Fit(bool),
 }
+
+/// Words in a 256-byte block of PIC18 program memory.
+const FIT_BLOCK: u32 = 128;
 
 /// Words an instruction occupies, from its mnemonic.
 pub fn words_of(text: &str) -> u32 {
@@ -123,22 +132,39 @@ fn size_of(it: &Item, f: Form) -> u32 {
         Item::Call(_) => if f == Form::Short { 1 } else { 2 },
         Item::SkipBr(..) => unreachable!("SkipBr is for the enhanced mid-range core"),
         Item::Data(b) => b.len().div_ceil(2) as u32,
-        Item::Org(_) => 0,
+        Item::Org(_) | Item::Fit(_) => 0,
     }
 }
 
 /// Resolves branch forms and produces the text. `start` is the word address of the first item.
 pub fn assemble(items: &[Item], start: u32) -> Assembled {
     let mut forms = vec![Form::Short; items.len()];
+    // `nop`s each `Fit` puts in front of its items. They only grow, so the layout settles.
+    let mut pads = vec![0u32; items.len()];
     let mut labels: HashMap<String, u32> = HashMap::new();
     loop {
         labels.clear();
         let mut pc = start;
         let mut at = vec![0u32; items.len()];
+        let mut pad_grew = false;
         for (i, it) in items.iter().enumerate() {
             if let Item::Org(w) = it {
                 assert!(pc <= *w, "code runs past the fixed address 0x{:04X}", w * 2);
                 pc = *w;
+            }
+            if let Item::Fit(true) = it {
+                let stop = items[i + 1..].iter().position(|x| matches!(x, Item::Fit(false))).map_or(items.len(), |k| i + 1 + k);
+                let span: u32 = (i + 1..stop).map(|k| size_of(&items[k], forms[k])).sum();
+                assert!(span <= FIT_BLOCK, "a computed jump table of {span} words does not fit a 256-byte block");
+                let mut p = pads[i];
+                while (pc + p) % FIT_BLOCK + span > FIT_BLOCK {
+                    p += 1;
+                }
+                if p != pads[i] {
+                    pads[i] = p;
+                    pad_grew = true;
+                }
+                pc += p;
             }
             at[i] = pc;
             match it {
@@ -153,7 +179,7 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
             }
             pc += size_of(it, forms[i]);
         }
-        let mut changed = false;
+        let mut changed = pad_grew;
         for (i, it) in items.iter().enumerate() {
             if forms[i] == Form::Long {
                 continue;
@@ -193,6 +219,14 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
                     Item::Comment(t) => lines.push(format!("    ; {t}")),
                     Item::Fence | Item::Keep(_) => {}
                     Item::Org(w) => lines.push(format!("    ORG 0x{:04X}", w * 2)),
+                    Item::Fit(_) => {
+                        if pads[i] > 0 {
+                            lines.extend(cur.map(str::to_string));
+                        }
+                        for _ in 0..pads[i] {
+                            lines.push("    nop".to_string());
+                        }
+                    }
                     Item::Data(b) => {
                         lines.extend(cur.map(str::to_string));
                         let text: Vec<String> = b.iter().map(|x| format!("0x{x:02X}")).collect();
@@ -259,7 +293,7 @@ fn flag16(cc: Cc) -> (u8, bool) {
 
 fn size16(it: &Item, long: bool, multipage: bool) -> u32 {
     match it {
-        Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Org(_) => 0,
+        Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Org(_) | Item::Fit(_) => 0,
         Item::Ins(t) | Item::Raw(t) => words_of16(t),
         Item::Br(Cc::Always, _) => match (long, multipage) {
             (false, _) | (true, false) => 1,
@@ -339,7 +373,7 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
                 }
                 Item::Comment(t) if t.starts_with("#line ") => cur = Some(t),
                 Item::Comment(t) => lines.push(format!("    ; {t}")),
-                Item::Fence | Item::Keep(_) => {}
+                Item::Fence | Item::Keep(_) | Item::Fit(_) => {}
                 Item::Org(w) => lines.push(format!("    ORG 0x{w:04X}")),
                 Item::Data(b) => {
                     lines.extend(cur.map(str::to_string));
@@ -452,6 +486,45 @@ mod tests {
         items.extend((0..200).map(|_| Item::Ins("nop".into())));
         items.push(Item::Label("far".into()));
         assert_eq!(assemble(&items, 0).words, 202);
+    }
+
+    /// `before` words of code, then a jump table run of `span` words between `Fit` markers (with a label at its start).
+    fn fitted(before: usize, span: usize, far: bool) -> Assembled {
+        let mut items: Vec<Item> = (0..before).map(|_| Item::Ins("nop".into())).collect();
+        items.push(Item::Fit(true));
+        items.push(Item::Label("tbl".into()));
+        // A branch whose size depends on the layout lies inside the run.
+        items.push(Item::Br(Cc::Nc, "away".into()));
+        items.extend((0..span - 1).map(|_| Item::Ins("nop".into())));
+        items.push(Item::Fit(false));
+        if far {
+            items.extend((0..300).map(|_| Item::Ins("nop".into())));
+        }
+        items.push(Item::Label("away".into()));
+        assemble(&items, 0)
+    }
+
+    #[test]
+    fn a_fitted_run_stays_inside_one_256_byte_block() {
+        // Fits where it is: no padding.
+        let a = fitted(10, 20, false);
+        assert_eq!(a.labels["tbl"], 10);
+        // 125 words in, 6 words long: it would end 3 words into the next block, so it starts at the next one.
+        let a = fitted(125, 6, false);
+        assert_eq!(a.labels["tbl"], 128);
+        assert_eq!(a.lines.iter().filter(|l| l.trim() == "nop").count(), 125 + 3 + 5);
+        // Ends exactly on the block end: no padding.
+        let a = fitted(122, 6, false);
+        assert_eq!(a.labels["tbl"], 122);
+    }
+
+    #[test]
+    fn a_branch_inside_a_fitted_run_may_grow_and_the_padding_follows() {
+        // With `away` near, the one-word `bnc` makes the run six words and it ends on the block end where it is. With
+        // `away` past `bcc` range the branch is two words, the run is seven and no longer fits there.
+        assert_eq!(fitted(122, 6, false).labels["tbl"], 122);
+        let a = fitted(122, 6, true);
+        assert_eq!(a.labels["tbl"], 128);
     }
 
     #[test]
