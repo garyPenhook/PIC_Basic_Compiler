@@ -258,3 +258,34 @@ Same setup as above. Flash in bytes, PIC18F27Q10; the 16F column is words, PIC16
 
 Sinks equal in basil-sim (PIC18) and MDB (PIC16F17146). Cycles, `bench/kernels` and `bench/random` were not
 re-measured for this step; the kernel table above is from before review 3.
+
+
+## Peripheral-module programs, 2026-11-12
+
+`bench/modules/m1..m4`: four new programs that call the library modules (`gpio`, `pinio`, `serial`, `adc`, `eeprom`,
+`timer`, `i2c`, `spi`, `pwm`, `shift`), each with an XC8 twin written at register level (XC8 has no peripheral
+library). `bench/modules/cmp.sh` builds all of them. PIC18F27Q10, 64 MHz, XC8 v4.00. Flash and data RAM in bytes
+(basil: words x 2 and the RAM total of `--report`; XC8: the "Program space" and "Data space" lines).
+
+| program | modules | basil | RAM | XC8 -Os | RAM | XC8 -O2 | RAM | basil / -Os |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| m1_logger | gpio serial adc eeprom timer | 1158 | 43 | 1439 | 45 | 1539 | 45 | 0.80 |
+| m2_i2cnode | gpio pinio serial i2c timer | 1340 | 45 | 1366 | 45 | 1478 | 46 | 0.98 |
+| m3_motor | gpio pinio adc pwm shift eeprom timer | 1896 | 59 | 1573 | 56 | 1701 | 56 | 1.21 |
+| m4_spiflash | gpio pinio spi serial eeprom timer | 1066 | 26 | 924 | 25 | 998 | 26 | 1.15 |
+| total | | 5460 | 173 | 5302 | 171 | 5716 | 172 | 1.03 |
+
+Read this with the following in mind:
+
+* The programs were **built, not run**. The C twins use the register sequences of the library modules (checked
+  against DS40002043F, e.g. PPS output codes TX1 09h, CCP1 05h, CCP2 06h, MSSP1 SCK/SCL 0Fh, SDO/SDA 10h, p.287) and
+  compile against the device pack's headers, but nothing compared their behaviour in the simulator.
+* The library does more than the twins: pin numbers are run-time arguments and are validated, `PwmStart` handles four
+  channel types and polarity, bus routines time out and return a status. The C twins have fixed pins, and the same
+  bounded waits and status codes for the I2C and SPI paths. A C twin without that generality would be smaller still;
+  a basil program that wrote the registers itself would be too.
+* Where the C leaves a PPS input at its power-on default (RX1PPS, SSP1CLKPPS, SSP1DATPPS) it still writes it, as the
+  library does; leaving those out would save about a dozen bytes per program.
+* `m3_motor` is where basil loses: `PWM_PWMSTART` is 235 words and `PwmPercent` pulls in the 32-bit multiply and divide
+  by the run-time step count (`__mul4`, `__divk2`, `__divk4`, 107 words together); the twin multiplies by a value it
+  keeps in a variable too but has one channel layout and no pin table.
