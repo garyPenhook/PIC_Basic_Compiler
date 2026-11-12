@@ -664,6 +664,9 @@ struct Gen<'p> {
     /// Routines each routine calls directly (the last entry is the main program).
     calls: Vec<BTreeSet<FuncId>>,
     helpers: BTreeSet<String>,
+    /// A `For` loop walking a Byte array: (array, loop variable, byte offset of the element the variable picks). While
+    /// it is set FSR0 points at that element and every access to it goes through `INDF0`.
+    walk: Option<(VarId, VarId, u32)>,
     /// The last constant-table read: (table, byte offset, byte index, bytes read, the item count right after it).
     /// TBLPTR is left just past those bytes, which the next read uses when it is of the element that follows.
     tbl_last: Option<(usize, u32, Option<Box<Ex>>, u32, usize)>,
@@ -710,6 +713,77 @@ enum Fac {
 
 fn weight(depth: u32) -> u64 {
     8u64.pow(depth.min(4))
+}
+
+/// `p` as the one-byte element `arr(iv)`: the array and the element's byte offset.
+fn walk_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
+    let (Base::Var(arr), Some(ix)) = (&p.base, &p.idx) else { return None };
+    if p.bit.is_some() || p.dbit.is_some() || p.bytes() != 1 {
+        return None;
+    }
+    let x = match &ix.k {
+        ExK::Conv(x) if !x.signed => &**x,
+        _ => &**ix,
+    };
+    let ExK::Load(q) = &x.k else { return None };
+    (x.w == 8 && !x.signed && q.base == Base::Var(iv) && q.off == 0 && q.idx.is_none() && q.bit.is_none() && q.dbit.is_none()).then_some((*arr, p.off))
+}
+
+/// What `walk_block` finds: the element every indirect place names, and whether the body reads the loop variable
+/// other than as that index.
+#[derive(Default)]
+struct WalkScan {
+    found: Option<(VarId, u32)>,
+    other: bool,
+}
+
+/// A place in the body of a loop that may walk an array: a direct one, a constant-table element, or the element
+/// `arr(iv)` of the one array `found` names (set by the first such place).
+fn walk_place(p: &Place, iv: VarId, st: &mut WalkScan) -> bool {
+    if p.dbit.is_some() {
+        return false;
+    }
+    if matches!(p.base, Base::Flash(_)) {
+        return p.idx.as_ref().is_none_or(|i| walk_ex(i, iv, st));
+    }
+    if !p.indirect() {
+        if p.base == Base::Var(iv) {
+            st.other = true;
+        }
+        return true;
+    }
+    match walk_elem(p, iv) {
+        Some(e) if st.found.is_none_or(|f| f == e) => {
+            st.found = Some(e);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn walk_ex(e: &Ex, iv: VarId, st: &mut WalkScan) -> bool {
+    match &e.k {
+        ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => true,
+        ExK::Load(p) => walk_place(p, iv, st),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => walk_ex(x, iv, st),
+        ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => walk_ex(a, iv, st) && walk_ex(b, iv, st),
+        ExK::Call(..) | ExK::Addr(_) | ExK::StrEq(..) => false,
+    }
+}
+
+fn walk_block(body: &[S], iv: VarId, st: &mut WalkScan) -> bool {
+    body.iter().all(|s| match &s.st {
+        St::Assign(p, e) => p.base != Base::Var(iv) && walk_place(p, iv, st) && walk_ex(e, iv, st),
+        St::Add(p, _) | St::Clear(p) | St::SetBit(p, _) | St::ToggleBit(p) => !p.indirect() && p.dbit.is_none() && p.base != Base::Var(iv),
+        St::If(arms, other) => arms.iter().all(|(c, b)| walk_ex(c, iv, st) && walk_block(b, iv, st)) && walk_block(other, iv, st),
+        St::Count { counter, body, step, .. } => {
+            !counter.indirect() && counter.base != Base::Var(iv) && step.as_ref().is_none_or(|(p, _)| !p.indirect() && p.base != Base::Var(iv)) && walk_block(body, iv, st)
+        }
+        St::While(c, b) | St::Repeat(b, c) => walk_ex(c, iv, st) && walk_block(b, iv, st),
+        St::For { var, from, limit, body, .. } => !var.indirect() && var.base != Base::Var(iv) && walk_ex(from, iv, st) && walk_ex(limit, iv, st) && walk_block(body, iv, st),
+        St::Break | St::Continue => true,
+        _ => false,
+    })
 }
 
 /// `e` recomputed in `w` bits (`w` below `e.w`), when its low `w` bits depend only on the low `w` bits of its operands.
@@ -767,6 +841,7 @@ impl<'p> Gen<'p> {
             calls: vec![BTreeSet::new(); p.funcs.len() + 1],
             helpers: BTreeSet::new(),
             tbl_last: None,
+            walk: None,
             lits: Vec::new(),
             errors: Vec::new(),
             span: Span::default(),
@@ -1371,6 +1446,9 @@ impl<'p> Gen<'p> {
     /// hence the 128-byte limit) reaches the element's first byte; a wider element continues with `incf WREG`.
     /// Returns `PLUSW0`; W must hold the offset at the access.
     fn plusw_point(&mut self, p: &Place) -> Option<Mem> {
+        if self.walk_hit(p) {
+            return Some(self.sfr_mem("INDF0"));
+        }
         let (x, shift) = self.plusw_shape(p)?;
         let Base::Var(v) = &p.base else { return None };
         // The index goes to W first (computing it may use FSR0); `lfsr` leaves W alone.
@@ -1397,6 +1475,10 @@ impl<'p> Gen<'p> {
     /// Points FSR`n` at the first byte of any RAM place (direct, indexed or through a `ByRef`
     /// parameter). Clobbers `__A` and, when the index needs code, may use FSR0.
     fn point_fsr(&mut self, n: u8, p: &Place) {
+        // The element a walking loop is at: FSR0 is there already (its users touch one byte, through INDF0).
+        if n == 0 && self.walk_hit(p) {
+            return;
+        }
         // A Byte index into an array of up to 256 bytes (or one that is not scaled): add it straight to the pointer,
         // `lfsr` / `movf` / `addwf` / `movlw 0` / `addwfc`, without building the address in `__A`.
         if let Base::Var(v) = &p.base
@@ -3586,6 +3668,18 @@ impl<'p> Gen<'p> {
                 return;
             }
         }
+        // The element a walking loop is at: the value goes straight to INDF0 (no index in W to protect).
+        if self.walk_hit(p) && e.w == 8 {
+            let ind = self.sfr_mem("INDF0");
+            match self.simple(e) {
+                Some(sv) => self.put_byte(&ind, &sv.byte(0)),
+                None => {
+                    self.gen_val(e);
+                    self.fo("movwf", &ind);
+                }
+            }
+            return;
+        }
         if p.indirect() {
             // The value is settled before FSR0 is loaded, since computing either can use FSR0.
             let n = p.bytes();
@@ -3611,8 +3705,9 @@ impl<'p> Gen<'p> {
                     return;
                 }
                 self.point_fsr0(p);
+                let ind = self.sfr_mem("INDF0");
                 for i in 0..n {
-                    self.put_byte(&post, &s.byte(i));
+                    self.put_byte(if i + 1 < n { &post } else { &ind }, &s.byte(i));
                 }
             } else {
                 // A constant (or a mix of constants and variables) is written into the temporary directly, not
@@ -3636,8 +3731,9 @@ impl<'p> Gen<'p> {
                     return;
                 }
                 self.point_fsr0(p);
+                let ind = self.sfr_mem("INDF0");
                 for i in 0..n {
-                    self.movff(&post, &t.at(i));
+                    self.movff(if i + 1 < n { &post } else { &ind }, &t.at(i));
                 }
                 self.free(n);
             }
@@ -4990,6 +5086,38 @@ impl<'p> Gen<'p> {
     fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S], free: bool) {
         let (w, sg) = (var.width(), var.signed());
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
+        // A Byte array indexed by the loop variable and nothing else through an FSR: FSR0 walks the array.
+        let walking = self.walk_plan(var, from, step, body);
+        // The body names the variable only as that index and nothing reads it afterwards: it just counts the passes
+        // down (a start of 0 is 256 passes), with `decfsz` at the end.
+        let counted = match (walking, limit.as_const()) {
+            (Some((_, _, _, start, true)), Some(l)) if free && l >= start && l - start <= 255 => Some((l - start + 1) & 0xFF),
+            _ => None,
+        };
+        if let (Some(n), Some((arr, iv, off, start, _))) = (counted, walking) {
+            self.store(var, &Ex::konst(n, w, sg));
+            let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
+            self.uses[arr] += 1;
+            let sym = self.p.vars[arr].asm.clone();
+            self.ins(format!("lfsr 0, {sym}+{}", off + start));
+            self.walk = Some((arr, iv, off));
+            self.depth += 1;
+            self.label(&top);
+            self.loops.push((cont.clone(), end.clone()));
+            self.block(body);
+            self.loops.pop();
+            self.label(&cont);
+            self.walk = None;
+            let post = self.sfr_mem("POSTINC0");
+            self.fop("movf", &post, "w");
+            if let Some(Src::Mem(vm, _)) = self.simple(&load(var)) {
+                self.fop("decfsz", &vm, "f");
+            }
+            self.br(Cc::Always, &top);
+            self.depth -= 1;
+            self.label(&end);
+            return;
+        }
         self.store(var, from);
         let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
         // Skip the entry test when both ends are constants that make the loop run, or when the start is the
@@ -5010,11 +5138,23 @@ impl<'p> Gen<'p> {
             let kind = if step > 0 { CmpKind::Gt } else { CmpKind::Lt };
             self.cmp_jump(kind, &load(var), limit, &end);
         }
+        if let Some((arr, iv, off, start, _)) = walking {
+            self.uses[arr] += 1;
+            let sym = self.p.vars[arr].asm.clone();
+            self.ins(format!("lfsr 0, {sym}+{}", off + start));
+            self.walk = Some((arr, iv, off));
+        }
         self.label(&top);
         self.loops.push((cont.clone(), end.clone()));
         self.block(body);
         self.loops.pop();
         self.label(&cont);
+        if walking.is_some() {
+            self.walk = None;
+            // On to the next element (the read itself is not used).
+            let post = self.sfr_mem("POSTINC0");
+            self.fop("movf", &post, "w");
+        }
         if free && self.tgt.opt && (step == 1 || step == -1) && self.free_loop_end(var, limit, step, &top) {
             self.depth -= 1;
             self.label(&end);
@@ -5033,6 +5173,38 @@ impl<'p> Gen<'p> {
         self.br(Cc::Always, &top);
         self.depth -= 1;
         self.label(&end);
+    }
+
+    /// Whether `p` is the element the walking loop is at (see `walk`).
+    fn walk_hit(&self, p: &Place) -> bool {
+        let Some((arr, iv, off)) = self.walk else { return false };
+        walk_elem(p, iv) == Some((arr, off))
+    }
+
+    /// The array a `For` loop over a Byte variable from a constant, stepping up by one, can walk with FSR0:
+    /// (array, loop variable, element offset, start value). Every place the body reaches through an FSR is the
+    /// one-byte element `arr(var)` of one array, and the body has nothing else that could use an FSR or let other
+    /// code run: no call, string or block operation, raw assembly, jump or `Save`. Not inside another walking loop.
+    fn walk_plan(&self, var: &Place, from: &Ex, step: i64, body: &[S]) -> Option<(VarId, VarId, u32, u32, bool)> {
+        if !self.tgt.opt || self.walk.is_some() || step != 1 || var.width() != 8 || var.signed() {
+            return None;
+        }
+        let Base::Var(iv) = var.base else { return None };
+        if var.off != 0 || var.idx.is_some() || var.bit.is_some() || var.dbit.is_some() || self.p.vars[iv].bytes != 1 || self.p.vars[iv].by_ref || !self.var_private(iv) {
+            return None;
+        }
+        let start = from.as_const()?;
+        self.tgt.sfr.get("POSTINC0")?;
+        let mut st = WalkScan::default();
+        if !walk_block(body, iv, &mut st) {
+            return None;
+        }
+        let (arr, off) = st.found?;
+        let a = &self.p.vars[arr];
+        if a.by_ref || a.volatile || arr == iv {
+            return None;
+        }
+        Some((arr, iv, off, start, !st.other))
     }
 
     /// The end of a `For` stepping by one whose variable nothing reads after the loop: step first, then go round

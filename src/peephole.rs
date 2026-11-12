@@ -2405,6 +2405,69 @@ fn pass_dead_loads(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// A walking loop ends its pass with `movf POSTINC0, w`, a read made only to step FSR0 on. When the last instruction
+/// before it that goes through FSR0 names `INDF0` once, as a plain read or a plain store, that instruction takes
+/// `POSTINC0` and the extra read goes. Nothing between the two may name FSR0 or be a label, branch, call or skip, the
+/// access must not itself sit behind a skip, and `WREG` and the flags of the dropped read must be dead.
+fn pass_fold_postinc(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let fsr0 = |t: &str| {
+        let u = t.to_ascii_uppercase();
+        ["FSR0", "INDF0", "POSTINC0", "POSTDEC0", "PREINC0", "PLUSW0"].iter().any(|n| u.contains(n)) || u.starts_with("LFSR 0")
+    };
+    let mut changed = false;
+    let mut j = 0;
+    while j < items.len() {
+        let is_bump = matches!(&items[j], Item::Ins(t) if !keep[j] && matches!(parse(t), Some((m, o)) if m == "movf" && o.len() == 3 && o[0].eq_ignore_ascii_case("POSTINC0") && matches!(o[1], "w" | "0")));
+        if !is_bump || !dead_paths(items, j + 1, true, Z | N) {
+            j += 1;
+            continue;
+        }
+        let mut k = j;
+        let mut hit = None;
+        while k > 0 {
+            k -= 1;
+            match &items[k] {
+                Item::Comment(_) | Item::Fence => {}
+                Item::Ins(t) if !keep[k] && !is_skip(t) => {
+                    if fsr0(t) {
+                        hit = Some(k);
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        let Some(k) = hit else {
+            j += 1;
+            continue;
+        };
+        let Item::Ins(t) = &items[k] else { unreachable!() };
+        let (mn, ops) = parse(t).unwrap_or_default();
+        let at: Vec<usize> = (0..ops.len()).filter(|&x| ops[x].eq_ignore_ascii_case("INDF0")).collect();
+        let others = ops.iter().enumerate().any(|(x, o)| !at.contains(&x) && fsr0(o));
+        let plain = match mn.as_str() {
+            "movwf" | "clrf" | "setf" => at == [0],
+            "movff" => at.len() == 1,
+            "movf" | "addwf" | "addwfc" | "subwf" | "subwfb" | "andwf" | "iorwf" | "xorwf" | "comf" => at == [0] && ops.get(1).is_some_and(|d| matches!(*d, "w" | "0")),
+            "cpfseq" | "cpfsgt" | "cpfslt" | "tstfsz" => false,
+            _ => false,
+        };
+        if !plain || others {
+            j += 1;
+            continue;
+        }
+        let mut new: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
+        new[at[0]] = "POSTINC0".into();
+        items[k] = Item::Ins(format!("{mn} {}", new.join(", ")));
+        items.remove(j);
+        changed = true;
+        // `keep` is indexed by the old positions.
+        break;
+    }
+    changed
+}
+
 /// `bcc L1 / bra L2 / L1:` is `b!cc L2`.
 fn pass_branch_over_branch(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
@@ -4553,6 +4616,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_forward(&mut items, env);
         changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);
+        changed |= pass_fold_postinc(&mut items);
         changed |= pass_retarget_build(&mut items, env);
         changed |= pass_copy_prop(&mut items, env);
         changed |= pass_wreg(&mut items, env);
