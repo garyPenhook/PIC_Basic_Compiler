@@ -6379,7 +6379,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
             None => plain.keys().cloned().collect(),
         };
-        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect(), shared, zero_abs: p.isrs.is_empty() && !p.c_link() })
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect(), shared, zero_abs: p.isrs.is_empty() && !p.c_link(), speed: p.speed })
     } else {
         items
     };

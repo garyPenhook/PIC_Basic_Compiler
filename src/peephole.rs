@@ -49,6 +49,8 @@ pub struct Env {
     /// The program has no interrupt handler and no linked C code, so nothing can observe a variable between its start-up
     /// clear and its first store: `pass_overwritten_store` may then delete a start-up `clrf 0xNNN` that the first store overwrites.
     pub zero_abs: bool,
+    /// `Optimize = Speed`: no rewrite that saves words at the cost of cycles (`pass_tail_merge`).
+    pub speed: bool,
 }
 
 impl Env {
@@ -2557,6 +2559,117 @@ fn pass_mask_fold(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// Tail merging: two runs of the same instructions that end the same way (the same `bra L`, a `return`, or, for the
+/// second, falling into `L:` itself) keep one copy; the first becomes a branch into the second. A run of k words is
+/// replaced by a one-word branch, at two cycles on that path, so not under `Optimize = Speed`. The runs are plain
+/// instructions with no label inside the one that goes and nothing a skip passes over at its start; the same text
+/// does the same thing wherever it runs, bank selection included, since both paths then reach the same place.
+fn pass_tail_merge(items: &mut Vec<Item>, env: &Env) -> bool {
+    if env.speed {
+        return false;
+    }
+    let mut changed = false;
+    let mut serial = 0usize;
+    for _ in 0..64 {
+        // Timed code (`Keep` regions) is never touched.
+        let mut timed = vec![false; items.len()];
+        let mut inside = false;
+        for (i, it) in items.iter().enumerate() {
+            if let Item::Keep(on) = it {
+                inside = *on;
+            }
+            timed[i] = inside || matches!(it, Item::Keep(_));
+        }
+        let is_ret = |it: &Item| matches!(it, Item::Ins(t) if t.trim() == "return");
+        // The item before `i` that is not a comment or a statement end.
+        let prev = |mut i: usize| -> Option<usize> {
+            while i > 0 {
+                i -= 1;
+                if !matches!(items[i], Item::Comment(_) | Item::Fence) {
+                    return Some(i);
+                }
+            }
+            None
+        };
+        let after_skip = |i: usize| matches!(prev(i).map(|p| &items[p]), Some(Item::Ins(t)) if is_skip(t));
+        let words = |t: &str| -> usize {
+            match parse(t) {
+                Some((m, _)) if !core16() && matches!(m.as_str(), "movff" | "lfsr") => 2,
+                _ => 1,
+            }
+        };
+        let ends: Vec<usize> = (0..items.len()).filter(|&i| !timed[i] && !after_skip(i) && (matches!(&items[i], Item::Br(Cc::Always, _)) || is_ret(&items[i]))).collect();
+        let mut best: Option<(usize, usize, usize, usize)> = None; // (words, first item of A's run, A's end, first item of B's run)
+        for &ea in &ends {
+            // Where the same ending is found again: the same branch or return, or the label the branch goes to.
+            let mut others: Vec<usize> = ends
+                .iter()
+                .copied()
+                .filter(|&eb| {
+                    eb != ea
+                        && match (&items[ea], &items[eb]) {
+                            (Item::Br(_, a), Item::Br(_, b)) => a == b,
+                            (a, b) => is_ret(a) && is_ret(b),
+                        }
+                })
+                .collect();
+            if let Item::Br(_, l) = &items[ea] {
+                others.extend((0..items.len()).filter(|&i| matches!(&items[i], Item::Label(x) if x == l)));
+            }
+            for eb in others {
+                // Matching instructions, nearest the end first.
+                let mut run: Vec<(usize, usize)> = Vec::new();
+                let (mut a, mut b) = (ea, eb);
+                while let (Some(pa), Some(pb)) = (prev(a), prev(b)) {
+                    let (Item::Ins(ta), Item::Ins(tb)) = (&items[pa], &items[pb]) else { break };
+                    if ta != tb || timed[pa] || timed[pb] || matches!(parse(ta), Some((m, _)) if m == "return" || m == "retfie" || m == "retlw") {
+                        break;
+                    }
+                    run.push((pa, pb));
+                    a = pa;
+                    b = pb;
+                }
+                // Neither run may start with what a skip passes over.
+                while let Some(&(fa, fb)) = run.last() {
+                    if after_skip(fa) || after_skip(fb) {
+                        run.pop();
+                    } else {
+                        break;
+                    }
+                }
+                let Some(&(fa, fb)) = run.last() else { continue };
+                // The two runs must not share an instruction.
+                let (lo_a, lo_b) = (fa, fb);
+                if (lo_a..=ea).contains(&eb) || (lo_b..=eb).contains(&ea) || (lo_a <= lo_b && lo_b <= ea) || (lo_b <= lo_a && lo_a <= eb) {
+                    continue;
+                }
+                let w: usize = run.iter().map(|&(pa, _)| if let Item::Ins(t) = &items[pa] { words(t) } else { 0 }).sum();
+                if w > 0 && best.is_none_or(|x| w > x.0) {
+                    best = Some((w, fa, ea, fb));
+                }
+            }
+        }
+        let Some((_, fa, ea, fb)) = best else { break };
+        let label = loop {
+            let l = format!("_Lm{serial}");
+            serial += 1;
+            if !items.iter().any(|it| matches!(it, Item::Label(x) if *x == l)) {
+                break l;
+            }
+        };
+        // B's label first when it lies after A's run (so A's indices stay), else after A's run has gone.
+        if fb > ea {
+            items.insert(fb, Item::Label(label.clone()));
+            items.splice(fa..=ea, [Item::Br(Cc::Always, label)]);
+        } else {
+            items.splice(fa..=ea, [Item::Br(Cc::Always, label.clone())]);
+            items.insert(fb, Item::Label(label));
+        }
+        changed = true;
+    }
+    changed
+}
+
 /// `bcc L1 / bra L2 / L1:` is `b!cc L2`.
 fn pass_branch_over_branch(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
@@ -4582,6 +4695,10 @@ fn div_prep(items: &[Item], c: usize, n: u8, bn: u8, env: &Env) -> Option<(usize
 fn pass_div_share(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
     let calls: Vec<usize> = (0..items.len()).filter(|&i| matches!(&items[i], Item::Call(n) if div_helper_width(n).is_some())).collect();
+    if calls.len() < 2 {
+        return false;
+    }
+    let taken = addr_taken(items, env);
     let mut dead = vec![false; items.len()];
     for w in calls.windows(2) {
         let (c1, c2) = (w[0], w[1]);
@@ -4600,8 +4717,14 @@ fn pass_div_share(items: &mut Vec<Item>, env: &Env) -> bool {
         let clean = items[c1 + 1..s2].iter().all(|it| match it {
             Item::Comment(_) | Item::Fence => true,
             Item::Ins(t) => effect(t).is_some_and(|e| {
-                !e.writes.iter().any(|l| matches!(l, Loc::S(_)))
-                    && e.wmem.iter().all(|m| matches!(m, Mem::Sym(s) if split_off(s).is_some_and(|(b, _)| !bases.contains(&b))))
+                // A store through an FSR reaches an operand only when the program takes that variable's address.
+                let absolute = parse(t).is_some_and(|(mm, o)| !mm.ends_with("lw") && mm != "lfsr" && mm != "movlb" && o.iter().take(2).any(|x| x.starts_with("0x")));
+                !absolute
+                    && !e.writes.iter().any(|l| matches!(l, Loc::S(_)))
+                    && e.wmem.iter().all(|m| match m {
+                        Mem::Sym(s) => split_off(s).is_some_and(|(b, _)| !bases.contains(&b)),
+                        Mem::Unknown => !bases.iter().any(|b| taken.contains(*b)),
+                    })
             }),
             _ => false,
         });
@@ -4719,8 +4842,10 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
                 break;
             }
             prologues = false;
-            // Once everything else has settled: one bank selection per routine.
-            if !pass_bank_prologue(&mut items) {
+            // Once everything else has settled: one bank selection per routine, and shared tails.
+            let a = pass_bank_prologue(&mut items);
+            let b = pass_tail_merge(&mut items, env);
+            if !a && !b {
                 break;
             }
         }
@@ -4771,6 +4896,10 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
             break;
         }
     }
+    if pass_tail_merge(&mut items, env) {
+        pass_branch_to_next(&mut items);
+        pass_unused_labels(&mut items);
+    }
     items
 }
 
@@ -4787,7 +4916,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default(), zero_abs: false }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default(), zero_abs: false, speed: false }
     }
 
     fn ins(t: &str) -> Item {
@@ -5280,8 +5409,8 @@ mod tests {
     fn a_boolean_that_is_read_elsewhere_keeps_its_store() {
         let s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
         let r = run(&s);
-        // Each path stores its own value and the reload and test are gone.
-        assert_eq!(r.iter().filter(|l| *l == "movwf X, c").count(), 2, "{r:?}");
+        // The value is stored (once: the two paths share the store, `pass_tail_merge`) and the reload and test are gone.
+        assert_eq!(r.iter().filter(|l| *l == "movwf X, c").count(), 1, "{r:?}");
         assert!(!r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
     }
 
@@ -5768,5 +5897,36 @@ mod tests {
         // A label inside the region that code outside it branches to is another way in.
         let src = [user, Item::Br(Cc::Z, "_L9".into()), ins("movff S, P"), Item::Fence, Item::Label("_L9".into()), ins("movf P, w, c"), ins("addwf R, f, c"), Item::Fence];
         assert!(run2(&src, &e).contains(&"movf P, w, c".to_string()));
+    }
+    #[test]
+    fn equal_tails_keep_one_copy() {
+        let e = env2();
+        let user = Item::Raw("lfsr 0, X+Y+R+S+P".into());
+        // Two arms that end with the same two instructions and the same branch.
+        let src = [
+            user.clone(),
+            ins("movf X, f, c"), Item::Br(Cc::Z, "_L1".into()),
+            ins("incf P, f, c"), ins("clrf S, c"), ins("setf R, c"), Item::Br(Cc::Always, "_L9".into()),
+            Item::Label("_L1".into()), ins("decf P, f, c"), ins("clrf S, c"), ins("setf R, c"), Item::Br(Cc::Always, "_L9".into()),
+            Item::Label("_L2".into()), ins("nop"), Item::Label("_L9".into()), ins("return"),
+        ];
+        let r = run2(&src, &e);
+        assert_eq!(r.iter().filter(|t| *t == "clrf S, c").count(), 1, "{r:?}");
+        assert_eq!(r.iter().filter(|t| *t == "setf R, c").count(), 1, "{r:?}");
+        // Not under Optimize = Speed.
+        let mut sp = env2();
+        sp.speed = true;
+        let r = run2(&src, &sp);
+        assert_eq!(r.iter().filter(|t| *t == "clrf S, c").count(), 2, "{r:?}");
+        // A run that starts right after a skip is not cut there.
+        let src = [
+            user,
+            ins("movf X, f, c"), Item::Br(Cc::Z, "_L1".into()),
+            ins("btfsc P, 0, c"), ins("clrf S, c"), Item::Br(Cc::Always, "_L9".into()),
+            Item::Label("_L1".into()), ins("btfsc P, 1, c"), ins("clrf S, c"), Item::Br(Cc::Always, "_L9".into()),
+            Item::Label("_L2".into()), ins("nop"), Item::Label("_L9".into()), ins("return"),
+        ];
+        let r = run2(&src, &e);
+        assert_eq!(r.iter().filter(|t| *t == "clrf S, c").count(), 2, "{r:?}");
     }
 }

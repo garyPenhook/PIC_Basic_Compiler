@@ -1700,7 +1700,27 @@ fn coalesce_results(p: &mut Program) -> bool {
             continue;
         }
         let vvar = &p.vars[v];
-        if vvar.kind != VarKind::Local || vvar.owner != Some(fi) || vvar.by_ref || vvar.volatile || vvar.init.is_some() || vvar.bytes != rvar.bytes {
+        // A `ByVal` parameter serves as well as a local (the caller stores the argument in it and reads the result
+        // from it), in a routine that calls nothing: it cannot then be entered again while the value is in use.
+        let is_param = vvar.kind == VarKind::Param && p.funcs[fi].params.contains(&v) && {
+            struct Calls(bool);
+            impl Visit for Calls {
+                fn ex(&mut self, e: &Ex) {
+                    if matches!(e.k, ExK::Call(..)) {
+                        self.0 = true;
+                    }
+                }
+                fn stmt(&mut self, s: &S) {
+                    if matches!(s.st, St::Call(..) | St::GoSub(_) | St::Asm(_)) {
+                        self.0 = true;
+                    }
+                }
+            }
+            let mut c = Calls(false);
+            w_block(&mut c, body);
+            !c.0
+        };
+        if !(vvar.kind == VarKind::Local || is_param) || vvar.owner != Some(fi) || vvar.by_ref || vvar.volatile || vvar.init.is_some() || vvar.bytes != rvar.bytes {
             continue;
         }
         if named(&rvar.asm) || named(&vvar.asm) {
@@ -1733,7 +1753,9 @@ fn coalesce_results(p: &mut Program) -> bool {
         body.remove(k);
         body.retain(|s| !matches!(&s.st, St::Clear(c) if whole(c, rv, &rty)));
         p.funcs[fi].result = Some(v);
-        p.vars[v].kind = VarKind::Result;
+        if !is_param {
+            p.vars[v].kind = VarKind::Result;
+        }
         let mut rename = |e: &mut Ex| {
             if let ExK::Load(pl) = &mut e.k
                 && matches!(pl.base, Base::Var(x) if x == rv)

@@ -1374,3 +1374,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - R12: `If (x And top) <> 0 Then x = (x << 1) Xor K Else x = x << 1` (and the `>> 1` / bit 0 form, and `= 0` with the arms swapped) shifts once and branches on the carry (`codegen::shift_out_shape`, both back ends; LSLF/LSRF set C, DS40001839E p.399). A shift that leaves one byte to move by 4 or 5 swaps its nibbles (`shift_acc`). `pass_mask_fold`: one mask for `(a And m) >> k`, and `c = c + (v And 1)` as `btfsc v,0; incf c,f`.
 - `pass_retarget_build` took a literal `movlw 0x36` for an absolute file operand and stopped at a copy it had just removed; it now renames at once and steps over removed copies.
 - `bench/large`: PIC18 6422 -> 6348 bytes, 16F 4766 -> 4758 words; cycles a_algo 78541 -> 75997.
+
+## Review 3, step 7: parameter results, shared divides, tail merging (done 2026-11-12, 0.1.188)
+- R15: `opt::coalesce_results` also takes a `ByVal` parameter as the result of a routine that calls nothing (`Result = a` in `Gcd`); the parameter keeps its kind. New `tests/exec/param_result.bas`.
+- R13: `pass_div_share` lets a store through an FSR stand between the two divides when the program never takes the address of an operand (`addr_taken`): `ToDec` makes one `__divk4` call a digit; c_text 57561 -> 46602 cycles.
+- R11: `pass_tail_merge` (both cores; not under `Optimize = Speed`, `Env::speed`): runs of the same instructions that end in the same `bra`/`return`, or fall into the label the other branches to, keep one copy. c_text 690 -> 663 words, d_ctrl 583 -> 575; 16F c_text 1056 -> 1032, d_ctrl 966 -> 947.
+- `bench/large`: PIC18 6348 -> 6270 bytes; 16F 4758 -> 4710 words. `unary_signext`, `table_pair`, `array_walk` and `param_result` are in `P16_PORTABLE`.
