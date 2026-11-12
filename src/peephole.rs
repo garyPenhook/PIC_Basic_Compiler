@@ -1884,10 +1884,8 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
     let taken = addr_taken(items, env);
     let mut dead = vec![false; items.len()];
-    let mut edits: Vec<(usize, String)> = Vec::new();
-    let mut claimed = vec![false; items.len()];
     for j in 1..items.len() {
-        if keep[j] || claimed[j] {
+        if keep[j] || dead[j] {
             continue;
         }
         let Item::Ins(t) = &items[j] else { continue };
@@ -1908,14 +1906,18 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
         let mut ok = true;
         while m > 0 && window.len() < 40 && j - m < 120 {
             m -= 1;
+            if dead[m] {
+                continue;
+            }
             match &items[m] {
                 Item::Comment(_) => {}
-                Item::Ins(u) if !keep[m] && !claimed[m] => {
+                Item::Ins(u) if !keep[m] => {
                     let Some(e) = effect(u) else {
                         ok = false;
                         break;
                     };
-                    let absolute = parse(u).is_some_and(|(_, o)| o.iter().take(2).any(|x| x.starts_with("0x")));
+                    // A file operand given as a number could be any byte.
+                    let absolute = parse(u).is_some_and(|(mm, o)| !mm.ends_with("lw") && mm != "lfsr" && mm != "movlb" && o.iter().take(2).any(|x| x.starts_with("0x")));
                     let touches_d = absolute
                         || e.rmem.iter().any(|r| may_alias(env, r, &d) || (by_ptr && is_indirect(r)))
                         || e.wmem.iter().any(|w| match w {
@@ -1963,20 +1965,16 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
         if !matches!(loc_live(items, j, Loc::S(k), env), Live::Dead) {
             continue;
         }
+        // Renamed at once, so the next copy sees the stretch as it now is.
         for &w in &window {
             let Item::Ins(u) = &items[w] else { continue };
             let (wm, wo) = parse(u).unwrap();
             let new: Vec<String> = wo.iter().map(|o| if scratch(o) == Some(k) { d.clone() } else { o.to_string() }).collect();
-            edits.push((w, format!("{wm} {}", new.join(", "))));
-            claimed[w] = true;
+            items[w] = Item::Ins(format!("{wm} {}", new.join(", ")));
         }
-        claimed[j] = true;
         dead[j] = true;
     }
     let changed = dead.iter().any(|&x| x);
-    for (i, t) in edits {
-        items[i] = Item::Ins(t);
-    }
     if changed {
         let mut k = 0;
         items.retain(|_| {
@@ -2464,6 +2462,97 @@ fn pass_fold_postinc(items: &mut Vec<Item>) -> bool {
         changed = true;
         // `keep` is indexed by the old positions.
         break;
+    }
+    changed
+}
+
+/// Two more rewrites of short runs in `WREG`:
+/// * `andlw m1` / k × `rrncf WREG, w` (or `rlncf`) / `andlw m2`: the first mask goes and the last becomes the first
+///   one rotated the same way, anded with the second (`(a And 63) >> 2` masks once, with 0x0F).
+/// * `movf V, w` / `andlw 1` / `addwf X, f`: `btfsc V, 0` / `incf X, f`, when `WREG` and every flag are dead (a
+///   wider sum goes on with the carry, and keeps the add).
+fn pass_mask_fold(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Comment(_))).collect();
+    let ins = |k: Option<&usize>| -> Option<(usize, String, Vec<String>)> {
+        let &k = k?;
+        if keep[k] {
+            return None;
+        }
+        let Item::Ins(t) = &items[k] else { return None };
+        parse(t).map(|(m, o)| (k, m, o.iter().map(|x| x.to_string()).collect()))
+    };
+    let mut edits: Vec<(usize, Option<String>)> = Vec::new();
+    let mut n = 0;
+    while n < real.len() {
+        let Some((i, mn, ops)) = ins(real.get(n)) else {
+            n += 1;
+            continue;
+        };
+        if mn == "andlw" && ops.len() == 1 && !core16()
+            && let Some(m1) = parse_lit(&ops[0])
+        {
+            let mut k = 0u32;
+            let mut dir: Option<bool> = None; // true = right
+            let mut x = n + 1;
+            while let Some((_, m2, o2)) = ins(real.get(x)) {
+                let right = match m2.as_str() {
+                    "rrncf" => true,
+                    "rlncf" => false,
+                    _ => break,
+                };
+                if o2.len() != 3 || !o2[0].eq_ignore_ascii_case("WREG") || !matches!(o2[1].as_str(), "w" | "0") || dir.is_some_and(|d| d != right) {
+                    break;
+                }
+                dir = Some(right);
+                k += 1;
+                x += 1;
+            }
+            if k > 0
+                && let Some((j, m3, o3)) = ins(real.get(x))
+                && m3 == "andlw"
+                && o3.len() == 1
+                && let Some(m2) = parse_lit(&o3[0])
+            {
+                let rot = if dir == Some(true) { m1.rotate_right(k) } else { m1.rotate_left(k) };
+                edits.push((i, None));
+                edits.push((j, Some(format!("andlw 0x{:02X}", rot & m2))));
+                n = x + 1;
+                continue;
+            }
+        }
+        if mn == "movf" && ops.len() >= 2 && matches!(ops[1].as_str(), "w" | "0") && env.is_plain(&ops[0])
+            && let Some((j, m2, o2)) = ins(real.get(n + 1))
+            && m2 == "andlw"
+            && o2.len() == 1
+            && parse_lit(&o2[0]) == Some(1)
+            && let Some((k, m3, o3)) = ins(real.get(n + 2))
+            && m3 == "addwf"
+            && o3.len() >= 2
+            && matches!(o3[1].as_str(), "f" | "1")
+            && env.is_plain(&o3[0])
+            && o3[0] != ops[0]
+            && !core16()
+            && dead_paths(items, k + 1, true, ALL)
+        {
+            let acc = |o: &[String]| o.get(2).map(|a| format!(", {a}")).unwrap_or_default();
+            edits.push((i, Some(format!("btfsc {}, 0{}", ops[0], acc(&ops)))));
+            edits.push((j, Some(format!("incf {}, f{}", o3[0], acc(&o3)))));
+            edits.push((k, None));
+            n += 3;
+            continue;
+        }
+        n += 1;
+    }
+    let changed = !edits.is_empty();
+    edits.sort_by_key(|e| e.0);
+    for (i, t) in edits.into_iter().rev() {
+        match t {
+            Some(t) => items[i] = Item::Ins(t),
+            None => {
+                items.remove(i);
+            }
+        }
     }
     changed
 }
@@ -4617,6 +4706,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);
         changed |= pass_fold_postinc(&mut items);
+        changed |= pass_mask_fold(&mut items, env);
         changed |= pass_retarget_build(&mut items, env);
         changed |= pass_copy_prop(&mut items, env);
         changed |= pass_wreg(&mut items, env);

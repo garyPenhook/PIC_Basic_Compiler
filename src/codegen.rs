@@ -715,6 +715,37 @@ fn weight(depth: u32) -> u64 {
     8u64.pow(depth.min(4))
 }
 
+/// The shape `If (x And top) <> 0 Then x = (x << 1) Xor K Else x = x << 1` (or `>> 1` with bit 0, or `= 0` with the
+/// arms the other way round) on a directly addressed integer `x`: the place, whether the shift is to the left, the
+/// constant (masked to the width) and the width in bytes. The bit tested is the one the shift moves out.
+pub(crate) fn shift_out_shape<'a>(arms: &'a [(Ex, Vec<S>)], otherwise: &'a [S]) -> Option<(&'a Place, bool, u32, u32)> {
+    let ([(c, then)], [els]) = (arms, otherwise) else { return None };
+    let [th] = then.as_slice() else { return None };
+    let ExK::Cmp(k, l, r) = &c.k else { return None };
+    let (p, bytes, ne) = and_test(*k, l, r)?;
+    let [(byte, bit)] = bytes.as_slice() else { return None };
+    let (with_k, plain) = if ne { (th, els) } else { (els, th) };
+    let (St::Assign(pa, ea), St::Assign(pb, eb)) = (&with_k.st, &plain.st) else { return None };
+    if pa != p || pb != p || p.indirect() || p.bit.is_some() || p.dbit.is_some() {
+        return None;
+    }
+    let n = p.bytes();
+    let is_shift = |e: &Ex| -> Option<bool> {
+        let ExK::Bin(op @ (BinKind::Shl | BinKind::Shr), x, one) = &e.k else { return None };
+        (one.as_const() == Some(1) && e.w as u32 == 8 * n && !(e.signed && *op == BinKind::Shr) && matches!(&x.k, ExK::Load(q) if q == p) && x.w == e.w).then_some(*op == BinKind::Shl)
+    };
+    let left = is_shift(eb)?;
+    let ExK::Bin(BinKind::Xor, a, b) = &ea.k else { return None };
+    let kc = match (is_shift(a), b.as_const(), is_shift(b), a.as_const()) {
+        (Some(d), Some(kc), _, _) | (_, _, Some(d), Some(kc)) if d == left => kc,
+        _ => return None,
+    };
+    if ea.w as u32 != 8 * n || (left && (*byte, *bit) != (n - 1, 0x80)) || (!left && (*byte, *bit) != (0, 0x01)) {
+        return None;
+    }
+    Some((p, left, kc & mask(ea.w), n))
+}
+
 /// `p` as the one-byte element `arr(iv)`: the array and the element's byte offset.
 fn walk_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
     let (Base::Var(arr), Some(ix)) = (&p.base, &p.idx) else { return None };
@@ -3030,6 +3061,15 @@ impl<'p> Gen<'p> {
             for _ in 0..r {
                 one(self);
             }
+        } else if (4..=5).contains(&r) && n - q == 1 && !signed && self.tgt.opt {
+            // One byte left to shift by four or more: swap its nibbles and mask, then the odd bits one at a time.
+            let m = if left { self.a(n - 1) } else { self.a(0) };
+            self.fop("swapf", &m, "f");
+            self.ins(if left { "movlw 0xF0" } else { "movlw 0x0F" });
+            self.fop("andwf", &m, "f");
+            for _ in 4..r {
+                one(self);
+            }
         } else {
             let d = self.d(0);
             self.ins(format!("movlw {r}"));
@@ -4722,6 +4762,7 @@ impl<'p> Gen<'p> {
                 let at = Place { base: Base::Flash(*f), off: *off, bit: None, idx: idx.clone().map(Box::new), dbit: None, ty: crate::types::Ty::Int(8, false) };
                 self.point_tblptr(&at);
             }
+            St::If(arms, otherwise) if self.tgt.opt && self.shift_out_if(arms, otherwise) => {}
             St::If(arms, otherwise) => {
                 let end = self.fresh();
                 let mut done = false;
@@ -5173,6 +5214,37 @@ impl<'p> Gen<'p> {
         self.br(Cc::Always, &top);
         self.depth -= 1;
         self.label(&end);
+    }
+
+    /// `If (x And top) <> 0 Then x = (x << 1) Xor K Else x = x << 1` (a CRC or LFSR step; also `>> 1` with bit 0, and
+    /// the test written `= 0` with the arms the other way round): the bit tested is the one the shift moves out, so
+    /// the shift is done once, in place, and the carry decides whether the constant is folded in. Emits the code and
+    /// returns true when the statement has that shape.
+    fn shift_out_if(&mut self, arms: &[(Ex, Vec<S>)], otherwise: &[S]) -> bool {
+        let Some((p, left, kc, n)) = shift_out_shape(arms, otherwise) else { return false };
+        if matches!(p.base, Base::Var(v) if self.p.vars[v].volatile) {
+            return false;
+        }
+        let dst = self.place_mem(p, true);
+        if dst.reg {
+            return false;
+        }
+        self.ins("bcf STATUS, 0, c");
+        if left {
+            for i in 0..n {
+                self.fop("rlcf", &dst.at(i), "f");
+            }
+        } else {
+            for i in (0..n).rev() {
+                self.fop("rrcf", &dst.at(i), "f");
+            }
+        }
+        let end = self.fresh();
+        self.br(Cc::Nc, &end);
+        let d2 = dst.clone();
+        self.chain(BinKind::Xor, &move |_g: &mut Self, i| d2.at(i), &Src::Imm(kc), n);
+        self.label(&end);
+        true
     }
 
     /// Whether `p` is the element the walking loop is at (see `walk`).

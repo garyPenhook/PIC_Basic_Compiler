@@ -43,6 +43,36 @@ impl<'p> G<'p> {
                 let p = Place { base: Base::Flash(*i), off: *n, bit: None, idx: idx.clone().map(Box::new), dbit: None, ty: crate::types::BYTE };
                 self.set_fsr(1, &p);
             }
+            // A CRC or LFSR step: the bit tested is the one the shift moves out, so shift once and let the carry
+            // decide whether the constant is folded in (`crate::codegen::shift_out_shape`).
+            St::If(arms, other)
+                if self.tgt.opt
+                    && crate::codegen::shift_out_shape(arms, other).is_some_and(|(p, ..)| !matches!(p.base, Base::Var(v) if self.p.vars[v].volatile) && self.place_mem(p).is_some()) =>
+            {
+                let (p, left, kc, n) = crate::codegen::shift_out_shape(arms, other).expect("checked");
+                let m = self.place_mem(p).expect("checked");
+                if left {
+                    self.fop("lslf", &m.at(0), "f");
+                    for i in 1..n {
+                        self.fop("rlf", &m.at(i), "f");
+                    }
+                } else {
+                    self.fop("lsrf", &m.at(n - 1), "f");
+                    for i in (0..n - 1).rev() {
+                        self.fop("rrf", &m.at(i), "f");
+                    }
+                }
+                let end = self.fresh();
+                self.br(Cc::Nc, &end);
+                for i in 0..n {
+                    let b = (kc >> (8 * i)) & 0xFF;
+                    if b != 0 {
+                        self.ins(format!("movlw 0x{b:02X}"));
+                        self.fop("xorwf", &m.at(i), "f");
+                    }
+                }
+                self.label(&end);
+            }
             St::If(arms, other) => {
                 let end = self.fresh();
                 for (i, (c, body)) in arms.iter().enumerate() {
