@@ -308,12 +308,14 @@ fn fold(e: &mut Ex) {
         }
         // `(x - c) - v` is `x - (v + c)` in wrap-around arithmetic at one width, and `v + 1` is one instruction where the
         // difference of two variables minus one takes a negate (`tmp(n - 1 - i)`: 2 words instead of 3).
-        ExK::Bin(BinKind::Sub, a, b) if b.w == w && b.as_const().is_none() && matches!(&b.k, ExK::Load(p) if !p.indirect() && p.idx.is_none() && p.dbit.is_none()) => {
-            let inner = match &a.k {
-                ExK::Bin(BinKind::Sub, x, c) if a.w == w && x.w == w && c.w == w && x.as_const().is_none() => c.as_const().map(|c| ((**x).clone(), c)),
-                _ => None,
-            };
-            let Some((x, c)) = inner else { return };
+        ExK::Bin(BinKind::Sub, a, b)
+            if b.w == w
+                && b.as_const().is_none()
+                && matches!(&b.k, ExK::Load(p) if !p.indirect() && p.idx.is_none() && p.dbit.is_none())
+                && matches!(&a.k, ExK::Bin(BinKind::Sub, x, c) if a.w == w && x.w == w && c.w == w && x.as_const().is_none() && c.as_const().is_some()) =>
+        {
+            let ExK::Bin(_, x, c) = &a.k else { return };
+            let (x, c) = ((**x).clone(), c.as_const().unwrap_or(0));
             let plus = Ex::new(ExK::Bin(BinKind::Add, b.clone(), Box::new(Ex::konst(c, w, signed))), w, b.signed);
             *e = Ex::new(ExK::Bin(BinKind::Sub, Box::new(x), Box::new(plus)), w, signed);
             return;
@@ -1752,24 +1754,7 @@ fn coalesce_results(p: &mut Program) -> bool {
         let vvar = &p.vars[v];
         // A `ByVal` parameter serves as well as a local (the caller stores the argument in it and reads the result
         // from it), in a routine that calls nothing: it cannot then be entered again while the value is in use.
-        let is_param = vvar.kind == VarKind::Param && p.funcs[fi].params.contains(&v) && {
-            struct Calls(bool);
-            impl Visit for Calls {
-                fn ex(&mut self, e: &Ex) {
-                    if matches!(e.k, ExK::Call(..)) {
-                        self.0 = true;
-                    }
-                }
-                fn stmt(&mut self, s: &S) {
-                    if matches!(s.st, St::Call(..) | St::GoSub(_) | St::Asm(_)) {
-                        self.0 = true;
-                    }
-                }
-            }
-            let mut c = Calls(false);
-            w_block(&mut c, body);
-            !c.0
-        };
+        let is_param = vvar.kind == VarKind::Param && p.funcs[fi].params.contains(&v) && leaf(body);
         if !(vvar.kind == VarKind::Local || is_param) || vvar.owner != Some(fi) || vvar.by_ref || vvar.volatile || vvar.init.is_some() {
             continue;
         }

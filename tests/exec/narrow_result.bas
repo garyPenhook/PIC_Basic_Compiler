@@ -1,4 +1,4 @@
-' expect: T_A=14464 T_B=44 T_C=-2 T_D=20 T_E=7 T_F=14464
+' expect: T_A=14464 T_B=44 T_C=-2 T_D=20 T_E=7 T_F=14464 T_G=1000
 ' `Result = r` with `r` a wider local: the callers read the low bytes of `r`. The high bytes must not leak into the result.
 Program T
 Device = 18F27Q10
@@ -10,6 +10,7 @@ Dim c As Integer
 Dim d As Byte
 Dim e As Word
 Dim f As Word
+Dim g As Word
 
 NoInline Function Sq(ByVal n As LongWord) As Word
     Dim r As LongWord
@@ -48,3 +49,4 @@ c = Sgn(69998)
 d = WithCall(0)
 e = Twice(3) + 1
 f = Twice(40000)
+g = Sq(100) + Sq(150)
