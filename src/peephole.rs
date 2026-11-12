@@ -559,6 +559,27 @@ fn dead_paths(items: &[Item], from: usize, w: bool, need: u8) -> bool {
                     }
                     work.push((p, w, need));
                 }
+                Item::SkipBr(t, target) => {
+                    // Enhanced mid-range: a skip and the branch taken when it does not skip. Only the plain forms are
+                    // followed: a bit test (of a flag, or of a byte other than `WREG`) and a counted skip into `f`.
+                    let Some((m, o)) = parse(t) else { return false };
+                    let stat = o.first().is_some_and(|x| x.to_ascii_uppercase().contains("STATUS"));
+                    let ok = match m.as_str() {
+                        "btfsc" | "btfss" if stat => match o.get(1).map(|b| b.trim()) {
+                            Some("0") => need & C == 0,
+                            Some("2") => need & Z == 0,
+                            _ => false,
+                        },
+                        "btfsc" | "btfss" => !o.first().is_some_and(|x| x.eq_ignore_ascii_case("WREG")),
+                        "decfsz" | "incfsz" => o.get(1).is_some_and(|d| matches!(*d, "f" | "1")),
+                        _ => false,
+                    };
+                    if !ok {
+                        return false;
+                    }
+                    let Some(p) = label_at(target) else { return false };
+                    work.push((p, w, need));
+                }
                 Item::Ins(t) => {
                     if matches!(parse(t), Some((m, _)) if m == "return" || m == "retlw") {
                         if w {
@@ -1696,6 +1717,113 @@ fn pass_incdec_w(items: &mut [Item], env: &Env) -> bool {
     changed
 }
 
+/// Small rewrites of adjacent instructions, each one word shorter:
+/// * `movf X, w` / `addlw 1` (or `0xFF`) is `incf X, w` (`decf X, w`). On the PIC18 both set the same five flags from
+///   the same sum; on the enhanced mid-range core `incf` leaves C and DC alone, so they must be dead.
+/// * `op X, w` / `movwf X` is `op X, f` when `WREG` is not read afterwards (the flags are those of `op` either way).
+/// * `movf X, w` / `op WREG, w` / `movwf X`, with `op` one of the commutative `addwf`, `andwf`, `iorwf`, `xorwf`, is
+///   `movf X, w` / `op X, f` under the same condition.
+/// * `movf X, w` / `movwf X` stores what is already there: the store goes.
+/// `X` is compiler-placed RAM, so reading or writing it once more or less has no side effect.
+fn pass_small(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Comment(_))).collect();
+    let is_w = |d: Option<&&str>| d.is_some_and(|d| matches!(*d, "w" | "0"));
+    let mut edits: Vec<(usize, Option<String>)> = Vec::new();
+    let mut busy = std::collections::HashSet::new();
+    for (n, &i) in real.iter().enumerate() {
+        let Some(&j) = real.get(n + 1) else { break };
+        let (Item::Ins(a), Item::Ins(b)) = (&items[i], &items[j]) else { continue };
+        if keep[i] || keep[j] || busy.contains(&i) {
+            continue;
+        }
+        let (Some((ma, oa)), Some((mb, ob))) = (parse(a), parse(b)) else { continue };
+        if oa.is_empty() || oa[0].eq_ignore_ascii_case("WREG") || !env.is_plain(oa[0]) || !is_w(oa.get(1)) {
+            continue;
+        }
+        let acc = |o: &[&str], at: usize| o.get(at).map(|x| x.to_string());
+        if ma == "movf" && mb == "addlw" && ob.len() == 1 {
+            let op = match parse_lit(ob[0]) {
+                Some(1) => "incf",
+                Some(0xFF) => "decf",
+                _ => continue,
+            };
+            if core16() && !dead_paths(items, j + 1, false, C) {
+                continue;
+            }
+            edits.push((i, Some(format!("{op} {}", oa.join(", ")))));
+            edits.push((j, None));
+            busy.insert(j);
+            continue;
+        }
+        if ma == "movf" && mb == "movwf" && ob.first() == oa.first() && acc(&ob, 1) == acc(&oa, 2) {
+            edits.push((j, None));
+            busy.insert(j);
+            continue;
+        }
+        let rmw = matches!(
+            ma.as_str(),
+            "addwf" | "addwfc" | "subwf" | "subwfb" | "andwf" | "iorwf" | "xorwf" | "incf" | "decf" | "comf" | "swapf" | "rlcf" | "rrcf" | "rlncf" | "rrncf" | "rlf" | "rrf" | "lslf" | "lsrf" | "asrf"
+        );
+        if rmw && mb == "movwf" && ob.first() == oa.first() && acc(&ob, 1) == acc(&oa, 2) && dead_paths(items, j + 1, true, 0) {
+            let mut o: Vec<&str> = oa.clone();
+            o[1] = "f";
+            edits.push((i, Some(format!("{ma} {}", o.join(", ")))));
+            edits.push((j, None));
+            busy.insert(j);
+            continue;
+        }
+        // movf X, w / op WREG, w / movwf X
+        if ma == "movf" && matches!(mb.as_str(), "addwf" | "andwf" | "iorwf" | "xorwf") && ob.first().is_some_and(|x| x.eq_ignore_ascii_case("WREG")) && is_w(ob.get(1)) {
+            let Some(&k) = real.get(n + 2) else { continue };
+            let Item::Ins(c) = &items[k] else { continue };
+            let Some((mc, oc)) = parse(c) else { continue };
+            if keep[k] || mc != "movwf" || oc.first() != oa.first() || acc(&oc, 1) != acc(&oa, 2) || !dead_paths(items, k + 1, true, 0) {
+                continue;
+            }
+            let mut o: Vec<&str> = oa.clone();
+            o[1] = "f";
+            edits.push((j, Some(format!("{mb} {}", o.join(", ")))));
+            edits.push((k, None));
+            busy.insert(j);
+            busy.insert(k);
+        }
+    }
+    let changed = !edits.is_empty();
+    edits.sort_by_key(|e| e.0);
+    for (i, t) in edits.into_iter().rev() {
+        match t {
+            Some(t) => items[i] = Item::Ins(t),
+            None => {
+                items.remove(i);
+            }
+        }
+    }
+    changed
+}
+
+/// A branch to a label that is followed by nothing but `return` is that `return`: the same size and two cycles less.
+fn pass_branch_to_return(items: &mut [Item]) -> bool {
+    let keep = protected(items);
+    let mut changed = false;
+    for i in 0..items.len() {
+        let Item::Br(Cc::Always, target) = &items[i] else { continue };
+        if keep[i] {
+            continue;
+        }
+        let Some(p) = items.iter().position(|x| matches!(x, Item::Label(l) if l == target)) else { continue };
+        let mut k = p + 1;
+        while matches!(items.get(k), Some(Item::Comment(_) | Item::Fence | Item::Label(_))) {
+            k += 1;
+        }
+        if matches!(items.get(k), Some(Item::Ins(t)) if t.trim() == "return") && !keep[k] {
+            items[i] = Item::Ins("return".to_string());
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// `bcc L1 / bra L2 / L1:` is `b!cc L2`.
 fn pass_branch_over_branch(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
@@ -2667,6 +2795,13 @@ fn is_temp(sym: &str) -> bool {
 /// `movf d, w` reads `s` instead while neither byte has been written. Chains collapse a step per round
 /// (`__A <- __C`, `TMP <- __A`, read `TMP` becomes a read of `__C`), and [`pass_dead_temp_stores`] then removes the
 /// copies that nothing reads.
+/// Enhanced mid-range: whether byte `s` can be named where `d` is, with the bank selected for `d`: `s` is in common RAM
+/// (offsets 70h-7Fh of every bank) or in the same bank as `d`.
+fn reach16(env: &Env, s: &str, d: &str) -> bool {
+    let (Some(a), Some(b)) = (env.addr(s), env.addr(d)) else { return false };
+    a & 0x7F >= 0x70 || (b & 0x7F < 0x70 && a >> 7 == b >> 7)
+}
+
 fn pass_forward16(items: &mut [Item], env: &Env) -> bool {
     let keep = protected(items);
     let mut pairs: Vec<(String, String)> = Vec::new(); // (d, s): d holds the byte s
@@ -2697,7 +2832,7 @@ fn pass_forward16(items: &mut [Item], env: &Env) -> bool {
                 let to_w = mn == "movf" && ops.len() == 2 && matches!(ops[1].trim(), "w" | "0");
                 let mut read = to_w.then(|| ops[0].trim().to_string());
                 if let Some(d) = &read
-                    && let Some((_, src)) = pairs.iter().find(|(a, _)| same_byte(env, a, d))
+                    && let Some((_, src)) = pairs.iter().find(|(a, b)| same_byte(env, a, d) && reach16(env, b, d))
                 {
                     edits.push((i, format!("movf {src}, w")));
                     read = Some(src.clone());
@@ -3798,6 +3933,8 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_repeat_test(&mut items, env);
         changed |= pass_incdec_test(&mut items);
         changed |= pass_incdec_w(&mut items, env);
+        changed |= pass_small(&mut items, env);
+        changed |= pass_branch_to_return(&mut items);
         changed |= pass_forward(&mut items, env);
         changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);
@@ -3847,6 +3984,8 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_branch_over_branch(&mut items);
         changed |= pass_xorlw_zero(&mut items);
         changed |= pass_repeat_test(&mut items, env);
+        changed |= pass_small(&mut items, env);
+        changed |= pass_branch_to_return(&mut items);
         changed |= pass_copy_back16(&mut items, env);
         changed |= pass_forward16(&mut items, env);
         changed |= pass_dead_temp_stores(&mut items, env);
@@ -4764,4 +4903,33 @@ mod tests {
         assert_eq!(r.iter().filter(|t| t.starts_with("movf X")).count(), 1, "{r:?}");
     }
 
+    #[test]
+    fn p16_copy_is_not_forwarded_into_another_bank() {
+        // U is in bank 2, T in bank 0: the read of T under `movlb 0` must not become a read of U.
+        let mut e = env();
+        e.plain.insert("T".into(), (0x20, 1));
+        e.plain.insert("U".into(), (0x120, 1));
+        e.keep_writes = true;
+        let src = [ins("movlb 2"), ins("movf U, w"), ins("movlb 0"), ins("movwf T"), ins("movlw 3"), ins("movwf X"), ins("movf T, w"), ins("addwf X, f"), Item::Fence];
+        let r: Vec<String> = optimise16(src.to_vec(), &e).iter().filter_map(|i| if let Item::Ins(t) = i { Some(t.clone()) } else { None }).collect();
+        assert!(r.contains(&"movf T, w".to_string()) && r.iter().filter(|t| t.contains("U")).count() == 1, "{r:?}");
+    }
+
+    #[test]
+    fn small_rewrites_of_adjacent_instructions() {
+        // movf/addlw 1 is incf into W; op into W then a store back is op into the byte; a self-copy goes.
+        let r = run(&[ins("movf X, w, c"), ins("addlw 0x01"), ins("movwf Y, c"), Item::Fence]);
+        assert_eq!(r, ["incf X, w, c", "movwf Y, c", "--"]);
+        let r = run(&[ins("movf Y, w, c"), ins("addwf X, w, c"), ins("movwf X, c"), Item::Fence, ins("movlw 1"), ins("movwf Y, c"), Item::Fence]);
+        assert_eq!(r[..2], ["movf Y, w, c", "addwf X, f, c"]);
+        // W is read afterwards: the pair stays.
+        let r = run(&[ins("movf Y, w, c"), ins("addwf X, w, c"), ins("movwf X, c"), ins("movwf Y+1, c"), Item::Fence]);
+        assert_eq!(r[..3], ["movf Y, w, c", "addwf X, w, c", "movwf X, c"]);
+    }
+
+    #[test]
+    fn branch_to_a_return_is_a_return() {
+        let r = run(&[ins("movf X, f, c"), Item::Br(Cc::Z, "_L1".into()), ins("clrf Y, c"), Item::Br(Cc::Always, "_L2".into()), Item::Label("_L1".into()), ins("setf Y, c"), Item::Label("_L2".into()), ins("return")]);
+        assert_eq!(r.iter().filter(|t| *t == "return").count(), 2, "{r:?}");
+    }
 }

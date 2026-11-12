@@ -5033,7 +5033,9 @@ impl<'p> Gen<'p> {
                 let d0 = self.d(0);
                 self.ins(format!("movlw {}", 8 * n));
                 self.fo("movwf", &d0);
-                let (lp, dosub, setq, next) = (self.fresh(), self.fresh(), self.fresh(), self.fresh());
+                // The remainder starts at zero, so before shift k it is at most the top k - 1 bits of the dividend and
+                // the shift never carries out of its top byte: no test of that carry is needed.
+                let (lp, setq, next) = (self.fresh(), self.fresh(), self.fresh());
                 self.label(&lp);
                 self.ins("bcf STATUS, 0, c");
                 for i in 0..n {
@@ -5044,7 +5046,6 @@ impl<'p> Gen<'p> {
                     let c = self.c(i);
                     self.fop("rlcf", &c, "f");
                 }
-                self.br(Cc::C, &dosub);
                 self.sub_cb(n);
                 self.br(Cc::C, &setq);
                 for i in 0..n {
@@ -5053,8 +5054,6 @@ impl<'p> Gen<'p> {
                     self.fop(if i == 0 { "addwf" } else { "addwfc" }, &c, "f");
                 }
                 self.br(Cc::Always, &next);
-                self.label(&dosub);
-                self.sub_cb(n);
                 self.label(&setq);
                 let a0 = self.a(0);
                 self.fbit("bsf", &a0, 0);

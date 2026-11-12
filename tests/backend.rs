@@ -867,6 +867,8 @@ fn p16_programs_in_simulator() {
     }
     let mut files: Vec<PathBuf> = P16_PORTABLE.iter().map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
     files.extend(bas_files(&root().join("tests/exec_p16")));
+    // The larger benchmark programs too: they caught a copy forwarded into the wrong bank (0.1.182).
+    files.extend(bas_files(&root().join("bench/large")));
     for flags in ["", "-O0"] {
         let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F17146").args(&files).output().unwrap();
         let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);

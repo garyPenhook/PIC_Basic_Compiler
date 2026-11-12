@@ -1341,3 +1341,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## Third efficiency review of the generated code (done 2026-11-11, 0.1.181, no compiler change)
 - `docs/EFFICIENCY.md` section 12 (R1-R15). The four `bench/large` programs built for the PIC18F27Q10 (7014 bytes) and the PIC16F18346 (5135 words) and the listings and helpers read against the source. Figures are counted from the listings; no proposed sequence has been run.
 - Largest items: single-use locals and inlined-call parameters/results stored and reloaded (R1), sign-extended operands built in `__A` (R2), loop ends (R3), pointer walks (R4), the 16F ports of PIC18 optimisations (R9). `__div2`/`__div4` carry a `bc` path that cannot be taken (R7).
+
+## Review 3, step 1: divide helpers, small peepholes, and a 16F bank fault (done 2026-11-11, 0.1.182)
+- **Fault fixed (16F, present since 0.1.175):** `pass_forward16` replaced a read of a copy by a read of its source without checking that the source is in the bank selected at the read. `bench/large` `b_dsp`, `c_text` and `d_ctrl` gave wrong sums on the PIC16F17146 when optimised (`-O0` was right). The source must now be in common RAM or in the copy's bank (`reach16`). `p16_programs_in_simulator` runs `bench/large` as well; unit test `p16_copy_is_not_forwarded_into_another_bank`.
+- R7: `__div2`/`__div4` (PIC18) lose the carry test after the remainder shift and the second copy of the subtract (28 -> 23 and 46 -> 37 words).
+- R12, R11 (part): `pass_small` (`movf X,w; addlw 1` -> `incf X,w`; `op X,w; movwf X` -> `op X,f`; self-copies) and `pass_branch_to_return`, both back ends; `dead_paths` follows the 16F skip-and-branch item.
+- `bench/large`: PIC18 7014 -> 6940 bytes; 16F 5135 -> 4920 words.
