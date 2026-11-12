@@ -1380,3 +1380,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - R13: `pass_div_share` lets a store through an FSR stand between the two divides when the program never takes the address of an operand (`addr_taken`): `ToDec` makes one `__divk4` call a digit; c_text 57561 -> 46602 cycles.
 - R11: `pass_tail_merge` (both cores; not under `Optimize = Speed`, `Env::speed`): runs of the same instructions that end in the same `bra`/`return`, or fall into the label the other branches to, keep one copy. c_text 690 -> 663 words, d_ctrl 583 -> 575; 16F c_text 1056 -> 1032, d_ctrl 966 -> 947.
 - `bench/large`: PIC18 6348 -> 6270 bytes; 16F 4758 -> 4710 words. `unary_signext`, `table_pair`, `array_walk` and `param_result` are in `P16_PORTABLE`.
+
+## Review 3, step 8: 16F array walks, start-up zeroing, multiplies (done 2026-11-12, 0.1.189)
+- R4 (16F): the array walk of step 5 in `codegen16` (`walk_plan`, `set_fsr`): FSR0 set once, `addfsr FSR0, 1` at the end of each pass; the loop variable keeps counting. A body with a constant table does not walk there (tables are read through an FSR on that core).
+- R10: a 16-bit variable times a constant does the high byte's products first (`mul_partials_from`), so `x = x * k + c` is built in `x` with no copy back. The 16F `__mul1`/`__mul2` loop ends when no bit of the multiplier is left instead of after a fixed count (same words, a Byte multiplier takes at most 8 passes); `__mul4` does so under `Optimize = Speed`.
+- R15: start-up zeroing joins two runs across bytes nobody owns when the program is the whole image and the span stays in one block of data RAM (one loop instead of two, 6 words).
+- `bench/large`: PIC18 6270 -> 6210 bytes; 16F 4710 -> 4685 words.

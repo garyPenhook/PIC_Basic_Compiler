@@ -87,6 +87,13 @@ impl<'p> G<'p> {
 
     /// Points FSR`n` at the first byte of an indirect place. Uses A when the place has a run-time index.
     pub fn set_fsr(&mut self, n: u32, p: &Place) {
+        // The element a walking loop is at: FSR0 is there already.
+        if n == 0
+            && let Some((arr, iv, off)) = self.walk
+            && crate::codegen::walk_elem(p, iv) == Some((arr, off))
+        {
+            return;
+        }
         let (l, h) = (format!("FSR{n}L"), format!("FSR{n}H"));
         let lo = |me: &mut Self, v: u32| {
             if v == 0 {

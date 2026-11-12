@@ -747,7 +747,7 @@ pub(crate) fn shift_out_shape<'a>(arms: &'a [(Ex, Vec<S>)], otherwise: &'a [S]) 
 }
 
 /// `p` as the one-byte element `arr(iv)`: the array and the element's byte offset.
-fn walk_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
+pub(crate) fn walk_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
     let (Base::Var(arr), Some(ix)) = (&p.base, &p.idx) else { return None };
     if p.bit.is_some() || p.dbit.is_some() || p.bytes() != 1 {
         return None;
@@ -763,9 +763,11 @@ fn walk_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
 /// What `walk_block` finds: the element every indirect place names, and whether the body reads the loop variable
 /// other than as that index.
 #[derive(Default)]
-struct WalkScan {
-    found: Option<(VarId, u32)>,
-    other: bool,
+pub(crate) struct WalkScan {
+    pub found: Option<(VarId, u32)>,
+    pub other: bool,
+    /// The enhanced mid-range core reads constant tables through an FSR too, so a body with one does not walk.
+    pub no_flash: bool,
 }
 
 /// A place in the body of a loop that may walk an array: a direct one, a constant-table element, or the element
@@ -775,7 +777,7 @@ fn walk_place(p: &Place, iv: VarId, st: &mut WalkScan) -> bool {
         return false;
     }
     if matches!(p.base, Base::Flash(_)) {
-        return p.idx.as_ref().is_none_or(|i| walk_ex(i, iv, st));
+        return !st.no_flash && p.idx.as_ref().is_none_or(|i| walk_ex(i, iv, st));
     }
     if !p.indirect() {
         if p.base == Base::Var(iv) {
@@ -802,7 +804,7 @@ fn walk_ex(e: &Ex, iv: VarId, st: &mut WalkScan) -> bool {
     }
 }
 
-fn walk_block(body: &[S], iv: VarId, st: &mut WalkScan) -> bool {
+pub(crate) fn walk_block(body: &[S], iv: VarId, st: &mut WalkScan) -> bool {
     body.iter().all(|s| match &s.st {
         St::Assign(p, e) => p.base != Base::Var(iv) && walk_place(p, iv, st) && walk_ex(e, iv, st),
         St::Add(p, _) | St::Clear(p) | St::SetBit(p, _) | St::ToggleBit(p) => !p.indirect() && p.dbit.is_none() && p.base != Base::Var(iv),
@@ -2561,6 +2563,33 @@ impl<'p> Gen<'p> {
     /// `mul_partials` with the first factor read from `src` (a variable) instead of `__A`: `__A` is then free, so
     /// the sum is built there directly, not in `__C` and copied over (2 words a byte).
     fn mul_partials_from(&mut self, n: u32, mut pairs: Vec<(u32, u32, Fac)>, src: Option<&Mem>) {
+        // 16 bits by a constant, read from a variable: the high byte's products first, the low byte's last. Each
+        // byte of the variable is then read before the result byte of the same weight is written, so
+        // `x = x * k` (and `x * k + c`) is built in `x` itself by `pass_retarget_build`, with no copy back.
+        if n == 2 && self.tgt.opt
+            && let Some(m) = src
+            && pairs.iter().all(|p| matches!(p.2, Fac::Lit(_)))
+            && let Some(k0) = pairs.iter().find_map(|p| if let (0, 0, Fac::Lit(k)) = p { Some(*k) } else { None })
+            && pairs.iter().any(|p| matches!(p, (1, 0, Fac::Lit(_))))
+        {
+            let k1 = pairs.iter().find_map(|p| if let (0, 1, Fac::Lit(k)) = p { Some(*k) } else { None });
+            let (a0, a1) = (self.a(0), self.a(1));
+            self.fop("movf", &m.at(1), "w");
+            self.ins(format!("mullw 0x{k0:02X}"));
+            self.movff_sfr(&a1, "PRODL");
+            if let Some(k1) = k1 {
+                self.fop("movf", m, "w");
+                self.ins(format!("mullw 0x{k1:02X}"));
+                self.ins("movf PRODL, w, c");
+                self.fop("addwf", &a1, "f");
+            }
+            self.fop("movf", m, "w");
+            self.ins(format!("mullw 0x{k0:02X}"));
+            self.movff_sfr(&a0, "PRODL");
+            self.ins("movf PRODH, w, c");
+            self.fop("addwf", &a1, "f");
+            return;
+        }
         pairs.sort_by_key(|p| p.0 + p.1);
         let direct = src.is_some();
         let acc = |g: &mut Self, t: u32| if direct { g.a(t) } else { g.c(t) };
@@ -6096,10 +6125,21 @@ impl<'p> Gen<'p> {
         }
         let own = joined;
         let cost = |len: u32| if len <= 4 { len } else { 4 + 2 * len.div_ceil(255) };
+        // The blocks of data RAM: the Access Bank's RAM half and the banked RAM, joined where they touch.
+        let mut blocks: Vec<(u32, u32)> = vec![self.tgt.access];
+        for &(s, e) in &self.tgt.ram {
+            match blocks.last_mut() {
+                Some(l) if l.1 == s => l.1 = e,
+                _ => blocks.push((s, e)),
+            }
+        }
         let mut spans: Vec<(u32, u32)> = Vec::new();
         for (a, b) in all {
             if let Some(l) = spans.last_mut() {
-                let inside = own.iter().any(|&(s, e)| s <= l.0 && b <= e);
+                // Also across bytes nobody owns, when this program is the whole image (no linked C code) and the
+                // span stays inside one block of data RAM: they hold nothing, so they may be zeroed as well.
+                let free_ram = !self.p.c_link() && blocks.iter().any(|&(s, e)| s <= l.0 && b <= e);
+                let inside = own.iter().any(|&(s, e)| s <= l.0 && b <= e) || free_ram;
                 if inside && cost(b - l.0) <= cost(l.1 - l.0) + cost(b - a) {
                     l.1 = b;
                     continue;

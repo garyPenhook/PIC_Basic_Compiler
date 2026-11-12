@@ -33,13 +33,19 @@ impl<'p> G<'p> {
 
     /// A = A * B (low n bytes), shift-and-add over the bits of B.
     fn mul_helper(&mut self, n: u32) {
+        // Up to 16 bits (and wider under `Optimize = Speed`) the loop ends when no bit of B is left, not after a
+        // fixed count: a small multiplier (a Byte, a constant such as 25) takes a few passes instead of all of them,
+        // for the same number of words at 16 bits and one fewer at 8.
+        let until_zero = n <= 2 || self.p.speed;
         let d0 = self.d(0);
         for i in 0..n {
             let c = self.c(i);
             self.fo("clrf", &c);
         }
-        self.ins(format!("movlw {}", 8 * n));
-        self.fo("movwf", &d0);
+        if !until_zero {
+            self.ins(format!("movlw {}", 8 * n));
+            self.fo("movwf", &d0);
+        }
         let (lp, skip) = (self.fresh(), self.fresh());
         self.label(&lp);
         // The low bit of B, shifted out into carry.
@@ -55,7 +61,17 @@ impl<'p> G<'p> {
         }
         self.label(&skip);
         self.shl_reg(0, n);
-        self.items.push(Item::SkipBr(format!("decfsz {}, f", d0.text()), lp));
+        if until_zero {
+            let b0 = self.b(0);
+            self.fop("movf", &b0, if n == 1 { "f" } else { "w" });
+            for i in 1..n {
+                let b = self.b(i);
+                self.fop("iorwf", &b, "w");
+            }
+            self.br(Cc::Nz, &lp);
+        } else {
+            self.items.push(Item::SkipBr(format!("decfsz {}, f", d0.text()), lp));
+        }
         for i in 0..n {
             let (a, c) = (self.a(i), self.c(i));
             self.fop("movf", &c, "w");

@@ -107,6 +107,9 @@ pub(crate) struct G<'p> {
     pub save_max: Vec<u32>,
     pub isr_end: Option<String>,
     pub flash_used: BTreeSet<usize>,
+    /// A `For` loop walking a Byte array: (array, loop variable, byte offset of the element the variable picks). While
+    /// it is set FSR0 points at that element and `set_fsr(0, ..)` of it emits nothing.
+    pub walk: Option<(VarId, VarId, u32)>,
     /// Scratch bytes in use in the previous round: the size of the registers a handler saves.
     pub isr_scratch: [u32; 4],
     /// Routines each routine calls, as the previous round found out (a `Save` copies the frames of everything its
@@ -170,6 +173,7 @@ impl<'p> G<'p> {
             save_max: vec![0; p.n_saves + p.isrs.len()],
             isr_end: None,
             flash_used: BTreeSet::new(),
+            walk: None,
             isr_scratch,
             reach: reachability(&prev_calls),
             prev_calls,
