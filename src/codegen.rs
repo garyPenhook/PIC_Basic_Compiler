@@ -664,6 +664,9 @@ struct Gen<'p> {
     /// Routines each routine calls directly (the last entry is the main program).
     calls: Vec<BTreeSet<FuncId>>,
     helpers: BTreeSet<String>,
+    /// The last constant-table read: (table, byte offset, byte index, bytes read, the item count right after it).
+    /// TBLPTR is left just past those bytes, which the next read uses when it is of the element that follows.
+    tbl_last: Option<(usize, u32, Option<Box<Ex>>, u32, usize)>,
     /// String literals held in program memory, in first-use order (label `__STR<n>`).
     lits: Vec<Vec<u8>>,
     errors: Vec<(Span, String)>,
@@ -727,6 +730,11 @@ fn narrow_expr(e: &Ex, w: u8, signed: bool) -> Option<Ex> {
         ExK::Bin(op @ (BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor), l, r) => {
             ExK::Bin(*op, Box::new(leaf(l)), Box::new(leaf(r)))
         }
+        // The low bits of a product, and of a left shift by a constant, come from the low bits of the operands too.
+        ExK::Bin(BinKind::Mul, l, r) => ExK::Bin(BinKind::Mul, Box::new(leaf(l)), Box::new(leaf(r))),
+        ExK::Bin(BinKind::Shl, l, r) if r.as_const().is_some_and(|k| k < u32::from(w)) => {
+            ExK::Bin(BinKind::Shl, Box::new(leaf(l)), Box::new(Ex::konst(r.as_const().unwrap(), w, false)))
+        }
         ExK::Conv(x) if x.w >= w => return Some(narrow_expr(x, w, signed).unwrap_or_else(|| Ex::new(ExK::Conv(x.clone()), w, signed))),
         _ => return None,
     };
@@ -758,6 +766,7 @@ impl<'p> Gen<'p> {
             called: BTreeSet::new(),
             calls: vec![BTreeSet::new(); p.funcs.len() + 1],
             helpers: BTreeSet::new(),
+            tbl_last: None,
             lits: Vec::new(),
             errors: Vec::new(),
             span: Span::default(),
@@ -1708,6 +1717,28 @@ impl<'p> Gen<'p> {
         let sym = self.p.flash[f].asm.clone();
         let at = if p.off == 0 { sym } else { format!("{sym}+{}", p.off) };
         let (tl, th, tu) = (self.sfr_mem("TBLPTRL"), self.sfr_mem("TBLPTRH"), self.sfr_mem("TBLPTRU"));
+        // A table of at most 256 bytes: an index inside it fits a byte, so only its low byte is worked out (in W)
+        // and added to the address, the carry going up through TBLPTRH and TBLPTRU. (An index outside the table
+        // reads some other flash byte either way.)
+        if let Some(idx) = &p.idx
+            && self.tgt.opt
+            && (self.p.flash[f].bytes.len() as u32).saturating_sub(p.off) <= 256
+            && !idx.has_call()
+        {
+            let low = if idx.w == 8 { (**idx).clone() } else { narrow_expr(idx, 8, false).unwrap_or_else(|| Ex::new(ExK::Conv(Box::new((**idx).clone())), 8, false)) };
+            self.gen_val(&low);
+            self.ins(format!("addlw low({at})"));
+            self.fo("movwf", &tl);
+            self.ins(format!("movlw high({at})"));
+            self.fo("movwf", &th);
+            self.ins("movlw 0");
+            self.fop("addwfc", &th, "f");
+            self.ins(format!("movlw highword({at})"));
+            self.fo("movwf", &tu);
+            self.ins("movlw 0");
+            self.fop("addwfc", &tu, "f");
+            return;
+        }
         if let Some(idx) = &p.idx {
             self.gen_to_acc(idx);
             let (a0, a1) = (self.a(0), self.a(1));
@@ -1729,6 +1760,53 @@ impl<'p> Gen<'p> {
         }
     }
 
+    /// Whether TBLPTR already points at `p`: the read before it was of the element just below in the same table
+    /// (`T(i)` then `T(i + 1)`, the pair an interpolation reads), with the same element size, and nothing since has
+    /// touched TBLPTR or the index variable or let other code run. The table has at most 255 elements, so an index
+    /// whose `+ 1` wraps was already outside it.
+    fn tbl_continues(&self, p: &Place, n: u32) -> bool {
+        let (Some((f, off, Some(old), read, at)), Base::Flash(pf), Some(new)) = (&self.tbl_last, &p.base, &p.idx) else { return false };
+        if !self.tgt.opt || pf != f || *off != p.off || *read != n || self.p.flash[*f].bytes.len() as u32 / n > 255 {
+            return false;
+        }
+        fn unscale(e: &Ex) -> (&Ex, u32) {
+            match &e.k {
+                ExK::Bin(BinKind::Shl, x, k) if k.as_const().is_some_and(|k| k < 8) => (x, 1 << k.as_const().unwrap()),
+                ExK::Bin(BinKind::Mul, x, k) if k.as_const().is_some() => (x, k.as_const().unwrap()),
+                _ => (e, 1),
+            }
+        }
+        fn bare(e: &Ex) -> &Ex {
+            match &e.k {
+                ExK::Conv(x) if !x.signed => bare(x),
+                _ => e,
+            }
+        }
+        let ((xo, so), (xn, sn)) = (unscale(old), unscale(new));
+        if so != n || sn != n {
+            return false;
+        }
+        let (xo, xn) = (bare(xo), bare(xn));
+        let ExK::Bin(BinKind::Add, a, one) = &xn.k else { return false };
+        if one.as_const() != Some(1) || bare(a) != xo {
+            return false;
+        }
+        let ExK::Load(vp) = &xo.k else { return false };
+        let Base::Var(v) = vp.base else { return false };
+        if vp.indirect() || vp.bit.is_some() || self.p.vars[v].volatile || self.p.vars[v].by_ref || !self.var_private(v) {
+            return false;
+        }
+        let sym = &self.p.vars[v].asm;
+        self.items[*at..].iter().all(|it| match it {
+            Item::Comment(_) | Item::Fence => true,
+            Item::Ins(t) => {
+                let u = t.to_ascii_uppercase();
+                !u.contains("TBL") && !u.contains(&sym.to_ascii_uppercase()) && !u.contains("INDF") && !u.contains("POSTINC") && !u.contains("POSTDEC") && !u.contains("PREINC") && !u.contains("PLUSW")
+            }
+            _ => false,
+        })
+    }
+
     fn load_place(&mut self, p: &Place, n: u32) {
         if matches!(p.base, Base::FlashNext(_)) {
             if n != 1 {
@@ -1739,8 +1817,10 @@ impl<'p> Gen<'p> {
             self.fop("movf", &t, "w");
             return;
         }
-        if matches!(p.base, Base::Flash(_)) {
-            self.point_tblptr(p);
+        if let Base::Flash(f) = p.base {
+            if !self.tbl_continues(p, n) {
+                self.point_tblptr(p);
+            }
             let t = self.sfr_mem("TABLAT");
             for i in 0..n {
                 self.ins("tblrd*+");
@@ -1751,6 +1831,7 @@ impl<'p> Gen<'p> {
                     self.movff(&d, &t);
                 }
             }
+            self.tbl_last = Some((f, p.off, p.idx.clone(), n, self.items.len()));
             return;
         }
         if p.indirect() {

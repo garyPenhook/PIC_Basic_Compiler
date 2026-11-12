@@ -2978,40 +2978,59 @@ fn pass_xor_chain(items: &mut Vec<Item>, env: &Env) -> bool {
     };
     for b in 1..items.len().saturating_sub(1) {
         let (Item::Ins(load), Item::Ins(x1), Item::Br(Cc::Nz, l)) = (&items[b - 1], &items[b], &items[b + 1]) else { continue };
-        let Some(a) = lit(x1) else { continue };
+        let Some(first) = lit(x1) else { continue };
         let Some((m, ops)) = parse(load) else { continue };
         if m != "movf" || ops.len() != 3 || !matches!(ops[1], "w" | "0") || !env.is_plain(ops[0]) || keep[b - 1] || keep[b] || keep[b + 1] {
             continue;
         }
-        let Some(lp) = items.iter().position(|it| matches!(it, Item::Label(x) if x == l)) else { continue };
-        if lp + 2 >= items.len() || keep[lp + 1] || keep[lp + 2] {
-            continue;
-        }
-        // Only the branch gets there: it is the single mention, and the code before it does not fall in.
-        let mentions = items
-            .iter()
-            .filter(|it| match it {
-                Item::Br(_, t) | Item::Call(t) => t == l,
-                Item::Ins(t) | Item::Raw(t) => t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == l),
+        // Follow the whole chain first: each link is `L: movf x, w / xorlw k / bnz next`, reached by the branch alone.
+        // Along it W holds the variable xor the constant of the test just made.
+        let mut links: Vec<(usize, u8)> = Vec::new(); // (position of the label, xorlw operand to use)
+        let mut a = first;
+        let mut l: &String = l;
+        loop {
+            let Some(lp) = items.iter().position(|it| matches!(it, Item::Label(x) if x == l)) else { break };
+            if lp + 2 >= items.len() || keep[lp + 1] || keep[lp + 2] || links.iter().any(|(p, _)| *p == lp) {
+                break;
+            }
+            // Only the branch gets there: it is the single mention, and the code before it does not fall in.
+            let mentions = items
+                .iter()
+                .filter(|it| match it {
+                    Item::Br(_, t) | Item::Call(t) => t == l,
+                    Item::Ins(t) | Item::Raw(t) => t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == l),
+                    _ => false,
+                })
+                .count();
+            let before = (0..lp).rev().find(|&k| !matches!(items[k], Item::Comment(_) | Item::Fence));
+            let closed = match before.map(|k| &items[k]) {
+                Some(Item::Br(Cc::Always, _)) => true,
+                Some(Item::Ins(t)) => t.trim() == "return",
                 _ => false,
-            })
-            .count();
-        let before = (0..lp).rev().find(|&k| !matches!(items[k], Item::Comment(_) | Item::Fence));
-        let closed = match before.map(|k| &items[k]) {
-            Some(Item::Br(Cc::Always, _)) => true,
-            Some(Item::Ins(t)) => t.trim() == "return",
-            _ => false,
-        };
-        if mentions != 1 || !closed {
+            };
+            if mentions != 1 || !closed {
+                break;
+            }
+            let (Item::Ins(again), Item::Ins(x2)) = (&items[lp + 1], &items[lp + 2]) else { break };
+            if again != load {
+                break;
+            }
+            let Some(bv) = lit(x2) else { break };
+            links.push((lp, a ^ bv));
+            a = bv;
+            match items.get(lp + 3) {
+                Some(Item::Br(Cc::Nz, n)) if !keep[lp + 3] => l = n,
+                _ => break,
+            }
+        }
+        if links.is_empty() {
             continue;
         }
-        let (Item::Ins(again), Item::Ins(x2)) = (&items[lp + 1], &items[lp + 2]) else { continue };
-        if again != load {
-            continue;
+        links.sort_by_key(|x| std::cmp::Reverse(x.0));
+        for (lp, k) in links {
+            items[lp + 2] = Item::Ins(format!("xorlw 0x{k:02X}"));
+            items.remove(lp + 1);
         }
-        let Some(bv) = lit(x2) else { continue };
-        items[lp + 2] = Item::Ins(format!("xorlw 0x{:02X}", a ^ bv));
-        items.remove(lp + 1);
         return true;
     }
     false
