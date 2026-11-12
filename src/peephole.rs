@@ -891,8 +891,8 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
-/// Deletes `movwf v` when `v` is a compiler-placed byte that nothing in the program reads, takes
-/// the address of or names any other way (typically a copy of `WREG` that `pass_wreg` made
+/// Deletes `movwf v` when `v` is a compiler-placed byte (or a byte `v+k` of a compiler-placed variable) that nothing
+/// in the program reads, takes the address of or names any other way (typically a copy of `WREG` that `pass_wreg` made
 /// redundant to reload).
 fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
     fn idents(t: &str) -> impl Iterator<Item = &str> {
@@ -907,8 +907,10 @@ fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
                 if let Some((m, ops)) = parse(t)
                     && m == "movwf"
                     && !keep[i]
-                    && let Some(&sym) = ops.first()
-                    && env.is_plain(sym)
+                    && let Some(&whole) = ops.first()
+                    && env.is_plain(whole)
+                    // A byte of a wider variable counts for the variable: nothing reads any of it.
+                    && let Some((sym, _)) = split_off(whole)
                     && idents(sym).count() == 1
                     && !sym.starts_with("__")
                     && !sym.starts_with("PROD")
@@ -1821,6 +1823,601 @@ fn pass_branch_to_return(items: &mut [Item]) -> bool {
         if matches!(items.get(k), Some(Item::Ins(t)) if t.trim() == "return") && !keep[k] {
             items[i] = Item::Ins("return".to_string());
             changed = true;
+        }
+    }
+    changed
+}
+
+/// A compiler-placed byte of a variable that no interrupt handler sees and that is not a scratch register.
+fn own_byte(env: &Env, sym: &str) -> bool {
+    scratch(sym).is_none() && !is_indirect(sym) && env.is_plain(sym) && split_off(sym).is_some_and(|(n, _)| !env.shared.contains(n))
+}
+
+/// `If a = b ... ElseIf a < b` on the same operands (a binary search) compares once (PIC18):
+///
+/// ```text
+///     <load a>; xorwf K, w; bnz L; ...; L: <load a>; cpfsgt K; bra M
+/// ```
+/// becomes `<load a>; subwf K, w; bnz L; ...; L: bnc M` (`bc M` for `cpfslt`): the subtract gives the same Z, and at
+/// `L`, where the two differ, its carry says which is larger. `L` must be reached by that branch alone, the load
+/// must read only the program's own RAM (through FSR0 only after its own `lfsr`), and neither `WREG` nor a flag
+/// may be read after the second test, nor C or OV on the equal path.
+fn pass_shared_compare(items: &mut Vec<Item>, env: &Env) -> bool {
+    if core16() {
+        return false;
+    }
+    let keep = protected(items);
+    let n = items.len();
+    for x in 0..n.saturating_sub(1) {
+        let Item::Ins(t) = &items[x] else { continue };
+        if keep[x] || keep[x + 1] {
+            continue;
+        }
+        let Some((m, o)) = parse(t) else { continue };
+        if m != "xorwf" || o.len() != 3 || !matches!(o[1], "w" | "0") || !own_byte(env, o[0]) {
+            continue;
+        }
+        let (k, acc) = (o[0].to_string(), o[2].to_string());
+        let Item::Br(Cc::Nz, l) = &items[x + 1] else { continue };
+        let l = l.clone();
+        let Some(p) = items.iter().position(|it| matches!(it, Item::Label(q) if *q == l)) else { continue };
+        if p <= x + 2 || label_referenced(items, &l, x + 1) {
+            continue;
+        }
+        // Not fallen into: what stands before the label is a jump or a return that always runs.
+        let mut b = p - 1;
+        while b > x + 1 && matches!(items[b], Item::Comment(_) | Item::Fence) {
+            b -= 1;
+        }
+        let closed = !keep[b]
+            && match &items[b] {
+                Item::Br(Cc::Always, _) => true,
+                Item::Ins(u) => matches!(parse(u), Some((m, _)) if m == "return"),
+                _ => false,
+            };
+        if !closed {
+            continue;
+        }
+        // The second load, up to the compare.
+        let mut q = p + 1;
+        let mut s2: Vec<usize> = Vec::new();
+        let found = loop {
+            match items.get(q) {
+                Some(Item::Comment(_)) => {}
+                Some(Item::Ins(u)) if !keep[q] => {
+                    if matches!(parse(u), Some((m, _)) if m == "cpfsgt" || m == "cpfslt") {
+                        break true;
+                    }
+                    s2.push(q);
+                }
+                _ => break false,
+            }
+            q += 1;
+        };
+        if !found || s2.is_empty() {
+            continue;
+        }
+        let Item::Ins(ct) = &items[q] else { continue };
+        let Some((cm, co)) = parse(ct) else { continue };
+        if co.len() != 2 || co[0] != k || co[1] != acc {
+            continue;
+        }
+        let cc = if cm == "cpfsgt" { Cc::Nc } else { Cc::C };
+        let Some(Item::Br(Cc::Always, mlab)) = items.get(q + 1) else { continue };
+        let mlab = mlab.clone();
+        let Some(m_at) = items.iter().position(|it| matches!(it, Item::Label(z) if *z == mlab)) else { continue };
+        // The first load: the same instructions right before the `xorwf`.
+        let mut s1: Vec<usize> = Vec::new();
+        let mut j = x;
+        let mut ok = true;
+        while s1.len() < s2.len() {
+            if j == 0 {
+                ok = false;
+                break;
+            }
+            j -= 1;
+            match &items[j] {
+                Item::Comment(_) => {}
+                Item::Ins(_) if !keep[j] => s1.push(j),
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        s1.reverse();
+        let text = |i: usize| match &items[i] {
+            Item::Ins(u) => u.trim().to_string(),
+            _ => String::new(),
+        };
+        if s1.iter().zip(&s2).any(|(&a, &b)| text(a) != text(b)) {
+            continue;
+        }
+        // The load only reads, starts from memory (not from what `WREG` held) and leaves its value in `WREG`.
+        let mut pointed = false;
+        let mut started = false;
+        let pure = s2.iter().all(|&i| {
+            let u = text(i);
+            let low = u.to_ascii_lowercase();
+            if let Some(rest) = low.strip_prefix("lfsr ") {
+                let sym = u[5..].split_once(',').map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+                pointed = rest.trim_start().starts_with('0') && own_byte(env, &sym);
+                return pointed;
+            }
+            let Some(e) = effect(&u) else { return false };
+            if !e.wmem.is_empty() || e.writes != [Loc::W] || e.flags_r != 0 {
+                return false;
+            }
+            if !started && e.reads.contains(&Loc::W) {
+                return false;
+            }
+            started = true;
+            e.rmem.iter().all(|r| own_byte(env, r) || (pointed && matches!(r.to_ascii_uppercase().as_str(), "PLUSW0" | "INDF0")))
+        });
+        if !pure || !started {
+            continue;
+        }
+        if !dead_paths(items, x + 2, false, C | OV) || !dead_paths(items, m_at, true, ALL) || !dead_paths(items, q + 2, true, ALL) {
+            continue;
+        }
+        items[x] = Item::Ins(format!("subwf {k}, w, {acc}"));
+        items[q] = Item::Br(cc, mlab);
+        let mut gone = s2;
+        gone.push(q + 1);
+        let mut i = 0;
+        items.retain(|_| {
+            i += 1;
+            !gone.contains(&(i - 1))
+        });
+        return true;
+    }
+    false
+}
+
+/// `movf A, w; subwf B, w; bc L` with `WREG` already holding `B` (it was just stored there) is `cpfsgt A; bra L`
+/// (PIC18): one word less, when neither `WREG` nor a flag is read on either path.
+fn pass_cpfs_held(items: &mut Vec<Item>, env: &Env) -> bool {
+    if core16() {
+        return false;
+    }
+    let keep = protected(items);
+    for i in 0..items.len().saturating_sub(2) {
+        if keep[i] || keep[i + 1] || keep[i + 2] {
+            continue;
+        }
+        let (Item::Ins(t0), Item::Ins(t1), Item::Br(Cc::C, l)) = (&items[i], &items[i + 1], &items[i + 2]) else { continue };
+        let (Some((m0, o0)), Some((m1, o1))) = (parse(t0), parse(t1)) else { continue };
+        if m0 != "movf" || o0.len() != 3 || !matches!(o0[1], "w" | "0") || m1 != "subwf" || o1.len() != 3 || !matches!(o1[1], "w" | "0") {
+            continue;
+        }
+        if !own_byte(env, o0[0]) || !own_byte(env, o1[0]) || may_alias(env, o0[0], o1[0]) || !w_holds(items, i, o1[0]) {
+            continue;
+        }
+        let Some(at) = items.iter().position(|it| matches!(it, Item::Label(z) if z == l)) else { continue };
+        if !dead_paths(items, at, true, ALL) || !dead_paths(items, i + 3, true, ALL) {
+            continue;
+        }
+        let l = l.clone();
+        items[i] = Item::Ins(format!("cpfsgt {}, {}", o0[0], o0[2]));
+        items[i + 1] = Item::Br(Cc::Always, l);
+        items.remove(i + 2);
+        return true;
+    }
+    false
+}
+
+/// What an FSR is known to hold at a point of the code (`fsr_flow`).
+#[derive(Clone, PartialEq)]
+enum F {
+    /// No path reaches the point yet.
+    Top,
+    /// The address an `lfsr` loaded (its operand, lower case).
+    Is(String),
+    Unknown,
+}
+
+/// What each of FSR0..2 holds before every item, by a forward data-flow analysis; `None` when the code has a
+/// branch it cannot place.
+fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
+    fn meet(a: &F, b: &F) -> F {
+        match (a, b) {
+            (F::Top, x) | (x, F::Top) => x.clone(),
+            (F::Is(p), F::Is(q)) if p == q => F::Is(p.clone()),
+            _ => F::Unknown,
+        }
+    }
+    type St3 = [F; 3];
+    let unknown = || -> St3 { [F::Unknown, F::Unknown, F::Unknown] };
+    let n = items.len();
+    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    for (i, it) in items.iter().enumerate() {
+        if let Item::Label(l) = it {
+            label_at.insert(l.as_str(), i);
+        }
+    }
+    let is_branch = |m: &str| matches!(m, "bra" | "goto" | "bz" | "bnz" | "bc" | "bnc" | "bn" | "bnn" | "bov" | "bnov");
+    // A label named by anything but a branch can be entered from anywhere.
+    let mut named: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for it in items.iter() {
+        let t = match it {
+            Item::Raw(t) => t,
+            Item::Ins(t) if !matches!(parse(t), Some((m, _)) if is_branch(&m)) => t,
+            _ => continue,
+        };
+        for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if let Some((&l, _)) = label_at.get_key_value(tok) {
+                named.insert(l);
+            }
+        }
+    }
+    let next_real = |mut i: usize| {
+        while i < n && matches!(items[i], Item::Comment(_) | Item::Fence | Item::Keep(_)) {
+            i += 1;
+        }
+        i
+    };
+    let mut inb: Vec<St3> = vec![[F::Top, F::Top, F::Top]; n + 1];
+    for (i, it) in items.iter().enumerate() {
+        if let Item::Label(l) = it && (!local_label(l) || named.contains(l.as_str())) {
+            inb[i] = unknown();
+        }
+    }
+    if n > 0 {
+        inb[0] = unknown();
+    }
+    for sweep in 0.. {
+        if sweep > 200 {
+            return None;
+        }
+        let mut changed = false;
+        for i in 0..n {
+            let s = inb[i].clone();
+            if s.iter().all(|f| *f == F::Top) {
+                continue;
+            }
+            let mut out = s.clone();
+            let mut falls = true;
+            let mut edges: Vec<usize> = Vec::new();
+            match &items[i] {
+                Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) => {}
+                Item::Call(_) | Item::Raw(_) | Item::Org(_) => out = unknown(),
+                Item::SkipBr(..) => return None,
+                Item::Data(_) => falls = false,
+                Item::Br(cc, l) => {
+                    // A branch out of the item list's labels leaves the code this pass looks at.
+                    if let Some(&k) = label_at.get(l.as_str()) {
+                        edges.push(k);
+                    }
+                    falls = *cc != Cc::Always;
+                }
+                Item::Ins(t) => {
+                    let low = t.trim().to_ascii_lowercase();
+                    match parse(t) {
+                        None => out = unknown(),
+                        Some((mn, ops)) => match mn.as_str() {
+                            "lfsr" => {
+                                let v = ops.get(1).map(|v| v.to_ascii_lowercase()).unwrap_or_default();
+                                match ops.first().and_then(|k| k.parse::<usize>().ok()) {
+                                    Some(k) if k < 3 && !v.is_empty() && ops.len() == 2 => out[k] = F::Is(v),
+                                    _ => out = unknown(),
+                                }
+                            }
+                            "return" | "retlw" | "retfie" | "reset" => falls = false,
+                            "call" | "rcall" => out = unknown(),
+                            m if is_branch(m) => {
+                                match ops.first().and_then(|o| label_at.get(*o)) {
+                                    Some(&k) => edges.push(k),
+                                    None => return None,
+                                }
+                                falls = !matches!(m, "bra" | "goto");
+                            }
+                            _ => {
+                                if is_skip(t) {
+                                    let j = next_real(i + 1);
+                                    if !matches!(items.get(j), Some(Item::Ins(_) | Item::Br(..))) {
+                                        return None;
+                                    }
+                                    edges.push(next_real(j + 1));
+                                }
+                                // Anything else that names a pointer, an auto-increment register or the program counter.
+                                if low.contains("fsr") || low.contains("pcl") || (0..3).any(|k| low.contains(&format!("inc{k}")) || low.contains(&format!("dec{k}"))) {
+                                    out = unknown();
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+            for k in edges {
+                // What a skip or a branch passes on is the state before it (neither writes a pointer).
+                let m: St3 = std::array::from_fn(|r| meet(&inb[k][r], &s[r]));
+                if m != inb[k] {
+                    inb[k] = m;
+                    changed = true;
+                }
+            }
+            if falls {
+                let m: St3 = std::array::from_fn(|r| meet(&inb[i + 1][r], &out[r]));
+                if m != inb[i + 1] {
+                    inb[i + 1] = m;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    Some(inb)
+}
+
+/// `lfsr n, X` when FSR n holds `X` on every path that reaches it (PIC18): a forward data-flow analysis over the
+/// item list, so the pointer is known across a label, a loop and a skip, where `pass_redundant_lfsr` forgets it
+/// (the `lfsr` inside a `While` whose every way in has already loaded it). The start of a routine, a label that
+/// anything but a branch names, a call, raw text and any other mention of an FSR or of an auto-increment register
+/// make the pointer unknown. Interrupt handlers save and restore the FSRs. Gives up when it cannot place a branch.
+fn pass_lfsr_flow(items: &mut Vec<Item>) -> bool {
+    if core16() {
+        return false;
+    }
+    let Some(inb) = fsr_flow(items) else { return false };
+    let keep = protected(items);
+    let n = items.len();
+    let mut dead = vec![false; n];
+    for i in 0..n {
+        if let Item::Ins(t) = &items[i]
+            && !keep[i]
+            && let Some((mn, ops)) = parse(t)
+            && mn == "lfsr"
+            && ops.len() == 2
+            && let Some(k) = ops[0].parse::<usize>().ok().filter(|k| *k < 3)
+            && inb[i][k] == F::Is(ops[1].to_ascii_lowercase())
+        {
+            dead[i] = true;
+        }
+    }
+    let changed = dead.iter().any(|&d| d);
+    if changed {
+        let mut k = 0;
+        items.retain(|_| {
+            k += 1;
+            !dead[k - 1]
+        });
+    }
+    changed
+}
+
+/// A value loaded into `WREG` a second time by the same instructions (PIC18): `decf J, w; lfsr 0, A; movf PLUSW0, w`,
+/// a test that leaves `WREG` alone, then the same three again (`If a(j - 1) >= k ... a(j) = a(j - 1)`). The second
+/// load goes when nothing in between wrote `WREG`, a byte the load reads or anything through a pointer, FSR0 still
+/// points where it did, and the flags the load sets are not read after it. Only straight runs: a label, a call or a
+/// branch that is always taken forgets what `WREG` holds; a branch not taken, or one a skip passes over, does not.
+fn pass_same_load(items: &mut Vec<Item>, env: &Env) -> bool {
+    if core16() {
+        return false;
+    }
+    let keep = protected(items);
+    let n = items.len();
+    // One step of a load: its text (an element read carries the array FSR0 points at) and the bytes it reads.
+    let step = |i: usize, fsr0: &Option<String>, first: bool| -> Option<(String, Vec<String>)> {
+        let Item::Ins(t) = &items[i] else { return None };
+        if keep[i] {
+            return None;
+        }
+        let e = effect(t)?;
+        if !e.wmem.is_empty() || e.writes != [Loc::W] || e.flags_r != 0 || (first && e.reads.contains(&Loc::W)) {
+            return None;
+        }
+        // A scratch register read is a dependency too (`#n`).
+        let mut deps: Vec<String> = e.reads.iter().filter_map(|r| match r {
+            Loc::S(k) => Some(format!("#{k}")),
+            Loc::W => None,
+        }).collect();
+        let mut text = t.trim().to_string();
+        for r in &e.rmem {
+            if own_byte(env, r) {
+                deps.push(r.clone());
+            } else if matches!(r.to_ascii_uppercase().as_str(), "PLUSW0" | "INDF0") {
+                let a = fsr0.as_ref()?;
+                text = format!("{text} @{a}");
+                deps.push(format!("@{a}"));
+            } else {
+                return None;
+            }
+        }
+        Some((text, deps))
+    };
+    let lfsr0 = |i: usize| -> Option<String> {
+        let Item::Ins(t) = &items[i] else { return None };
+        let (m, o) = parse(t)?;
+        (m == "lfsr" && o.len() == 2 && o[0] == "0").then(|| o[1].to_string())
+    };
+    let Some(flow) = fsr_flow(items) else { return false };
+    let known0 = |i: usize| match &flow[i][0] {
+        F::Is(a) => items.iter().find_map(|it| match it {
+            Item::Ins(t) => parse(t).filter(|(m, o)| m == "lfsr" && o.len() == 2 && o[1].to_ascii_lowercase() == *a).map(|(_, o)| o[1].to_string()),
+            _ => None,
+        }).filter(|a| own_byte(env, a)),
+        _ => None,
+    };
+    let mut held: Vec<String> = Vec::new();
+    let mut deps: Vec<String> = Vec::new();
+    let mut fsr0: Option<String> = None;
+    let mut i = 0;
+    while i < n {
+        // What the analysis knows of FSR0 here (a label ends the run, but the pointer may be the same on every way in).
+        if fsr0.is_none() {
+            fsr0 = known0(i);
+        }
+        match &items[i] {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Br(cc, _) if *cc != Cc::Always || keep[i] => {}
+            Item::Ins(t) => {
+                if let Some(a) = lfsr0(i) {
+                    if keep[i] {
+                        fsr0 = None;
+                        held.clear();
+                    } else if fsr0.as_deref() != Some(a.as_str()) {
+                        fsr0 = own_byte(env, &a).then_some(a);
+                        if deps.iter().any(|d| d.starts_with('@')) {
+                            held.clear();
+                        }
+                    }
+                    i += 1;
+                    continue;
+                }
+                // A load starting here: follow it as far as it goes.
+                if let Some((t0, d0)) = step(i, &fsr0, true) {
+                    let mut texts = vec![t0];
+                    let mut nd = d0;
+                    let mut idx = vec![i];
+                    let mut f = fsr0.clone();
+                    let mut j = i + 1;
+                    let mut matched = None;
+                    loop {
+                        if !held.is_empty() && texts == held {
+                            matched = Some(j);
+                        }
+                        if j >= n {
+                            break;
+                        }
+                        if matches!(items[j], Item::Comment(_)) {
+                            j += 1;
+                            continue;
+                        }
+                        if let Some(a) = lfsr0(j) {
+                            if keep[j] || !own_byte(env, &a) {
+                                break;
+                            }
+                            f = Some(a);
+                            j += 1;
+                            continue;
+                        }
+                        // Further steps work on what `WREG` holds.
+                        let Item::Ins(u) = &items[j] else { break };
+                        if !effect(u).is_some_and(|e| e.reads.contains(&Loc::W)) {
+                            break;
+                        }
+                        let Some((tx, dx)) = step(j, &f, false) else { break };
+                        texts.push(tx);
+                        nd.extend(dx);
+                        idx.push(j);
+                        j += 1;
+                    }
+                    if let Some(end) = matched {
+                        // `end` is just past the instructions that rebuilt the held value.
+                        let cut: Vec<usize> = idx.iter().copied().filter(|&k| k < end).collect();
+                        let last = *cut.last().unwrap();
+                        if cut.len() == held.len() && dead_paths(items, last + 1, false, ALL) {
+                            let mut k = 0;
+                            items.retain(|_| {
+                                k += 1;
+                                !cut.contains(&(k - 1))
+                            });
+                            return true;
+                        }
+                    }
+                    held = texts;
+                    deps = nd;
+                    fsr0 = f;
+                    i = j;
+                    continue;
+                }
+                match effect(t) {
+                    None => {
+                        held.clear();
+                        fsr0 = None;
+                    }
+                    Some(e) => {
+                        let low = t.to_ascii_lowercase();
+                        if low.contains("fsr0") || low.contains("inc0") || low.contains("dec0") {
+                            fsr0 = None;
+                            held.clear();
+                        }
+                        let hit = e.writes.contains(&Loc::W)
+                            || e.writes.iter().any(|w| matches!(w, Loc::S(k) if deps.contains(&format!("#{k}"))))
+                            || e.wmem.iter().any(|m| match m {
+                                Mem::Unknown => true,
+                                Mem::Sym(s) => deps.iter().any(|d| match d.strip_prefix('@') {
+                                    Some(a) => split_off(a).map(|b| b.0) == split_off(s).map(|b| b.0),
+                                    None => !d.starts_with('#') && may_alias(env, d, s),
+                                }),
+                            });
+                        if hit || keep[i] && e.writes.contains(&Loc::W) {
+                            held.clear();
+                        }
+                    }
+                }
+            }
+            _ => {
+                held.clear();
+                fsr0 = None;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// A value made by one instruction from a byte, stored and read back once: `comf S, w; movwf T; ...; movf T, w`
+/// makes it again at the read (`comf S, w`) when nothing in between writes `S` or `T` or leaves the straight run, so
+/// a `T` nothing else reads loses its store (an inlined `Result = Not x` used in the next statement). The flags the
+/// instruction sets beyond those of `movf` must be dead after the read.
+fn pass_forward_unary(items: &mut [Item], env: &Env) -> bool {
+    if core16() {
+        return false;
+    }
+    let keep = protected(items);
+    let mut changed = false;
+    for i in 0..items.len().saturating_sub(1) {
+        if keep[i] || keep[i + 1] {
+            continue;
+        }
+        let (Item::Ins(t0), Item::Ins(t1)) = (&items[i], &items[i + 1]) else { continue };
+        let (Some((m0, o0)), Some((m1, o1))) = (parse(t0), parse(t1)) else { continue };
+        if !matches!(m0.as_str(), "comf" | "incf" | "decf" | "swapf" | "rlncf" | "rrncf") || o0.len() != 3 || !matches!(o0[1], "w" | "0") || !own_byte(env, o0[0]) {
+            continue;
+        }
+        if m1 != "movwf" || o1.len() != 2 || !own_byte(env, o1[0]) || may_alias(env, o0[0], o1[0]) {
+            continue;
+        }
+        let (s, t) = (o0[0].to_string(), o1[0].to_string());
+        let Some(e0) = effect(t0) else { continue };
+        let make = t0.trim().to_string();
+        let mut j = i + 2;
+        while j < items.len() {
+            match &items[j] {
+                Item::Comment(_) | Item::Fence => {}
+                Item::Ins(u) if !keep[j] => {
+                    let Some(e) = effect(u) else { break };
+                    if let Some((m, o)) = parse(u)
+                        && m == "movf"
+                        && o.len() == 3
+                        && matches!(o[1], "w" | "0")
+                        && o[0] == t
+                    {
+                        if dead_paths(items, j + 1, false, e0.flags_w & !e.flags_w) {
+                            items[j] = Item::Ins(make.clone());
+                            changed = true;
+                            j += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    if e.wmem.iter().any(|m| match m {
+                        Mem::Unknown => true,
+                        Mem::Sym(x) => may_alias(env, x, &s) || may_alias(env, x, &t),
+                    }) || e.rmem.iter().any(|r| is_indirect(r))
+                    {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+            j += 1;
         }
     }
     changed
@@ -4822,6 +5419,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_redundant_movlb_flow(&mut items);
         changed |= pass_load_reuse(&mut items, env);
         changed |= pass_redundant_lfsr(&mut items);
+        changed |= pass_lfsr_flow(&mut items);
         changed |= pass_copy_back(&mut items, env);
         changed |= pass_overwritten_store(&mut items, env);
         changed |= pass_stage_store(&mut items, env);
@@ -4842,6 +5440,10 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_small(&mut items, env);
         changed |= pass_dead_loads(&mut items, env);
         changed |= pass_branch_to_return(&mut items);
+        changed |= pass_shared_compare(&mut items, env);
+        changed |= pass_cpfs_held(&mut items, env);
+        changed |= pass_same_load(&mut items, env);
+        changed |= pass_forward_unary(&mut items, env);
         changed |= pass_forward(&mut items, env);
         changed |= pass_zero_load(&mut items);
         changed |= pass_retarget(&mut items, env);

@@ -747,6 +747,10 @@ Highest precedence first:
   or `MULLW` steps. A Byte, and under `Optimize = Speed` a Word, divided by a constant uses a reciprocal
   multiply; an unsigned `LongWord` divided by a constant from 3 to 255 uses a short byte-divisor routine. A `/`
   and a `Mod` of the same operands in consecutive statements make one call to the divide routine.
+* **`#option Optimize`.** `Size` and `Balanced` (the default) pick the smallest code. `Speed` trades flash for
+  time in a few places: a Word divided by a constant uses the reciprocal multiply, the multiply and divide
+  routines take their early exits, and equal ends of two branches of one routine are each kept instead of
+  being shared (sharing costs a jump on one of the paths). Results are the same under every setting.
 * **Shifts.** The count must be a constant or a `Byte`. Shifting by the width or more gives 0 (or the
   sign for a signed right shift). `>>` is arithmetic for signed types.
 * Functions may be used in expressions; subroutines may not. Parentheses are needed when calling

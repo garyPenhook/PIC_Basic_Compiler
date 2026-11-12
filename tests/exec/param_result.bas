@@ -2,7 +2,7 @@
 ' (`opt::coalesce_results`). Byte (argument in W), Word and LongWord; a call as the argument of the same routine,
 ' two calls in one expression, a parameter the routine changes first, and routines that are not leaves or that
 ' read `Result` (which keep the copy).
-' expect: T_R0=12 T_R1=48 T_R2=34 T_R3=21 T_R4=6 T_R5=300000 T_R6=77 T_R7=9 T_R8=40 T_R9=1010
+' expect: T_R0=12 T_R1=48 T_R2=34 T_R3=21 T_R4=6 T_R5=300000 T_R6=77 T_R7=9 T_R8=40 T_R9=1010 T_G=84
 Program T
 Device = 18F27Q10
 Clock = 64
@@ -11,6 +11,7 @@ Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 Dim R0, R1, R2, R3, R4, R5, R6, R7, R8, R9 As LongWord
 Dim a, b As Byte
 Dim w As Word
+Dim g As Byte
 
 Function Dbl(ByVal x As Byte) As Byte
     x = x + x
@@ -59,6 +60,14 @@ Function LastOf(ByVal n As Byte) As Byte
     Result = n
 End Function
 
+' The same with a body that reads the loop variable, so the loop is not turned into a count of passes: the
+' variable is the result, so the loop may not step it past the limit (`opt::free_loop_ends`).
+Function LastRead(ByVal n As Byte) As Byte
+    For n = 3 To 9
+        g = g + n
+    Next
+    Result = n
+End Function
 
 a = 6
 b = 3
@@ -75,3 +84,5 @@ w = 1000
 R9 = Mix(w)
 R0 = R0 + LastOf(1) - 9
 R6 = R6 + LastOf(2) - 9
+R1 = R1 + LastRead(1) - 9
+R2 = R2 + LastRead(2) - 9
