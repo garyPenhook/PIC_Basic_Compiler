@@ -4788,6 +4788,136 @@ fn pass_stage_store(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// Three-variable rotate, PIC18 (`t = a + b: a = b: b = t`, the Fibonacci step): the sum is built a byte at a time in
+/// `t`, then `b` is copied to `a` and `t` to `b`. Each byte is done in one go instead, `movf a,w; addwfc b,w; movff b,a;
+/// movwf b`: neither `movff` nor `movwf` touches the carry, `a` and `b` are not read again by a later byte, and `t` is
+/// not needed (nothing else names it). A four-byte step is 20 words, not 28.
+fn pass_rotate3(items: &mut Vec<Item>, env: &Env) -> bool {
+    if core16() || env.keep_writes {
+        return false;
+    }
+    let keep = protected(items);
+    let sym = |n: &str, o: u32| if o == 0 { n.to_string() } else { format!("{n}+{o}") };
+    // `op, c` operand lists of the instruction at `k`: (mnemonic, operands without the access bit).
+    let get = |k: usize| -> Option<(String, Vec<String>)> {
+        let Some(Item::Ins(t)) = items.get(k) else { return None };
+        if keep[k] {
+            return None;
+        }
+        let (m, mut o) = parse(t)?;
+        if m != "movff" && o.pop()? != "c" {
+            return None;
+        }
+        Some((m, o.iter().map(|x| x.to_string()).collect()))
+    };
+    let byte = |s: &str| -> Option<(String, u32)> {
+        let (n, o) = split_off(s)?;
+        (env.is_plain(s) && scratch(s).is_none()).then(|| (n.to_string(), o))
+    };
+    let mut i = 0;
+    while i < items.len() {
+        // The n-th instruction from `i`, looking past statement fences.
+        let at = |n: usize| -> usize {
+            let mut left = n;
+            let mut j = i;
+            loop {
+                if !matches!(items.get(j), Some(Item::Fence)) {
+                    if left == 0 {
+                        return j;
+                    }
+                    left -= 1;
+                }
+                j += 1;
+            }
+        };
+        for w in [4u32, 3, 2] {
+            let w_us = w as usize;
+            let (mut x, mut y, mut t): (Option<(String, u32)>, Option<(String, u32)>, Option<(String, u32)>) = (None, None, None);
+            let mut ok = true;
+            for k in 0..w_us {
+                let (Some((m1, o1)), Some((m2, o2)), Some((m3, o3))) = (get(at(3 * k)), get(at(3 * k + 1)), get(at(3 * k + 2))) else {
+                    ok = false;
+                    break;
+                };
+                let add = if k == 0 { "addwf" } else { "addwfc" };
+                if m1 != "movf" || o1.len() != 2 || o1[1] != "w" || m2 != add || o2.len() != 2 || o2[1] != "w" || m3 != "movwf" || o3.len() != 1 {
+                    ok = false;
+                    break;
+                }
+                let (Some(a), Some(b), Some(c)) = (byte(&o1[0]), byte(&o2[0]), byte(&o3[0])) else {
+                    ok = false;
+                    break;
+                };
+                for (slot, v) in [(&mut x, a), (&mut y, b), (&mut t, c)] {
+                    match slot {
+                        None => *slot = Some(v),
+                        Some(f) if f.0 == v.0 && f.1 + k as u32 == v.1 => {}
+                        _ => ok = false,
+                    }
+                }
+                if !ok {
+                    break;
+                }
+            }
+            let (Some(x), Some(y), Some(t)) = (x, y, t) else { continue };
+            if !ok || x.0 == y.0 || x.0 == t.0 || y.0 == t.0 {
+                continue;
+            }
+            // `movff s+k, d+k` for all k, with `{s, d} = {x, y}`, then `movff t+k, s+k`.
+            let first = match get(at(3 * w_us)) {
+                Some((m, o)) if m == "movff" && o.len() == 2 => (byte(&o[0]), byte(&o[1])),
+                _ => continue,
+            };
+            let (Some(s), Some(d)) = first else { continue };
+            if !((s == x && d == y) || (s == y && d == x)) {
+                continue;
+            }
+            let mut good = true;
+            for k in 0..w_us {
+                let want1 = format!("{}, {}", sym(&s.0, s.1 + k as u32), sym(&d.0, d.1 + k as u32));
+                let want2 = format!("{}, {}", sym(&t.0, t.1 + k as u32), sym(&s.0, s.1 + k as u32));
+                for (n, want) in [(3 * w_us + k, &want1), (4 * w_us + k, &want2)] {
+                    match get(at(n)) {
+                        Some((m, o)) if m == "movff" && o.join(", ") == *want => {}
+                        _ => good = false,
+                    }
+                }
+            }
+            if !good || env.shared.contains(&x.0) || env.shared.contains(&y.0) || env.shared.contains(&t.0) {
+                continue;
+            }
+            // `t` is named nowhere else: 2w mentions here, no address taken.
+            let mentions = items
+                .iter()
+                .map(|it| match it {
+                    Item::Ins(s) | Item::Raw(s) | Item::Label(s) | Item::Call(s) | Item::Br(_, s) | Item::Comment(s) => s.as_str(),
+                    Item::SkipBr(a, _) => a.as_str(),
+                    _ => "",
+                })
+                .map(|s| s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|id| *id == t.0).count())
+                .sum::<usize>();
+            let skip_mentions: usize = items.iter().map(|it| if let Item::SkipBr(_, b) = it { b.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|id| *id == t.0).count() } else { 0 }).sum();
+            if mentions + skip_mentions != 2 * w_us || addr_taken(items, env).contains(&t.0) {
+                continue;
+            }
+            let mut out = Vec::new();
+            for k in 0..w {
+                let (xs, ss) = (sym(&d.0, d.1 + k), sym(&s.0, s.1 + k));
+                out.push(Item::Ins(format!("movf {xs}, w, c")));
+                out.push(Item::Ins(format!("{} {ss}, w, c", if k == 0 { "addwf" } else { "addwfc" })));
+                out.push(Item::Ins(format!("movff {ss}, {xs}")));
+                out.push(Item::Ins(format!("movwf {ss}, c")));
+            }
+            let end = at(5 * w_us - 1) + 1;
+            let fence = matches!(items.get(end), Some(Item::Fence));
+            items.splice(i..end + fence as usize, out.into_iter().chain(fence.then_some(Item::Fence)));
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// One array element already copied into a byte of compiler RAM: `arr(idx + add)` is in `holder`.
 struct Held {
     arr: String,
@@ -5508,6 +5638,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_copy_prop(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
+        changed |= pass_rotate3(&mut items, env);
         if !env.keep_writes {
             changed |= pass_write_only(&mut items, env);
         }
@@ -5590,6 +5721,7 @@ mod tests {
         plain.insert("__D0".to_string(), (0x0C, 4));
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
+        plain.insert("Z".to_string(), (0x14, 2));
         Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default(), zero_abs: false, speed: false }
     }
 
@@ -6787,5 +6919,31 @@ mod tests {
         let mut s = vec![ins("lfsr 0, X")];
         s.extend(table(vec![], vec![], vec![ins("lfsr 0, X"), ins("movf INDF0, w, c"), ins("return")]));
         assert!(pass_lfsr_flow(&mut s), "{:?}", texts(&s));
+    }
+
+    fn rotate_src(extra: &[Item]) -> Vec<Item> {
+        let mut v: Vec<Item> = ["movf X, w, c", "addwf Y, w, c", "movwf Z, c", "movf X+1, w, c", "addwfc Y+1, w, c", "movwf Z+1, c"].map(ins).to_vec();
+        v.push(Item::Fence);
+        v.extend(["movff Y, X", "movff Y+1, X+1"].map(ins));
+        v.push(Item::Fence);
+        v.extend(["movff Z, Y", "movff Z+1, Y+1"].map(ins));
+        v.extend_from_slice(extra);
+        v
+    }
+
+    #[test]
+    fn three_variable_rotate_goes_a_byte_at_a_time() {
+        let mut src = rotate_src(&[]);
+        src.insert(0, Item::Label("L".into()));
+        let got = run_alone(&src);
+        assert_eq!(got, ["L:", "movf X, w, c", "addwf Y, w, c", "movff Y, X", "movwf Y, c", "movf X+1, w, c", "addwfc Y+1, w, c", "movff Y+1, X+1", "movwf Y+1, c"]);
+    }
+
+    #[test]
+    fn three_variable_rotate_keeps_a_temporary_that_is_read_later() {
+        let mut src = rotate_src(&[ins("movf Z, w, c"), ins("movwf X, c")]);
+        src.insert(0, Item::Label("L".into()));
+        let got = run_alone(&src);
+        assert!(got.iter().any(|t| t == "movwf Z, c"), "{got:?}");
     }
 }
