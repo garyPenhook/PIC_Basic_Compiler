@@ -1386,3 +1386,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - R10: a 16-bit variable times a constant does the high byte's products first (`mul_partials_from`), so `x = x * k + c` is built in `x` with no copy back. The 16F `__mul1`/`__mul2` loop ends when no bit of the multiplier is left instead of after a fixed count (same words, a Byte multiplier takes at most 8 passes); `__mul4` does so under `Optimize = Speed`.
 - R15: start-up zeroing joins two runs across bytes nobody owns when the program is the whole image and the span stays in one block of data RAM (one loop instead of two, 6 words).
 - `bench/large`: PIC18 6270 -> 6210 bytes; 16F 4710 -> 4685 words.
+
+## Review 3, step 9: Word by a byte constant, review of the new passes (done 2026-11-12, 0.1.190)
+- R7: an unsigned Word divided by a byte constant calls `__divk2` (8-bit remainder) when the program has no other 16-bit division (`Gen::div2_other`, `opt::any_ex`); `__mul2` (PIC18) is finished in `__A` (15 words, was 18). c_text 46602 -> 37762 cycles, d_ctrl 34359 -> 27285. New `tests/exec/divk_word.bas`.
+- Review of the new passes: `pass_copy_prop` takes a string helper call as a store through an FSR; `free_loop_ends` never frees a variable that is a routine's result (a parameter can be one since 0.1.188).
+- `docs/EFFICIENCY.md` section 12.4 lists what of R1-R15 is done and what is not; `docs/BENCHMARKS.md` has the re-measured table (PIC18 6180 bytes, 0.82 of XC8 `-Os`; 16F 4685 words).
+- **Fault found by the full suite and fixed before release:** `pass_tail_merge` (0.1.188) shared equal tails of two different routines; `pass_w_return` then loaded one routine's result into `WREG` on the other's way out (`tests/exec_rtcc/lib_rtccspi_model` failed). Tails are now shared only inside one routine; unit test `tails_of_two_routines_are_not_shared`. The quick gate (`tests/exec` and `bench/large`) did not show it: the library-model folders must be run too.
+- An independent review of the whole change raised four cases of a rewrite behind a skip instruction; all are refused by the `protected` mask, now pinned by `the_new_passes_leave_what_a_skip_passes_over`.

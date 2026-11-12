@@ -2152,7 +2152,10 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
                     labels.push(l);
                 }
                 Item::Call(c) => {
-                    if !c.starts_with("__") || env.reg_calls.contains(c) {
+                    // The arithmetic helpers write only scratch; the string helpers store through an FSR, which
+                    // reaches a source only when its address is taken.
+                    let pure = ["__mul", "__smul", "__div", "__sdiv", "__shl", "__shr", "__sar"].iter().any(|h| c.starts_with(h));
+                    if !c.starts_with("__") || env.reg_calls.contains(c) || (!pure && src_by_ptr) {
                         ok = false;
                     }
                 }
@@ -2563,7 +2566,8 @@ fn pass_mask_fold(items: &mut Vec<Item>, env: &Env) -> bool {
 /// second, falling into `L:` itself) keep one copy; the first becomes a branch into the second. A run of k words is
 /// replaced by a one-word branch, at two cycles on that path, so not under `Optimize = Speed`. The runs are plain
 /// instructions with no label inside the one that goes and nothing a skip passes over at its start; the same text
-/// does the same thing wherever it runs, bank selection included, since both paths then reach the same place.
+/// does the same thing wherever it runs, bank selection included, since both paths then reach the same place. Both
+/// runs lie in the same routine.
 fn pass_tail_merge(items: &mut Vec<Item>, env: &Env) -> bool {
     if env.speed {
         return false;
@@ -2579,6 +2583,16 @@ fn pass_tail_merge(items: &mut Vec<Item>, env: &Env) -> bool {
                 inside = *on;
             }
             timed[i] = inside || matches!(it, Item::Keep(_));
+        }
+        // Which routine each item belongs to: a tail is shared only inside one routine. A routine's exit is its own
+        // (`pass_w_return` puts its result in `WREG` there, and the stack and bank passes work routine by routine).
+        let mut region = vec![0usize; items.len()];
+        let mut cur = 0usize;
+        for (i, it) in items.iter().enumerate() {
+            if matches!(it, Item::Label(l) if !local_label(l)) {
+                cur += 1;
+            }
+            region[i] = cur;
         }
         let is_ret = |it: &Item| matches!(it, Item::Ins(t) if t.trim() == "return");
         // The item before `i` that is not a comment or a statement end.
@@ -2638,6 +2652,9 @@ fn pass_tail_merge(items: &mut Vec<Item>, env: &Env) -> bool {
                     }
                 }
                 let Some(&(fa, fb)) = run.last() else { continue };
+                if region[fa] != region[fb] || region[ea] != region[eb] || region[fa] != region[ea] {
+                    continue;
+                }
                 // The two runs must not share an instruction.
                 let (lo_a, lo_b) = (fa, fb);
                 if (lo_a..=ea).contains(&eb) || (lo_b..=eb).contains(&ea) || (lo_a <= lo_b && lo_b <= ea) || (lo_b <= lo_a && lo_a <= eb) {
@@ -5409,8 +5426,8 @@ mod tests {
     fn a_boolean_that_is_read_elsewhere_keeps_its_store() {
         let s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
         let r = run(&s);
-        // The value is stored (once: the two paths share the store, `pass_tail_merge`) and the reload and test are gone.
-        assert_eq!(r.iter().filter(|l| *l == "movwf X, c").count(), 1, "{r:?}");
+        // Each path stores its own value and the reload and test are gone.
+        assert_eq!(r.iter().filter(|l| *l == "movwf X, c").count(), 2, "{r:?}");
         assert!(!r.iter().any(|l| l == "movf X, w, c"), "{r:?}");
     }
 
@@ -5928,5 +5945,35 @@ mod tests {
         ];
         let r = run2(&src, &e);
         assert_eq!(r.iter().filter(|t| *t == "clrf S, c").count(), 2, "{r:?}");
+    }
+    #[test]
+    fn the_new_passes_leave_what_a_skip_passes_over() {
+        let e = env2();
+        let user = Item::Raw("lfsr 1, X+Y+R+S+P".into());
+        // A clear behind a skip does not make the byte a known zero.
+        let src = [user.clone(), ins("btfsc P, 0, c"), ins("clrf S, c"), ins("movff S, R"), Item::Fence];
+        assert!(run2(&src, &e).contains(&"movff S, R".to_string()));
+        // An access behind a skip does not take the pointer step.
+        let src = [user.clone(), ins("btfsc P, 0, c"), ins("clrf INDF0, c"), ins("movf POSTINC0, w, c"), ins("movlw 1"), ins("movwf R, c"), Item::Fence];
+        let r = run2(&src, &e);
+        assert!(r.contains(&"clrf INDF0, c".to_string()) && r.contains(&"movf POSTINC0, w, c".to_string()), "{r:?}");
+        // A pair whose first instruction is behind a skip is not merged, and a dead load there stays.
+        let src = [user.clone(), ins("movf Y, w, c"), ins("btfsc P, 0, c"), ins("addwf X, w, c"), ins("movwf X, c"), Item::Fence];
+        let r = run2(&src, &e);
+        assert!(r.contains(&"addwf X, w, c".to_string()) && r.contains(&"movwf X, c".to_string()), "{r:?}");
+        let src = [user, ins("btfsc P, 0, c"), ins("movlw 3"), ins("movlw 4"), ins("movwf R, c"), Item::Fence];
+        let r = run2(&src, &e);
+        assert!(r.contains(&"movlw 3".to_string()), "{r:?}");
+    }
+    #[test]
+    fn tails_of_two_routines_are_not_shared() {
+        let e = env2();
+        let src = [
+            Item::Raw("lfsr 0, X+Y+R+S+P".into()),
+            Item::Label("K_ONE".into()), ins("movlw 5"), ins("movwf S, c"), ins("return"),
+            Item::Label("K_TWO".into()), ins("incf P, f, c"), ins("movlw 5"), ins("movwf S, c"), ins("return"),
+        ];
+        let r = run2(&src, &e);
+        assert_eq!(r.iter().filter(|t| *t == "movwf S, c").count(), 2, "{r:?}");
     }
 }

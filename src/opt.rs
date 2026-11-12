@@ -1874,6 +1874,7 @@ fn free_loop_ends(p: &mut Program) {
     let vars = p.vars.clone();
     let seen = interrupt_vars(p);
     let n_bodies = p.funcs.len() + 1;
+    let results: HashSet<VarId> = p.funcs.iter().filter_map(|f| f.result).collect();
     let named: Vec<Vec<bool>> = {
         let bodies: Vec<&[S]> = p.funcs.iter().map(|f| f.body.as_slice()).chain(std::iter::once(p.main.body.as_slice())).collect();
         (0..vars.len()).map(|v| bodies.iter().map(|b| crate::ir::mentions(b, v)).collect()).collect()
@@ -1882,7 +1883,8 @@ fn free_loop_ends(p: &mut Program) {
         let body: &[S] = if bi < p.funcs.len() { &p.funcs[bi].body } else { &p.main.body };
         let mut ok = HashSet::new();
         for (v, var) in vars.iter().enumerate() {
-            if var.volatile || var.by_ref || !named[v][bi] || !matches!(var.kind, VarKind::Global | VarKind::Local | VarKind::Param) {
+            // A routine's result is read by its callers (a parameter can be one, `coalesce_results`).
+            if var.volatile || var.by_ref || !named[v][bi] || !matches!(var.kind, VarKind::Global | VarKind::Local | VarKind::Param) || results.contains(&v) {
                 continue;
             }
             if var.kind == VarKind::Global && (named[v].iter().filter(|x| **x).count() != 1 || seen.as_ref().is_none_or(|s| s.contains(&v))) {

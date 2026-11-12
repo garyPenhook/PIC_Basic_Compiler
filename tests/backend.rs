@@ -806,7 +806,7 @@ const P16_PORTABLE: &[&str] = &[
     "absminmax", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_func", "str_func2", "gosub", "call_stmt", "if_gosub", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings",
-    "loop_free_end", "unary_signext", "table_pair", "array_walk", "param_result", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge",
+    "loop_free_end", "unary_signext", "table_pair", "array_walk", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge",
 ];
 
 /// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.

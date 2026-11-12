@@ -50,6 +50,16 @@ Function Mix(ByVal x As Word) As Word
     Result = x
 End Function
 
+' The parameter is a loop variable and the result: it keeps the last value the loop gave it.
+Function LastOf(ByVal n As Byte) As Byte
+    Dim s As Byte
+    For n = 3 To 9
+        s = s + 1
+    Next
+    Result = n
+End Function
+
+
 a = 6
 b = 3
 R0 = Dbl(a)
@@ -63,3 +73,5 @@ R7 = Same(Same(b)) + Dbl(b)
 R8 = Quad(10)
 w = 1000
 R9 = Mix(w)
+R0 = R0 + LastOf(1) - 9
+R6 = R6 + LastOf(2) - 9

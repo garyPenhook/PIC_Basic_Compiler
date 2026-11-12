@@ -753,3 +753,36 @@ emitted as `movlw 0x00; subwf x, w` and can go: `movf x+1, w; xorlw 0x80; addlw 
 
 Re-measure `bench/large` on both cores and `bench/random` after each step and record the figures in
 `docs/BENCHMARKS.md`.
+
+### 12.4 What was done (0.1.182 to 0.1.190, 2026-11-11/12)
+
+Measured, not counted: `bench/large` built with each version, sinks checked in basil-sim (PIC18F27Q10) and MDB
+(PIC16F17146), the `-O0` differential and the full suite (`BASIL_MDB=1 cargo test --release`).
+
+| | 0.1.181 | 0.1.190 | |
+|---|---|---|---|
+| PIC18F27Q10 flash, four programs | 7014 bytes | 6180 bytes | −11.9 %; 0.82 of XC8 `-Os` (7560), was 0.93 |
+| PIC18 cycles (a_algo / b_dsp / c_text / d_ctrl) | 83372 / 84200 / 60199 / 35917 | 75801 / 78275 / 37762 / 27285 | −9 % / −7 % / −37 % / −24 % |
+| PIC16F18346 flash, four programs | 5135 words | 4685 words | −8.8 % |
+
+**A fault found on the way.** The optimised 16F build of `b_dsp`, `c_text` and `d_ctrl` gave wrong results at 0.1.181
+(`-O0` was right): `pass_forward16` (0.1.175) forwarded a copy to a read made with another bank selected. Fixed in
+0.1.182; `bench/large` now runs in the 16F simulator test.
+
+| # | Status | Where |
+|---|---|---|
+| R1 | done (PIC18): `pass_retarget_build`, `pass_copy_prop`. Not done: the same copy propagation on the 16F; a result whose frame is overlaid by the next inlined routine (`K_FIR__RESULT` under `K_PID__D`) still takes its copy | `peephole.rs` |
+| R2 | done for a sign-extended variable folded into a wider one. Not done: an operand that reads the destination kept at its own width (`sink + Isqrt(..) + Isqrt(sink)`); a sum of two variables routed through W into `__A` was tried and dropped (it lost `pass_sum_share`, +4 words net) | `codegen.rs` `fold_into` |
+| R3 | done, both cores (`St::For::free`, `opt::free_loop_ends`) | `opt.rs`, `for_loop` |
+| R4 | done for one-byte elements `arr(var)`, both cores; the PIC18 also counts the passes down when the variable has no other use. Not done: wider elements, two arrays at once (the FIR), `arr(var + k)` | `walk_plan`, `pass_fold_postinc` |
+| R5 | done (PIC18). Not done: `If v < 0 Then v = 0 - v` as `Abs` | `store` |
+| R6 | done for an unsigned byte with the left side in W. Not done: one subtract shared by `If a = b ... ElseIf a < b` | `ord_jump` |
+| R7 | done: `__div2`/`__div4` without the carry path; `__mul2` finished in `__A`; a Word by a byte constant through `__divk2` when nothing else needs `__div2` | `emit_helper`, `gen_div` |
+| R8 | done: byte index for tables up to 256 bytes, `T(i)` then `T(i + 1)` | `point_tblptr`, `tbl_continues` |
+| R9 | done: mask tests, dead loads, known-zero copies, repeated `FSRnH` loads, array walks. Not done: load reuse and `moviw k[FSR0]` for neighbouring elements; variable placement by bank | `codegen16`, `pass_dead_loads` |
+| R10 | done: 16-bit constant multiply built in the destination; the 16F multiply loop ends with the multiplier. Not done: `Integer * Byte` inline with two `mulwf` | `mul_partials_from`, `mul_helper` |
+| R11 | done: whole `xorlw` chains, tail merging, `bra` to a `return`. Not done: a computed jump for a dense `Select` | `pass_xor_chain`, `pass_tail_merge` |
+| R12 | done: `incf X,w`, `op X,f`, self-copies, mask folding, bit add, nibble-swap shift tail, the shift-out conditional, `rlcf top,w`. Not done: peephole facts kept across a label with one way in; `(n - 1) - i` | `pass_small`, `pass_mask_fold`, `shift_out_shape` |
+| R13 | done | `pass_div_share` |
+| R14 | done | `ord_core` |
+| R15 | done: joined start-up zero runs, a `ByVal` parameter as the result of a leaf routine. Not done: a result that is the low bytes of a wider local, the entry clear of a local array, the three-variable rotate | `startup`, `coalesce_results` |

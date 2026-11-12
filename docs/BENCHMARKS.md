@@ -227,3 +227,19 @@ fail dropped. Total 7244 to 7124 bytes (algorithms 1618, fixed-point DSP 2722, t
 0.1.159 (M7/M8): constant multiplies read a plain multiplicand where it is, and array stores of a staged byte read the
 source directly. Total 7124 to 7092 bytes (algorithms 1598, fixed-point DSP 2714, text 1536, command state machine
 1244; 0.94 of XC8 `-Os`), `sink` unchanged in all four.
+
+## Larger programs after review 3, 2026-11-12 (0.1.190)
+
+`bench/large/run.sh`, flash in bytes, PIC18F27Q10, XC8 v4.00. Sinks equal to the `-Os` values in basil-sim.
+
+| program | basil 0.1.181 | basil 0.1.190 | XC8 -Os | XC8 -O2 | basil vs -Os |
+|---|---:|---:|---:|---:|---:|
+| a_algo | 1592 | 1376 | 1826 | 2062 | 0.75 |
+| b_dsp | 2662 | 2376 | 2606 | 2878 | 0.91 |
+| c_text | 1520 | 1300 | 1738 | 1896 | 0.75 |
+| d_ctrl | 1240 | 1128 | 1390 | 1538 | 0.81 |
+| total | 7014 | 6180 | 7560 | 8374 | 0.82 |
+
+Cycles to `__halt` (basil-sim): a_algo 83372 -> 75801, b_dsp 84200 -> 78275, c_text 60199 -> 37762, d_ctrl 35917 -> 27285.
+The same sources for the PIC16F18346: 5135 -> 4685 words. What changed is listed in `docs/EFFICIENCY.md` section 12.4.
+
