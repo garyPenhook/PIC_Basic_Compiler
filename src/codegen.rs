@@ -804,6 +804,8 @@ struct Gen<'p> {
     /// A `For` loop walking a Byte array: (array, loop variable, byte offset of the element the variable picks). While
     /// it is set FSR0 points at that element and every access to it goes through `INDF0`.
     walk: Option<(VarId, VarId, u32)>,
+    /// The streaming walkers of the `For` loop being generated (see `stream_plan`); empty outside one.
+    stream: Vec<Stream>,
     /// The last constant-table read: (table, byte offset, byte index, bytes read, the item count right after it).
     /// TBLPTR is left just past those bytes, which the next read uses when it is of the element that follows.
     tbl_last: Option<(usize, u32, Option<Box<Ex>>, u32, usize)>,
@@ -881,6 +883,110 @@ pub(crate) fn shift_out_shape<'a>(arms: &'a [(Ex, Vec<S>)], otherwise: &'a [S]) 
         return None;
     }
     Some((p, left, kc & mask(ea.w), n))
+}
+
+/// An array element a streaming loop walks (see `CodeGen::stream_plan`): `arr(iv + k)` of `esize` bytes, held by
+/// FSR`fsr`, which steps one element a pass with the auto-increment (`down` false) or auto-decrement access.
+#[derive(Clone, Debug)]
+struct Stream {
+    arr: VarId,
+    iv: VarId,
+    off: u32,
+    k: i32,
+    esize: u32,
+    fsr: u8,
+    down: bool,
+    /// Accesses generated in the body so far: the pointer steps once a pass, so it must be exactly one.
+    touched: u32,
+}
+
+/// `p` as the element `arr(iv + k)`, Byte, Word or Long: (array, byte offset into it, k, element size). The index is
+/// the loop Byte, or the loop Byte plus or minus a constant (all in 8 bits), widened and doubled once or twice.
+fn stream_elem(p: &Place, iv: VarId) -> Option<(VarId, u32, i32, u32)> {
+    let (Base::Var(arr), Some(ix)) = (&p.base, &p.idx) else { return None };
+    if p.bit.is_some() || p.dbit.is_some() || !matches!(p.width(), 8 | 16 | 32) {
+        return None;
+    }
+    let esize = p.bytes();
+    let (x, shift) = match &ix.k {
+        ExK::Bin(BinKind::Shl, l, c) => (&**l, c.as_const()?),
+        _ => (&**ix, 0),
+    };
+    if shift != esize.trailing_zeros() {
+        return None;
+    }
+    let ExK::Conv(y) = &x.k else { return None };
+    if x.w != 16 || x.signed || y.w != 8 || y.signed {
+        return None;
+    }
+    let is_iv = |e: &Ex| matches!(&e.k, ExK::Load(q) if e.w == 8 && !e.signed && q.base == Base::Var(iv) && q.off == 0 && q.idx.is_none() && q.bit.is_none() && q.dbit.is_none());
+    let k = match &y.k {
+        _ if is_iv(y) => 0,
+        ExK::Bin(BinKind::Add, a, b) if is_iv(a) => b.as_const()? as i32,
+        ExK::Bin(BinKind::Add, a, b) if is_iv(b) => a.as_const()? as i32,
+        ExK::Bin(BinKind::Sub, a, b) if is_iv(a) => -(b.as_const()? as i32),
+        _ => return None,
+    };
+    if !(-127..=127).contains(&k) {
+        return None;
+    }
+    Some((*arr, p.off, k, esize))
+}
+
+/// The elements `arr(iv + k)` of a loop body as (array, offset, k, size, times named), or `None` when the body is not
+/// one a streaming loop can run: statements are plain assignments to variables or to such elements (and counting or
+/// clearing of variables), with no call, no branch and no element in the right-hand side of `AndAlso`/`OrElse`.
+fn stream_scan(body: &[S], iv: VarId) -> Option<(Vec<(VarId, u32, i32, u32, u32)>, bool)> {
+    type Found = Vec<(VarId, u32, i32, u32, u32)>;
+    // The FSRs and the registers that reach through them belong to the walkers for the length of the loop.
+    fn fsr_reg(p: &Place) -> bool {
+        matches!(&p.base, Base::Abs { name, .. } if crate::ir::indirect_sfr(name) || name.to_ascii_uppercase().starts_with("FSR"))
+    }
+    fn place(p: &Place, iv: VarId, cond: bool, out: &mut Found) -> bool {
+        if p.dbit.is_some() || fsr_reg(p) || matches!(p.base, Base::Flash(_) | Base::FlashNext(_) | Base::Ptr(_)) {
+            return false;
+        }
+        if !p.indirect() {
+            if p.base == Base::Var(iv) {
+                // Recorded as an element of size 0 so the caller can tell the body reads the loop variable.
+                out.push((iv, 0, 0, 0, 0));
+            }
+            return true;
+        }
+        let Some((a, o, k, n)) = stream_elem(p, iv) else { return false };
+        if cond {
+            return false;
+        }
+        match out.iter_mut().find(|e| (e.0, e.1, e.2, e.3) == (a, o, k, n)) {
+            Some(e) => e.4 += 1,
+            None => out.push((a, o, k, n, 1)),
+        }
+        true
+    }
+    fn ex(e: &Ex, iv: VarId, cond: bool, out: &mut Found) -> bool {
+        match &e.k {
+            ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => true,
+            ExK::Load(p) => place(p, iv, cond, out),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => ex(x, iv, cond, out),
+            ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) => ex(a, iv, cond, out) && ex(b, iv, cond, out),
+            ExK::AndAlso(a, b) | ExK::OrElse(a, b) => ex(a, iv, cond, out) && ex(b, iv, true, out),
+            ExK::Call(..) | ExK::Addr(_) | ExK::StrEq(..) => false,
+        }
+    }
+    let mut out = Found::new();
+    for s in body {
+        let ok = match &s.st {
+            St::Assign(p, e) => (p.indirect() || p.base != Base::Var(iv)) && place(p, iv, false, &mut out) && ex(e, iv, false, &mut out),
+            St::Add(p, _) | St::Clear(p) | St::SetBit(p, _) | St::ToggleBit(p) => !p.indirect() && p.dbit.is_none() && !fsr_reg(p) && p.base != Base::Var(iv),
+            _ => false,
+        };
+        if !ok {
+            return None;
+        }
+    }
+    let other = out.iter().any(|e| e.3 == 0);
+    out.retain(|e| e.3 != 0);
+    Some((out, other))
 }
 
 /// `p` as the one-byte element `arr(iv)`: the array and the element's byte offset.
@@ -1013,6 +1119,7 @@ impl<'p> Gen<'p> {
             tbl_last: None,
             div2_other: None,
             walk: None,
+            stream: Vec::new(),
             lits: Vec::new(),
             errors: Vec::new(),
             span: Span::default(),
@@ -2061,6 +2168,10 @@ impl<'p> Gen<'p> {
     }
 
     fn load_place(&mut self, p: &Place, n: u32) {
+        if let Some(si) = self.stream_hit(p) {
+            self.stream_read(si, n);
+            return;
+        }
         if matches!(p.base, Base::FlashNext(_)) {
             if n != 1 {
                 self.err("internal: a table walk reads one byte at a time");
@@ -2523,6 +2634,18 @@ impl<'p> Gen<'p> {
     fn prep_ab(&mut self, l: &Ex, r: &Ex, n: u32) {
         let ls = self.left_src(l, r);
         let rs = self.simple(r);
+        // The right operand is an element a streaming loop walks: it is read straight into `__B` (reading it moves
+        // nothing in `__A`), after the left one is in `__A`.
+        if n >= 2
+            && let ExK::Load(q) = &r.k
+            && r.w as u32 == 8 * n
+            && q.bytes() == n
+            && let Some(si) = self.stream_hit(q)
+        {
+            self.gen_to_acc(l);
+            self.stream_read_to(si, n, true);
+            return;
+        }
         if let Some(rs) = rs {
             self.gen_to_acc(l);
             self.src_to_reg(1, &rs, n);
@@ -3854,6 +3977,10 @@ impl<'p> Gen<'p> {
     // ---- statements -----------------------------------------------------------------------
 
     fn store(&mut self, p: &Place, e: &Ex) {
+        if let Some(si) = self.stream_hit(p) {
+            self.stream_write(si, e);
+            return;
+        }
         // `arr(i) = 0`, `= 255`, `arr(i) = arr(i) + 1` and `- 1` on a one-byte element reached through PLUSW0: the
         // instruction takes no operand from W, which holds the index (a `movlw` would overwrite it).
         if p.indirect() && p.bytes() == 1 && p.bit.is_none() && self.tgt.opt {
@@ -5353,6 +5480,33 @@ impl<'p> Gen<'p> {
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
         // A Byte array indexed by the loop variable and nothing else through an FSR: FSR0 walks the array.
         let walking = self.walk_plan(var, from, step, body);
+        let (streams, reads_var) = match if walking.is_none() { self.stream_plan(var, from, limit, step, body) } else { None } {
+            Some((p, o)) => (Some(p), o),
+            None => (None, true),
+        };
+        // The body never reads the variable and nothing reads it afterwards: it just counts the passes down.
+        if let (Some(plan), false, true, Some(a), Some(l)) = (&streams, reads_var, free, from.as_const(), limit.as_const())
+            && (if step > 0 { l >= a } else { a >= l })
+        {
+            let n = (l.abs_diff(a) + 1) & 0xFF;
+            self.store(var, &Ex::konst(n, w, sg));
+            self.stream_start(plan, a);
+            let (top, cont, end) = (self.fresh(), self.fresh(), self.fresh());
+            self.depth += 1;
+            self.label(&top);
+            self.loops.push((cont.clone(), end.clone()));
+            self.block(body);
+            self.loops.pop();
+            self.label(&cont);
+            self.stream_end();
+            if let Some(Src::Mem(vm, _)) = self.simple(&load(var)) {
+                self.fop("decfsz", &vm, "f");
+            }
+            self.br(Cc::Always, &top);
+            self.depth -= 1;
+            self.label(&end);
+            return;
+        }
         // The body names the variable only as that index and nothing reads it afterwards: it just counts the passes
         // down (a start of 0 is 256 passes), with `decfsz` at the end.
         let counted = match (walking, limit.as_const()) {
@@ -5409,11 +5563,17 @@ impl<'p> Gen<'p> {
             self.ins(format!("lfsr 0, {sym}+{}", off + start));
             self.walk = Some((arr, iv, off));
         }
+        if let Some(plan) = &streams {
+            self.stream_start(plan, from.as_const().unwrap_or(0));
+        }
         self.label(&top);
         self.loops.push((cont.clone(), end.clone()));
         self.block(body);
         self.loops.pop();
         self.label(&cont);
+        if streams.is_some() {
+            self.stream_end();
+        }
         if walking.is_some() {
             self.walk = None;
             // On to the next element (the read itself is not used).
@@ -5580,6 +5740,160 @@ impl<'p> Gen<'p> {
             return None;
         }
         Some((arr, iv, off, start, !st.other))
+    }
+
+    /// The streaming walkers for a `For` loop over a Byte variable from a constant to a constant, stepping by one
+    /// either way, whose body is straight-line (`stream_scan`) and names each of up to two array elements `arr(i + k)`
+    /// exactly once. Each element gets an FSR (0, then 1) pointing at it before the loop; reading or writing it
+    /// takes all its bytes through `POSTINC` (counting up, low byte first) or `POSTDEC` (counting down, high byte
+    /// first), which leaves the FSR on the same element of the next pass: no index is worked out, no pointer is
+    /// reloaded and nothing is stepped separately. FSR2 is the software stack, so two elements is the most.
+    fn stream_plan(&self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S]) -> Option<(Vec<Stream>, bool)> {
+        if !self.tgt.opt || self.walk.is_some() || !self.stream.is_empty() || !(step == 1 || step == -1) || var.width() != 8 || var.signed() {
+            return None;
+        }
+        let Base::Var(iv) = var.base else { return None };
+        if var.off != 0 || var.idx.is_some() || var.bit.is_some() || var.dbit.is_some() || self.p.vars[iv].bytes != 1 || self.p.vars[iv].by_ref || !self.var_private(iv) {
+            return None;
+        }
+        let (start, last) = (from.as_const()? as i64, limit.as_const()? as i64);
+        let (lo, hi) = (start.min(last), start.max(last));
+        for n in ["POSTINC0", "POSTDEC0", "POSTINC1", "POSTDEC1"] {
+            self.tgt.sfr.get(n)?;
+        }
+        let (found, other) = stream_scan(body, iv)?;
+        if found.is_empty() || found.len() > 2 || found.iter().any(|e| e.4 != 1) {
+            return None;
+        }
+        let mut out = Vec::new();
+        for (n, (arr, off, k, esize, _)) in found.into_iter().enumerate() {
+            let a = &self.p.vars[arr];
+            if a.by_ref || a.volatile || arr == iv || lo + i64::from(k) < 0 || hi + i64::from(k) > 255 {
+                return None;
+            }
+            out.push(Stream { arr, iv, off, k, esize, fsr: n as u8, down: step < 0, touched: 0 });
+        }
+        Some((out, other))
+    }
+
+    /// Points each walker at its element for the first pass (the loop variable starts at `start`) and makes them the
+    /// ones the body's accesses go through.
+    fn stream_start(&mut self, plan: &[Stream], start: u32) {
+        for st in plan {
+            self.uses[st.arr] += 1;
+            let sym = self.p.vars[st.arr].asm.clone();
+            let first = i64::from(st.off) + (i64::from(start) + i64::from(st.k)) * i64::from(st.esize) + if st.down { i64::from(st.esize) - 1 } else { 0 };
+            self.ins(format!("lfsr {}, {sym}+{first}", st.fsr));
+        }
+        self.stream = plan.to_vec();
+    }
+
+    /// The body is done: every walker was reached exactly once, or the pointers would be off.
+    fn stream_end(&mut self) {
+        if self.stream.iter().any(|s| s.touched != 1) {
+            self.err("internal: a streaming array loop did not touch each element once");
+        }
+        self.stream.clear();
+    }
+
+    /// The streaming walker for `p`, when it is the element one names.
+    fn stream_hit(&self, p: &Place) -> Option<usize> {
+        if self.stream.is_empty() || p.idx.is_none() {
+            return None;
+        }
+        let iv = self.stream[0].iv;
+        let (arr, off, k, esize) = stream_elem(p, iv)?;
+        self.stream.iter().position(|s| (s.arr, s.off, s.k, s.esize) == (arr, off, k, esize))
+    }
+
+    fn stream_post(&self, s: &Stream) -> Mem {
+        self.sfr_mem(&format!("{}{}", if s.down { "POSTDEC" } else { "POSTINC" }, s.fsr))
+    }
+
+    /// Reads the low `n` bytes of the element walker `si` is at (into `__A`, or W for one byte) and leaves its FSR
+    /// on the same element of the next pass: the bytes not read are stepped over.
+    fn stream_read(&mut self, si: usize, n: u32) {
+        self.stream_read_to(si, n, false);
+    }
+
+    /// `stream_read` into `__B` instead of `__A` when `to_b` (two or more bytes).
+    fn stream_read_to(&mut self, si: usize, n: u32, to_b: bool) {
+        self.stream[si].touched += 1;
+        let s = self.stream[si].clone();
+        let post = self.stream_post(&s);
+        let one = |g: &mut Self, i: u32| {
+            if n == 1 {
+                g.fop("movf", &post, "w");
+            } else {
+                let d = if to_b { g.b(i) } else { g.a(i) };
+                g.movff(&d, &post);
+            }
+        };
+        if s.down {
+            for _ in n..s.esize {
+                self.fop("movf", &post, "w");
+            }
+            for i in (0..n).rev() {
+                one(self, i);
+            }
+        } else {
+            for i in 0..n {
+                one(self, i);
+            }
+            for _ in n..s.esize {
+                if n == 1 {
+                    // The byte read is in W: step the pointer without touching it.
+                    let (l, h) = (self.sfr_mem(&format!("FSR{}L", s.fsr)), self.sfr_mem(&format!("FSR{}H", s.fsr)));
+                    self.fop("infsnz", &l, "f");
+                    self.fop("incf", &h, "f");
+                } else {
+                    self.fop("movf", &post, "w");
+                }
+            }
+        }
+    }
+
+    /// Writes `e` (as wide as the element) to the element walker `si` is at.
+    fn stream_write(&mut self, si: usize, e: &Ex) {
+        self.stream[si].touched += 1;
+        let s = self.stream[si].clone();
+        let post = self.stream_post(&s);
+        let n = s.esize;
+        let order: Vec<u32> = if s.down { (0..n).rev().collect() } else { (0..n).collect() };
+        // One element copied to another (distinct elements, so the bytes cannot overlap): each byte goes straight
+        // from one FSR to the other.
+        if let ExK::Load(q) = &e.k
+            && e.w as u32 == 8 * n
+            && q.bytes() == n
+            && let Some(sj) = self.stream_hit(q)
+            && sj != si
+            && (self.stream[sj].arr != s.arr || self.stream[sj].off == s.off)
+        {
+            self.stream[sj].touched += 1;
+            let src = self.stream_post(&self.stream[sj].clone());
+            for _ in &order {
+                self.movff(&post, &src);
+            }
+            return;
+        }
+        match self.simple(e) {
+            Some(src) => {
+                for i in order {
+                    self.put_byte(&post, &src.byte(i));
+                }
+            }
+            None if n == 1 => {
+                self.gen_val(e);
+                self.fo("movwf", &post);
+            }
+            None => {
+                self.gen_to_acc(e);
+                for i in order {
+                    let a = self.a(i);
+                    self.movff(&post, &a);
+                }
+            }
+        }
     }
 
     /// The end of a `For` stepping by one whose variable nothing reads after the loop: step first, then go round
