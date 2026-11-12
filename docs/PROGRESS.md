@@ -1337,3 +1337,7 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## Module review 15: oled (done 2026-11-11, 0.1.181)
 - `docs/MODULE-REVIEWS.md` section 15. No size gain worth taking (both transports and the font are always linked; an unused-transport option would change the API). Fixed: `OledBufText` and `OledBufChar` wrapped the Byte `x` past column 255 (a string over 42 characters drew its 43rd character at column 2); off-screen characters are now ignored. New test `tests/exec/lib_oled_text` (fails on the old module).
+
+## Third efficiency review of the generated code (done 2026-11-11, 0.1.181, no compiler change)
+- `docs/EFFICIENCY.md` section 12 (R1-R15). The four `bench/large` programs built for the PIC18F27Q10 (7014 bytes) and the PIC16F18346 (5135 words) and the listings and helpers read against the source. Figures are counted from the listings; no proposed sequence has been run.
+- Largest items: single-use locals and inlined-call parameters/results stored and reloaded (R1), sign-extended operands built in `__A` (R2), loop ends (R3), pointer walks (R4), the 16F ports of PIC18 optimisations (R9). `__div2`/`__div4` carry a `bc` path that cannot be taken (R7).

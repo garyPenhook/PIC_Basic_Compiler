@@ -552,3 +552,204 @@ Ranked by words recovered across these programs and by how many real programs th
 
 The next module reviews (`floatlib` onward) will keep finding gaps of the item 1 kind; fixing it first means their measurements start from the
 better 16F baseline.
+
+## 12. Third review: whole compiler output, both cores (0.1.181, 2026-11-11)
+
+**Method.** The four `bench/large/` programs were built with `basil -S --report` for the PIC18F27Q10 and, with only
+the `Device`, `Clock` and `RSTOSC` lines changed, for the PIC16F18346, and the listings were read against the source.
+Sizes at this version: PIC18 7014 bytes (a_algo 1592, b_dsp 2662, c_text 1520, d_ctrl 1240); 16F 5135 words (1213,
+1840, 1077, 1005). The helpers (`__div2`, `__div4`, `__mul2`, `__mul4`, `__smul4`, `__sdiv4`, the 16F `__mul2` and
+`__udiv2`) were read as emitted.
+
+**How far to trust this.** Nothing here is implemented and no proposed sequence was assembled or run: every word and
+cycle figure is *(counted)* from the listing (`movff`, `lfsr`, `call` = 2 words; a taken branch = 2 cycles). Each
+"after" sequence must go through the simulator sink check, the `-O0` differential and `cargo test --release` like
+every earlier step. Instruction facts checked in the data sheets for this review: `RLCF f, W` leaves `f` alone and
+puts the old bit 7 in C (DS40002043F p.666, flags C, Z, N p.627); `CPFSGT`/`CPFSLT` skip on `f > W` / `f < W`
+(DS40002043F p.646-647); `MOVIW k[FSRn]` / `MOVWI k[FSRn]` take a signed offset of -32..31 and leave the FSR
+unchanged (DS40001839E p.406). The other sequences use only instructions in the forms the compiler already emits.
+
+Where the PIC18 bytes still go: `movff` is 376 of 2989 instructions; 138 of them load `__A`/`__B` from a variable and
+92 store `__A`/`__C` to one. b_dsp alone has 93 and 43.
+
+### 12.1 Ranked summary
+
+| # | Change | Core | Where in the compiler | Flash *(counted)* | Cycles |
+|---|---|---|---|---|---|
+| R1 | Single-use locals and inlined-call parameters/results forwarded instead of stored and reloaded | both | `opt.rs` (inliner, a forward-substitution pass), `peephole::pass_copy_back` | 4-16 words per site; about 60 words in b_dsp, 20 in a_algo | same count |
+| R2 | Sign- or zero-extended operand added/xored into a wider variable without building it in `__A` | PIC18 | `codegen.rs` `fold_into` / `bin_multi` | -8 words per 16-into-32 signed accumulate (5 sites in b_dsp) | -8 |
+| R3 | `For` loop end: increment first when the variable is not read after the loop | both | `for_loop` (both back ends) | -1 word per loop (34 loop ends in the four programs) | -1 per pass |
+| R4 | Array walks as pointer walks (`POSTINC0`, `MOVIW FSRn++`), count with `decfsz` | both | `for_loop` + element access (M10, still open) | 3-6 words per loop | about half of a simple loop body |
+| R5 | Unary `Not` / `0 - x` through W or in place | PIC18 | `store`, unary lowering in `codegen.rs` | `Not` 32-bit 20 -> 8 words; `v = 0 - v` 10 -> 4 | same count |
+| R6 | Compare with the left operand already in W: `cpfsgt`/`cpfslt`/reversed `subwf` instead of a temporary | PIC18 | `ord_jump` | -2 to -3 words per site | -2 to -3 |
+| R7 | Dead `bc` path in `__div2`/`__div4` | PIC18 | `emit_helper` "div" | `__div2` 28 -> 23, `__div4` 46 -> 37 | -1 per quotient bit |
+| R8 | Constant-table reads: byte index arithmetic, reuse `TBLPTR` for the next element | PIC18 | const-array read in `codegen.rs` (M9, still open) | 13 -> 7-8 words; a following `T(i+1)` 13 -> 0 | same count |
+| R9 | 16F: ports of what the PIC18 already has (bit tests, zero-extended stores, load reuse, self-copies, FSR reuse) | 16F | `codegen16/*`, `peephole::optimise16` | CRC16 bit loop 32 -> about 12 words; 2-4 words per array access | large in bit loops |
+| R10 | Multiply by a constant: build in the destination; 16F `__mul2` with a byte multiplier | both | `gen_mul` / `mul_partials_from`, 16F `__mul2` | PIC18 -3 to -5 words per site | 16F about half of 200 |
+| R11 | `Select` on a dense range; shared case tails; `bra` to a `return` | both | `Select` lowering, `peephole` | 1 word per two cases; 2-3 words per shared tail | 2 per exit |
+| R12 | Peepholes listed in section 10 and not yet done, plus new ones | both | `peephole.rs` | 1-3 words each, 25+ sites | same count |
+| R13 | Quotient and remainder shared across a statement in between | both | `pass_div_share` or IR | -13 words in `ToDec` | one divide per digit |
+| R14 | Signed compare with a constant: sign-bit pre-test, no low-byte subtract when the low byte is 0 | PIC18 | `ord_jump` | 8 -> 7 words; 8 -> 4 when the low byte is 0 | -1 to -4; frees `__D2` |
+| R15 | Small items: start-up zero runs merged, `Result` coalescing for parameters and narrowed locals, arithmetic shift in scratch | both | `startup`, `opt::coalesce_results`, `shift_acc` | 1-5 words each | |
+
+### 12.2 Detail
+
+**R1. Values stored only to be loaded again.** The largest remaining class. Seen:
+* A local assigned once and used once in the next statement: `d = SINT(idx + 1) - v` then `(d * frac) / 4` emits
+  `movff __A0, D; movff __A1, D+1; movff D, __A0; movff D+1, __A0+1` (8 words, all removable since `d` is dead);
+  `s = ...; samples(i) = s` in `Gen`; `t = v; t = t * num; Result = t / den` in `Scale` (24 words of copies);
+  `t = a Mod b; a = b; b = t` in `Gcd` (`movff __C -> T` then `T -> B`, 4 words, 4 cycles a pass).
+* Inlined calls. Parameters that the body only reads are copied anyway (`movff K_PLANT, K_PID__PV`,
+  `movff K_Y, K_LOWPASS__Y`, `movff K_MODE, K_EXEC__OP`, and `K_LOWPASS__X`/`K_FIR__X`, stored from `__A` and never
+  read from memory again). Results go through the callee's `Result` (`movff __A, K_FIR__RESULT` then
+  `K_FIR__RESULT -> K_F`; `__A -> K_MEAN__RESULT -> __A`; `K_PID__OUT -> K_U -> __A`).
+* `data(i) = Rnd()` in `Fill`: `movff K_SEED+1, K_RND__RESULT; movf K_RND__RESULT, w; movwf K_FILL__TMP; ...;
+  movff K_FILL__TMP, PLUSW0` where `movff K_SEED+1, PLUSW0` would do (-4 words, -4 cycles a pass);
+  `pass_stage_store` sees one stage, not two.
+
+Proposal: at IR level, when inlining, substitute a `ByVal` parameter by its argument when the argument is a plain
+variable or constant, the body never writes the parameter and nothing in the body writes the argument (same write-set
+test as `calls_spare`); forward-substitute a scalar local that has one definition and one use in the following
+statement when no operand of the definition is written in between; let an inlined `Result` take the storage of the
+assignment's destination when the destination is not read in the body. The same conditions as M1 apply for
+`Volatile` and interrupt-visible variables. On the PIC18 a general `pass_retarget` like the 16F's `pass_retarget16`
+(a value finished in `__An` and then copied to `D` is built in `D`) would remove most of the 92 `movff __A, var`.
+
+**R2. Extended operands.** `sink = sink + f` (`f` an Integer, `sink` a LongInt) is 17 words:
+`movff F, __A0; movff F+1, __A1; movlw 0; btfsc __A1, 7; movlw 0xFF; movwf __A2; movwf __A3`, then eight words of
+add. Without the scratch: `movf F, w; addwf SINK, f; movf F+1, w; addwfc SINK+1, f; movlw 0; btfsc F+1, 7;
+movlw 0xFF; addwfc SINK+2, f; addwfc SINK+3, f` (9 words; `movlw` and `btfsc` leave the carry). Five sites in b_dsp
+(the three accumulates of the main loop, `Mean`, `MinMax`). Related: `sink = sink + Isqrt(1000000) + Isqrt(sink)`
+keeps the running sum as four bytes in `__main__TMP` (53 words from the first call to the store). Saving the first
+*result* at its own width (2 bytes), making the second call, then adding both into `sink` is about 25 words; the
+rule is "an operand that reads `x` is evaluated to a temporary of its own width first, then the spine runs in `x`".
+Also `If n >= r + bt`: the sum is built as `movff r -> __A` (8 words) then `addwf __A, f` (8 words); the W-routed
+three-address form of P1 with `__A` as its destination is 12 words (-4 words, -4 cycles; -2 for 16 bits).
+
+**R3. Loop ends.** `For i = 0 To 47` ends `movf i, w; xorlw 0x2F; bz out; incf i, f; bra top` (5 words, 6 cycles a
+pass); the 16F form is 6 words. The variable must keep its last value after the loop (LANGUAGE.md, D33), which is
+why the test comes first. When the variable is not read after the loop (the common case, and already known for L1):
+`movf i, w; incf i, f; xorlw 0x2F; bnz top` (4 words, 5 cycles; correct for a limit of 255 and for a hidden variable
+limit with `xorwf H, w`, because the old value is tested). 16F: `movf i, w; incf i, f; xorlw K; btfss STATUS, 2;
+bra top` (5 words). Counting down, `For i = 7 To 1 Step -1` ends `decf i, w; bz out; decf i, f; bra top` and becomes
+`decfsz i, f; bra top` under the same condition (-2 words, -3 cycles a pass). 34 loop ends in the four programs.
+
+**R4. Pointer walks (M10).** Every element access in a counted loop is `movf i, w; lfsr 0, A; <op> PLUSW0` (4 words,
+4 cycles) plus the 5-word loop end. `For i = 0 To 63: flags(i) = 1: Next` is 12 words and 13 cycles a pass
+(`movlw 1; movwf TMP; movf i, w; lfsr; movff TMP, PLUSW0` + loop end); as `lfsr 0, flags; movlw 64; movwf H;
+L: movlw 1; movwf POSTINC0; decfsz H, f; bra L` it is 8 words and 5 cycles a pass. Same for the `cnt = cnt +
+flags(i)` sum, the CRC loops over `data(i)`, `Mean`/`Rms` over `samples(i)`, and (two pointers, FSR0 and FSR1) the
+FIR `hist(i) * coef(i)` and `hist(i) = hist(i - 1)`. Conditions: the body has no call and no other use of that FSR,
+the index is the loop variable (plus a constant), the loop variable is not otherwise needed or is kept alongside.
+Smaller steps on the way: a constant stored to an element does not need the temporary (`clrf PLUSW0; incf PLUSW0, f`
+for 1, `setf PLUSW0` for 255, or load the constant before the index when the index goes through an FSR add); a
+loop-invariant `lfsr` inside a `While` can be hoisted when every path into the loop has it (R12, flow-aware state).
+
+**R5. Unary operators.** `Result = Not crc` (LongWord) copies to `__A` (8 words), `comf` four times, copies out (8
+words): `comf crc, w; movwf Result` per byte is 8 words, and with the following `sink = sink Xor Result` it could be
+`comf crc, w; xorwf sink, f` per byte (28 -> 8 words). `v = 0 - v` (twice in b_dsp) is 10 words through `__A`:
+`comf v+1, f; negf v; movlw 0; addwfc v+1, f` (4 words, the sequence `Abs` already uses). `If v < 0 Then v = 0 - v`
+is `Abs` and could be recognised as such.
+
+**R6. Compares with an operand in W.** `If data(mid) < key`: `movf PLUSW0, w; movwf TMP; movf KEY, w; subwf TMP, w;
+bc` (5 words) where `cpfsgt KEY; bra` (2 words) follows the load directly; `data(j - 1) >= k` likewise. In the
+bubble sort both elements are stored (`TMP`, `TMP+1`) and reloaded: `... movwf TMP; incf j, w; movf PLUSW0, w;
+cpfsgt TMP; bra` is 9 words against 13. An `If a = b ... ElseIf a < b` chain on the same operands (`BinSearch`)
+could share one `subwf` (Z for the first test, C for the second) instead of reading the element twice (-6 words).
+
+**R7. Divide helpers.** `__div2` and `__div4` test the carry out of the remainder shift (`bc _L92`) and carry a
+second copy of the subtract for it. With the remainder cleared on entry the carry can never be set: before shift
+*k* the remainder is at most the top *k* - 1 bits of the dividend, so after the last shift it still fits the width.
+The 16F `__udiv2` already has no such path. Removing it: `__div2` 28 -> 23 words, `__div4` 46 -> 37, one cycle less
+per quotient bit. Check first that no caller enters either helper with a non-zero `__C` (`__divk4`, the
+`Optimize = Speed` short path) and run `div_const_*`, `arith_*` exhaustively. Separately, the still-open "operand
+fits a byte" item of section 3.4: `v / 10` and `v Mod 10` on a Word run the full 16-bit loop (about 19 cycles a bit).
+Also `__mul2` forms the product in `__C` and copies it to `__A` (`movff` x 4, 8 words): ordering the partial
+products so the low byte of `__A` is overwritten last saves about 3 words and 3 cycles.
+
+**R8. Constant tables.** `v = SINT(idx)` builds a 16-bit index in `__A` (`movff idx, __A0; clrf __A1; bcf; rlcf;
+rlcf; movlw low; addwf; movwf TBLPTRL; movlw high; addwfc; movwf TBLPTRH; clrf TBLPTRU`, 13 words). For a table
+whose scaled index fits a byte: `bcf STATUS, 0; rlcf idx, w; addlw low(T); movwf TBLPTRL; movlw high(T); movwf
+TBLPTRH; clrf WREG; addwfc TBLPTRH, f; clrf TBLPTRU` (9 words), or 7 when the table is placed so that it does not
+cross a 256-byte boundary. `SINT(idx + 1)` right after `SINT(idx)` repeats all 13 words although `TBLPTR` already
+points there after the two `tblrd*+` (M9). `movff TABLAT, __A0; ...; movff __A0, V` should be `movff TABLAT, V`.
+
+**R9. 16F gaps against the PIC18 back end.** Counted in `a_algo` for the PIC16F18346:
+* `(crc And $8000) <> 0` copies to `__A`, masks and tests both bytes (11 words); the PIC18's `and_test` gives
+  `btfss crc+1, 7` (L1 is not in `codegen16`).
+* `crc = crc << 1` emits `movf crc, w; movwf crc; movf crc+1, w; movwf crc+1` first (two self-copies, 4 words, in
+  both arms) and a dead `movf crc+1, w` after; `t = t << 8` emits `clrf t+1; movwf t+1` and then xors a byte it has
+  just cleared (`clrf t; movf t, w; xorwf crc, f`). The CRC16 bit loop is 32 words on the 16F against 15 on the PIC18.
+* `sink = Crc16(48)`: `clrf __A2; clrf __A3; ...; movf __A2, w; movwf sink+2; movf __A3, w; movwf sink+3` (M5).
+* Array access: `movwf FSR0L; movlw 0x20; movwf FSR0H` before every access, six times in a row in the bubble sort
+  with `FSR0H` unchanged; `data(j)` and `data(j + 1)` could share one pointer with `moviw 0[FSR0]` and
+  `moviw 1[FSR0]`; the swap rereads both elements (no `pass_load_reuse` on the 16F).
+* 16F bank selects: 222 `movlb` in the four programs (97 in b_dsp, 5 % of its instructions). Placing the variables
+  that one routine uses together in one bank, with scratch `__A`..`__D` in common RAM, is the lever; not measured.
+
+**R10. Multiply by a constant.** PIC18 `seed = seed * 25 + 13849`, `n = n * 3 + 1`, `lcg = lcg * 5 + 1` build in
+`__A` and copy back (`movff __A0, x; movff __A1, x+1`). The low byte of `x` is not read again after its `mullw`, so
+`PRODL` can go straight to `x`, the high sum to `x+1`, and `+ 1` becomes `infsnz x, f; incf x+1, f`: 18 -> 13 words
+for `n * 3 + 1`. `p = e * 3` stores the high byte through `__A1` (`movff PRODH, __A1; ...; movff __A1, P+1`, -2
+words). `d * frac` (Integer by Byte) calls `__mul2` after zero-extending the byte: two `mulwf` inline are about 9
+words and 9 cycles against the call. On the 16F `seed * 25` loads four bytes and calls the shift-and-add `__mul2`,
+which always runs 16 passes; an exit when the remaining multiplier is zero (or an 8-pass entry for a byte
+multiplier) halves the time for byte constants, and shift-and-add inline wins for constants with two or three bits.
+
+**R11. `Select` and case tails.** `Select state` copies the subject to a hidden byte and tests it with `xorlw`
+chains, but W is reloaded (`movf H, w`) at every second case, so half the tests cost 3 words instead of 2. For a
+dense range (9 consecutive cases in `Exec`) a computed jump is about 15 words and constant time against about 23
+words and up to 25 cycles. `clrf K_STATE; bra _L22` appears four times in `Machine` (tail merging, 2 words each);
+`bra _L22` where `_L22:` is `return` should be `return` (same size, 2 cycles less).
+
+**R12. Peepholes.** From the section 10 list, still present in the output: `movf X, w; addlw 1 / 0xFF` (13 sites) ->
+`incf X, w` / `decf X, w` with dead C/DC; `op X, w; movwf X` -> `op X, f` with W dead (`addwf S, w; movwf S`,
+`rrcf REGS, w; movwf REGS`, `addwf WREG, w` forms); the self-copy `movf T, w; movwf T` (insertion sort);
+`(a And 63) >> 2` masks twice (`andlw 0x3F; rrncf; rrncf; andlw 0x3F` -> one `andlw 0x0F` after the rotates). New:
+* Known-zero bytes: `clrf T` followed by `movf T, w; xorwf X, f` (or `iorwf`/`addwf` with known carry) is a no-op.
+* `c = c + (v And 1)` -> `btfsc v, 0; incf c, f` (4 -> 2 words).
+* `Integer(lcg >> 12)`: byte move, then a counted loop of four `rrcf` -> `swapf lcg+1, w; andlw 0x0F`.
+* Arithmetic shift in scratch uses `movf __A1, w; rlcf WREG, w; rrcf ...`; the in-place form already uses
+  `rlcf X+3, w` (1 word and 1 cycle less per step; four loops in b_dsp).
+* `(n - 1) - i` is computed as `movf n, w; addlw 0xFF; subwf i, w; sublw 0`; `incf i, w; subwf n, w` is 2 words, and
+  `n - 1` is already in the loop's hidden limit.
+* `If c Then x = (x << 1) Xor K Else x = x << 1`, `c` the bit shifted out: shift once, `bnc` over the xor (CRC16
+  13 -> 8 words in the bit loop, CRC32 21 -> 14).
+* Peephole state (known W, known FSR, known scratch contents) is dropped at every label. A label reached only by
+  one forward branch, or where all predecessors agree, can keep it: this removes the repeated `movf mid, w;
+  lfsr 0, data` in `BinSearch` and the `lfsr` inside the sieve's `While`.
+
+**R13. Divide and `Mod` apart.** `ToDec` stores `v Mod 10` into the buffer and then computes `v / 10`: two
+`__divk4` calls per digit because a statement sits between them. Carrying the quotient across the store (it touches
+only `TMP`, `WREG` and FSR0) or pairing them in the IR removes one call (13 words and one 32-bit divide per digit).
+
+**R14. Signed compare with a constant.** `If pidI > 2000` is `movf x+1, w; xorlw 0x80; movwf __D2; movlw lo;
+subwf x, w; movlw hi^0x80; subwfb __D2, w; bnc` (8 words). For a non-negative constant, `btfsc x+1, 7; bra skip`
+followed by the unsigned compare (5 words) is 7 words, usually fewer cycles, and needs no `__D2`; a negative
+constant uses `btfss`. When the low byte of the constant is 0 (`out > 4095` is `out >= 0x1000`) the low subtract is
+emitted as `movlw 0x00; subwf x, w` and can go: `movf x+1, w; xorlw 0x80; addlw -(hi^0x80)` and one branch
+(4 words). The same low-byte rule applies to unsigned compares.
+
+**R15. Small items.**
+* Start-up zeroing emits one 5-word loop per run of variables (two on the PIC18, two loops and six `clrf` on the
+  16F in a_algo); runs separated by a few bytes that are initialised afterwards anyway can be one loop.
+* `opt::coalesce_results` takes only a local of the same type: `Result = a` with `a` a `ByVal` parameter (`Gcd`)
+  and `Result = r` with `r` wider than `Result` (`Isqrt`, `Rms`: the low bytes could be the result) still copy
+  (4 words each).
+* `ToDec` clears its 12-byte local array on every call (5 words and 40 cycles); `may_read_unset` handles scalars only.
+* Element updates with a constant index (`regs(0) = regs(0) << 1`) go `movf; addwf WREG, w; movwf` instead of the
+  one-instruction in-place form scalars get.
+* `Fib`'s `t = a + b; a = b; b = t` is 28 words; per byte `movf b, w; addwf a, w; movff b, a; movwf b` is 20
+  (`movff` leaves the carry), a pattern match on a rotate of three variables.
+
+### 12.3 Suggested order
+
+1. R7, R12, the `bra`-to-`return` part of R11 and the `rlcf f, w` item: small, local, and checked by the existing
+   exhaustive arithmetic tests.
+2. R3 (needs only the "not read after the loop" fact that L1 already computes), then R5, R6 and R14 in `codegen.rs`.
+3. R1 and R2: the largest PIC18 gain; one IR pass and one peephole, with the M1 safety rules.
+4. R9: the 16F ports, each one already proven on the PIC18.
+5. R4 and R8 (pointer and `TBLPTR` reuse), then R10, R11's jump table and R13.
+
+Re-measure `bench/large` on both cores and `bench/random` after each step and record the figures in
+`docs/BENCHMARKS.md`.
