@@ -78,8 +78,8 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 * Compared with Microchip XC8 on a set of small kernels (written alongside the compiler, so not an independent
   sample), the output is smaller in total and about as fast (see `docs/BENCHMARKS.md`). On four larger,
   independently written programs of 1.5 to 3 KB (algorithms, fixed-point DSP, text formatting, a command
-  state machine) basil's images were 6% smaller than XC8 `-Os` in total: 7092 bytes against 7560 (smaller on
-  three of the four; the fixed-point DSP program is 4% larger, 2714 against 2606). Results were identical in the
+  state machine) basil's images were 19% smaller than XC8 `-Os` in total: 6118 bytes against 7560 (smaller on
+  all four; the fixed-point DSP program is the closest, 2364 against 2606). Results were identical in the
   simulator. These programs were also used to find the optimisations, so expect parity on other code rather
   than a reliable win.
 * Optimisations include constant folding, narrowing, Access Bank placement, overlapping of

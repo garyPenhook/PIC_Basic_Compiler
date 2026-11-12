@@ -1,7 +1,7 @@
-# fable2 mods: state at stand-down (2026-11-12)
+# Code generation: open items (2026-11-12)
 
-Work on the open items left after review 3 (`docs/EFFICIENCY.md` section 12.4, basil 0.1.190).
-Committed as 0.1.191 with the 16F run and the full suite still owed (see below). Files: `src/peephole.rs`,
+Open items left after review 3 (`docs/EFFICIENCY.md` section 12.4, basil 0.1.190).
+Committed as 0.1.191; 0.1.192 adds unit tests, review fixes and the docs. The 16F gate and the unit tests now pass; the full `BASIL_MDB=1` suite was not run. Files: `src/peephole.rs`,
 `tests/exec/param_result.bas`, `docs/MANUAL.md`, new `scripts/gate.sh`, and this file.
 
 ## Where it stands

@@ -1393,3 +1393,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `docs/EFFICIENCY.md` section 12.4 lists what of R1-R15 is done and what is not; `docs/BENCHMARKS.md` has the re-measured table (PIC18 6180 bytes, 0.82 of XC8 `-Os`; 16F 4685 words).
 - **Fault found by the full suite and fixed before release:** `pass_tail_merge` (0.1.188) shared equal tails of two different routines; `pass_w_return` then loaded one routine's result into `WREG` on the other's way out (`tests/exec_rtcc/lib_rtccspi_model` failed). Tails are now shared only inside one routine; unit test `tails_of_two_routines_are_not_shared`. The quick gate (`tests/exec` and `bench/large`) did not show it: the library-model folders must be run too.
 - An independent review of the whole change raised four cases of a rewrite behind a skip instruction; all are refused by the `protected` mask, now pinned by `the_new_passes_leave_what_a_skip_passes_over`.
+
+## Review 3, step 10: shared compare, FSR facts across labels, repeated loads (done 2026-11-12, 0.1.191-0.1.192)
+- PIC18 peephole: `pass_shared_compare` (`If a = b ... ElseIf a < b` subtracts once), `pass_cpfs_held`, `fsr_flow` with `pass_lfsr_flow` (an `lfsr` goes when every way into a label has loaded it), `pass_same_load`, `pass_forward_unary`. `pass_write_only` (both cores) removes stores to a byte of a wider variable nothing reads.
+- `bench/large`: PIC18 6180 -> 6118 bytes; 16F 4685 -> 4653 words. New `LastRead` case in `tests/exec/param_result.bas` (the loop-variable guard of 0.1.190). `docs/MANUAL.md` says what `#option Optimize Speed` changes.
+- `scripts/gate.sh` committed: PIC18 and (with `16`) PIC16F17146 simulator sets, optimised and `-O0`, plus sizes.
+- Unit tests for the new passes; a stale test of `pass_write_only` was updated to the new rule. Review fixes (0.1.192): a skip that moves an FSR hands its target the moved state; any `PCL` write makes every label an unknown entry; the gate stops on a failed build.
+- Open items: `docs/codegen-open-items.md`. Nothing has run on a real part.

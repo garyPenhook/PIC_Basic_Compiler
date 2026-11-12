@@ -243,3 +243,18 @@ source directly. Total 7124 to 7092 bytes (algorithms 1598, fixed-point DSP 2714
 Cycles to `__halt` (basil-sim): a_algo 83372 -> 75801, b_dsp 84200 -> 78275, c_text 60199 -> 37762, d_ctrl 35917 -> 27285.
 The same sources for the PIC16F18346: 5135 -> 4685 words. What changed is listed in `docs/EFFICIENCY.md` section 12.4.
 
+
+## Larger programs after the 0.1.191 passes, 2026-11-12 (0.1.192)
+
+Same setup as above. Flash in bytes, PIC18F27Q10; the 16F column is words, PIC16F18346.
+
+| program | basil 0.1.190 | basil 0.1.191 | XC8 -Os | basil vs -Os | 16F 0.1.190 | 16F 0.1.191 |
+|---|---:|---:|---:|---:|---:|---:|
+| a_algo | 1376 | 1338 | 1826 | 0.73 | | 960 |
+| b_dsp | 2376 | 2364 | 2606 | 0.91 | | 1738 |
+| c_text | 1300 | 1296 | 1738 | 0.75 | | 1017 |
+| d_ctrl | 1128 | 1120 | 1390 | 0.81 | | 938 |
+| total | 6180 | 6118 | 7560 | 0.81 | 4685 | 4653 |
+
+Sinks equal in basil-sim (PIC18) and MDB (PIC16F17146). Cycles, `bench/kernels` and `bench/random` were not
+re-measured for this step; the kernel table above is from before review 3.

@@ -2060,8 +2060,10 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
         i
     };
     let mut inb: Vec<St3> = vec![[F::Top, F::Top, F::Top]; n + 1];
+    // A computed jump can land on any label after it (a jump table), where no edge shows it.
+    let computed = items.iter().any(|it| matches!(it, Item::Ins(t) | Item::Raw(t) if t.to_ascii_lowercase().contains("pcl")));
     for (i, it) in items.iter().enumerate() {
-        if let Item::Label(l) = it && (!local_label(l) || named.contains(l.as_str())) {
+        if let Item::Label(l) = it && (computed || !local_label(l) || named.contains(l.as_str())) {
             inb[i] = unknown();
         }
     }
@@ -2081,6 +2083,7 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
             let mut out = s.clone();
             let mut falls = true;
             let mut edges: Vec<usize> = Vec::new();
+            let mut skip_to: Option<usize> = None;
             match &items[i] {
                 Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) => {}
                 Item::Call(_) | Item::Raw(_) | Item::Org(_) => out = unknown(),
@@ -2120,7 +2123,7 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
                                     if !matches!(items.get(j), Some(Item::Ins(_) | Item::Br(..))) {
                                         return None;
                                     }
-                                    edges.push(next_real(j + 1));
+                                    skip_to = Some(next_real(j + 1));
                                 }
                                 // Anything else that names a pointer, an auto-increment register or the program counter.
                                 if low.contains("fsr") || low.contains("pcl") || (0..3).any(|k| low.contains(&format!("inc{k}")) || low.contains(&format!("dec{k}"))) {
@@ -2131,8 +2134,16 @@ fn fsr_flow(items: &[Item]) -> Option<Vec<[F; 3]>> {
                     }
                 }
             }
+            // A skip that itself moves a pointer passes on the state after it.
+            if let Some(k) = skip_to {
+                let m: St3 = std::array::from_fn(|r| meet(&inb[k][r], &out[r]));
+                if m != inb[k] {
+                    inb[k] = m;
+                    changed = true;
+                }
+            }
             for k in edges {
-                // What a skip or a branch passes on is the state before it (neither writes a pointer).
+                // What a branch passes on is the state before it (a branch writes no pointer).
                 let m: St3 = std::array::from_fn(|r| meet(&inb[k][r], &s[r]));
                 if m != inb[k] {
                     inb[k] = m;
@@ -6054,7 +6065,19 @@ mod tests {
 
     #[test]
     fn a_boolean_stored_in_one_byte_of_a_wider_object_keeps_its_store() {
-        // `X+1` is a byte of X: the name alone does not show whether X is read, so the store stays.
+        // `X+1` is a byte of X, and the code at T reads X: the store stays.
+        let mut s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movf X, w, c"), ins("movwf Y, c"), Item::Fence]);
+        for it in s.iter_mut() {
+            if let Item::Ins(t) = it {
+                *t = t.replace("movwf X, c", "movwf X+1, c");
+            }
+        }
+        let r = run_alone(&s);
+        assert!(r.iter().any(|l| l == "movwf X+1, c"), "{r:?}");
+    }
+
+    #[test]
+    fn a_store_to_a_byte_of_a_wider_object_nothing_reads_goes() {
         let mut s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
         for it in s.iter_mut() {
             if let Item::Ins(t) = it {
@@ -6062,7 +6085,113 @@ mod tests {
             }
         }
         let r = run_alone(&s);
-        assert!(r.iter().any(|l| l == "movwf X+1, c"), "{r:?}");
+        assert!(!r.iter().any(|l| l.contains("X+1")), "{r:?}");
+    }
+
+    #[test]
+    fn a_unary_result_stored_and_read_back_is_made_again_and_its_store_goes() {
+        // `comf X, w; movwf Y; ...; movf Y, w` -> the read makes the value again; Y (read nowhere else) loses its store.
+        let s = vec![ins("comf X, w, c"), ins("movwf Y, c"), ins("clrf Q, c"), ins("movf Y, w, c"), ins("movwf Q, c"), Item::Fence];
+        let r = run_alone(&s);
+        assert!(!r.iter().any(|l| l == "movwf Y, c"), "{r:?}");
+    }
+
+    #[test]
+    fn a_unary_result_is_kept_when_its_source_changes_in_between() {
+        let s = vec![ins("comf X, w, c"), ins("movwf Y, c"), ins("incf X, f, c"), ins("movf Y, w, c"), ins("movwf Q, c"), Item::Fence];
+        let r = run(&s);
+        assert!(r.iter().any(|l| l == "movwf Y, c"), "{r:?}");
+    }
+
+    #[test]
+    fn a_compare_made_twice_on_the_same_operands_subtracts_once() {
+        // `If a = b ... ElseIf a < b`: the second test reads the carry of the first subtract.
+        let s = vec![
+            ins("movf X, w, c"), ins("xorwf Y, w, c"), Item::Br(Cc::Nz, "_L1".into()), ins("clrf Q, c"), ins("movlw 0"), ins("return"),
+            Item::Label("_L1".into()), ins("movf X, w, c"), ins("cpfsgt Y, c"), Item::Br(Cc::Always, "_L3".into()), ins("setf Q, c"),
+            Item::Label("_L3".into()), ins("movlw 0"), ins("return"),
+        ];
+        let r = run(&s);
+        assert!(!r.iter().any(|l| l.starts_with("cpfs")), "{r:?}");
+    }
+
+    #[test]
+    fn a_pointer_loaded_on_every_way_into_a_label_is_not_loaded_again() {
+        let s = vec![
+            ins("lfsr 0, X"), Item::Label("_L1".into()), ins("lfsr 0, X"), ins("movf INDF0, w, c"), ins("movwf Q, c"),
+            ins("decfsz Q, f, c"), Item::Br(Cc::Always, "_L1".into()), ins("return"),
+        ];
+        let r = run(&s);
+        assert_eq!(r.iter().filter(|l| l.starts_with("lfsr")).count(), 1, "{r:?}");
+    }
+
+    #[test]
+    fn a_pointer_changed_on_one_way_into_a_label_is_loaded_again() {
+        let s = vec![
+            ins("lfsr 0, X"), Item::Label("_L1".into()), ins("lfsr 0, X"), ins("movf POSTINC0, w, c"), ins("movwf Q, c"),
+            ins("decfsz Q, f, c"), Item::Br(Cc::Always, "_L1".into()), ins("return"),
+        ];
+        let r = run(&s);
+        assert_eq!(r.iter().filter(|l| l.starts_with("lfsr")).count(), 2, "{r:?}");
+    }
+
+    #[test]
+    fn a_compare_with_the_second_operand_held_in_wreg_is_a_cpfsgt() {
+        // `movwf Y` leaves Y in WREG: `movf X, w; subwf Y, w; bc` -> `cpfsgt X; bra`.
+        let s = vec![
+            ins("movlw 3"), ins("movwf Y, c"), ins("movf X, w, c"), ins("subwf Y, w, c"), Item::Br(Cc::C, "_L1".into()),
+            ins("movlw 0"), ins("return"), Item::Label("_L1".into()), ins("movlw 0"), ins("return"),
+        ];
+        let r = run(&s);
+        assert!(r.iter().any(|l| l.starts_with("cpfs")), "{r:?}");
+    }
+
+    #[test]
+    fn a_compare_whose_carry_is_read_later_stays_a_subtract() {
+        let s = vec![
+            ins("movlw 3"), ins("movwf Y, c"), ins("movf X, w, c"), ins("subwf Y, w, c"), Item::Br(Cc::C, "_L1".into()),
+            ins("rlcf Q, f, c"), ins("movlw 0"), ins("return"), Item::Label("_L1".into()), ins("rlcf Q, f, c"), ins("movlw 0"), ins("return"),
+        ];
+        let r = run(&s);
+        assert!(!r.iter().any(|l| l.starts_with("cpfs")), "{r:?}");
+    }
+
+    #[test]
+    fn a_value_loaded_twice_by_the_same_instructions_is_loaded_once() {
+        let s = vec![
+            ins("movf X, w, c"), ins("btfsc Q, 1, b"), ins("clrf Q, c"), ins("movf X, w, c"), ins("movwf Y, c"), ins("movlw 0"), ins("return"),
+        ];
+        let r = run(&s);
+        assert_eq!(r.iter().filter(|l| *l == "movf X, w, c").count(), 1, "{r:?}");
+    }
+
+    #[test]
+    fn a_value_loaded_twice_is_loaded_again_when_a_byte_it_reads_was_written() {
+        let s = vec![
+            ins("movf X, w, c"), ins("clrf X, c"), ins("movf X, w, c"), ins("movwf Y, c"), ins("movlw 0"), ins("return"),
+        ];
+        let r = run(&s);
+        assert_eq!(r.iter().filter(|l| *l == "movf X, w, c").count(), 1, "{r:?}");
+        assert!(r.iter().any(|l| l == "movf X, w, c") && r.iter().any(|l| l.contains("clrf X")), "{r:?}");
+    }
+
+    #[test]
+    fn a_skip_that_moves_a_pointer_hands_the_moved_state_to_its_target() {
+        let s = vec![
+            ins("lfsr 0, X"), ins("tstfsz POSTINC0, c"), Item::Br(Cc::Always, "_L1".into()), Item::Label("_L1".into()),
+            ins("lfsr 0, X"), ins("movf INDF0, w, c"), ins("movwf Q, c"), ins("movlw 0"), ins("return"),
+        ];
+        let r = run(&s);
+        assert_eq!(r.iter().filter(|l| l.starts_with("lfsr")).count(), 2, "{r:?}");
+    }
+
+    #[test]
+    fn a_pointer_is_unknown_at_every_label_when_the_code_jumps_through_pcl() {
+        let mut s = vec![
+            ins("lfsr 0, X"), ins("addwf PCL, f, c"), Item::Br(Cc::Always, "_L2".into()), Item::Label("_L1".into()), ins("lfsr 0, X"),
+            ins("movf INDF0, w, c"), Item::Label("_L2".into()), ins("return"),
+        ];
+        assert!(!pass_lfsr_flow(&mut s));
     }
 
     #[test]

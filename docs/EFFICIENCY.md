@@ -592,6 +592,14 @@ Where the PIC18 bytes still go: `movff` is 376 of 2989 instructions; 138 of them
 | R14 | Signed compare with a constant: sign-bit pre-test, no low-byte subtract when the low byte is 0 | PIC18 | `ord_jump` | 8 -> 7 words; 8 -> 4 when the low byte is 0 | -1 to -4; frees `__D2` |
 | R15 | Small items: start-up zero runs merged, `Result` coalescing for parameters and narrowed locals, arithmetic shift in scratch | both | `startup`, `opt::coalesce_results`, `shift_acc` | 1-5 words each | |
 
+**0.1.191 / 0.1.192.** `bench/large` PIC18 6180 -> 6118 bytes (0.81 of XC8 `-Os`), 16F 4685 -> 4653 words. The 16F gain is
+all `pass_write_only`, which now also removes a store to one byte of a wider variable nothing reads. The new passes
+have unit tests, and the review of them found and fixed: `fsr_flow` passing a stale FSR to the target of a skip that
+moves a pointer, and labels after a `PCL` write (a jump table) being treated as reached only by fall-through.
+`scripts/gate.sh` (`gate.sh`, `gate.sh 16`, `gate.sh sizes`) runs the simulator sets that have caught optimiser
+faults, optimised and `-O0`, and now fails when the build fails. The list of what is still open is in
+`docs/codegen-open-items.md`.
+
 ### 12.2 Detail
 
 **R1. Values stored only to be loaded again.** The largest remaining class. Seen:
@@ -754,7 +762,7 @@ emitted as `movlw 0x00; subwf x, w` and can go: `movf x+1, w; xorlw 0x80; addlw 
 Re-measure `bench/large` on both cores and `bench/random` after each step and record the figures in
 `docs/BENCHMARKS.md`.
 
-### 12.4 What was done (0.1.182 to 0.1.190, 2026-11-11/12)
+### 12.4 What was done (0.1.182 to 0.1.192, 2026-11-11/12)
 
 Measured, not counted: `bench/large` built with each version, sinks checked in basil-sim (PIC18F27Q10) and MDB
 (PIC16F17146), the `-O0` differential and the full suite (`BASIL_MDB=1 cargo test --release`).
@@ -776,13 +784,13 @@ Measured, not counted: `bench/large` built with each version, sinks checked in b
 | R3 | done, both cores (`St::For::free`, `opt::free_loop_ends`) | `opt.rs`, `for_loop` |
 | R4 | done for one-byte elements `arr(var)`, both cores; the PIC18 also counts the passes down when the variable has no other use. Not done: wider elements, two arrays at once (the FIR), `arr(var + k)` | `walk_plan`, `pass_fold_postinc` |
 | R5 | done (PIC18). Not done: `If v < 0 Then v = 0 - v` as `Abs` | `store` |
-| R6 | done for an unsigned byte with the left side in W. Not done: one subtract shared by `If a = b ... ElseIf a < b` | `ord_jump` |
+| R6 | done for an unsigned byte with the left side in W; one subtract shared by `If a = b ... ElseIf a < b` (`pass_shared_compare`); `cpfsgt` when the second operand is already in W (`pass_cpfs_held`; the bubble-sort compare still stores both elements for the swap) | `ord_jump` |
 | R7 | done: `__div2`/`__div4` without the carry path; `__mul2` finished in `__A`; a Word by a byte constant through `__divk2` when nothing else needs `__div2` | `emit_helper`, `gen_div` |
 | R8 | done: byte index for tables up to 256 bytes, `T(i)` then `T(i + 1)` | `point_tblptr`, `tbl_continues` |
 | R9 | done: mask tests, dead loads, known-zero copies, repeated `FSRnH` loads, array walks. Not done: load reuse and `moviw k[FSR0]` for neighbouring elements; variable placement by bank | `codegen16`, `pass_dead_loads` |
 | R10 | done: 16-bit constant multiply built in the destination; the 16F multiply loop ends with the multiplier. Not done: `Integer * Byte` inline with two `mulwf` | `mul_partials_from`, `mul_helper` |
 | R11 | done: whole `xorlw` chains, tail merging, `bra` to a `return`. Not done: a computed jump for a dense `Select` | `pass_xor_chain`, `pass_tail_merge` |
-| R12 | done: `incf X,w`, `op X,f`, self-copies, mask folding, bit add, nibble-swap shift tail, the shift-out conditional, `rlcf top,w`. Not done: peephole facts kept across a label with one way in; `(n - 1) - i` | `pass_small`, `pass_mask_fold`, `shift_out_shape` |
+| R12 | done: `incf X,w`, `op X,f`, self-copies, mask folding, bit add, nibble-swap shift tail, the shift-out conditional, `rlcf top,w`. FSR contents kept across labels, loops and skips (`fsr_flow`, `pass_lfsr_flow`), a repeated load of `WREG` dropped (`pass_same_load`), a unary result forwarded (`pass_forward_unary`). Not done: the same facts for `WREG` and scratch bytes; `(n - 1) - i` | `pass_small`, `pass_mask_fold`, `shift_out_shape` |
 | R13 | done | `pass_div_share` |
 | R14 | done | `ord_core` |
 | R15 | done: joined start-up zero runs, a `ByVal` parameter as the result of a leaf routine. Not done: a result that is the low bytes of a wider local, the entry clear of a local array, the three-variable rotate | `startup`, `coalesce_results` |

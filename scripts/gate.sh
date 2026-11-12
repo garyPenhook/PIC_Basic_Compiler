@@ -11,7 +11,8 @@
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 1
 B=$root/target/release/basil
-cargo build --release 2>&1 | grep -E '^(warning|error)' -A6 | head -40
+cargo build --release > "${TMPDIR:-/tmp}/gate-build.$$" 2>&1 || { grep -E '^(warning|error)' -A6 "${TMPDIR:-/tmp}/gate-build.$$"; rm -f "${TMPDIR:-/tmp}/gate-build.$$"; echo "build failed"; exit 1; }
+rm -f "${TMPDIR:-/tmp}/gate-build.$$"
 [ -x "$B" ] || { echo "no $B"; exit 1; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
