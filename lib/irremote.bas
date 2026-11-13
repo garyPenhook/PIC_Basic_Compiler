@@ -24,24 +24,35 @@ Function Width(ByVal pin As Byte, ByVal level As Boolean, ByVal limit As Word) A
     Result = n
 End Function
 
+' Makes the pin an input and waits for the start of a frame: False for a bad pin, a line stuck low (more than about 10 ms)
+' or no falling edge within about 0.65 s. On True the line has just gone low.
+Function Begin(ByVal pin As Byte) As Boolean
+    Result = False
+    If Not Pinio.PinOk(pin) Then
+        Exit
+    End If
+    Pinio.PinInput(pin)
+    If Width(pin, False, 1000) > 1000 Then
+        Exit
+    End If
+    ' the line has to be idle (high), then fall
+    If Width(pin, True, 65000) > 65000 Then
+        Exit
+    End If
+    Result = True
+End Function
+
 ' Sony SIRC, 12 bit frames: a 2.4 ms burst, then 12 bits LSB first (7 command bits, 5 system bits), each a burst of
 ' 0.6 ms (0) or 1.2 ms (1) followed by a 0.6 ms gap. The pulse widths are judged against the width of the header,
 ' so the result does not depend on the exact poll time.
 Public Function SonyIn(ByVal pin As Byte) As Word
     Dim header As Word
     Dim w As Word
+    Dim t As Word
     Dim v As Word
     Dim i As Byte
     Result = 65535
-    If Not Pinio.PinOk(pin) Then
-        Exit
-    End If
-    Pinio.PinInput(pin)
-    ' idle high, then the header burst
-    If Width(pin, False, 1000) > 1000 Then
-        Exit
-    End If
-    If Width(pin, True, 65000) > 65000 Then
+    If Not Begin(pin) Then
         Exit
     End If
     header = Width(pin, False, 1000)
@@ -49,18 +60,22 @@ Public Function SonyIn(ByVal pin As Byte) As Word
     If header < 140 Or header > 360 Then
         Exit
     End If
+    ' 1.2 ms against 0.6 ms: the threshold is 0.9 ms, 3/8 of the 2.4 ms header (w * 8 > header * 3 is w > this)
+    t = (header * 3) >> 3
     v = 0
     For i = 0 To 11
         If Width(pin, True, 200) > 200 Then
             Exit
         End If
         w = Width(pin, False, 1000)
-        ' 1.2 ms against 0.6 ms: the threshold is 0.9 ms, 3/8 of the 2.4 ms header
-        If w * 8 > header * 3 Then
-            v = v Or (1 << i)
+        v = v >> 1
+        If w > t Then
+            v = v Or 2048
         End If
     Next
-    Result = ((v >> 7) << 8) Or (v And 127)
+    ' v: bit 0 is the first bit received; command bits 0..6, system bits 7..11
+    Result.Byte0 = Byte(v) And 127
+    Result.Byte1 = (Byte(v >> 8) << 1) Or (Byte(v) >> 7)
 End Function
 
 ' Philips RC5, 14 bits Manchester coded at 1.778 ms per bit: two start bits (the second is the inverse of command
@@ -71,15 +86,7 @@ Public Function RC5In(ByVal pin As Byte) As Word
     Dim v As Word
     Dim i As Byte
     Result = 65535
-    If Not Pinio.PinOk(pin) Then
-        Exit
-    End If
-    Pinio.PinInput(pin)
-    If Width(pin, False, 1000) > 1000 Then
-        Exit
-    End If
-    ' the line has to be idle (high), then fall in the middle of the first start bit
-    If Width(pin, True, 65000) > 65000 Then
+    If Not Begin(pin) Then
         Exit
     End If
     ' The edge is the middle of the first start bit. A bit is 1.778 ms, so the second half of the next bit is centred
@@ -94,7 +101,8 @@ Public Function RC5In(ByVal pin As Byte) As Word
         Pulse.WaitUs(1770)
     Next
     ' v: bit 12 = start 2, bit 11 = toggle, bits 10..6 = system, bits 5..0 = command
-    Result = (((v >> 6) And 31) << 8) Or (v And 63)
+    Result.Byte0 = Byte(v) And 63
+    Result.Byte1 = ((Byte(v >> 8) << 2) Or (Byte(v) >> 6)) And 31
     If (v And 4096) = 0 Then
         Result = Result Or 64
     End If

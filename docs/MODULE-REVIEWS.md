@@ -47,6 +47,7 @@ fixed in the module.
 | 24 | `strings` | reviewed (0.1.210) | compiler change: `Len` 17 → 12 words (18F27Q10); `lib_strings` 139 → 134, `str_basic` 542 → 532, `str_slice_ref` 629 → 559 |
 | 25 | `system` | reviewed (0.1.211) | all-routines probe 299 → 278 (18F27Q10, 18F16Q41), 375 → 356 (16F17146), 418 → 389 (16F18346), 353 → 334 (16F18056, 16F15244) |
 | 26 | `x10` | reviewed (0.1.212) | all-routines probe 768 → 741 (18F27Q10, 18F16Q41), 952 → 929 (16F17146, 16F18346) |
+| 27 | `irremote` | reviewed (0.1.213) | all-routines probe 436 → 357 (18F27Q10, 18F16Q41), 533 → 444 (16F17146) |
 | … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -719,6 +720,17 @@ Probe calls `Xout`, `Xin`, `CodeOf` and `NumberOf` with run-time pins and codes:
 - **Left:** `Frame`, `SendBit`, `Half` and `Zero` are already a chain of small calls; the rest is the 500 µs and 10 µs delays.
 - **Tests:** `tests/exec_pins/lib_pins_model` (all 16 codes both ways, frames sent and played back through `Xin`) passes on 18F27Q10 and 16F17146.
 
+## 27. `irremote` (done 2026-11-13, 0.1.213)
+
+Probe calls `SonyIn` and `RC5In` with a run-time pin: 18F27Q10 and 18F16Q41 436 → 357 words, 16F17146 533 → 444.
+
+- **One `Begin` for the start-up both decoders repeated** (pin check, input, the stuck-low test, the wait for the falling edge): the second copy of the two `Width` calls with their compares and the `PinOk`/`PinInput` calls is gone.
+- **Sony threshold once.** `w * 8 > header * 3` is `w > (header * 3) >> 3` for integers; it is now computed once before the loop instead of a multiply and a three-place shift per bit.
+- **Sony bits shifted in from the top** (`v = v >> 1`, `Or 2048`) instead of `v Or (1 << i)`, which called `__shl2` per bit.
+- **Results as two byte stores** (`Result.Byte0`, `Result.Byte1`) from the bytes of `v`: no 7-place and 6-place word shift loops, no 16-bit mask and shift in `__A`.
+- **Left:** `Width` (a 16-bit count, a delay and a `PinGet` per poll) and the 5 ms of `WaitUs` per RC5 bit are the timing itself.
+- **Tests:** `tests/exec_pins/lib_pins_model` now decodes four RC5 lines (command below and above 64, toggle set, all ones, all zeros) as well as the Sony frame; the new test passes on the old library too, so the decode is unchanged. Passes on 18F27Q10, 18F16Q41, 16F17146 and 16F18346.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `epaper`, `glcd`, `intosc`, `irremote`, `pulse`).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `epaper`, `glcd`, `intosc`, `pulse`; `irremote` is done).

@@ -36,6 +36,32 @@ Sub ChkB(ByRef e As Byte, ByVal got As Boolean, ByVal want As Boolean)
     End If
 End Sub
 
+' A line for `RC5In`: idle high, then the falling edge (the middle of the first start bit, one poll), then the 13 samples
+' of the frame, one poll each, a 1 being low. `w` holds the 13 bits, start 2 in bit 12, then toggle, 5 system bits, 6 command bits.
+Sub Rc5Wave(ByVal w As Word)
+    Dim k As Byte
+    Dim run As Word
+    Dim isLow As Boolean
+    Dim b As Boolean
+    Pinio.WaveBegin()
+    Pinio.WaveAdd(5)
+    isLow = True
+    run = 1
+    For k = 0 To 12
+        b = ((w >> (12 - k)) And 1) = 1
+        If b = isLow Then
+            run = run + 1
+        Else
+            Pinio.WaveAdd(run)
+            isLow = b
+            run = 1
+        End If
+    Next
+    Pinio.WaveAdd(run)
+    Pinio.WaveAdd(5)
+    Pinio.WaveStart()
+End Sub
+
 ' X-10: the code table, one frame on the line, and a round trip through Xin.
 For i = 0 To 15
     Chk(e1, X10.NumberOf(X10.CodeOf(i)), i)
@@ -107,6 +133,15 @@ Pinio.WaveStart()
 Chk(e5, Irremote.SonyIn(12), 65535)
 Pinio.WaveStart()
 Chk(e5, Irremote.RC5In(12), 65535)
+' RC5: system 5, command 42, start 2 set (so command < 64), toggle 0; then toggle 1 with start 2 clear (command + 64); then all ones
+Rc5Wave(4096 + 320 + 42)
+Chk(e5, Irremote.RC5In(12), 1322)
+Rc5Wave(2048 + 320 + 42)
+Chk(e5, Irremote.RC5In(12), 1386)
+Rc5Wave(8191)
+Chk(e5, Irremote.RC5In(12), 7999)
+Rc5Wave(0)
+Chk(e5, Irremote.RC5In(12), 64)
 Chk(e5, Irremote.SonyIn(30), 65535)
 
 ' Pulse measurements: high 10, low 100, high 300 polls; low 123; low 200.

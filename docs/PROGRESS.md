@@ -1445,3 +1445,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## x10 module review (done 2026-11-13, 0.1.212)
 - `lib/x10.bas`: `CodeOf` and `NumberOf` from 16-byte `Const` tables. All-routines probe 18F27Q10 / 18F16Q41 768 -> 741, 16F17146 / 16F18346 952 -> 929 words. See MODULE-REVIEWS section 26.
+
+## irremote module review (done 2026-11-13, 0.1.213)
+- `lib/irremote.bas`: one `Begin` start-up for both decoders, the Sony threshold computed once, bits shifted in from the top, results stored as two bytes. All-routines probe 18F27Q10 / 18F16Q41 436 -> 357, 16F17146 533 -> 444 words. RC5 decode cases added to `tests/exec_pins/lib_pins_model`. See MODULE-REVIEWS section 27.
