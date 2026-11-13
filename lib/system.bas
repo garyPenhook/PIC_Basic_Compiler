@@ -71,22 +71,13 @@ End Sub
 ' The cause for a given STATUS value `st` (only the TO and PD bits are looked at):
 '   0 none (power-up, or cleared), 1 woke from Sleep by an interrupt or another non-watchdog event,
 '   2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
+Const WakeTab(4) As Byte = (2, 3, 1, 0)
 Public Function SysWakeFrom(ByVal st As Byte) As Byte
-    Dim m As Byte
 #if _has(PRODL)
-    m = (st >> 5) And 3
+    Result = WakeTab((st >> 5) And 3)
 #else
-    m = (st >> 3) And 3
+    Result = WakeTab((st >> 3) And 3)
 #endif
-    ' m bit 0 = PD, bit 1 = TO
-    Result = 0
-    If m = 2 Then
-        Result = 1
-    ElseIf m = 0 Then
-        Result = 2
-    ElseIf m = 1 Then
-        Result = 3
-    End If
 End Function
 
 ' The wake-up / power-down cause now, from STATUS (see SysWakeFrom).
@@ -100,6 +91,17 @@ Public Sub SysClearWakeFlags()
         clrwdt
     End Asm
 End Sub
+
+' HFINTOSC megahertz for each OSCFRQ code. The PIC16F183xx table also holds, from index 8, the PLL clocks for codes 4..6.
+#if _has(ADCON1.PREF) Or (_has(OSCFRQ.FRQ) And Not _has(OSCCON1))
+Const MhzTab(6) As Byte = (1, 2, 4, 8, 16, 32)
+#elseif _has(ADCON0.CHS)
+Const MhzTab(11) As Byte = (1, 2, 0, 4, 8, 12, 16, 32, 16, 24, 32)
+#elseif _has(OSCFRQ.HFFRQ)
+Const MhzTab(9) As Byte = (1, 2, 4, 8, 12, 16, 32, 48, 64)
+#else
+Const MhzTab(6) As Byte = (1, 2, 4, 8, 16, 32)
+#endif
 
 ' The system clock in Hz for a source `cosc` (OSCCON2 bits 6:4), divider code `cdiv` (OSCCON2 bits 3:0)
 ' and HFINTOSC frequency code `hffrq` (OSCFRQ bits 3:0) [5.6.2, 5.6.5, Table 5-1]: HFINTOSC (cosc = 6) at
@@ -117,52 +119,24 @@ Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq
 #endif
         Exit
     End If
-    mhz = 0
-    If hffrq = 0 Then
-        mhz = 1
-    ElseIf hffrq = 1 Then
-        mhz = 2
-    ElseIf hffrq = 2 Then
-        mhz = 4
-    ElseIf hffrq = 3 Then
-        mhz = 8
-    ElseIf hffrq = 4 Then
-        mhz = 16
-    ElseIf hffrq = 5 Then
-        mhz = 32
+    If hffrq > 5 Then
+        Exit
     End If
-    If mhz <> 0 Then
-        Result = LongWord(mhz) * 1000000
-    End If
+    mhz = MhzTab(hffrq)
+    Result = LongWord(mhz) * 1000000
 #elseif _has(ADCON0.CHS)
     If (cosc <> 6 And cosc <> 0) Or cdiv > 9 Then
         Exit
     End If
     mhz = 0
     If cosc = 6 Then
-        If hffrq = 0 Then
-            mhz = 1
-        ElseIf hffrq = 1 Then
-            mhz = 2
-        ElseIf hffrq = 3 Then
-            mhz = 4
-        ElseIf hffrq = 4 Then
-            mhz = 8
-        ElseIf hffrq = 5 Then
-            mhz = 12
-        ElseIf hffrq = 6 Then
-            mhz = 16
-        ElseIf hffrq >= 7 Then
-            mhz = 32
+        ' HFFRQ 2 is reserved (0 in the table); 7 and more are 32 MHz
+        If hffrq > 7 Then
+            hffrq = 7
         End If
-    Else
-        If hffrq = 4 Then
-            mhz = 16
-        ElseIf hffrq = 5 Then
-            mhz = 24
-        ElseIf hffrq = 6 Then
-            mhz = 32
-        End If
+        mhz = MhzTab(hffrq)
+    ElseIf hffrq >= 4 And hffrq <= 6 Then
+        mhz = MhzTab(hffrq + 4)
     End If
     If mhz <> 0 Then
         Result = (LongWord(mhz) * 1000000) >> cdiv
@@ -171,36 +145,17 @@ Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq
     If cosc <> 6 Or cdiv > 9 Then
         Exit
     End If
-    mhz = 0
-    If hffrq = 0 Then
-        mhz = 1
-    ElseIf hffrq = 1 Then
-        mhz = 2
-    ElseIf hffrq = 2 Then
-        mhz = 4
-    ElseIf hffrq = 3 Then
-        mhz = 8
 #if _has(OSCFRQ.HFFRQ)
-    ElseIf hffrq = 4 Then
-        mhz = 12
-    ElseIf hffrq = 5 Then
-        mhz = 16
-    ElseIf hffrq = 6 Then
-        mhz = 32
-    ElseIf hffrq = 7 Then
-        mhz = 48
-    ElseIf hffrq = 8 Then
-        mhz = 64
+    If hffrq > 8 Then
+        Exit
+    End If
 #else
-    ElseIf hffrq = 4 Then
-        mhz = 16
-    ElseIf hffrq = 5 Then
-        mhz = 32
+    If hffrq > 5 Then
+        Exit
+    End If
 #endif
-    End If
-    If mhz <> 0 Then
-        Result = (LongWord(mhz) * 1000000) >> cdiv
-    End If
+    mhz = MhzTab(hffrq)
+    Result = (LongWord(mhz) * 1000000) >> cdiv
 #endif
 End Function
 

@@ -45,6 +45,7 @@ fixed in the module.
 | 22 | `shift` | reviewed (0.1.208) | all-routines probe 570 → 524 (18F27Q10, 18F16Q41), 672 → 625 (16F17146) |
 | 23 | `spi` | reviewed (0.1.209) | constant-pin programs: `lib_spi` 357 → 313 (18F27Q10), 120 → 103 (Q41), 731 → 722 (16F18056); `m4_spiflash` 470 → 436; run-time-pin probe 706 → 659 (16F17146), 417 → 425 (18F27Q10), 459 → 475 (Q41) |
 | 24 | `strings` | reviewed (0.1.210) | compiler change: `Len` 17 → 12 words (18F27Q10); `lib_strings` 139 → 134, `str_basic` 542 → 532, `str_slice_ref` 629 → 559 |
+| 25 | `system` | reviewed (0.1.211) | all-routines probe 299 → 278 (18F27Q10, 18F16Q41), 375 → 356 (16F17146), 418 → 389 (16F18346), 353 → 334 (16F18056, 16F15244) |
 | … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -699,6 +700,15 @@ The module is one routine, `Len`, 17 words (18F27Q10, run-time strings). Loop sh
 - **Result.** `Len` 17 → 12 words. Programs (18F27Q10): `lib_strings` 139 → 134, `str_basic` 542 → 532, `str_func` 991 → 986, `str_slice` 599 → 594, `str_slice_ref` 629 → 559, `lib_oled` 1748 → 1742. No other program in `tests/exec/lib_*`, `str_*`, `bench/large`, `library_*` changed.
 - **Tests:** new `tests/exec/byref_index` (Byte indices into `ByRef` arrays, a loop index, an expression index, 255); PIC18 gate (`tests/exec/*.bas`, `bench/large`, `tests/exec_rtcc/lib_*.bas`) 207 pass. The 16F back end is not touched.
 
+## 25. `system` (done 2026-11-13, 0.1.211)
+
+Probe calls every routine with run-time values: 18F27Q10 and 18F16Q41 299 → 278 words, 16F17146 375 → 356, 16F18346 418 → 389, 16F18056 and 16F15244 353 → 334.
+
+- **`SysClockFrom` reads the HFINTOSC megahertz from a `Const` table** (`MhzTab`, one per family) instead of an `If` chain: 88 → 66 words (18F27Q10). Out-of-range codes still give 0; the 16F183xx table keeps the reserved code 2 as 0, codes 7 and up as 32 MHz, and the PLL clocks from index 8.
+- **`SysWakeFrom` is a four-entry table** (`WakeTab`): 21 → 15 words (18F27Q10), 26 → 14 (16F).
+- **Left:** `SysResetCause` is a flag-priority chain with no shorter form; `SysWdtSleep` is already minimal.
+- **Tests:** `lib_system` passes on 18F27Q10 (also -O0), 16F15244, 16F18056, 16F18346.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then the rest of the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (`x10`, then the unlisted `epaper`, `glcd`, `intosc`, `irremote`, `pulse`).

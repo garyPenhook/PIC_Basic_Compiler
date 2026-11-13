@@ -1439,3 +1439,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## strings module review (done 2026-11-13, 0.1.210)
 - `point_fsr` (PIC18): a Byte index into a `ByRef` array or String is added to the pointer in W and written to FSRn (6 words, was 8 through `__A`). `Strings.Len` 17 -> 12 words; `str_slice_ref` 629 -> 559. See MODULE-REVIEWS section 24.
+
+## system module review (done 2026-11-13, 0.1.211)
+- `lib/system.bas`: `SysClockFrom` and `SysWakeFrom` use `Const` tables instead of `If` chains. All-routines probe 18F27Q10 299 -> 278, 16F17146 375 -> 356, 16F18346 418 -> 389 words. See MODULE-REVIEWS section 25.

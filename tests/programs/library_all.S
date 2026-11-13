@@ -120,7 +120,7 @@ SPI_SPIREAD__RESULT equ 0x017  ; Result (1 byte)
 SPI_SPISTATUS__RESULT equ 0x014  ; Result (1 byte)
 SYSTEM_SYSRESETCAUSE__RESULT equ 0x00F  ; Result (1 byte)
 SYSTEM_SYSRESETFLAGS__RESULT equ 0x00F  ; Result (1 byte)
-SYSTEM_SYSCLOCKOK__RESULT equ 0x019  ; Result (1 byte)
+SYSTEM_SYSCLOCKOK__RESULT equ 0x02D  ; Result (1 byte)
 LCD_LCDINIT__RESULT equ 0x012  ; Result (1 byte)
 LCD_LCDSETADDRESS__ADDR equ 0x011  ; addr (1 byte)
 LCD_LCDGOTO__COL equ 0x00F  ; col (1 byte)
@@ -355,21 +355,18 @@ LCD_LCDWRITEWORD__DIGIT equ 0x013  ; digit (1 byte)
 LCD_LCDWRITE__I equ 0x00F  ; i (1 byte)
 LCD_LCDINIT__I equ 0x010  ; i (1 byte)
 LCD_LCDINIT__J equ 0x00F  ; j (1 byte)
-SYSTEM_SYSCLOCKFROM__COSC equ 0x02D  ; cosc (1 byte)
+SYSTEM_SYSCLOCKFROM__COSC equ 0x02E  ; cosc (1 byte)
 SYSTEM_SYSCLOCKFROM__CDIV equ 0x018  ; cdiv (1 byte)
-SYSTEM_SYSCLOCKFROM__HFFRQ equ 0x02E  ; hffrq (1 byte)
+SYSTEM_SYSCLOCKFROM__HFFRQ equ 0x019  ; hffrq (1 byte)
 SYSTEM_SYSCLOCKFROM__RESULT equ 0x00F  ; Result (4 bytes)
-SYSTEM_SYSCLOCKFROM__MHZ equ 0x013  ; mhz (1 byte)
+SYSTEM_SYSCLOCKFROM__MHZ equ 0x017  ; mhz (1 byte)
 SYSTEM_SYSRESETCAUSE__F equ 0x010  ; f (1 byte)
-SPI_PPSOFF__PIN equ 0x011  ; pin (1 byte)
-SPI_PPSOFF__SL equ 0x00F  ; sl (1 byte)
-SPI_PPSOFF__SH equ 0x010  ; sh (1 byte)
+SPI_SETPPS__PIN equ 0x010  ; pin (1 byte)
+SPI_SETPPS__CODE equ 0x00F  ; code (1 byte)
 SPI_SPIWRITE__R equ 0x045  ; r (1 byte)
 SPI_SPITRANSFER__N equ 0x014  ; n (2 bytes)
 SPI_PINSETUP__PIN equ 0x010  ; pin (1 byte)
 SPI_PINSETUP__ASINPUT equ 0x011  ; asInput (1 byte)
-SPI_SETPPS__PIN equ 0x010  ; pin (1 byte)
-SPI_SETPPS__CODE equ 0x00F  ; code (1 byte)
 SPI_PINSETUP__M equ 0x00F  ; m (1 byte)
 I2C_SETPPS__PIN equ 0x00F  ; pin (1 byte)
 I2C_SETPPS__CODE equ 0x010  ; code (1 byte)
@@ -460,7 +457,7 @@ RTCCSPI_TOBCD__TMP equ 0x015
 RTCCSPI_READBLOCK__TMP equ 0x013
 RTCC_TOBCD__TMP equ 0x015
 RTCC_READBLOCK__TMP equ 0x019
-SYSTEM_SYSCLOCKFROM__TMP equ 0x014
+SYSTEM_SYSCLOCKFROM__TMP equ 0x013
 PWM_SETDUTY__TMP equ 0x02F
 FLASHWRITE_SETADDR__TMP equ 0x046
 
@@ -566,11 +563,11 @@ _L7:
     movwf TX1STA, c
     movlw 0x90
     movwf RC1STA, c
-    movlw low(__SLIT3)
+    movlw low(__SLIT4)
     movwf TBLPTRL, c
-    movlw high(__SLIT3)
+    movlw high(__SLIT4)
     movwf TBLPTRH, c
-    movlw highword(__SLIT3)
+    movlw highword(__SLIT4)
     movwf TBLPTRU, c
 _L14:
     tblrd*+
@@ -588,9 +585,9 @@ _Lr10:
 _L19:
     movf SERIAL_SERIALWRITEWORD__K, w, c
     addwf WREG, w, c
-    addlw low(__CA2)
+    addlw low(__CA3)
     movwf TBLPTRL, c
-    movlw high(__CA2)
+    movlw high(__CA3)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -698,9 +695,9 @@ _L37:
     bra _L42
 _L41:
     movf SERIAL2_SERIAL2WRITE__I, w, c
-    addlw low(__SLIT4)
+    addlw low(__SLIT5)
     movwf TBLPTRL, c
-    movlw high(__SLIT4)
+    movlw high(__SLIT5)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -711,9 +708,9 @@ _L41:
     incf SERIAL2_SERIAL2WRITE__I, f, c
 _L42:
     movf SERIAL2_SERIAL2WRITE__I, w, c
-    addlw low(__SLIT4)
+    addlw low(__SLIT5)
     movwf TBLPTRL, c
-    movlw high(__SLIT4)
+    movlw high(__SLIT5)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -730,9 +727,9 @@ _L42:
 _L44:
     movf SERIAL2_SERIAL2WRITEWORD__K, w, c
     addwf WREG, w, c
-    addlw low(__CA1)
+    addlw low(__CA2)
     movwf TBLPTRL, c
-    movlw high(__CA1)
+    movlw high(__CA2)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1223,12 +1220,12 @@ _L166:
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf I2C_I2CPROBE__RESULT, c
-    bnz _L986
+    bnz _L971
     movlw 0xA0
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf I2C_I2CPROBE__RESULT, c
-_L986:
+_L971:
     call I2C_I2CSTOP
     movff I2C_I2CPROBE__RESULT, I2C_LASTSTATUS
     movf I2C_I2CPROBE__RESULT, w, c
@@ -1361,9 +1358,13 @@ _L3:
     movwf T_R, c
     clrf SSP1CON1, c
     movlw 0x13
-    call SPI_PPSOFF
+    movwf SPI_SETPPS__PIN, c
+    clrf SPI_SETPPS__CODE, c
+    call SPI_SETPPS
     movlw 0x14
-    call SPI_PPSOFF
+    movwf SPI_SETPPS__PIN, c
+    clrf SPI_SETPPS__CODE, c
+    call SPI_SETPPS
     movlb 0
     clrf SPI_READY, b
     movff PCON0, SYSTEM_SYSRESETCAUSE__F
@@ -1696,9 +1697,9 @@ _Lr53:
     bra _L301
 _L300:
     movf LCD_LCDWRITE__I, w, c
-    addlw low(__SLIT5)
+    addlw low(__SLIT6)
     movwf TBLPTRL, c
-    movlw high(__SLIT5)
+    movlw high(__SLIT6)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1709,9 +1710,9 @@ _L300:
     incf LCD_LCDWRITE__I, f, c
 _L301:
     movf LCD_LCDWRITE__I, w, c
-    addlw low(__SLIT5)
+    addlw low(__SLIT6)
     movwf TBLPTRL, c
-    movlw high(__SLIT5)
+    movlw high(__SLIT6)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1930,9 +1931,9 @@ _Lr68:
     bra _L360
 _L359:
     movf OLED_OLEDWRITE__I, w, c
-    addlw low(__SLIT6)
+    addlw low(__SLIT7)
     movwf TBLPTRL, c
-    movlw high(__SLIT6)
+    movlw high(__SLIT7)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1943,9 +1944,9 @@ _L359:
     incf OLED_OLEDWRITE__I, f, c
 _L360:
     movf OLED_OLEDWRITE__I, w, c
-    addlw low(__SLIT6)
+    addlw low(__SLIT7)
     movwf TBLPTRL, c
-    movlw high(__SLIT6)
+    movlw high(__SLIT7)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -4301,38 +4302,38 @@ PWM_PWMSTART:
     bz _L134
     clrf PWM_PINOK__RESULT, c
     decf PWM_PWMSTART__CH, w, c
-    bz _L1017
+    bz _L1002
     movf PWM_PWMSTART__CH, w, c
     xorlw 0x02
-    bnz _L1016
-_L1017:
+    bnz _L1001
+_L1002:
     movf PWM_PWMSTART__PIN, w, c
     addlw 0xF8
     sublw 0x0F
-    bnc _L1015
+    bnc _L1000
     movlw 0x01
     movwf PWM_PINOK__RESULT, c
-    bra _L1015
-_L1016:
+    bra _L1000
+_L1001:
     xorlw 0x01
-    bz _L1021
+    bz _L1006
     movf PWM_PWMSTART__CH, w, c
     xorlw 0x04
-    bnz _L1020
-_L1021:
+    bnz _L1005
+_L1006:
     movlw 0x08
     subwf PWM_PWMSTART__PIN, w, c
-    bnc _L1024
+    bnc _L1009
     movf PWM_PWMSTART__PIN, w, c
     addlw 0xF0
     sublw 0x07
-    bnc _L1023
-_L1024:
+    bnc _L1008
+_L1009:
     movlw 0x01
     movwf PWM_PINOK__RESULT, c
-_L1023:
-_L1020:
-_L1015:
+_L1008:
+_L1005:
+_L1000:
     movf PWM_PINOK__RESULT, w, c
     bnz _L133
 _L134:
@@ -4704,61 +4705,22 @@ SYSTEM_SYSCLOCKHZ:
     bnc _L939
     return
 _L939:
-    clrf SYSTEM_SYSCLOCKFROM__MHZ, c
-    movf PCL, w, c
-    movf SYSTEM_SYSCLOCKFROM__HFFRQ, w, c
-    sublw 0x08
-    bnc _L941
-    rlncf WREG, w, c
-    addwf PCL, f, c
-    bra _L950
-    bra _L949
-    bra _L948
-    bra _L947
-    bra _L946
-    bra _L945
-    bra _L944
-    bra _L943
-    bra _L942
+    movlw 0x09
+    subwf SYSTEM_SYSCLOCKFROM__HFFRQ, w, c
+    bnc _L942
+    return
 _L942:
-    movlw 0x01
+    movf SYSTEM_SYSCLOCKFROM__HFFRQ, w, c
+    addlw low(__CA1)
+    movwf TBLPTRL, c
+    movlw high(__CA1)
+    movwf TBLPTRH, c
+    movlw 0
+    addwfc TBLPTRH, f, c
+    clrf TBLPTRU, c
+    tblrd*+
+    movf TABLAT, w, c
     movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L943:
-    movlw 0x02
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L944:
-    movlw 0x04
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L945:
-    movlw 0x08
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L946:
-    movlw 0x0C
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L947:
-    movlw 0x10
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L948:
-    movlw 0x20
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L949:
-    movlw 0x30
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-    bra _L941
-_L950:
-    movlw 0x40
-    movwf SYSTEM_SYSCLOCKFROM__MHZ, c
-_L941:
-    movf SYSTEM_SYSCLOCKFROM__MHZ, f, c
-    bz _L952
-    movf SYSTEM_SYSCLOCKFROM__MHZ, w, c
     mullw 0x40
     movff PRODL, __A0
     movff PRODH, __A1
@@ -4788,7 +4750,6 @@ _L941:
     movff __A1, SYSTEM_SYSCLOCKFROM__RESULT+1
     movff __A2, SYSTEM_SYSCLOCKFROM__RESULT+2
     movff __A3, SYSTEM_SYSCLOCKFROM__RESULT+3
-_L952:
 _Lr110:
     return
     ; Sub/Function LcdSetAddress
@@ -5668,7 +5629,7 @@ PINIO_BINDDATA:
     movwf __D1, c
     movlw 0x01
     movwf __A0, c
-    call __shl1
+    rcall __shl1
     movf __A0, w, c
     movlb 0
     movwf PINIO_DMASK, b
@@ -5813,7 +5774,7 @@ _L833:
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
     movlw 0x13
-    call SPI_SPIWRITE
+    rcall SPI_SPIWRITE
     movf RTCCSPI_READBLOCK__A, w, c
     call SPI_SPIWRITE
     clrf RTCCSPI_READBLOCK__I, c
@@ -6273,19 +6234,119 @@ _L937:
     decfsz __D0, f, c
     bra _L937
     return
-    ; Sub/Function PpsOff
-SPI_PPSOFF:
-    movwf SPI_PPSOFF__PIN, c
-    clrf SPI_PPSOFF__SL, c
-    clrf SPI_PPSOFF__SH, c
-            movff FSR2L, SPI_PPSOFF__SL
-            movff FSR2H, SPI_PPSOFF__SH
-            lfsr 2, RA0PPS
-            movf SPI_PPSOFF__PIN, w, c
-            addwf FSR2L, f, c
-            clrf INDF2, c
-            movff SPI_PPSOFF__SL, FSR2L
-            movff SPI_PPSOFF__SH, FSR2H
+    ; Sub/Function SetPps
+SPI_SETPPS:
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    movf PCL, w, c
+    movf SPI_SETPPS__PIN, w, c
+    addlw 0xF8
+    sublw 0x0F
+    bnc _L943
+    rlncf WREG, w, c
+    addwf PCL, f, c
+    bra _L959
+    bra _L958
+    bra _L957
+    bra _L956
+    bra _L955
+    bra _L954
+    bra _L953
+    bra _L952
+    bra _L951
+    bra _L950
+    bra _L949
+    bra _L948
+    bra _L947
+    bra _L946
+    bra _L945
+    bra _L944
+_L944:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB0PPS, b
+    return
+_L945:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB1PPS, b
+    return
+_L946:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB2PPS, b
+    return
+_L947:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB3PPS, b
+    return
+_L948:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB4PPS, b
+    return
+_L949:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB5PPS, b
+    return
+_L950:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB6PPS, b
+    return
+_L951:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RB7PPS, b
+    return
+_L952:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC0PPS, b
+    return
+_L953:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC1PPS, b
+    return
+_L954:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC2PPS, b
+    return
+_L955:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC3PPS, b
+    return
+_L956:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC4PPS, b
+    return
+_L957:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC5PPS, b
+    return
+_L958:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC6PPS, b
+    return
+_L959:
+    movf SPI_SETPPS__CODE, w, c
+    movlb 14
+    movwf RC7PPS, b
+_L943:
     return
     ; Sub/Function PinSetup
 SPI_PINSETUP:
@@ -6299,173 +6360,35 @@ SPI_PINSETUP:
     movwf SPI_PINSETUP__M, c
     movlw 0x10
     subwf SPI_PINSETUP__PIN, w, c
-    bc _L954
+    bc _L961
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     movlb 15
     andwf ANSELB, f, b
     movf SPI_PINSETUP__ASINPUT, f, c
-    bz _L956
+    bz _L963
     movf SPI_PINSETUP__M, w, c
     iorwf TRISB, f, c
     return
-_L956:
+_L963:
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     andwf TRISB, f, c
     return
-_L954:
+_L961:
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     movlb 15
     andwf ANSELC, f, b
     movf SPI_PINSETUP__ASINPUT, f, c
-    bz _L958
+    bz _L965
     movf SPI_PINSETUP__M, w, c
     iorwf TRISC, f, c
     return
-_L958:
+_L965:
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     andwf TRISC, f, c
-    return
-    ; Sub/Function SetPps
-SPI_SETPPS:
-    movf PCL, w, c
-    movf SPI_SETPPS__PIN, w, c
-    sublw 0x17
-    bnc _L959
-    rlncf WREG, w, c
-    addwf PCL, f, c
-    bra _L980
-    bra _L979
-    bra _L978
-    bra _L977
-    bra _L976
-    bra _L975
-    bra _L974
-    bra _L973
-    bra _L972
-    bra _L971
-    bra _L970
-    bra _L969
-    bra _L968
-    bra _L967
-    bra _L966
-    bra _L965
-    bra _L959
-    bra _L959
-    bra _L964
-    bra _L963
-    bra _L959
-    bra _L962
-    bra _L961
-    bra _L960
-_L960:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RA0PPS, b
-    return
-_L961:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RA1PPS, b
-    return
-_L962:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RA2PPS, b
-    return
-_L963:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RA4PPS, b
-    return
-_L964:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RA5PPS, b
-    return
-_L965:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB0PPS, b
-    return
-_L966:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB1PPS, b
-    return
-_L967:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB2PPS, b
-    return
-_L968:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB3PPS, b
-    return
-_L969:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB4PPS, b
-    return
-_L970:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB5PPS, b
-    return
-_L971:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB6PPS, b
-    return
-_L972:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RB7PPS, b
-    return
-_L973:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC0PPS, b
-    return
-_L974:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC1PPS, b
-    return
-_L975:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC2PPS, b
-    return
-_L976:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC3PPS, b
-    return
-_L977:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC4PPS, b
-    return
-_L978:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC5PPS, b
-    return
-_L979:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC6PPS, b
-    return
-_L980:
-    movf SPI_SETPPS__CODE, w, c
-    movlb 14
-    movwf RC7PPS, b
-_L959:
     return
     ; Sub/Function SetPps
 I2C_SETPPS:
@@ -6486,19 +6409,19 @@ I2C_OPEN:
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf I2C_OPEN__RESULT, c
-    bnz _L982
+    bnz _L967
     movlw 0xA0
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf I2C_OPEN__RESULT, c
-_L982:
+_L967:
     movf I2C_OPEN__RESULT, f, c
-    bnz _L984
+    bnz _L969
     movlw 0x01
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf I2C_OPEN__RESULT, c
-_L984:
+_L969:
     return
     ; Sub/Function Condition
 I2C_CONDITION:
@@ -6507,7 +6430,7 @@ I2C_CONDITION:
     rcall I2C_WAITIDLE
     movf I2C_WAITIDLE__RESULT, w, c
     movwf I2C_CONDITION__RESULT, c
-    bnz _L988
+    bnz _L973
     movlb 14
     bcf PIR3, 0, b
     movf I2C_CONDITION__MSK, w, c
@@ -6515,7 +6438,7 @@ I2C_CONDITION:
     rcall I2C_WAITIDLE
     movf I2C_WAITIDLE__RESULT, w, c
     movwf I2C_CONDITION__RESULT, c
-_L988:
+_L973:
     return
     ; Sub/Function WaitIdle
 I2C_WAITIDLE:
@@ -6524,30 +6447,30 @@ I2C_WAITIDLE:
     clrf I2C_WAITIDLE__N+1, c
     movlw 0x01
     movwf I2C_WAITIDLE__RESULT, c
-    bra _L990
-_L989:
+    bra _L975
+_L974:
     movlb 14
     btfss PIR3, 1, b
-    bra _L993
+    bra _L978
     bcf PIR3, 1, b
     movlw 0x02
     movwf I2C_WAITIDLE__RESULT, c
     return
-_L993:
+_L978:
     movf SSP1CON2, w, c
     andwf I2C_WAITIDLE__MSK, w, c
-    bnz _L995
+    bnz _L980
     clrf I2C_WAITIDLE__RESULT, c
     return
-_L995:
+_L980:
     infsnz I2C_WAITIDLE__N, f, c
     incf I2C_WAITIDLE__N+1, f, c
-_L990:
+_L975:
     movlw 0x60
     subwf I2C_WAITIDLE__N, w, c
     movlw 0xEA
     subwfb I2C_WAITIDLE__N+1, w, c
-    bnc _L989
+    bnc _L974
     return
     ; Sub/Function WaitIf
 I2C_WAITIF:
@@ -6555,30 +6478,30 @@ I2C_WAITIF:
     clrf I2C_WAITIF__N+1, c
     movlw 0x01
     movwf I2C_WAITIF__RESULT, c
-    bra _L997
-_L996:
+    bra _L982
+_L981:
     movlb 14
     btfss PIR3, 1, b
-    bra _L1000
+    bra _L985
     bcf PIR3, 1, b
     movlw 0x02
     movwf I2C_WAITIF__RESULT, c
     return
-_L1000:
+_L985:
     btfss PIR3, 0, b
-    bra _L1002
+    bra _L987
     bcf PIR3, 0, b
     clrf I2C_WAITIF__RESULT, c
     return
-_L1002:
+_L987:
     infsnz I2C_WAITIF__N, f, c
     incf I2C_WAITIF__N+1, f, c
-_L997:
+_L982:
     movlw 0x60
     subwf I2C_WAITIF__N, w, c
     movlw 0xEA
     subwfb I2C_WAITIF__N+1, w, c
-    bnc _L996
+    bnc _L981
     return
     ; Sub/Function PinSetup
 I2C_PINSETUP:
@@ -6592,14 +6515,14 @@ I2C_PINSETUP:
     movwf I2C_PINSETUP__M, c
     movlw 0x10
     subwf I2C_PINSETUP__PIN, w, c
-    bc _L1004
+    bc _L989
     movf I2C_PINSETUP__M, w, c
     iorwf TRISB, f, c
     xorlw 0xFF
     movlb 15
     andwf ANSELB, f, b
     return
-_L1004:
+_L989:
     movf I2C_PINSETUP__M, w, c
     iorwf TRISC, f, c
     xorlw 0xFF
@@ -6609,24 +6532,24 @@ _L1004:
     ; Sub/Function SetCon
 PWM_SETCON:
     decf PWM_SETCON__CH, w, c
-    bnz _L1006
+    bnz _L991
     movf PWM_SETCON__V, w, c
     movwf CCP1CON, c
     return
-_L1006:
+_L991:
     movf PWM_SETCON__CH, w, c
     xorlw 0x02
-    bnz _L1007
+    bnz _L992
     movf PWM_SETCON__V, w, c
     movwf CCP2CON, c
     return
-_L1007:
+_L992:
     xorlw 0x01
-    bnz _L1008
+    bnz _L993
     movf PWM_SETCON__V, w, c
     movwf PWM3CON, c
     return
-_L1008:
+_L993:
     movf PWM_SETCON__V, w, c
     movwf PWM4CON, c
     return
@@ -6648,11 +6571,11 @@ PWM_SETPPS:
 PWM_SETDUTY:
     movlw 4
     subwf PWM_SETDUTY__D+1, w, c
-    bnc _L1010
+    bnc _L995
     setf PWM_SETDUTY__D, c
     movlw 0x03
     movwf PWM_SETDUTY__D+1, c
-_L1010:
+_L995:
     movf PWM_SETDUTY__D+1, w, c
     mullw 64
     movf PRODL, w, c
@@ -6668,30 +6591,30 @@ _L1010:
     movf PRODL, w, c
     movwf PWM_SETDUTY__LO, c
     decf PWM_SETDUTY__CH, w, c
-    bnz _L1012
+    bnz _L997
     movf PWM_SETDUTY__LO, w, c
     movwf CCPR1L, c
     movf PWM_SETDUTY__HI, w, c
     movwf CCPR1H, c
     return
-_L1012:
+_L997:
     movf PWM_SETDUTY__CH, w, c
     xorlw 0x02
-    bnz _L1013
+    bnz _L998
     movf PWM_SETDUTY__LO, w, c
     movwf CCPR2L, c
     movf PWM_SETDUTY__HI, w, c
     movwf CCPR2H, c
     return
-_L1013:
+_L998:
     xorlw 0x01
-    bnz _L1014
+    bnz _L999
     movf PWM_SETDUTY__LO, w, c
     movwf PWM3DCL, c
     movf PWM_SETDUTY__HI, w, c
     movwf PWM3DCH, c
     return
-_L1014:
+_L999:
     movf PWM_SETDUTY__LO, w, c
     movwf PWM4DCL, c
     movf PWM_SETDUTY__HI, w, c
@@ -6719,9 +6642,9 @@ FLASHWRITE_SETADDR:
 ADC_CONVERT:
     movlb 15
     bsf ADCON0, 0, b
-_L1025:
+_L1010:
     btfsc ADCON0, 0, b
-    bra _L1025
+    bra _L1010
     movff ADRESL, ADC_CONVERT__RESULT
     movff ADRESH, ADC_CONVERT__RESULT+1
     return
@@ -6737,9 +6660,9 @@ ADC_SETCLOCK:
 SERIAL2_SERIAL2WRITEBYTE:
     movwf SERIAL2_SERIAL2WRITEBYTE__B, c
     movlb 14
-_L1028:
+_L1013:
     btfss PIR3, 6, b
-    bra _L1028
+    bra _L1013
     movf SERIAL2_SERIAL2WRITEBYTE__B, w, c
     movwf TX2REG, b
     return
@@ -6747,9 +6670,9 @@ _L1028:
 SERIAL_SERIALWRITEBYTE:
     movwf SERIAL_SERIALWRITEBYTE__B, c
     movlb 14
-_L1031:
+_L1016:
     btfss PIR3, 4, b
-    bra _L1031
+    bra _L1016
     movf SERIAL_SERIALWRITEBYTE__B, w, c
     movwf TX1REG, c
     return
@@ -6759,7 +6682,7 @@ __div2:
     clrf __C1, c
     movlw 16
     movwf __D0, c
-_L1034:
+_L1019:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     rlcf __A1, f, c
@@ -6769,17 +6692,17 @@ _L1034:
     subwf __C0, f, c
     movf __B1, w, c
     subwfb __C1, f, c
-    bc _L1035
+    bc _L1020
     movf __B0, w, c
     addwf __C0, f, c
     movf __B1, w, c
     addwfc __C1, f, c
-    bra _L1036
-_L1035:
+    bra _L1021
+_L1020:
     bsf __A0, 0, c
-_L1036:
+_L1021:
     decfsz __D0, f, c
-    bra _L1034
+    bra _L1019
     return
     ; helper div4
 __div4:
@@ -6789,7 +6712,7 @@ __div4:
     clrf __C3, c
     movlw 32
     movwf __D0, c
-_L1037:
+_L1022:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     rlcf __A1, f, c
@@ -6807,7 +6730,7 @@ _L1037:
     subwfb __C2, f, c
     movf __B3, w, c
     subwfb __C3, f, c
-    bc _L1038
+    bc _L1023
     movf __B0, w, c
     addwf __C0, f, c
     movf __B1, w, c
@@ -6816,185 +6739,187 @@ _L1037:
     addwfc __C2, f, c
     movf __B3, w, c
     addwfc __C3, f, c
-    bra _L1039
-_L1038:
+    bra _L1024
+_L1023:
     bsf __A0, 0, c
-_L1039:
+_L1024:
     decfsz __D0, f, c
-    bra _L1037
+    bra _L1022
     return
     ; helper shl1
 __shl1:
     movf __D1, f, c
-    bz _L1041
-_L1040:
+    bz _L1026
+_L1025:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     decfsz __D1, f, c
-    bra _L1040
-_L1041:
+    bra _L1025
+_L1026:
     return
     ; helper shl2
 __shl2:
     movf __D1, f, c
-    bz _L1043
-_L1042:
+    bz _L1028
+_L1027:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     rlcf __A1, f, c
     decfsz __D1, f, c
-    bra _L1042
-_L1043:
+    bra _L1027
+_L1028:
     return
     ; helper shr1
 __shr1:
     movf __D1, f, c
-    bz _L1045
-_L1044:
+    bz _L1030
+_L1029:
     bcf STATUS, 0, c
     rrcf __A0, f, c
     decfsz __D1, f, c
-    bra _L1044
-_L1045:
+    bra _L1029
+_L1030:
     return
     ; helper shr4
 __shr4:
     movf __D1, f, c
-    bz _L1047
-_L1046:
+    bz _L1032
+_L1031:
     bcf STATUS, 0, c
     rrcf __A3, f, c
     rrcf __A2, f, c
     rrcf __A1, f, c
     rrcf __A0, f, c
     decfsz __D1, f, c
-    bra _L1046
-_L1047:
+    bra _L1031
+_L1032:
     return
 __CA0:
     db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5E, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x0E, 0x00, 0x28, 0x7C, 0x28, 0x7C, 0x28, 0x08, 0x54, 0x7C, 0x54, 0x20, 0x26, 0x10, 0x08, 0x64, 0x00, 0x28, 0x54, 0x28, 0x40, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x00, 0x00, 0x00, 0x42, 0x3C, 0x00, 0x00, 0x00, 0x54, 0x38, 0x54, 0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x00, 0x80, 0x60, 0x20, 0x00, 0x10, 0x10, 0x10, 0x10, 0x00, 0x00, 0x60, 0x60, 0x00, 0x00, 0x20, 0x10, 0x08, 0x04, 0x00, 0x00, 0x3C, 0x42, 0x3C, 0x00, 0x00, 0x44, 0x7E, 0x40, 0x00, 0x44, 0x62, 0x52, 0x4C, 0x00, 0x22, 0x4A, 0x4A, 0x36, 0x00, 0x18, 0x14, 0x7E, 0x10, 0x00, 0x2E, 0x4A, 0x4A, 0x32, 0x00, 0x3C, 0x4A, 0x4A, 0x30, 0x00, 0x02, 0x62, 0x1A, 0x06, 0x00, 0x34, 0x4A, 0x4A, 0x34, 0x00, 0x0C, 0x52, 0x52, 0x3C, 0x00, 0x00, 0x6C, 0x6C, 0x00, 0x00, 0x80, 0x6C, 0x2C, 0x00, 0x00, 0x00, 0x10, 0x28, 0x44, 0x00, 0x28, 0x28, 0x28, 0x28, 0x00, 0x00, 0x44, 0x28, 0x10, 0x00, 0x00, 0x04, 0x52, 0x0C, 0x00, 0x3C, 0x42, 0x5A, 0x1C, 0x00, 0x7C, 0x12, 0x12, 0x7C, 0x00, 0x7E, 0x4A, 0x4A, 0x34, 0x00, 0x3C, 0x42, 0x42, 0x24, 0x00, 0x7E, 0x42, 0x42, 0x3C, 0x00, 0x7E, 0x4A, 0x4A, 0x42, 0x00, 0x7E, 0x0A, 0x0A, 0x02, 0x00, 0x3C, 0x42, 0x52, 0x74, 0x00, 0x7E, 0x08, 0x08, 0x7E, 0x00, 0x00, 0x42, 0x7E, 0x42, 0x00, 0x20, 0x40, 0x40, 0x3E, 0x00, 0x7E, 0x18, 0x24, 0x42, 0x00, 0x7E, 0x40, 0x40, 0x40, 0x00, 0x7E, 0x0C, 0x0C, 0x7E, 0x00, 0x7E, 0x0C, 0x30, 0x7E, 0x00, 0x3C, 0x42, 0x42, 0x3C, 0x00, 0x7E, 0x12, 0x12, 0x0C, 0x00, 0x3C, 0x62, 0x42, 0xBC, 0x00, 0x7E, 0x12, 0x32, 0x4C, 0x00, 0x24, 0x4A, 0x52, 0x24, 0x00, 0x00, 0x02, 0x7E, 0x02, 0x00, 0x3E, 0x40, 0x40, 0x3E, 0x00, 0x1E, 0x60, 0x60, 0x1E, 0x00, 0x7E, 0x30, 0x30, 0x7E, 0x00, 0x66, 0x18, 0x18, 0x66, 0x00, 0x00, 0x0E, 0x70, 0x0E, 0x00, 0x62, 0x52, 0x4A, 0x46, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x00, 0x04, 0x08, 0x10, 0x20, 0x00, 0x00, 0x42, 0x42, 0x7E, 0x00, 0x00, 0x04, 0x02, 0x04, 0x00, 0x40, 0x40, 0x40, 0x40, 0x00, 0x00, 0x02, 0x04, 0x00, 0x00, 0x30, 0x48, 0x28, 0x78, 0x00, 0x7E, 0x48, 0x48, 0x30, 0x00, 0x30, 0x48, 0x48, 0x00, 0x00, 0x30, 0x48, 0x48, 0x7E, 0x00, 0x30, 0x68, 0x58, 0x10, 0x00, 0x10, 0x7C, 0x12, 0x04, 0x00, 0x50, 0xA8, 0xA8, 0x98, 0x00, 0x7E, 0x08, 0x08, 0x70, 0x00, 0x00, 0x48, 0x7A, 0x40, 0x00, 0x00, 0x40, 0x80, 0x7A, 0x00, 0x7E, 0x10, 0x28, 0x40, 0x00, 0x00, 0x42, 0x7E, 0x40, 0x00, 0x78, 0x10, 0x18, 0x70, 0x00, 0x78, 0x08, 0x08, 0x70, 0x00, 0x30, 0x48, 0x48, 0x30, 0x00, 0xF8, 0x48, 0x48, 0x30, 0x00, 0x30, 0x48, 0x48, 0xF8, 0x00, 0x78, 0x08, 0x08, 0x10, 0x00, 0x50, 0x58, 0x68, 0x28, 0x00, 0x08, 0x3E, 0x48, 0x40, 0x00, 0x38, 0x40, 0x40, 0x78, 0x00, 0x00, 0x38, 0x40, 0x38, 0x00, 0x78, 0x60, 0x60, 0x78, 0x00, 0x48, 0x30, 0x30, 0x48, 0x00, 0x18, 0xA0, 0x40, 0x38, 0x00, 0x48, 0x68, 0x58, 0x48, 0x00, 0x00, 0x08, 0x3C, 0x42, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x42, 0x3C, 0x08, 0x00, 0x04, 0x02, 0x04, 0x02, 0x00, 0x00
 __CA1:
-    db 0x10, 0x27, 0xE8, 0x03, 0x64, 0x00, 0x0A, 0x00
+    db 0x01, 0x02, 0x04, 0x08, 0x0C, 0x10, 0x20, 0x30, 0x40, 0x00
 __CA2:
     db 0x10, 0x27, 0xE8, 0x03, 0x64, 0x00, 0x0A, 0x00
-__SLIT3:
-    db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
+__CA3:
+    db 0x10, 0x27, 0xE8, 0x03, 0x64, 0x00, 0x0A, 0x00
 __SLIT4:
     db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
 __SLIT5:
-    db 0x68, 0x69, 0x00, 0x00
+    db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
 __SLIT6:
     db 0x68, 0x69, 0x00, 0x00
-;SYM ADC_ADCREAD 0x1C82
-;SYM ADC_CONVERT 0x3042
-;SYM ADC_SETCLOCK 0x3054
-;SYM AHT30_AHT30FETCH 0x23CA
-;SYM AHT30_AHT30START 0x238A
-;SYM EEPROM_EEPROMREAD 0x1CA6
-;SYM EEPROM_EEPROMWRITE 0x1CC8
-;SYM FLASHWRITE_FLASHERASESECTOR 0x1D3C
-;SYM FLASHWRITE_FLASHREADWORD 0x1D20
-;SYM FLASHWRITE_FLASHUPDATEWORD 0x1DE8
-;SYM FLASHWRITE_FLASHWRITEWORD 0x1D80
-;SYM FLASHWRITE_SETADDR 0x3022
-;SYM I2C_CONDITION 0x2ECC
-;SYM I2C_I2CRECEIVE 0x20CC
-;SYM I2C_I2CRESTART 0x2116
-;SYM I2C_I2CSEND 0x2082
-;SYM I2C_I2CSTART 0x206A
-;SYM I2C_I2CSTATUS 0x2146
-;SYM I2C_I2CSTOP 0x212E
-;SYM I2C_OPEN 0x2EA8
-;SYM I2C_PINSETUP 0x2F4E
-;SYM I2C_SETPPS 0x2E86
-;SYM I2C_WAITIDLE 0x2EE8
-;SYM I2C_WAITIF 0x2F1C
-;SYM IRREMOTE_WIDTH 0x2818
-;SYM LCD_LCDCOMMAND 0x229A
-;SYM LCD_LCDSETADDRESS 0x227C
-;SYM LCD_LCDWRITECHAR 0x2284
-;SYM LCD_NIBBLE 0x2CEC
-;SYM LCD_SEND 0x2CC2
-;SYM OLED_BEGIN 0x2B2E
-;SYM OLED_CMD 0x2BE4
-;SYM OLED_FINISH 0x2BB8
-;SYM OLED_FONTBYTE 0x2374
-;SYM OLED_OLEDFILL 0x22F4
-;SYM OLED_OLEDGOTO 0x22C6
-;SYM OLED_OLEDWRITECHAR 0x2324
-;SYM OLED_PUT 0x2B90
-;SYM OLED_RESET 0x2C08
-;SYM OLED_SETUP 0x2C48
-;SYM PINIO_BINDDATA 0x28AC
-;SYM PINIO_CLKPUT 0x28E8
-;SYM PINIO_CLKPUT_END 0x2900
-;SYM PINIO_CLKPUT_HI 0x28FE
-;SYM PINIO_DATAPUT 0x28CE
-;SYM PINIO_DATAPUT_END 0x28E6
-;SYM PINIO_DATAPUT_HI 0x28E4
-;SYM PINIO_DATAREAD 0x2920
-;SYM PINIO_DATAREAD_END 0x2934
-;SYM PINIO_PINADDR 0x2902
-;SYM PINIO_PINADDR_END 0x291E
-;SYM PINIO_PINGET 0x26A8
-;SYM PINIO_PINGET_END 0x26D4
-;SYM PINIO_PINGET_GOT 0x26CE
-;SYM PINIO_PINGET_SHL 0x26C6
-;SYM PINIO_PININPUT 0x25F8
-;SYM PINIO_PINOK 0x25E8
-;SYM PINIO_PINOUTPUT 0x277A
-;SYM PINIO_PINSET 0x274A
-;SYM PINIO_PINSET_END 0x2778
-;SYM PINIO_PINSET_GOT 0x276C
-;SYM PINIO_PINSET_HI 0x2776
-;SYM PINIO_PINSET_SHL 0x2764
-;SYM PULSE_RCIN 0x25A6
-;SYM PULSE_WAITUS 0x2852
-;SYM PWM_PWMDUTY 0x2006
-;SYM PWM_PWMSTART 0x1ECA
-;SYM PWM_PWMSTOP 0x2028
-;SYM PWM_SETCON 0x2F7C
-;SYM PWM_SETDUTY 0x2FC4
-;SYM PWM_SETPPS 0x2FA2
-;SYM RTCCSPI_RDREG 0x2976
-;SYM RTCCSPI_READBLOCK 0x29B2
-;SYM RTCCSPI_TOBCD 0x2988
-;SYM RTCCSPI_WRITEBLOCK 0x2936
-;SYM RTCCSPI_WRREG 0x29FC
-;SYM RTCC_OPEN 0x2A54
-;SYM RTCC_RDREG 0x2A78
-;SYM RTCC_READBLOCK 0x2AB4
-;SYM RTCC_TOBCD 0x2A8A
-;SYM RTCC_WRITEBLOCK 0x2A14
-;SYM RTCC_WRREG 0x2B16
-;SYM SERIAL2_SERIAL2WRITEBYTE 0x3060
-;SYM SERIAL_SERIALWRITEBYTE 0x306E
-;SYM SPI_PINSETUP 0x2D58
-;SYM SPI_PPSOFF 0x2D36
-;SYM SPI_SETPPS 0x2DA2
-;SYM SPI_SPIREAD 0x2192
-;SYM SPI_SPISTATUS 0x219C
-;SYM SPI_SPITRANSFER 0x214E
-;SYM SPI_SPIWRITE 0x218A
-;SYM SYSTEM_SYSCLOCKHZ 0x21A2
-;SYM X10_CODEOF 0x26F4
-;SYM X10_HALF 0x27BE
-;SYM X10_NUMBEROF 0x26D6
-;SYM X10_SENDBIT 0x27F8
-;SYM X10_ZERO 0x2646
-;SYM __CA0 0x3134
-;SYM __CA1 0x3310
-;SYM __CA2 0x3318
-;SYM __SLIT3 0x3320
-;SYM __SLIT4 0x3326
-;SYM __SLIT5 0x332C
-;SYM __SLIT6 0x3330
-;SYM __div2 0x307C
-;SYM __div4 0x30AA
-;SYM __halt 0x1C80
+__SLIT7:
+    db 0x68, 0x69, 0x00, 0x00
+;SYM ADC_ADCREAD 0x1C8A
+;SYM ADC_CONVERT 0x2FC2
+;SYM ADC_SETCLOCK 0x2FD4
+;SYM AHT30_AHT30FETCH 0x2396
+;SYM AHT30_AHT30START 0x2356
+;SYM EEPROM_EEPROMREAD 0x1CAE
+;SYM EEPROM_EEPROMWRITE 0x1CD0
+;SYM FLASHWRITE_FLASHERASESECTOR 0x1D44
+;SYM FLASHWRITE_FLASHREADWORD 0x1D28
+;SYM FLASHWRITE_FLASHUPDATEWORD 0x1DF0
+;SYM FLASHWRITE_FLASHWRITEWORD 0x1D88
+;SYM FLASHWRITE_SETADDR 0x2FA2
+;SYM I2C_CONDITION 0x2E4C
+;SYM I2C_I2CRECEIVE 0x20D4
+;SYM I2C_I2CRESTART 0x211E
+;SYM I2C_I2CSEND 0x208A
+;SYM I2C_I2CSTART 0x2072
+;SYM I2C_I2CSTATUS 0x214E
+;SYM I2C_I2CSTOP 0x2136
+;SYM I2C_OPEN 0x2E28
+;SYM I2C_PINSETUP 0x2ECE
+;SYM I2C_SETPPS 0x2E06
+;SYM I2C_WAITIDLE 0x2E68
+;SYM I2C_WAITIF 0x2E9C
+;SYM IRREMOTE_WIDTH 0x27E4
+;SYM LCD_LCDCOMMAND 0x2266
+;SYM LCD_LCDSETADDRESS 0x2248
+;SYM LCD_LCDWRITECHAR 0x2250
+;SYM LCD_NIBBLE 0x2CB4
+;SYM LCD_SEND 0x2C8A
+;SYM OLED_BEGIN 0x2AF6
+;SYM OLED_CMD 0x2BAC
+;SYM OLED_FINISH 0x2B80
+;SYM OLED_FONTBYTE 0x2340
+;SYM OLED_OLEDFILL 0x22C0
+;SYM OLED_OLEDGOTO 0x2292
+;SYM OLED_OLEDWRITECHAR 0x22F0
+;SYM OLED_PUT 0x2B58
+;SYM OLED_RESET 0x2BD0
+;SYM OLED_SETUP 0x2C10
+;SYM PINIO_BINDDATA 0x2878
+;SYM PINIO_CLKPUT 0x28B2
+;SYM PINIO_CLKPUT_END 0x28CA
+;SYM PINIO_CLKPUT_HI 0x28C8
+;SYM PINIO_DATAPUT 0x2898
+;SYM PINIO_DATAPUT_END 0x28B0
+;SYM PINIO_DATAPUT_HI 0x28AE
+;SYM PINIO_DATAREAD 0x28EA
+;SYM PINIO_DATAREAD_END 0x28FE
+;SYM PINIO_PINADDR 0x28CC
+;SYM PINIO_PINADDR_END 0x28E8
+;SYM PINIO_PINGET 0x2674
+;SYM PINIO_PINGET_END 0x26A0
+;SYM PINIO_PINGET_GOT 0x269A
+;SYM PINIO_PINGET_SHL 0x2692
+;SYM PINIO_PININPUT 0x25C4
+;SYM PINIO_PINOK 0x25B4
+;SYM PINIO_PINOUTPUT 0x2746
+;SYM PINIO_PINSET 0x2716
+;SYM PINIO_PINSET_END 0x2744
+;SYM PINIO_PINSET_GOT 0x2738
+;SYM PINIO_PINSET_HI 0x2742
+;SYM PINIO_PINSET_SHL 0x2730
+;SYM PULSE_RCIN 0x2572
+;SYM PULSE_WAITUS 0x281E
+;SYM PWM_PWMDUTY 0x200E
+;SYM PWM_PWMSTART 0x1ED2
+;SYM PWM_PWMSTOP 0x2030
+;SYM PWM_SETCON 0x2EFC
+;SYM PWM_SETDUTY 0x2F44
+;SYM PWM_SETPPS 0x2F22
+;SYM RTCCSPI_RDREG 0x2940
+;SYM RTCCSPI_READBLOCK 0x297C
+;SYM RTCCSPI_TOBCD 0x2952
+;SYM RTCCSPI_WRITEBLOCK 0x2900
+;SYM RTCCSPI_WRREG 0x29C4
+;SYM RTCC_OPEN 0x2A1C
+;SYM RTCC_RDREG 0x2A40
+;SYM RTCC_READBLOCK 0x2A7C
+;SYM RTCC_TOBCD 0x2A52
+;SYM RTCC_WRITEBLOCK 0x29DC
+;SYM RTCC_WRREG 0x2ADE
+;SYM SERIAL2_SERIAL2WRITEBYTE 0x2FE0
+;SYM SERIAL_SERIALWRITEBYTE 0x2FEE
+;SYM SPI_PINSETUP 0x2DBC
+;SYM SPI_SETPPS 0x2CFE
+;SYM SPI_SPIREAD 0x219A
+;SYM SPI_SPISTATUS 0x21A4
+;SYM SPI_SPITRANSFER 0x2156
+;SYM SPI_SPIWRITE 0x2192
+;SYM SYSTEM_SYSCLOCKHZ 0x21AA
+;SYM X10_CODEOF 0x26C0
+;SYM X10_HALF 0x278A
+;SYM X10_NUMBEROF 0x26A2
+;SYM X10_SENDBIT 0x27C4
+;SYM X10_ZERO 0x2612
+;SYM __CA0 0x30B4
+;SYM __CA1 0x3290
+;SYM __CA2 0x329A
+;SYM __CA3 0x32A2
+;SYM __SLIT4 0x32AA
+;SYM __SLIT5 0x32B0
+;SYM __SLIT6 0x32B6
+;SYM __SLIT7 0x32BA
+;SYM __div2 0x2FFC
+;SYM __div4 0x302A
+;SYM __halt 0x1C88
 ;SYM __reset 0x0000
-;SYM __shl1 0x30F4
-;SYM __shl2 0x3102
-;SYM __shr1 0x3112
-;SYM __shr4 0x3120
+;SYM __shl1 0x3074
+;SYM __shl2 0x3082
+;SYM __shr1 0x3092
+;SYM __shr4 0x30A0
     END __reset
