@@ -1430,3 +1430,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## rtccspi module review (done 2026-11-13, 0.1.207)
 - `lib/rtccspi.bas`: one `Rmw` read-modify-write routine replaces eleven copies (`WkWrite` removed), `GetByte` / `EeGet` shared by the register, RAM, EEPROM and ID reads. All-routines probe 18F27Q10 1839 -> 1812, 16F17146 2700 -> 2664, 18F16Q41 1947 -> 1922 words. See MODULE-REVIEWS section 21.
+
+## shift module review (done 2026-11-13, 0.1.208)
+- `lib/shift.bas`: one `Setup` (pin check, binds, clock) and one `Pulse` replace four copies. All-routines probe 18F27Q10 570 -> 524, 16F17146 672 -> 625, 18F16Q41 570 -> 524 words; a single-`ShiftOut` program +5. `lib_shift` covers the bit-count refusals. See MODULE-REVIEWS section 22.

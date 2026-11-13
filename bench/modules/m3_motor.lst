@@ -1,0 +1,943 @@
+; PIC18F27Q10   747 words (1494 bytes)
+;
+; config: CONFIG1L=0x8C CONFIG1H=0xFF CONFIG2L=0xFF CONFIG2H=0xFF
+;        CONFIG3L=0x9F CONFIG3H=0xFF CONFIG4L=0xFF CONFIG4H=0xFF
+;        CONFIG5L=0xFF CONFIG6L=0xFF CONFIG6H=0xFF
+;
+; RAM
+;   0x000   2  __A  (compiler scratch)
+;   0x002   1  __B  (compiler scratch)
+;   0x003   2  __C  (compiler scratch)
+;   0x005   2  __D  (compiler scratch)
+;   0x007   1  cur
+;   0x008   1  target
+;   0x009   1  Result
+;   0x009   1  Result
+;   0x009   1  Result
+;   0x009   1  c
+;   0x009   1  ch
+;   0x009   1  ch
+;   0x009   1  data
+;   0x009   1  pct
+;   0x009   1  pin
+;   0x009   1  value
+;   0x00A   2  raw
+;   0x00C   1  Result
+;   0x00C   1  ch
+;   0x00C   1  ch
+;   0x00C   1  i
+;   0x00C   1  level
+;   0x00C   1  pin
+;   0x00D   1  saved
+;   0x00E      PWM_PWMSTART__TMP
+;   0x00E   1  Result
+;   0x00E   1  Result
+;   0x00E   1  Result
+;   0x00E   1  level
+;   0x00E   1  level
+;   0x00E   2  Result
+;   0x00E   2  Result
+;   0x00E   2  d
+;   0x00F   1  ie
+;   0x00F   1  pin
+;   0x00F   1  pin
+;   0x00F   1  pin
+;   0x010   1  ok
+;   0x011   1  ch
+;   0x011   1  m
+;   0x011   1  n
+;   0x011   1  pin
+;   0x011   1  sl
+;   0x011   1  v
+;   0x011   2  d
+;   0x012   1  ch
+;   0x012   1  pin
+;   0x012   1  pin
+;   0x012   1  pin
+;   0x012   1  pin
+;   0x012   1  pin
+;   0x012   1  sh
+;   0x013   1  Result
+;   0x013   1  ch
+;   0x013   1  old
+;   0x014   1  Result
+;   0x014   1  ch
+;   0x014   1  pin
+;   0x014   1  v
+;   0x015   1  code
+;   0x015   1  hi
+;   0x015   1  m
+;   0x016   1  lo
+;   0x017   2  dAddr
+;   0x019   2  cAddr
+;   0x01B   2  steps
+;   0x01D   4  freq
+;   0x021   4  pins
+;   0x025   1  Result
+;   0x025   2  duty
+;   0x027   1  lastCh
+;   0x028   1  nact
+;   0x029   1  dMask
+;   0x02A   1  cMask
+;   0x02B   1  period
+;   0x02C   1  ckps
+;   0x02D   4  polv
+;   0x031   1  ready
+;   0x032      PWM_SETDUTY__TMP
+;
+; routines (words)
+;   0x0000   266  (start-up and program body)
+;   0x0214    33  Sub/Function PinOutput
+;   0x0256    38  Sub/Function PinInput
+;   0x02A2   146  Sub/Function PwmStart
+;   0x03C6    12  Sub/Function EepromRead
+;   0x03DE    47  Sub/Function PwmPercent
+;   0x043C    15  Sub/Function PinGet
+;   0x045A     4  PINIO_PINGET_SHL
+;   0x0462     3  PINIO_PINGET_GOT
+;   0x0468     1  PINIO_PINGET_END
+;   0x046A    13  Sub/Function PinSet
+;   0x0484     4  PINIO_PINSET_SHL
+;   0x048C     5  PINIO_PINSET_GOT
+;   0x0496     1  PINIO_PINSET_HI
+;   0x0498     1  PINIO_PINSET_END
+;   0x049A    11  Sub/Function DataPut
+;   0x04B0     1  PINIO_DATAPUT_HI
+;   0x04B2     1  PINIO_DATAPUT_END
+;   0x04B4    11  Sub/Function ClkPut
+;   0x04CA     1  PINIO_CLKPUT_HI
+;   0x04CC     1  PINIO_CLKPUT_END
+;   0x04CE    14  Sub/Function PinAddr
+;   0x04EA     1  PINIO_PINADDR_END
+;   0x04EC    47  Sub/Function SetDuty
+;   0x054A     9  Sub/Function Convert
+;   0x055C    17  Sub/Function SetPps
+;   0x057E    19  Sub/Function SetCon
+;   0x05A4    18  helper divk2
+;   0x05C8     7  helper shl1
+;
+0000  __reset:
+0000      clrf    0x007, c
+0002      clrf    0x008, c
+0004      clrf    0x00A, c
+0006      clrf    0x00B, c
+0008      clrf    0x00D, c
+000A      lfsr    0, 0x010
+000E      movlw   34
+0010  _L1:
+0010      clrf    POSTINC0, c
+0012      decfsz  WREG, f, c
+0014      bra     _L1
+0016      movlb   15
+0018      clrf    ANSELA, b
+001A      clrf    ANSELB, b
+001C      clrf    ANSELC, b
+001E      clrf    WPUA, b
+0020      movlw   0x08
+0022      movwf   WPUB, b
+0024      clrf    WPUC, b
+0026      movlw   0x0A
+0028      rcall   PINIO_PINOUTPUT
+002A      movlw   0x0B
+002C      rcall   PINIO_PININPUT
+002E      movlb   15
+0030      clrf    ADCON0, b
+0032      clrf    ADCON1, b
+0034      clrf    ADCON2, b
+0036      clrf    ADCON3, b
+0038      clrf    ADCAP, b
+003A      clrf    ADPRE, b
+003C      clrf    ADACT, b
+003E      clrf    ADREF, b
+0040      movlw   0x1F
+0042      movwf   ADCLK, b
+0044      movlw   0x05
+0046      movwf   ADACQ, b
+0048      setf    lastCh, c
+004A      movlw   0x84
+004C      movwf   ADCON0, b
+004E      movlw   0x01
+0050      iorwf   TRISA, f, c
+0052      iorwf   ANSELA, f, b
+0054      clrf    PWM_PWMINIT__RESULT, c
+0056      movf    nact, f, c
+0058      bnz     _Lr4
+005A      movlw   0x02
+005C      movwf   ckps, c
+005E      movlw   0xC7
+0060      movwf   period, c
+0062      movlw   0x20
+0064      movwf   steps, c
+0066      movlw   0x03
+0068      movwf   steps+1, c
+006A      movlw   0x20
+006C      movwf   freq, c
+006E      movlw   0x4E
+0070      movwf   freq+1, c
+0072      clrf    freq+2, c
+0074      clrf    freq+3, c
+0076      movlw   0x01
+0078      movwf   ready, c
+007A      movwf   PWM_PWMINIT__RESULT, c
+007C  _Lr4:
+007C      movlw   0x01
+007E      movwf   PWM_PWMSTART__CH, c
+0080      movlw   0x12
+0082      movwf   PWM_PWMSTART__PIN, c
+0084      rcall   PWM_PWMSTART
+0086      movlw   0x02
+0088      movwf   PWM_PWMSTART__CH, c
+008A      movlw   0x11
+008C      movwf   PWM_PWMSTART__PIN, c
+008E      rcall   PWM_PWMSTART
+0090      movf    PWM_PWMSTART__RESULT, w, c
+0092      rcall   EEPROM_EEPROMREAD
+0094      movwf   saved, c
+0096      clrf    cur, c
+0098      movlw   0x65
+009A      subwf   saved, w, c
+009C      bc      _L3
+009E      movff   saved, cur
+00A2  _L3:
+00A2      clrf    T0CON0, c
+00A4      movlw   0x49
+00A6      movwf   T0CON1, c
+00A8      movlw   0x7C
+00AA      movwf   TMR0H, c
+00AC      clrf    TMR0L, c
+00AE      movlb   14
+00B0      bcf     PIR0, 5, b
+00B2      movlw   0x80
+00B4      movwf   T0CON0, c
+00B6  _L4:
+00B6      clrf    TIMER_TIMER0EXPIRED__RESULT, c
+00B8      movlb   14
+00BA      btfss   PIR0, 5, b
+00BC      bra     _L55
+00BE      bcf     PIR0, 5, b
+00C0      movlw   0x01
+00C2      movwf   TIMER_TIMER0EXPIRED__RESULT, c
+00C4  _L55:
+00C4      movf    TIMER_TIMER0EXPIRED__RESULT, w, c
+00C6      bz      _L4
+00C8      movlw   0x00
+00CA      movwf   ADC_ADCREAD__CH, c
+00CC      movlw   0x3F
+00CE      andwf   ADC_ADCREAD__CH, f, c
+00D0      movf    ADC_ADCREAD__CH, w, c
+00D2      xorwf   lastCh, w, c
+00D4      bz      _L57
+00D6      movf    ADC_ADCREAD__CH, w, c
+00D8      movlb   15
+00DA      movwf   ADPCH, b
+00DC      rcall   ADC_CONVERT
+00DE      movff   ADC_ADCREAD__CH, lastCh
+00E2  _L57:
+00E2      rcall   ADC_CONVERT
+00E4      movff   ADC_CONVERT__RESULT, __A0
+00E8      movff   ADC_CONVERT__RESULT+1, __A0+1
+00EC      movlw   10
+00EE      movwf   __B0, c
+00F0      rcall   __divk2
+00F2      movf    __A0, w, c
+00F4      movwf   target, c
+00F6      movlw   0x65
+00F8      subwf   target, w, c
+00FA      bnc     _L10
+00FC      movlw   0x64
+00FE      movwf   target, c
+0100  _L10:
+0100      movf    target, w, c
+0102      subwf   cur, w, c
+0104      bc      _L12
+0106      incf    cur, f, c
+0108      bra     _L11
+010A  _L12:
+010A      movf    cur, w, c
+010C      subwf   target, w, c
+010E      bc      _L13
+0110      decf    cur, f, c
+0112  _L13:
+0112  _L11:
+0112      movlw   0x01
+0114      movwf   PWM_PWMPERCENT__CH, c
+0116      movff   cur, pct
+011A      rcall   PWM_PWMPERCENT
+011C      movlw   0x02
+011E      movwf   PWM_PWMPERCENT__CH, c
+0120      movf    cur, w, c
+0122      sublw   0x64
+0124      movwf   pct, c
+0126      rcall   PWM_PWMPERCENT
+0128      movf    cur, w, c
+012A      movwf   M3_SHOW__V, c
+012C      movlw   0x0A
+012E      movwf   PINIO_PINSET__PIN, c
+0130      clrf    PINIO_PINSET__LEVEL, c
+0132      rcall   PINIO_PINSET
+0134      movff   M3_SHOW__V, data
+0138      clrf    SHIFT_SETUP__RESULT, c
+013A      movlw   0x01
+013C      movwf   PINIO_PINOK__RESULT_S33, c
+013E      movf    PINIO_PINOK__RESULT_S33, w, c
+0140      bz      _Lr11
+0142      movlw   0x01
+0144      movwf   PINIO_PINOK__RESULT_S34, c
+0146      movf    PINIO_PINOK__RESULT_S34, w, c
+0148      bz      _Lr11
+014A      movlw   0x08
+014C      rcall   PINIO_PINADDR
+014E      movff   PINIO_PINADDR__RESULT, dAddr
+0152      movff   PINIO_PINADDR__RESULT+1, dAddr+1
+0156      movlw   0x01
+0158      movwf   dMask, c
+015A      movlw   0x09
+015C      rcall   PINIO_PINADDR
+015E      movff   PINIO_PINADDR__RESULT, cAddr
+0162      movff   PINIO_PINADDR__RESULT+1, cAddr+1
+0166      movlw   0x02
+0168      movwf   cMask, c
+016A      movlw   0x00
+016C      rcall   PINIO_CLKPUT
+016E      movlw   0x09
+0170      rcall   PINIO_PINOUTPUT
+0172      movlw   0x01
+0174      movwf   SHIFT_SETUP__RESULT, c
+0176  _Lr11:
+0176      movf    SHIFT_SETUP__RESULT, w, c
+0178      bz      _Lr10
+017A      movlw   0x08
+017C      rcall   PINIO_PINOUTPUT
+017E      movlw   0x01
+0180      movwf   i, c
+0182  _L73:
+0182      movlw   0
+0184      btfsc   data, 7, c
+0186      movlw   1
+0188      rcall   PINIO_DATAPUT
+018A      movf    data, w, c
+018C      addwf   WREG, w, c
+018E      movwf   data, c
+0190      movlw   5
+0192      movwf   __D0, c
+0194  _L83:
+0194      decfsz  __D0, f, c
+0196      bra     _L83
+0198      movlw   0x01
+019A      rcall   PINIO_CLKPUT
+019C      movlw   5
+019E      movwf   __D0, c
+01A0  _L84:
+01A0      decfsz  __D0, f, c
+01A2      bra     _L84
+01A4      movlw   0x00
+01A6      rcall   PINIO_CLKPUT
+01A8      movf    i, w, c
+01AA      incf    i, f, c
+01AC      xorlw   0x08
+01AE      bnz     _L73
+01B0  _Lr10:
+01B0      movlw   0x0A
+01B2      movwf   PINIO_PINSET__PIN, c
+01B4      movlw   0x01
+01B6      movwf   PINIO_PINSET__LEVEL, c
+01B8      rcall   PINIO_PINSET
+01BA      movlw   0x0B
+01BC      rcall   PINIO_PINGET
+01BE      movf    PINIO_PINGET__RESULT, w, c
+01C0      bz      __skip1
+01C2      bra     _L4
+01C4  __skip1:
+01C4      movf    cur, w, c
+01C6      xorwf   saved, w, c
+01C8      bnz     __skip2
+01CA      bra     _L4
+01CC  __skip2:
+01CC      movff   cur, value
+01D0      movlw   0x01
+01D2      movwf   EEPROM_EEPROMWRITE__RESULT, c
+01D4      rcall   EEPROM_EEPROMREAD
+01D6      xorwf   value, w, c
+01D8      bz      _L62
+01DA      movf    value, w, c
+01DC      movwf   NVMDATL, c
+01DE      movlw   0
+01E0      btfsc   INTCON, 7, c
+01E2      movlw   1
+01E4      movwf   ie, c
+01E6      bcf     INTCON, 7, c
+01E8      bsf     NVMCON0, 7, c
+01EA      movlw   0x55
+01EC      movwf   NVMCON2, c
+01EE      movlw   0xAA
+01F0      movwf   NVMCON2, c
+01F2      bsf     NVMCON1, 4, c
+01F4      decf    ie, w, c
+01F6      bnz     _L66
+01F8      bsf     INTCON, 7, c
+01FA  _L65:
+01FA  _L66:
+01FA      btfsc   NVMCON1, 4, c
+01FC      bra     _L65
+01FE      bcf     NVMCON0, 7, c
+0200      movlb   14
+0202      bcf     PIR7, 5, b
+0204      rcall   EEPROM_EEPROMREAD
+0206      xorwf   value, w, c
+0208      bz      _L69
+020A      clrf    EEPROM_EEPROMWRITE__RESULT, c
+020C  _L69:
+020C  _L62:
+020C      bcf     NVMCON0, 4, c
+020E      movff   cur, saved
+0212      bra     _L4
+0214  __halt:
+
+; ---- Sub/Function PinOutput
+0214  PINIO_PINOUTPUT:
+0214      movwf   PINIO_PINOUTPUT__PIN, c
+0216      andlw   0x07
+0218      movwf   __D1, c
+021A      movlw   0x01
+021C      movwf   __A0, c
+021E      rcall   __shl1
+0220      movf    __A0, w, c
+0222      xorlw   0xFF
+0224      movwf   PINIO_PINOUTPUT__N, c
+0226      movlw   0x08
+0228      subwf   PINIO_PINOUTPUT__PIN, w, c
+022A      bc      _L19
+022C      movf    PINIO_PINOUTPUT__N, w, c
+022E      movlb   15
+0230      andwf   ANSELA, f, b
+0232      andwf   TRISA, f, c
+0234      return
+0236  _L19:
+0236      movlw   0x10
+0238      subwf   PINIO_PINOUTPUT__PIN, w, c
+023A      bc      _L20
+023C      movf    PINIO_PINOUTPUT__N, w, c
+023E      movlb   15
+0240      andwf   ANSELB, f, b
+0242      andwf   TRISB, f, c
+0244      return
+0246  _L20:
+0246      movlw   0x18
+0248      subwf   PINIO_PINOUTPUT__PIN, w, c
+024A      bc      _L21
+024C      movf    PINIO_PINOUTPUT__N, w, c
+024E      movlb   15
+0250      andwf   ANSELC, f, b
+0252      andwf   TRISC, f, c
+0254  _L21:
+0254      return
+
+; ---- Sub/Function PinInput
+0256  PINIO_PININPUT:
+0256      movwf   PINIO_PININPUT__PIN, c
+0258      andlw   0x07
+025A      movwf   __D1, c
+025C      movlw   0x01
+025E      movwf   __A0, c
+0260      rcall   __shl1
+0262      movf    __A0, w, c
+0264      movwf   PINIO_PININPUT__M, c
+0266      movlw   0x08
+0268      subwf   PINIO_PININPUT__PIN, w, c
+026A      bc      _L23
+026C      movf    PINIO_PININPUT__M, w, c
+026E      xorlw   0xFF
+0270      movlb   15
+0272      andwf   ANSELA, f, b
+0274      movf    PINIO_PININPUT__M, w, c
+0276      iorwf   TRISA, f, c
+0278      return
+027A  _L23:
+027A      movlw   0x10
+027C      subwf   PINIO_PININPUT__PIN, w, c
+027E      bc      _L24
+0280      movf    PINIO_PININPUT__M, w, c
+0282      xorlw   0xFF
+0284      movlb   15
+0286      andwf   ANSELB, f, b
+0288      movf    PINIO_PININPUT__M, w, c
+028A      iorwf   TRISB, f, c
+028C      return
+028E  _L24:
+028E      movlw   0x18
+0290      subwf   PINIO_PININPUT__PIN, w, c
+0292      bc      _L25
+0294      movf    PINIO_PININPUT__M, w, c
+0296      xorlw   0xFF
+0298      movlb   15
+029A      andwf   ANSELC, f, b
+029C      movf    PINIO_PININPUT__M, w, c
+029E      iorwf   TRISC, f, c
+02A0  _L25:
+02A0      return
+
+; ---- Sub/Function PwmStart
+02A2  PWM_PWMSTART:
+02A2      clrf    PWM_PWMSTART__RESULT, c
+02A4      movf    ready, f, c
+02A6      bz      _L31
+02A8      clrf    PWM_PINOK__RESULT, c
+02AA      decf    PWM_PWMSTART__CH, w, c
+02AC      bz      _L100
+02AE      movf    PWM_PWMSTART__CH, w, c
+02B0      xorlw   0x02
+02B2      bnz     _L99
+02B4  _L100:
+02B4      movf    PWM_PWMSTART__PIN, w, c
+02B6      addlw   0xF8
+02B8      sublw   0x0F
+02BA      bnc     _L98
+02BC      movlw   0x01
+02BE      movwf   PWM_PINOK__RESULT, c
+02C0      bra     _L98
+02C2  _L99:
+02C2      xorlw   0x01
+02C4      bz      _L104
+02C6      movf    PWM_PWMSTART__CH, w, c
+02C8      xorlw   0x04
+02CA      bnz     _L103
+02CC  _L104:
+02CC      movlw   0x08
+02CE      subwf   PWM_PWMSTART__PIN, w, c
+02D0      bnc     _L107
+02D2      movf    PWM_PWMSTART__PIN, w, c
+02D4      addlw   0xF0
+02D6      sublw   0x07
+02D8      bnc     _L106
+02DA  _L107:
+02DA      movlw   0x01
+02DC      movwf   PWM_PINOK__RESULT, c
+02DE  _L106:
+02DE  _L103:
+02DE  _L98:
+02DE      movf    PWM_PINOK__RESULT, w, c
+02E0      bnz     _L30
+02E2  _L31:
+02E2      return
+02E4  _L30:
+02E4      movlw   0x04
+02E6      movwf   PWM_PWMSTART__C, c
+02E8      bra     _L33
+02EA  _L32:
+02EA      movf    PWM_PWMSTART__C, w, c
+02EC      xorwf   PWM_PWMSTART__CH, w, c
+02EE      bz      _L36
+02F0      decf    PWM_PWMSTART__C, w, c
+02F2      lfsr    0, pins
+02F6      movf    PLUSW0, w, c
+02F8      movwf   PWM_PWMSTART__TMP, c
+02FA      incf    PWM_PWMSTART__PIN, w, c
+02FC      xorwf   PWM_PWMSTART__TMP, w, c
+02FE      bnz     _L36
+0300      return
+0302  _L36:
+0302      decf    PWM_PWMSTART__C, f, c
+0304  _L33:
+0304      movf    PWM_PWMSTART__C, f, c
+0306      bnz     _L32
+0308      decf    PWM_PWMSTART__CH, w, c
+030A      lfsr    0, pins
+030E      movf    PLUSW0, w, c
+0310      movwf   old, c
+0312      bz      _L38
+0314      incf    PWM_PWMSTART__PIN, w, c
+0316      xorwf   old, w, c
+0318      bz      _L38
+031A      decf    old, w, c
+031C      rcall   PINIO_PININPUT
+031E      decf    old, w, c
+0320      movwf   PWM_SETPPS__PIN, c
+0322      clrf    code, c
+0324      rcall   PWM_SETPPS
+0326  _L38:
+0326      movf    PWM_PWMSTART__PIN, w, c
+0328      rcall   PINIO_PININPUT
+032A      movff   PWM_PWMSTART__PIN, PWM_SETPPS__PIN
+032E      movf    PWM_PWMSTART__CH, w, c
+0330      addlw   0x04
+0332      movwf   code, c
+0334      rcall   PWM_SETPPS
+0336      movlw   0x03
+0338      subwf   PWM_PWMSTART__CH, w, c
+033A      bc      _L40
+033C      movff   PWM_PWMSTART__CH, PWM_SETCON__CH
+0340      movlw   0x9C
+0342      movwf   PWM_SETCON__V, c
+0344      rcall   PWM_SETCON
+0346      bra     _L39
+0348  _L40:
+0348      movff   PWM_PWMSTART__CH, PWM_SETCON__CH
+034C      decf    PWM_PWMSTART__CH, w, c
+034E      lfsr    0, polv
+0352      movf    PLUSW0, w, c
+0354      movwf   PWM_SETCON__V, c
+0356      rcall   PWM_SETCON
+0358  _L39:
+0358      movff   PWM_PWMSTART__CH, PWM_SETDUTY__CH
+035C      clrf    PWM_SETDUTY__D, c
+035E      clrf    PWM_SETDUTY__D+1, c
+0360      rcall   PWM_SETDUTY
+0362      movf    nact, f, c
+0364      bnz     _L42
+0366      clrf    T2CON, c
+0368      movlw   0x01
+036A      movwf   T2CLKCON, c
+036C      clrf    T2HLT, c
+036E      clrf    T2RST, c
+0370      movf    period, w, c
+0372      movwf   T2PR, c
+0374      clrf    T2TMR, c
+0376      movlb   14
+0378      bcf     PIR4, 1, b
+037A      movf    ckps, w, c
+037C      mullw   0x10
+037E      movf    PRODL, w, c
+0380      addlw   0x80
+0382      movwf   T2CON, c
+0384      bra     _L44
+0386  _L42:
+0386      movlb   14
+0388      bcf     PIR4, 1, b
+038A  _L43:
+038A  _L44:
+038A      btfss   PIR4, 1, b
+038C      bra     _L43
+038E      bcf     PIR4, 1, b
+0390      incf    PWM_PWMSTART__PIN, w, c
+0392      movwf   PWM_PWMSTART__TMP, c
+0394      decf    PWM_PWMSTART__CH, w, c
+0396      lfsr    0, pins
+039A      movff   PWM_PWMSTART__TMP, PLUSW0
+039E      movf    old, f, c
+03A0      bnz     _L47
+03A2      incf    nact, f, c
+03A4  _L47:
+03A4      movf    PWM_PWMSTART__PIN, w, c
+03A6      rcall   PINIO_PINOUTPUT
+03A8      movlw   0x03
+03AA      subwf   PWM_PWMSTART__CH, w, c
+03AC      bnc     _L49
+03AE      movff   PWM_PWMSTART__CH, PWM_SETCON__CH
+03B2      decf    PWM_PWMSTART__CH, w, c
+03B4      lfsr    0, polv
+03B8      movf    PLUSW0, w, c
+03BA      addlw   0x80
+03BC      movwf   PWM_SETCON__V, c
+03BE      rcall   PWM_SETCON
+03C0  _L49:
+03C0      movlw   0x01
+03C2      movwf   PWM_PWMSTART__RESULT, c
+03C4      return
+
+; ---- Sub/Function EepromRead
+03C6  EEPROM_EEPROMREAD:
+03C6      setf    EEPROM_EEPROMREAD__RESULT, c
+03C8      movlw   0x31
+03CA      movwf   NVMADRU, c
+03CC      clrf    NVMADRH, c
+03CE      clrf    NVMADRL, c
+03D0      bsf     NVMCON1, 0, c
+03D2  _L51:
+03D2      btfsc   NVMCON1, 0, c
+03D4      bra     _L51
+03D6      movff   NVMDATL, EEPROM_EEPROMREAD__RESULT
+03DA      movf    EEPROM_EEPROMREAD__RESULT, w, c
+03DC      return
+
+; ---- Sub/Function PwmPercent
+03DE  PWM_PWMPERCENT:
+03DE      movlw   0x65
+03E0      subwf   pct, w, c
+03E2      bnc     _L59
+03E4      movlw   0x64
+03E6      movwf   pct, c
+03E8  _L59:
+03E8      movff   steps, __A0
+03EC      movff   steps+1, __A0+1
+03F0      bcf     STATUS, 0, c
+03F2      rrcf    __A1, f, c
+03F4      rrcf    __A0, f, c
+03F6      bcf     STATUS, 0, c
+03F8      rrcf    __A1, f, c
+03FA      rrcf    __A0, f, c
+03FC      movf    pct, w, c
+03FE      mulwf   __A0+1, c
+0400      movff   PRODL, __A1
+0404      mulwf   __A0, c
+0406      movff   PRODL, __A0
+040A      movf    PRODH, w, c
+040C      addwf   __A1, f, c
+040E      movlw   25
+0410      movwf   __B0, c
+0412      rcall   __divk2
+0414      movff   __A0, PWM_PWMPERCENT__D
+0418      movff   __A1, PWM_PWMPERCENT__D+1
+041C      decf    PWM_PWMPERCENT__CH, w, c
+041E      sublw   0x03
+0420      bnc     _L86
+0422      decf    PWM_PWMPERCENT__CH, w, c
+0424      lfsr    0, pins
+0428      movf    PLUSW0, w, c
+042A      bz      _L88
+042C      movff   PWM_PWMPERCENT__CH, PWM_SETDUTY__CH
+0430      movff   PWM_PWMPERCENT__D, PWM_SETDUTY__D
+0434      movff   PWM_PWMPERCENT__D+1, PWM_SETDUTY__D+1
+0438      rcall   PWM_SETDUTY
+043A  _L88:
+043A  _L86:
+043A      return
+
+; ---- Sub/Function PinGet
+043C  PINIO_PINGET:
+043C      movwf   PINIO_PINGET__PIN, c
+043E      clrf    PINIO_PINGET__RESULT, c
+0440      movf    PINIO_PINGET__PIN, w, c
+0442      sublw   23
+0444      bnc     PINIO_PINGET_END
+0446      lfsr    0, PORTA
+044A      rrncf   PINIO_PINGET__PIN, w, c
+044C      rrncf   WREG, w, c
+044E      rrncf   WREG, w, c
+0450      andlw   3
+0452      addwf   FSR0L, f, c
+0454      movlw   7
+0456      andwf   PINIO_PINGET__PIN, f, c
+0458      movlw   1
+045A  PINIO_PINGET_SHL:
+045A      decf    PINIO_PINGET__PIN, f, c
+045C      bnc     PINIO_PINGET_GOT
+045E      rlncf   WREG, w, c
+0460      bra     PINIO_PINGET_SHL
+0462  PINIO_PINGET_GOT:
+0462      andwf   INDF0, w, c
+0464      bz      PINIO_PINGET_END
+0466      incf    PINIO_PINGET__RESULT, f, c
+0468  PINIO_PINGET_END:
+0468      return
+
+; ---- Sub/Function PinSet
+046A  PINIO_PINSET:
+046A      movf    PINIO_PINSET__PIN, w, c
+046C      sublw   23
+046E      bnc     PINIO_PINSET_END
+0470      lfsr    0, LATA
+0474      rrncf   PINIO_PINSET__PIN, w, c
+0476      rrncf   WREG, w, c
+0478      rrncf   WREG, w, c
+047A      andlw   3
+047C      addwf   FSR0L, f, c
+047E      movlw   7
+0480      andwf   PINIO_PINSET__PIN, f, c
+0482      movlw   1
+0484  PINIO_PINSET_SHL:
+0484      decf    PINIO_PINSET__PIN, f, c
+0486      bnc     PINIO_PINSET_GOT
+0488      rlncf   WREG, w, c
+048A      bra     PINIO_PINSET_SHL
+048C  PINIO_PINSET_GOT:
+048C      tstfsz  PINIO_PINSET__LEVEL, c
+048E      bra     PINIO_PINSET_HI
+0490      comf    WREG, w, c
+0492      andwf   INDF0, f, c
+0494      bra     PINIO_PINSET_END
+0496  PINIO_PINSET_HI:
+0496      iorwf   INDF0, f, c
+0498  PINIO_PINSET_END:
+0498      return
+
+; ---- Sub/Function DataPut
+049A  PINIO_DATAPUT:
+049A      movwf   PINIO_DATAPUT__LEVEL, c
+049C      movff   dAddr, FSR0L
+04A0      movff   dAddr+1, FSR0H
+04A4      movf    dMask, w, c
+04A6      tstfsz  PINIO_DATAPUT__LEVEL, c
+04A8      bra     PINIO_DATAPUT_HI
+04AA      comf    WREG, w, c
+04AC      andwf   INDF0, f, c
+04AE      bra     PINIO_DATAPUT_END
+04B0  PINIO_DATAPUT_HI:
+04B0      iorwf   INDF0, f, c
+04B2  PINIO_DATAPUT_END:
+04B2      return
+
+; ---- Sub/Function ClkPut
+04B4  PINIO_CLKPUT:
+04B4      movwf   PINIO_CLKPUT__LEVEL, c
+04B6      movff   cAddr, FSR0L
+04BA      movff   cAddr+1, FSR0H
+04BE      movf    cMask, w, c
+04C0      tstfsz  PINIO_CLKPUT__LEVEL, c
+04C2      bra     PINIO_CLKPUT_HI
+04C4      comf    WREG, w, c
+04C6      andwf   INDF0, f, c
+04C8      bra     PINIO_CLKPUT_END
+04CA  PINIO_CLKPUT_HI:
+04CA      iorwf   INDF0, f, c
+04CC  PINIO_CLKPUT_END:
+04CC      return
+
+; ---- Sub/Function PinAddr
+04CE  PINIO_PINADDR:
+04CE      movwf   PINIO_PINADDR__PIN, c
+04D0      clrf    PINIO_PINADDR__RESULT, c
+04D2      clrf    PINIO_PINADDR__RESULT+1, c
+04D4      movf    PINIO_PINADDR__PIN, w, c
+04D6      sublw   23
+04D8      bnc     PINIO_PINADDR_END
+04DA      rrncf   PINIO_PINADDR__PIN, w, c
+04DC      rrncf   WREG, w, c
+04DE      rrncf   WREG, w, c
+04E0      andlw   3
+04E2      addlw   low LATA
+04E4      movwf   PINIO_PINADDR__RESULT, c
+04E6      movlw   high LATA
+04E8      movwf   PINIO_PINADDR__RESULT+1, c
+04EA  PINIO_PINADDR_END:
+04EA      return
+
+; ---- Sub/Function SetDuty
+04EC  PWM_SETDUTY:
+04EC      movlw   4
+04EE      subwf   PWM_SETDUTY__D+1, w, c
+04F0      bnc     _L90
+04F2      setf    PWM_SETDUTY__D, c
+04F4      movlw   0x03
+04F6      movwf   PWM_SETDUTY__D+1, c
+04F8  _L90:
+04F8      movf    PWM_SETDUTY__D+1, w, c
+04FA      mullw   64
+04FC      movf    PRODL, w, c
+04FE      movwf   PWM_SETDUTY__TMP, c
+0500      movf    PWM_SETDUTY__D, w, c
+0502      rrncf   WREG, w, c
+0504      rrncf   WREG, w, c
+0506      andlw   0x3F
+0508      iorwf   PWM_SETDUTY__TMP, w, c
+050A      movwf   hi, c
+050C      movf    PWM_SETDUTY__D, w, c
+050E      mullw   64
+0510      movf    PRODL, w, c
+0512      movwf   lo, c
+0514      decf    PWM_SETDUTY__CH, w, c
+0516      bnz     _L92
+0518      movf    lo, w, c
+051A      movwf   CCPR1L, c
+051C      movf    hi, w, c
+051E      movwf   CCPR1H, c
+0520      return
+0522  _L92:
+0522      movf    PWM_SETDUTY__CH, w, c
+0524      xorlw   0x02
+0526      bnz     _L93
+0528      movf    lo, w, c
+052A      movwf   CCPR2L, c
+052C      movf    hi, w, c
+052E      movwf   CCPR2H, c
+0530      return
+0532  _L93:
+0532      xorlw   0x01
+0534      bnz     _L94
+0536      movf    lo, w, c
+0538      movwf   PWM3DCL, c
+053A      movf    hi, w, c
+053C      movwf   PWM3DCH, c
+053E      return
+0540  _L94:
+0540      movf    lo, w, c
+0542      movwf   PWM4DCL, c
+0544      movf    hi, w, c
+0546      movwf   PWM4DCH, c
+0548      return
+
+; ---- Sub/Function Convert
+054A  ADC_CONVERT:
+054A      movlb   15
+054C      bsf     ADCON0, 0, b
+054E  _L95:
+054E      btfsc   ADCON0, 0, b
+0550      bra     _L95
+0552      movff   ADRESL, ADC_CONVERT__RESULT
+0556      movff   ADRESH, ADC_CONVERT__RESULT+1
+055A      return
+
+; ---- Sub/Function SetPps
+055C  PWM_SETPPS:
+055C      clrf    sl, c
+055E      clrf    sh, c
+0560      movff   FSR2L, sl
+0564      movff   FSR2H, sh
+0568      lfsr    2, RA0PPS
+056C      movf    PWM_SETPPS__PIN, w, c
+056E      addwf   FSR2L, f, c
+0570      movf    code, w, c
+0572      movwf   INDF2, c
+0574      movff   sl, FSR2L
+0578      movff   sh, FSR2H
+057C      return
+
+; ---- Sub/Function SetCon
+057E  PWM_SETCON:
+057E      decf    PWM_SETCON__CH, w, c
+0580      bnz     _L109
+0582      movf    PWM_SETCON__V, w, c
+0584      movwf   CCP1CON, c
+0586      return
+0588  _L109:
+0588      movf    PWM_SETCON__CH, w, c
+058A      xorlw   0x02
+058C      bnz     _L110
+058E      movf    PWM_SETCON__V, w, c
+0590      movwf   CCP2CON, c
+0592      return
+0594  _L110:
+0594      xorlw   0x01
+0596      bnz     _L111
+0598      movf    PWM_SETCON__V, w, c
+059A      movwf   PWM3CON, c
+059C      return
+059E  _L111:
+059E      movf    PWM_SETCON__V, w, c
+05A0      movwf   PWM4CON, c
+05A2      return
+
+; ---- helper divk2
+05A4  __divk2:
+05A4      clrf    __C0, c
+05A6      clrf    __C1, c
+05A8      movlw   16
+05AA      movwf   __D0, c
+05AC  _L112:
+05AC      bcf     STATUS, 0, c
+05AE      rlcf    __A0, f, c
+05B0      rlcf    __A1, f, c
+05B2      rlcf    __C0, f, c
+05B4      bc      _L113
+05B6      movf    __B0, w, c
+05B8      subwf   __C0, w, c
+05BA      bnc     _L114
+05BC  _L113:
+05BC      movf    __B0, w, c
+05BE      subwf   __C0, f, c
+05C0      bsf     __A0, 0, c
+05C2  _L114:
+05C2      decfsz  __D0, f, c
+05C4      bra     _L112
+05C6      return
+
+; ---- helper shl1
+05C8  __shl1:
+05C8      movf    __D1, f, c
+05CA      bz      _L116
+05CC  _L115:
+05CC      bcf     STATUS, 0, c
+05CE      rlcf    __A0, f, c
+05D0      decfsz  __D1, f, c
+05D2      bra     _L115
+05D4  _L116:
+05D4      return

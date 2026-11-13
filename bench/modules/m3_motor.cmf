@@ -1,0 +1,865 @@
+%CMF
+# %PSECTS Section
+# For each object file, details of its psects are enumerated here.
+# The begining of the section is indicated by %PSECTS.  The first
+# line indicates the name of the first object file, e.g.
+#    $foo.obj
+# Each line that follows describes a psect in that object file, until
+# the next object file.  The lines that describe a psect have the
+# format:
+#    <psect name> <class name> <space> <link address> <load addresses> <length> <delta> <reloc>
+# All addresses and the length are given in unqualified hexadecimal
+# in delta units.  Any other numeric values are decimal.
+%PSECTS
+$bench/modules/m3_motor.o
+code CODE 0 0 0 5D6 1 2
+config CONFIG 4 300000 300000 C 1 1
+# %UNUSED Section
+# This section enumerates the unused ranges of each CLASS. Each entry
+# is described on a single line as follows:
+#    <class name> <range> <delta>
+# Addresses given in the range are in hexadecimal and units of delta.
+%UNUSED
+RAM 60-CFF 1
+RAM E00-E1E 1
+SFR D00-DFF 1
+SFR E1F-FFF 1
+BANK0 60-FF 1
+BANK1 100-1FF 1
+BANK2 200-2FF 1
+BANK3 300-3FF 1
+BANK4 400-4FF 1
+BANK5 500-5FF 1
+BANK6 600-6FF 1
+BANK7 700-7FF 1
+BANK8 800-8FF 1
+BANK9 900-9FF 1
+CONST 5D6-1FFFF 1
+IDLOC 200000-2000FF 1
+SMALLCONST 1000-FFFF 1
+SMALLCONST 11000-1FFFF 1
+CODE 5D6-1FFFF 1
+BANK10 A00-AFF 1
+BANK11 B00-BFF 1
+BANK12 C00-CFF 1
+BANK14 E00-E1E 1
+BIGRAM 5D6-CFF 1
+BIGRAM E00-E1E 1
+BIGSFR D00-DFF 1
+BIGSFR E1F-FFF 1
+COMRAM 0-5F 1
+EEDATA 310000-3103FF 1
+MEDIUMCONST 1000-FFFF 1
+MEDIUMCONST 11000-1FFFF 1
+# %LINETAB Section
+# This section enumerates the file/line to address mappings.
+# The beginning of the section is indicated by %LINETAB.
+# The first line indicates the name of the first object file, e.g.
+#   $foo.obj
+# Each line that follows describes a single mapping until the next
+# object file.  Mappings have the following format:
+#    <address> <psect name> <class name> ><line number>:<file name>
+# The address is absolute and given given in unqualified hex 
+# in delta units of the psect. All mappings within an object file
+# are in ascending order of addresses.
+# All other numeric values are in decimal.
+%LINETAB
+$bench/modules/m3_motor.o
+0 code CODE >103:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2 code CODE >104:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4 code CODE >105:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+6 code CODE >106:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+8 code CODE >107:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+A code CODE >108:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+E code CODE >109:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+10 code CODE >111:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+12 code CODE >112:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+14 code CODE >113:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+16 code CODE >114:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+18 code CODE >115:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1A code CODE >116:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1C code CODE >117:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1E code CODE >118:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+20 code CODE >119:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+22 code CODE >120:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+24 code CODE >121:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+26 code CODE >122:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+28 code CODE >123:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2A code CODE >124:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2C code CODE >125:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2E code CODE >126:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+30 code CODE >127:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+32 code CODE >128:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+34 code CODE >129:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+36 code CODE >130:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+38 code CODE >131:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3A code CODE >132:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3C code CODE >133:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3E code CODE >134:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+40 code CODE >135:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+42 code CODE >136:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+44 code CODE >137:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+46 code CODE >138:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+48 code CODE >139:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4A code CODE >140:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4C code CODE >141:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4E code CODE >142:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+50 code CODE >143:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+52 code CODE >144:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+54 code CODE >145:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+56 code CODE >146:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+58 code CODE >147:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5A code CODE >148:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5C code CODE >149:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5E code CODE >150:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+60 code CODE >151:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+62 code CODE >152:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+64 code CODE >153:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+66 code CODE >154:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+68 code CODE >155:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+6A code CODE >156:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+6C code CODE >157:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+6E code CODE >158:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+70 code CODE >159:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+72 code CODE >160:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+74 code CODE >161:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+76 code CODE >162:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+78 code CODE >163:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+7A code CODE >164:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+7C code CODE >166:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+7E code CODE >167:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+80 code CODE >168:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+82 code CODE >169:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+84 code CODE >170:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+86 code CODE >171:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+88 code CODE >172:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+8A code CODE >173:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+8C code CODE >174:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+8E code CODE >175:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+90 code CODE >176:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+92 code CODE >177:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+94 code CODE >178:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+96 code CODE >179:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+98 code CODE >180:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+9A code CODE >181:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+9C code CODE >182:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+9E code CODE >183:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+A2 code CODE >185:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+A4 code CODE >186:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+A6 code CODE >187:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+A8 code CODE >188:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+AA code CODE >189:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+AC code CODE >190:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+AE code CODE >191:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+B0 code CODE >192:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+B2 code CODE >193:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+B4 code CODE >194:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+B6 code CODE >196:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+B8 code CODE >197:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+BA code CODE >198:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+BC code CODE >199:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+BE code CODE >200:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+C0 code CODE >201:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+C2 code CODE >202:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+C4 code CODE >204:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+C6 code CODE >205:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+C8 code CODE >206:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+CA code CODE >207:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+CC code CODE >208:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+CE code CODE >209:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+D0 code CODE >210:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+D2 code CODE >211:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+D4 code CODE >212:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+D6 code CODE >213:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+D8 code CODE >214:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+DA code CODE >215:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+DC code CODE >216:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+DE code CODE >217:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+E2 code CODE >219:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+E4 code CODE >220:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+E8 code CODE >221:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+EC code CODE >222:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+EE code CODE >223:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+F0 code CODE >224:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+F2 code CODE >225:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+F4 code CODE >226:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+F6 code CODE >227:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+F8 code CODE >228:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+FA code CODE >229:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+FC code CODE >230:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+FE code CODE >231:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+100 code CODE >233:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+102 code CODE >234:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+104 code CODE >235:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+106 code CODE >236:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+108 code CODE >237:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+10A code CODE >239:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+10C code CODE >240:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+10E code CODE >241:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+110 code CODE >242:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+112 code CODE >245:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+114 code CODE >246:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+116 code CODE >247:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+11A code CODE >248:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+11C code CODE >249:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+11E code CODE >250:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+120 code CODE >251:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+122 code CODE >252:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+124 code CODE >253:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+126 code CODE >254:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+128 code CODE >255:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+12A code CODE >256:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+12C code CODE >257:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+12E code CODE >258:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+130 code CODE >259:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+132 code CODE >260:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+134 code CODE >261:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+138 code CODE >262:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+13A code CODE >263:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+13C code CODE >264:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+13E code CODE >265:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+140 code CODE >266:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+142 code CODE >267:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+144 code CODE >268:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+146 code CODE >269:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+148 code CODE >270:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+14A code CODE >271:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+14C code CODE >272:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+14E code CODE >273:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+152 code CODE >274:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+156 code CODE >275:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+158 code CODE >276:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+15A code CODE >277:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+15C code CODE >278:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+15E code CODE >279:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+162 code CODE >280:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+166 code CODE >281:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+168 code CODE >282:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+16A code CODE >283:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+16C code CODE >284:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+16E code CODE >285:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+170 code CODE >286:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+172 code CODE >287:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+174 code CODE >288:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+176 code CODE >290:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+178 code CODE >291:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+17A code CODE >292:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+17C code CODE >293:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+17E code CODE >294:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+180 code CODE >295:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+182 code CODE >297:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+184 code CODE >298:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+186 code CODE >299:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+188 code CODE >300:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+18A code CODE >301:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+18C code CODE >302:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+18E code CODE >303:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+190 code CODE >304:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+192 code CODE >305:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+194 code CODE >307:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+196 code CODE >308:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+198 code CODE >309:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+19A code CODE >310:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+19C code CODE >311:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+19E code CODE >312:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1A0 code CODE >314:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1A2 code CODE >315:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1A4 code CODE >316:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1A6 code CODE >317:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1A8 code CODE >318:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1AA code CODE >319:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1AC code CODE >320:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1AE code CODE >321:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1B0 code CODE >323:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1B2 code CODE >324:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1B4 code CODE >325:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1B6 code CODE >326:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1B8 code CODE >327:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1BA code CODE >328:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1BC code CODE >329:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1BE code CODE >330:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1C0 code CODE >331:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1C2 code CODE >332:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1C4 code CODE >334:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1C6 code CODE >335:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1C8 code CODE >336:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1CA code CODE >337:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1CC code CODE >339:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1D0 code CODE >340:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1D2 code CODE >341:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1D4 code CODE >342:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1D6 code CODE >343:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1D8 code CODE >344:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1DA code CODE >345:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1DC code CODE >346:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1DE code CODE >347:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1E0 code CODE >348:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1E2 code CODE >349:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1E4 code CODE >350:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1E6 code CODE >351:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1E8 code CODE >352:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1EA code CODE >353:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1EC code CODE >354:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1EE code CODE >355:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1F0 code CODE >356:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1F2 code CODE >357:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1F4 code CODE >358:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1F6 code CODE >359:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1F8 code CODE >360:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1FA code CODE >363:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1FC code CODE >364:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+1FE code CODE >365:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+200 code CODE >366:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+202 code CODE >367:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+204 code CODE >368:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+206 code CODE >369:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+208 code CODE >370:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+20A code CODE >371:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+20C code CODE >374:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+20E code CODE >375:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+212 code CODE >376:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+214 code CODE >380:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+216 code CODE >381:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+218 code CODE >382:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+21A code CODE >383:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+21C code CODE >384:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+21E code CODE >385:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+220 code CODE >386:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+222 code CODE >387:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+224 code CODE >388:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+226 code CODE >389:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+228 code CODE >390:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+22A code CODE >391:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+22C code CODE >392:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+22E code CODE >393:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+230 code CODE >394:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+232 code CODE >395:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+234 code CODE >396:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+236 code CODE >398:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+238 code CODE >399:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+23A code CODE >400:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+23C code CODE >401:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+23E code CODE >402:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+240 code CODE >403:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+242 code CODE >404:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+244 code CODE >405:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+246 code CODE >407:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+248 code CODE >408:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+24A code CODE >409:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+24C code CODE >410:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+24E code CODE >411:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+250 code CODE >412:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+252 code CODE >413:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+254 code CODE >415:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+256 code CODE >418:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+258 code CODE >419:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+25A code CODE >420:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+25C code CODE >421:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+25E code CODE >422:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+260 code CODE >423:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+262 code CODE >424:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+264 code CODE >425:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+266 code CODE >426:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+268 code CODE >427:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+26A code CODE >428:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+26C code CODE >429:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+26E code CODE >430:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+270 code CODE >431:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+272 code CODE >432:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+274 code CODE >433:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+276 code CODE >434:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+278 code CODE >435:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+27A code CODE >437:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+27C code CODE >438:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+27E code CODE >439:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+280 code CODE >440:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+282 code CODE >441:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+284 code CODE >442:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+286 code CODE >443:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+288 code CODE >444:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+28A code CODE >445:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+28C code CODE >446:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+28E code CODE >448:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+290 code CODE >449:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+292 code CODE >450:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+294 code CODE >451:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+296 code CODE >452:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+298 code CODE >453:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+29A code CODE >454:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+29C code CODE >455:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+29E code CODE >456:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2A0 code CODE >458:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2A2 code CODE >461:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2A4 code CODE >462:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2A6 code CODE >463:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2A8 code CODE >464:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2AA code CODE >465:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2AC code CODE >466:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2AE code CODE >467:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2B0 code CODE >468:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2B2 code CODE >469:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2B4 code CODE >471:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2B6 code CODE >472:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2B8 code CODE >473:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2BA code CODE >474:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2BC code CODE >475:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2BE code CODE >476:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2C0 code CODE >477:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2C2 code CODE >479:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2C4 code CODE >480:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2C6 code CODE >481:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2C8 code CODE >482:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2CA code CODE >483:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2CC code CODE >485:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2CE code CODE >486:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2D0 code CODE >487:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2D2 code CODE >488:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2D4 code CODE >489:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2D6 code CODE >490:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2D8 code CODE >491:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2DA code CODE >493:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2DC code CODE >494:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2DE code CODE >498:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2E0 code CODE >499:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2E2 code CODE >501:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2E4 code CODE >503:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2E6 code CODE >504:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2E8 code CODE >505:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2EA code CODE >507:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2EC code CODE >508:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2EE code CODE >509:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2F0 code CODE >510:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2F2 code CODE >511:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2F6 code CODE >512:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2F8 code CODE >513:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2FA code CODE >514:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2FC code CODE >515:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+2FE code CODE >516:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+300 code CODE >517:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+302 code CODE >519:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+304 code CODE >521:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+306 code CODE >522:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+308 code CODE >523:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+30A code CODE >524:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+30E code CODE >525:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+310 code CODE >526:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+312 code CODE >527:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+314 code CODE >528:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+316 code CODE >529:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+318 code CODE >530:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+31A code CODE >531:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+31C code CODE >532:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+31E code CODE >533:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+320 code CODE >534:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+322 code CODE >535:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+324 code CODE >536:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+326 code CODE >538:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+328 code CODE >539:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+32A code CODE >540:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+32E code CODE >541:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+330 code CODE >542:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+332 code CODE >543:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+334 code CODE >544:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+336 code CODE >545:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+338 code CODE >546:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+33A code CODE >547:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+33C code CODE >548:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+340 code CODE >549:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+342 code CODE >550:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+344 code CODE >551:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+346 code CODE >552:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+348 code CODE >554:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+34C code CODE >555:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+34E code CODE >556:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+352 code CODE >557:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+354 code CODE >558:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+356 code CODE >559:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+358 code CODE >561:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+35C code CODE >562:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+35E code CODE >563:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+360 code CODE >564:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+362 code CODE >565:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+364 code CODE >566:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+366 code CODE >567:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+368 code CODE >568:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+36A code CODE >569:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+36C code CODE >570:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+36E code CODE >571:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+370 code CODE >572:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+372 code CODE >573:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+374 code CODE >574:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+376 code CODE >575:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+378 code CODE >576:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+37A code CODE >577:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+37C code CODE >578:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+37E code CODE >579:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+380 code CODE >580:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+382 code CODE >581:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+384 code CODE >582:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+386 code CODE >584:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+388 code CODE >585:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+38A code CODE >588:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+38C code CODE >589:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+38E code CODE >590:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+390 code CODE >591:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+392 code CODE >592:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+394 code CODE >593:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+396 code CODE >594:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+39A code CODE >595:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+39E code CODE >596:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3A0 code CODE >597:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3A2 code CODE >598:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3A4 code CODE >600:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3A6 code CODE >601:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3A8 code CODE >602:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3AA code CODE >603:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3AC code CODE >604:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3AE code CODE >605:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3B2 code CODE >606:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3B4 code CODE >607:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3B8 code CODE >608:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3BA code CODE >609:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3BC code CODE >610:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3BE code CODE >611:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3C0 code CODE >613:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3C2 code CODE >614:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3C4 code CODE >615:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3C6 code CODE >618:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3C8 code CODE >619:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3CA code CODE >620:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3CC code CODE >621:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3CE code CODE >622:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3D0 code CODE >623:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3D2 code CODE >625:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3D4 code CODE >626:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3D6 code CODE >627:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3DA code CODE >628:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3DC code CODE >629:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3DE code CODE >632:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3E0 code CODE >633:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3E2 code CODE >634:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3E4 code CODE >635:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3E6 code CODE >636:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3E8 code CODE >638:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3EC code CODE >639:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3F0 code CODE >640:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3F2 code CODE >641:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3F4 code CODE >642:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3F6 code CODE >643:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3F8 code CODE >644:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3FA code CODE >645:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3FC code CODE >646:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+3FE code CODE >647:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+400 code CODE >648:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+404 code CODE >649:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+406 code CODE >650:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+40A code CODE >651:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+40C code CODE >652:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+40E code CODE >653:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+410 code CODE >654:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+412 code CODE >655:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+414 code CODE >656:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+418 code CODE >657:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+41C code CODE >658:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+41E code CODE >659:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+420 code CODE >660:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+422 code CODE >661:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+424 code CODE >662:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+428 code CODE >663:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+42A code CODE >664:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+42C code CODE >665:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+430 code CODE >666:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+434 code CODE >667:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+438 code CODE >668:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+43A code CODE >671:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+43C code CODE >674:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+43E code CODE >675:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+440 code CODE >676:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+442 code CODE >677:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+444 code CODE >678:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+446 code CODE >679:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+44A code CODE >680:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+44C code CODE >681:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+44E code CODE >682:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+450 code CODE >683:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+452 code CODE >684:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+454 code CODE >685:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+456 code CODE >686:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+458 code CODE >687:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+45A code CODE >689:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+45C code CODE >690:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+45E code CODE >691:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+460 code CODE >692:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+462 code CODE >694:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+464 code CODE >695:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+466 code CODE >696:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+468 code CODE >698:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+46A code CODE >701:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+46C code CODE >702:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+46E code CODE >703:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+470 code CODE >704:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+474 code CODE >705:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+476 code CODE >706:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+478 code CODE >707:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+47A code CODE >708:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+47C code CODE >709:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+47E code CODE >710:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+480 code CODE >711:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+482 code CODE >712:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+484 code CODE >714:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+486 code CODE >715:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+488 code CODE >716:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+48A code CODE >717:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+48C code CODE >719:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+48E code CODE >720:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+490 code CODE >721:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+492 code CODE >722:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+494 code CODE >723:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+496 code CODE >725:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+498 code CODE >727:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+49A code CODE >730:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+49C code CODE >731:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4A0 code CODE >732:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4A4 code CODE >733:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4A6 code CODE >734:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4A8 code CODE >735:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4AA code CODE >736:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4AC code CODE >737:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4AE code CODE >738:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4B0 code CODE >740:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4B2 code CODE >742:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4B4 code CODE >745:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4B6 code CODE >746:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4BA code CODE >747:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4BE code CODE >748:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4C0 code CODE >749:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4C2 code CODE >750:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4C4 code CODE >751:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4C6 code CODE >752:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4C8 code CODE >753:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4CA code CODE >755:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4CC code CODE >757:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4CE code CODE >760:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4D0 code CODE >761:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4D2 code CODE >762:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4D4 code CODE >763:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4D6 code CODE >764:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4D8 code CODE >765:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4DA code CODE >766:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4DC code CODE >767:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4DE code CODE >768:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4E0 code CODE >769:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4E2 code CODE >770:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4E4 code CODE >771:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4E6 code CODE >772:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4E8 code CODE >773:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4EA code CODE >775:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4EC code CODE >778:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4EE code CODE >779:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4F0 code CODE >780:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4F2 code CODE >781:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4F4 code CODE >782:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4F6 code CODE >783:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4F8 code CODE >785:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4FA code CODE >786:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4FC code CODE >787:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+4FE code CODE >788:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+500 code CODE >789:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+502 code CODE >790:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+504 code CODE >791:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+506 code CODE >792:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+508 code CODE >793:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+50A code CODE >794:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+50C code CODE >795:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+50E code CODE >796:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+510 code CODE >797:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+512 code CODE >798:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+514 code CODE >799:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+516 code CODE >800:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+518 code CODE >801:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+51A code CODE >802:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+51C code CODE >803:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+51E code CODE >804:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+520 code CODE >805:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+522 code CODE >807:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+524 code CODE >808:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+526 code CODE >809:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+528 code CODE >810:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+52A code CODE >811:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+52C code CODE >812:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+52E code CODE >813:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+530 code CODE >814:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+532 code CODE >816:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+534 code CODE >817:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+536 code CODE >818:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+538 code CODE >819:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+53A code CODE >820:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+53C code CODE >821:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+53E code CODE >822:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+540 code CODE >824:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+542 code CODE >825:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+544 code CODE >826:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+546 code CODE >827:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+548 code CODE >828:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+54A code CODE >831:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+54C code CODE >832:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+54E code CODE >834:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+550 code CODE >835:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+552 code CODE >836:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+556 code CODE >837:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+55A code CODE >838:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+55C code CODE >841:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+55E code CODE >842:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+560 code CODE >843:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+564 code CODE >844:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+568 code CODE >845:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+56C code CODE >846:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+56E code CODE >847:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+570 code CODE >848:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+572 code CODE >849:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+574 code CODE >850:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+578 code CODE >851:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+57C code CODE >852:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+57E code CODE >855:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+580 code CODE >856:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+582 code CODE >857:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+584 code CODE >858:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+586 code CODE >859:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+588 code CODE >861:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+58A code CODE >862:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+58C code CODE >863:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+58E code CODE >864:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+590 code CODE >865:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+592 code CODE >866:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+594 code CODE >868:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+596 code CODE >869:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+598 code CODE >870:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+59A code CODE >871:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+59C code CODE >872:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+59E code CODE >874:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5A0 code CODE >875:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5A2 code CODE >876:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5A4 code CODE >879:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5A6 code CODE >880:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5A8 code CODE >881:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5AA code CODE >882:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5AC code CODE >884:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5AE code CODE >885:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5B0 code CODE >886:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5B2 code CODE >887:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5B4 code CODE >888:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5B6 code CODE >889:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5B8 code CODE >890:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5BA code CODE >891:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5BC code CODE >893:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5BE code CODE >894:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5C0 code CODE >895:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5C2 code CODE >897:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5C4 code CODE >898:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5C6 code CODE >899:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5C8 code CODE >902:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5CA code CODE >903:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5CC code CODE >905:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5CE code CODE >906:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5D0 code CODE >907:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5D2 code CODE >908:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+5D4 code CODE >910:/home/gary/apps/Basic_Compiler/bench/modules/m3_motor.S
+# %SYMTAB Section
+# An enumeration of all symbols in the program.
+# The beginning of the section is indicated by %SYMTAB.
+# Each line describes a single symbol as follows:
+#    <label> <value> [-]<load-adj> <class> <space> <psect> <file-name>
+# The value and load-adj are both in unqualified hexadecimal.
+# All other numeric values are in decimal.  The load-adj is the
+# quantity one needs to add to the symbol value in order to obtain the load
+# address of the symbol.  This value may be signed. If the symbol
+# was defined in a psect then <psect> will be "-". File-name
+# is the name of the object file in which the symbol was defined.
+%SYMTAB
+__Hspace_0 5D6 0 ABS 0 - -
+__Hspace_1 0 0 ABS 0 - -
+__Hspace_3 0 0 ABS 0 - -
+__Hspace_4 60000C 0 ABS 0 - -
+__Hudata_bank0 0 0 ABS 0 udata_bank0 -
+__Hudata_bank1 0 0 ABS 0 udata_bank1 -
+__Hudata_bank2 0 0 ABS 0 udata_bank2 -
+__Hudata_bank3 0 0 ABS 0 udata_bank3 -
+__Hudata_bank4 0 0 ABS 0 udata_bank4 -
+__Hudata_bank5 0 0 ABS 0 udata_bank5 -
+__Hudata_bank6 0 0 ABS 0 udata_bank6 -
+__Hudata_bank7 0 0 ABS 0 udata_bank7 -
+__Hudata_bank8 0 0 ABS 0 udata_bank8 -
+__Hudata_bank9 0 0 ABS 0 udata_bank9 -
+__L__absolute__ 0 0 ABS 0 __absolute__ -
+__Hudata_bank10 0 0 ABS 0 udata_bank10 -
+__Hudata_bank11 0 0 ABS 0 udata_bank11 -
+__Hudata_bank12 0 0 ABS 0 udata_bank12 -
+__Hudata_bank14 0 0 ABS 0 udata_bank14 -
+isa$xinst 0 0 ABS 0 - bench/modules/m3_motor.o
+__Hedata 0 0 ABS 0 edata -
+__Hudata 0 0 ABS 0 udata -
+__Hconfig 30000C 0 CONFIG 4 config -
+__Ledata 0 0 ABS 0 edata -
+__Ludata 0 0 ABS 0 udata -
+__Hcode 0 0 ABS 0 code -
+__Hdata 0 0 ABS 0 data -
+__Lcode 0 0 ABS 0 code -
+__Ldata 0 0 ABS 0 data -
+__S0 0 0 ABS 0 - -
+__S1 0 0 ABS 0 - -
+__S3 0 0 ABS 0 - -
+__Ludata_bank10 0 0 ABS 0 udata_bank10 -
+__Ludata_bank11 0 0 ABS 0 udata_bank11 -
+__Ludata_bank12 0 0 ABS 0 udata_bank12 -
+__Ludata_bank14 0 0 ABS 0 udata_bank14 -
+__Lconfig 0 0 CONFIG 4 config -
+isa$std 1 0 ABS 0 - bench/modules/m3_motor.o
+__Lspace_0 0 0 ABS 0 - -
+__Lspace_1 0 0 ABS 0 - -
+__Lspace_3 0 0 ABS 0 - -
+__Lspace_4 0 0 ABS 0 - -
+__Ludata_bank0 0 0 ABS 0 udata_bank0 -
+__Ludata_bank1 0 0 ABS 0 udata_bank1 -
+__Ludata_bank2 0 0 ABS 0 udata_bank2 -
+__Ludata_bank3 0 0 ABS 0 udata_bank3 -
+__Ludata_bank4 0 0 ABS 0 udata_bank4 -
+__Ludata_bank5 0 0 ABS 0 udata_bank5 -
+__Ludata_bank6 0 0 ABS 0 udata_bank6 -
+__Ludata_bank7 0 0 ABS 0 udata_bank7 -
+__Ludata_bank8 0 0 ABS 0 udata_bank8 -
+__Ludata_bank9 0 0 ABS 0 udata_bank9 -
+__H__absolute__ 0 0 ABS 0 __absolute__ -
+__Hudata_acs 0 0 ABS 0 udata_acs -
+__Ludata_acs 0 0 ABS 0 udata_acs -
+# %SPLITSTAB Section
+# This section enumerates all the psect splits performed by the assembler.
+# The beginning of the section is indicated by %SPLITSTAB.
+# Each line is a record a particular split, where the parent psect is on
+# the left and the child on the right.  Note that a child psect is always
+# split form the top of the parent psect. All splits from a given parent
+# are listed in the order in which they occurred.
+%SPLITSTAB
+# %DABS Section
+# This section contains a table of all usuage of the assember
+# directive DABS in the program. Each line has the following format:
+#   <name> <space> <address> <size>
+# If the DABS was originally labelled then that shall be <name>,
+# otherwise name will be "-".  The <space> number is in decimal.
+# <address> and <size> are in byte units as unqaulified hexadecimal
+%DABS
+# %SEGMENTS Section
+# This sections enumerates the segments of the program.  Each segment
+# is described on a single line as follows:
+#    <name> <space> <link address> <file address> <size> <delta>
+# Addresses and size are in unqualified hexadecimal.  The link address
+# and size are in units of delta. The file address is in units of bytes.
+# All other numeric quantities are in decimal.
+%SEGMENTS
+# %NOTES Section
+# This section contains data of all the note-psects.  The beginning of the section
+# is indicated by %NOTES. The first line indicates the name and decimal
+# byte-length of the first note-psect, e.g.
+#   $codecov_info_hdr 16
+# Each line that follows contains the byte-data of the psect in hexadecimal as a
+# space-separated list. These lines are limited to 16 bytes of data.
+%NOTES

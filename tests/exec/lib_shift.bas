@@ -19,8 +19,11 @@ LATC = 0
 Shift.ShiftOut(255, 24, 17, False, 8)
 Shift.ShiftOut(255, 16, 16, False, 8)
 Shift.ShiftOut(255, 16, 17, False, 0)
+Shift.ShiftOut(255, 16, 17, False, 9)
+Shift.ShiftOut16(255, 16, 17, False, 17)
+Shift.ShiftOut16(255, 16, 17, False, 0)
 tris1 = TRISC And 3
-badin = Shift.ShiftIn(30, 17, False, 8)
+badin = Shift.ShiftIn(30, 17, False, 8) + Shift.ShiftIn(16, 17, False, 9) + Shift.ShiftIn16(16, 17, False, 17)
 ' RC0 = data, RC1 = clock, both outputs; 0 sent, so both low.
 Shift.ShiftOut(0, 16, 17, False, 8)
 tris = TRISC And 3

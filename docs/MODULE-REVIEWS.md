@@ -42,7 +42,8 @@ fixed in the module.
 | 19 | `serial2` | reviewed (0.1.205) | all-routines probe 185 → 163 (18F27Q10), 241 → 213 (16F17146, 16F18056), 186 → 164 (18F16Q41) |
 | 20 | `rtcc` | reviewed (0.1.206) | all-routines probe 1487 → 1431 (18F27Q10), 1956 → 1895 (16F17146), 1628 → 1579 (18F16Q41) |
 | 21 | `rtccspi` | reviewed (0.1.207) | all-routines probe 1839 → 1812 (18F27Q10), 2700 → 2664 (16F17146), 1947 → 1922 (18F16Q41) |
-| … | `shift` … `x10` | not started | |
+| 22 | `shift` | reviewed (0.1.208) | all-routines probe 570 → 524 (18F27Q10, 18F16Q41), 672 → 625 (16F17146) |
+| … | `spi` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -667,6 +668,16 @@ Probe calls every public routine with values read from ports (program words, `--
 - **Not done:** `RtccspiSet` and `RtccspiAlarm` (the errata sequence and register layout are as the data sheet gives them), `EeReady` / `StatusRead` (53 words, the timing loop), `Cmd1` / `Cmd2` / `ReadBlock` / `WriteBlock` (the chip-select framing, each a different byte pattern).
 - **Tests:** `lib_rtccspi_model` (18F27Q10, optimised and `-O0`) and `lib_rtccspi` (18F27Q10, 16F17146) pass; every changed routine is called by the model test.
 
+## 22. `shift` (done 2026-11-13, 0.1.208)
+
+Probe calls all four routines with values read from ports (program words, `--report`). Before and after: 18F27Q10 570 → 524, 16F17146 672 → 625, 18F16Q41 570 → 524.
+
+- **`Setup`.** The pin check, the binds, the clock parked low and made an output were written four times (`PinsOk` plus the same five calls in each routine); one `Setup(d, c, bits, max)` function now does them. The data pin direction stays in the callers, so a program that only shifts out does not pull in `PinInput`.
+- **`Pulse`.** The delay, clock high, delay, clock low of the two output routines is one routine.
+- **Tried and dropped:** collecting `ShiftIn` bits at the top and justifying once at the end (the loop is simpler but the variable shift costs more: probe +26 words).
+- **Cost:** a program that calls only `ShiftOut` once (`bench/modules/m3_motor`) is 5 words larger (742 → 747): the single-call case no longer folds the pin check as it did. Programs that use two or more of the routines gain.
+- **Tests:** `lib_shift` now also refuses 9 bits on `ShiftOut` / `ShiftIn` and 17 or 0 bits on the 16-bit routines; it passes on 18F27Q10 (optimised and `-O0`), 18F16Q41 and 16F17146. `bench/large/d_ctrl` passes on 18F27Q10 and 16F17146.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `shift` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13) and on through the list in alphabetical order.

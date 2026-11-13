@@ -11,19 +11,32 @@ Include "pinio"
 '   right-justified. ShiftOut16 / ShiftIn16 do the same for 9..16 bits.
 ' Both set their pins (clock output, data output or input) and make them digital. A pin that does not exist
 ' on the part, or equal pins, stop the routine at once: ShiftOut sends nothing and ShiftIn returns 0.
-Function PinsOk(ByVal d As Byte, ByVal c As Byte, ByVal bits As Byte, ByVal max As Byte) As Boolean
-    Result = Pinio.PinOk(d) And Pinio.PinOk(c) And d <> c And bits >= 1 And bits <= max
+' Checks the pins and the bit count, binds the pins, parks the clock low and makes the clock an output;
+' False (nothing touched) when the pins or the count are not valid.
+Function Setup(ByVal d As Byte, ByVal c As Byte, ByVal bits As Byte, ByVal max As Byte) As Boolean
+    Result = False
+    If Pinio.PinOk(d) And Pinio.PinOk(c) And d <> c And bits >= 1 And bits <= max Then
+        Pinio.BindData(d)
+        Pinio.BindClk(c)
+        Pinio.ClkPut(False)
+        Pinio.PinOutput(c)
+        Result = True
+    End If
 End Function
+
+' One clock pulse: data has been put, wait, clock high, wait, clock low.
+Sub Pulse()
+    DelayUS(1)
+    Pinio.ClkPut(True)
+    DelayUS(1)
+    Pinio.ClkPut(False)
+End Sub
 
 Public Sub ShiftOut(ByVal data As Byte, ByVal dataPin As Byte, ByVal clkPin As Byte, ByVal lsbFirst As Boolean, ByVal bits As Byte)
     Dim i As Byte
-    If Not PinsOk(dataPin, clkPin, bits, 8) Then
+    If Not Setup(dataPin, clkPin, bits, 8) Then
         Exit
     End If
-    Pinio.BindData(dataPin)
-    Pinio.BindClk(clkPin)
-    Pinio.ClkPut(False)
-    Pinio.PinOutput(clkPin)
     Pinio.PinOutput(dataPin)
     If Not lsbFirst Then
         data = data << (8 - bits)
@@ -36,23 +49,16 @@ Public Sub ShiftOut(ByVal data As Byte, ByVal dataPin As Byte, ByVal clkPin As B
             Pinio.DataPut((data And 128) <> 0)
             data = data << 1
         End If
-        DelayUS(1)
-        Pinio.ClkPut(True)
-        DelayUS(1)
-        Pinio.ClkPut(False)
+        Pulse()
     Next
 End Sub
 
 Public Function ShiftIn(ByVal dataPin As Byte, ByVal clkPin As Byte, ByVal lsbFirst As Boolean, ByVal bits As Byte) As Byte
     Dim i As Byte
     Result = 0
-    If Not PinsOk(dataPin, clkPin, bits, 8) Then
+    If Not Setup(dataPin, clkPin, bits, 8) Then
         Exit
     End If
-    Pinio.BindData(dataPin)
-    Pinio.BindClk(clkPin)
-    Pinio.ClkPut(False)
-    Pinio.PinOutput(clkPin)
     Pinio.PinInput(dataPin)
     For i = 1 To bits
         Pinio.ClkPut(True)
@@ -75,13 +81,9 @@ End Function
 
 Public Sub ShiftOut16(ByVal data As Word, ByVal dataPin As Byte, ByVal clkPin As Byte, ByVal lsbFirst As Boolean, ByVal bits As Byte)
     Dim i As Byte
-    If Not PinsOk(dataPin, clkPin, bits, 16) Then
+    If Not Setup(dataPin, clkPin, bits, 16) Then
         Exit
     End If
-    Pinio.BindData(dataPin)
-    Pinio.BindClk(clkPin)
-    Pinio.ClkPut(False)
-    Pinio.PinOutput(clkPin)
     Pinio.PinOutput(dataPin)
     If Not lsbFirst Then
         data = data << (16 - bits)
@@ -94,23 +96,16 @@ Public Sub ShiftOut16(ByVal data As Word, ByVal dataPin As Byte, ByVal clkPin As
             Pinio.DataPut((data And 32768) <> 0)
             data = data << 1
         End If
-        DelayUS(1)
-        Pinio.ClkPut(True)
-        DelayUS(1)
-        Pinio.ClkPut(False)
+        Pulse()
     Next
 End Sub
 
 Public Function ShiftIn16(ByVal dataPin As Byte, ByVal clkPin As Byte, ByVal lsbFirst As Boolean, ByVal bits As Byte) As Word
     Dim i As Byte
     Result = 0
-    If Not PinsOk(dataPin, clkPin, bits, 16) Then
+    If Not Setup(dataPin, clkPin, bits, 16) Then
         Exit
     End If
-    Pinio.BindData(dataPin)
-    Pinio.BindClk(clkPin)
-    Pinio.ClkPut(False)
-    Pinio.PinOutput(clkPin)
     Pinio.PinInput(dataPin)
     For i = 1 To bits
         Pinio.ClkPut(True)
