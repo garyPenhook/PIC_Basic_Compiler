@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.226**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.227**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -5566,6 +5566,26 @@ Pulse.Sound2(14, 15, 2500, 3500, 1000)
 
 **See also** `Sound`
 
+### DtmfOut
+
+**Syntax**
+```basic
+DtmfOut(pin, ms, key)
+DtmfOut(pin, ms, gap, text)
+```
+**Overview** Dials touch-tones: the two tones of a telephone keypad key, added on one pin.
+
+**Parameters** `ms` the time of each tone in milliseconds; `key` 0..9 the digits, 10 for `*`, 11 for `#`, 12..15 for `A` to `D` (another value is silent); `gap` the silence after each key in milliseconds; `text` a string of `0`..`9`, `*`, `#`, `A`..`D` (any other character is skipped).
+
+**Example**
+```basic
+Pulse.DtmfOut(14, 100, 5)
+Pulse.DtmfOut(14, 80, 60, "555*0123#")
+```
+**Notes** The row tones are 697, 770, 852 and 941 Hz and the column tones 1209, 1336, 1477 and 1633 Hz, made by `Freqout` from its 10 us time base: each is within 2 % of the standard. The waves are square. The pin is made an output and ends low. One key costs about 145 words on the 18F27Q10, over the 121 of `Freqout(pin, ms, f1, f2)` it uses.
+
+**See also** `Freqout`, `Sound2`
+
 ### SonyIn
 
 **Syntax**
@@ -6075,7 +6095,7 @@ reports these rather than miscompiling them.
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
 | `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
-| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout` | `pulse` module (see *pulse, irremote and x10*) |
+| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout`, `DtmfOut` | `pulse` module (see *pulse, irremote and x10*) |
 | `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
 | `HPWM` | `pwm` module (hardware PWM) |
 | `Freqout` | `Pulse.Freqout(pin, ms, f1)` and `Pulse.Freqout(pin, ms, f1, f2)` of the `pulse` module (square waves; no sine) |

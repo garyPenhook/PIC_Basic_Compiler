@@ -30,6 +30,8 @@ Pulse.Sound(14, 0, 1)
 Pulse.Sound2(15, 14, 1000, 2000, 2)
 Pulse.Freqout(13, 2, 1000)
 Pulse.Freqout(12, 2, 1000, 2000)
+Pulse.DtmfOut(12, 2, 5)
+Pulse.DtmfOut(12, 2, 1, "1*#D")
 lat = LATB
 tb = TRISB
 ' A pin the part lacks, and equal pins: nothing happens.

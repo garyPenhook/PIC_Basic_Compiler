@@ -195,4 +195,12 @@ Pulse.Freqout(21, 2, 1000)
 Chk(e8, Pinio.Sets(21), 6)
 Pulse.Freqout(22, 2, 1000, 2000)
 Chk(e8, Pinio.Sets(22), 14)
+' DtmfOut: key 5 is 770 + 1336 Hz (half periods 64 and 37 ticks: 15 + 27 toggles in 1000 ticks, plus the first and last write);
+' key 0 is 941 + 1336 Hz (53 and 37: 18 + 27).
+Pulse.DtmfOut(23, 10, 5)
+Chk(e8, Pinio.Sets(23), 44)
+Pulse.DtmfOut(9, 10, 0)
+Chk(e8, Pinio.Sets(9), 47)
+Pulse.DtmfOut(9, 10, 16)
+Chk(e8, Pinio.Sets(9), 47)
 done = 1

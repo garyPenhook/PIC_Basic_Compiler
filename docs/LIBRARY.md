@@ -587,7 +587,7 @@ Test `tests/exec/lib_shift.bas` (set-up only; the simulator has no pin model); b
 
 Polled, on any pin 0..23 as in `pinio`. `Counter(pin, ms)` counts rising edges in about `ms` ms (10 to 40 per cent long; edges faster than about 40 kHz missed). `Button(pin, down, delay, rate, ByRef state)` is a debounced push button with auto-repeat: True for a press to act on, `state` a caller's Byte (0 at start). Test `tests/exec/lib_buttons.bas`. Include as `Include "buttons"`; calls are `Buttons.Button(...)`.
 
-## pulse (PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound, Sound2, Freqout)
+## pulse (PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound, Sound2, Freqout, DtmfOut)
 
 Bit-banged pulse measurement and generation on any pin (pins 0..23 as in `pinio`; a missing pin or a zero count stops a routine, a
 measurement then returns 0). Time is kept by polling and cycle-counted delays; one "unit" is a 10 us poll plus the loop time, so units are
@@ -604,6 +604,7 @@ measurement then returns 0). Time is kept by polling and cycle-counted delays; o
 | `Sound(pin, note, duration)` | note 0 silence, 1..127 a tone of about 78.74 x note Hz, 128..255 noise; `duration` in 10 ms |
 | `Sound2(pin1, pin2, f1, f2, ms)` | two tones (Hz, 0 = silent) at once on two pins for `ms` ms, from one 10 us time base: exact to about 10 % |
 | `Freqout(pin, ms, f1)` / `Freqout(pin, ms, f1, f2)` | square wave of `f1` Hz (8..32767) for `ms` ms, or two added on one pin (10 us base, 197 Hz and up, about 10 %) |
+| `DtmfOut(pin, ms, key)` / `DtmfOut(pin, ms, gap, text)` | the keypad tone pair (row 697..941 Hz and column 1209..1633 Hz, within 2 %) of a key 0..9, 10 `*`, 11 `#`, 12..15 `A`..`D`, or of each character of a string with `gap` ms of silence between |
 | `WaitUs(us)` | delay of `us` microseconds (a `Word`) |
 
 Tests: `tests/exec/lib_pulse.bas` (set-up and final pin states) and `tests/exec_pins/lib_pins_model.bas` (against a pin model: waveforms measured by `PulseIn`, `RCin`

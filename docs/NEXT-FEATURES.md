@@ -21,7 +21,7 @@ USB (no supported part has it), the 12-bit core, polled-interrupt mode (`Interru
 | 5 | Pre-loaded data EEPROM image in the `.hex` | compiler (`Data` / `EData`) | **done 0.1.224**: `EData [At offset,] item, ...` header line (bytes and strings), checked against the hex of 4 parts (`tests/backend.rs`); no mechanism existed. Not run on hardware |
 | 6 | 8-bit integer `Sin`, `Cos`, `Atn`, `Hyp` (binary radians, quarter-wave table) | `bits` | **done 0.1.225** (`BSin`, `BCos`, `BAtn`, `BHyp`: named with a `B` because `Sin` and `Cos` are build-time names; 256 steps to the turn, `ShortInt` results of +-127; `BAtn` is shift-and-add, within 2 steps, 140 words on 18F27Q10 against 150 for a table with a divide and 196 against 322 on 16F18346; exec `lib_bits_trig` on 18F27Q10, 18F16Q41, 16F17146, 16F15244) |
 | 7 | `FreqCount(pin, ms)` pulse counting over a window | `timer` | **done 0.1.226** (`Timer.FreqCount`: Timer1 counter on any pin through `T1CKIPPS` (the PPS value is the pin number), read every millisecond so the count is a `LongWord`; 106 words on 18F27Q10; exec `lib_freqcount` in basil-sim with a stimulus on 5 parts; not run on hardware) |
-| 8 | `DtmfOut(pin, ...)` | `pulse` (over `Sound2`) | planned |
+| 8 | `DtmfOut(pin, ms, key)`, `DtmfOut(pin, ms, gap, text)` | `pulse` (over the two-tone `Freqout`) | **done 0.1.227** (rows 697..941 Hz and columns 1209..1633 Hz on one pin, within 2 %; 145 words for one key on 18F27Q10, 328 words total on 16F17146; pin-write counts in `tests/exec_pins/lib_pins_model`, set-up in `lib_pulse`; not run on hardware) |
 | 9 | `ClrWdt()` intrinsic | compiler | planned |
 | 10 | `LcdRead` (busy flag, RW pin) | `lcd` | later |
 

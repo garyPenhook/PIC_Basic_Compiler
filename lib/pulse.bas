@@ -325,3 +325,85 @@ Public Sub Freqout(ByVal pin As Byte, ByVal ms As Word, ByVal f1 As Word, ByVal 
     Pinio.PinOutput(pin)
     TwoTone(ms, f1, f2, True)
 End Sub
+
+Private Function DtmfRow(ByVal r As Byte) As Word
+    Select r
+        Case 0
+            Result = 697
+        Case 1
+            Result = 770
+        Case 2
+            Result = 852
+        Else
+            Result = 941
+    EndSelect
+End Function
+
+Private Function DtmfCol(ByVal c As Byte) As Word
+    Select c
+        Case 0
+            Result = 1209
+        Case 1
+            Result = 1336
+        Case 2
+            Result = 1477
+        Else
+            Result = 1633
+    EndSelect
+End Function
+
+' Dual-tone dialling tone of one key on pin for `ms` milliseconds: key 0..9 the digits, 10 is *, 11 is #, 12..15 are A..D
+' (any other key is silent). The two tones are the keypad's row (697, 770, 852, 941 Hz) and column (1209, 1336, 1477,
+' 1633 Hz) frequencies, added on one pin by `Freqout` from its 10 us time base: each is within 2 % of the nominal value.
+Public Sub DtmfOut(ByVal pin As Byte, ByVal ms As Word, ByVal key As Byte)
+    Dim r As Byte
+    Dim c As Byte
+    If key > 15 Then
+        Exit
+    End If
+    If key >= 12 Then
+        r = key - 12
+        c = 3
+    ElseIf key = 0 Then
+        r = 3
+        c = 1
+    ElseIf key >= 10 Then
+        r = 3
+        c = (key - 10) << 1
+    Else
+        r = (key - 1) / 3
+        c = (key - 1) Mod 3
+    EndIf
+        Freqout(pin, ms, DtmfRow(r), DtmfCol(c))
+End Sub
+
+' Dials the characters of `text` (0..9, *, #, A..D; anything else is skipped): each for `ms` milliseconds, then `gap`
+' milliseconds of silence.
+Public Sub DtmfOut(ByVal pin As Byte, ByVal ms As Word, ByVal gap As Word, ByRefConst text As String(80))
+    Dim i As Byte
+    Dim c As Byte
+    i = 0
+    While True
+        c = Byte(text(i))
+        If c = 0 Then
+            Exit
+        End If
+        Select c
+            Case 48 To 57
+                c = c - 48
+            Case 42
+                c = 10
+            Case 35
+                c = 11
+            Case 65 To 68
+                c = c - 53
+            Else
+                c = 255
+        EndSelect
+        If c < 16 Then
+            DtmfOut(pin, ms, c)
+            DelayMS(gap)
+        End If
+        Inc(i)
+    Wend
+End Sub
