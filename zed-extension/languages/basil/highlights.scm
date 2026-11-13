@@ -20,5 +20,5 @@
 ((identifier) @boolean (#match? @boolean "^(?i)(true|false)$"))
 ((identifier) @constant.builtin (#match? @constant.builtin "^(?i)null$"))
 ((identifier) @type.builtin (#match? @type.builtin "^(?i)(bit|boolean|byte|char|float|integer|longint|longword|shortint|string|word|sbyte|sword|long|dword)$"))
-((identifier) @function.builtin (#match? @function.builtin "^(?i)(addressof|bound|clear|dec|delayms|delayus|disable|enable|high|inc|input|low|output|terminate|toggle)$"))
+((identifier) @function.builtin (#match? @function.builtin "^(?i)(addressof|bound|clear|clrwdt|dec|delayms|delayus|disable|enable|high|inc|input|low|output|terminate|toggle)$"))
 ((identifier) @keyword (#match? @keyword "^(?i)(absolute|access|and|as|asm|bitof|break|byref|byrefconst|byval|case|cfile|clock|edata|compound|config|const|continue|device|dim|else|elseif|end|endif|endselect|event|exit|export|extern|for|function|gosub|goto|if|include|inline|interrupt|mod|module|next|noinline|not|or|private|program|public|reentrant|repeat|restore|result|return|save|select|static|step|structure|sub|then|to|type|until|volatile|wend|while|xor|declare|do|endproc|exitproc|loop|proc|symbol)$"))
