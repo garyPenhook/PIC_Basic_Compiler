@@ -1,4 +1,5 @@
 Module Spi
+Include "pinio"
 ' SPI host (master) on MSSP1, DS40002043F chapter 28. SCK, SDO and SDI go to pins of ports B and C
 ' (pin numbers 8..23: RB0..RB7 = 8..15, RC0..RC7 = 16..23, as the Adc channels) [Table 18-1, 18-2].
 ' SDO can be 255 for a receive-only host. The chip select is not part of the module: drive it with
@@ -44,36 +45,47 @@ Module Spi
 ' PIC16F18056/76 (DS40002325C chapters 18 and 29; chosen with `Not _has(OSCCON1)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 15h (21) and SDO1/SDA1 = 16h (22) [Table 18-2 p.170], SSP1CLKPPS and SSP1DATPPS take
 ' the pin number [18.8.1 p.173]. The 28- and 40-pin parts route MSSP1 to port B or port C only [Tables 18-1 and 18-2 p.169-170], so only pins 8..23 (RB0..RB7, RC0..RC7) are accepted. RB6 and RB7 are also the ICSP
 ' clock and data pins. The silicon errata (DS80001014D) list nothing for the MSSP.
-#if _has(SPI1CON0) Or Not _has(PRODL)
 Dim ready As Boolean
 Dim lastStatus As Byte
-
-' RxyPPS = code for pin 0..23 (a pin the part has).
-#if _has(PRODL)
-' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
-' [DS40002214G register summary: RA0PPS 0x0201 .. RC7PPS 0x0218] and the PIC18F27Q10 [DS40002043F: 0x0EE2 .. 0x0EF9], so one write
-' through FSR2 replaces a chain of one comparison per pin. Callers pass a pin PinOk accepted. FSR2 is saved and put back
-' (it is the stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the
-' compiler keeps them.
-Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    Dim sl As Byte
-    Dim sh As Byte
-    sl = 0
-    sh = 0
-    Asm
-        movff FSR2L, SPI_SETPPS__SL
-        movff FSR2H, SPI_SETPPS__SH
-        lfsr 2, RA0PPS
-        movf SPI_SETPPS__PIN, w, c
-        addwf FSR2L, f, c
-        movf SPI_SETPPS__CODE, w, c
-        movwf INDF2, c
-        movff SPI_SETPPS__SL, FSR2L
-        movff SPI_SETPPS__SH, FSR2H
-    End Asm
-End Sub
+#if _has(SPI1CON0)
+Dim RxIf As PIR3.0
+Const SckCode = 27
+Const SdoCode = 28
 #else
+Dim BitWcol As SSP1CON1.7
+Dim RxIf As SSP1STAT.0
+#if _has(PRODL)
+Const SckCode = 15
+Const SdoCode = 16
+#elseif _has(ADCON1.PREF)
+Const SckCode = 7
+Const SdoCode = 8
+#elseif _has(ADCON0.CHS)
+Const SckCode = 24
+Const SdoCode = 25
+#elseif Not _has(OSCCON1)
+Const SckCode = 21
+Const SdoCode = 22
+#else
+Const SckCode = 27
+Const SdoCode = 28
+#endif
+#endif
+
+' RxyPPS = code for a pin PinOk accepted (code 0 gives the pin back to its LATxy bit). A comparison chain on purpose: the pins are
+' constants in nearly every program, and a call with a constant pin then folds into one register write.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+#if (_has(PRODL) And Not _has(SPI1CON0)) Or (Not _has(OSCCON1) And Not _has(ADCON1.PREF))
+    ' PIC18F27Q10 and PIC16F18056/76: port B and C only.
+    If pin = 8 Then
+        RB0PPS = code
+    ElseIf pin = 9 Then
+        RB1PPS = code
+    ElseIf pin = 10 Then
+        RB2PPS = code
+    ElseIf pin = 11 Then
+        RB3PPS = code
+#else
     If pin = 0 Then
         RA0PPS = code
     ElseIf pin = 1 Then
@@ -84,15 +96,6 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
         RA4PPS = code
     ElseIf pin = 5 Then
         RA5PPS = code
-#if _has(RB0PPS)
-    ElseIf pin = 8 Then
-        RB0PPS = code
-    ElseIf pin = 9 Then
-        RB1PPS = code
-    ElseIf pin = 10 Then
-        RB2PPS = code
-    ElseIf pin = 11 Then
-        RB3PPS = code
 #endif
 #if _has(RB4PPS)
     ElseIf pin = 12 Then
@@ -126,11 +129,13 @@ Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
 #endif
     End If
 End Sub
-#endif
 
 ' True for a pin the part has: RA0..RA5, RB4..RB7 (20-pin parts), RC0..RC7 (RC6, RC7 on the 20-pin parts).
 Function PinOk(ByVal pin As Byte) As Boolean
-#if Not _has(OSCCON1) And Not _has(ADCON1.PREF)
+#if _has(PRODL) And Not _has(SPI1CON0)
+    ' PIC18F27Q10: port B and C only.
+    Result = pin >= 8 And pin <= 23
+#elseif Not _has(OSCCON1) And Not _has(ADCON1.PREF)
     ' PIC16F18056/76: port B and C only (see the top).
     Result = pin >= 8 And pin <= 23
 #else
@@ -152,10 +157,13 @@ Function PinOk(ByVal pin As Byte) As Boolean
 #endif
 End Function
 
-' Makes pin 0..23 a digital input (asInput) or output.
+' Makes pin 0..23 a digital input (asInput) or output (a pin PinOk accepted).
 Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
     Dim m As Byte
     m = 1 << (pin And 7)
+#if _has(PRODL) And Not _has(SPI1CON0)
+    If pin < 16 Then
+#else
     If pin < 8 Then
         ANSELA = ANSELA And (m Xor 255)
         If asInput Then
@@ -165,6 +173,9 @@ Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
         End If
 #if _has(TRISB)
     ElseIf pin < 16 Then
+#endif
+#endif
+#if _has(TRISB)
         ANSELB = ANSELB And (m Xor 255)
         If asInput Then
             TRISB = TRISB Or m
@@ -183,45 +194,77 @@ Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
 #endif
     End If
 End Sub
-#endif
 
-#if _has(SPI1CON0)
-Dim RxIf As PIR3.0
-
-' Sets up SPI1 as a host at about `hz` (1..10000000) in mode 0..3 with SCK on `sck`, data out on `sdo`
-' (255 = none) and data in on `sdi`. Returns 1, or 0 for a bad pin, a pin used twice, a mode above 3, or a
-' clock below FOSC / 512. Use SpiOff before changing pins.
+' Sets up the module as a host at about `hz` (1..16000000 on the MSSP, 1..10000000 on SPI1) in mode 0..3 with SCK on `sck`,
+' data out on `sdo` (255 = none) and data in on `sdi`. Returns 1, or 0 for a bad pin, a pin used twice, a mode above 3, or
+' a clock below FOSC / 1024 (FOSC / 512 on SPI1). Use SpiOff before changing pins.
+' The pins are checked and routed in this routine, not in a shared one: a call with constant pins then folds the checks away.
 Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As Byte, ByVal sdo As Byte, ByVal sdi As Byte) As Byte
-    Dim fosc As LongWord
     Dim d As LongWord
+#if Not _has(SPI1CON0)
+    Dim con As Byte
+#endif
     Result = 0
+#if _has(SPI1CON0)
     If mode > 3 Or hz = 0 Or hz > 10000000 Then
         Exit
     End If
-    If Not PinOk(sck) Or Not PinOk(sdi) Or sck = sdi Or sck = 3 Then
+    ' SPI1BAUD = ceil(FOSC / (2 * hz)) - 1 = floor((FOSC - 1) / (2 * hz))
+    d = LongWord(_Clock * 1000000 - 1) / (hz << 1)
+#else
+    If mode > 3 Or hz = 0 Or hz > 16000000 Then
         Exit
     End If
-    If sdo <> 255 Then
-        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Or sdo = 3 Then
-            Exit
-        End If
-    End If
-    fosc = LongWord(_Clock * 1000000)
-    ' SPI1BAUD = ceil(FOSC / (2 * hz)) - 1
-    d = (fosc + LongWord(2) * hz - 1) / (LongWord(2) * hz) - 1
+    ' SSPxADD = ceil(FOSC / (4 * hz)) - 1 = floor((FOSC - 1) / (4 * hz)); 0 means FOSC / 4.
+    d = LongWord(_Clock * 1000000 - 1) / (hz << 2)
+#endif
     If d > 255 Then
         Exit
     End If
+#if _has(PRODL) And Not _has(SPI1CON0)
+    If sck < 8 Or sck > 23 Or sdi < 8 Or sdi > 23 Or sck = sdi Then
+        Exit
+    End If
+    If sdo <> 255 Then
+        If sdo < 8 Or sdo > 23 Or sdo = sck Or sdo = sdi Then
+            Exit
+        End If
+    End If
+#else
+    If Not PinOk(sck) Or Not PinOk(sdi) Or sck = sdi Then
+        Exit
+    End If
+    If sdo <> 255 Then
+        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Then
+            Exit
+        End If
+    End If
+#endif
+#if Not (_has(PRODL) And Not _has(SPI1CON0))
+    If sck = 3 Or sdo = 3 Then
+        Exit
+    End If
+#endif
+#if _has(SPI1CON0)
     SPI1CON0 = 0
+#else
+    SSP1CON1 = 0
+#endif
     PinSetup(sck, False)
     PinSetup(sdi, True)
+#if _has(SPI1CON0)
     SPI1SCKPPS = sck
     SPI1SDIPPS = sdi
-    SetPps(sck, 27)
+#else
+    SSP1CLKPPS = sck
+    SSP1DATPPS = sdi
+#endif
+    SetPps(sck, SckCode)
     If sdo <> 255 Then
         PinSetup(sdo, False)
-        SetPps(sdo, 28)
+        SetPps(sdo, SdoCode)
     End If
+#if _has(SPI1CON0)
     SPI1CLK = 0
     SPI1BAUD = Byte(d)
     ' CKP (bit 5) = idle level, CKE (bit 6) = 1 for modes 0 and 2, SMP = 0, SSP (bit 2) left at its reset value.
@@ -236,177 +279,7 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
     SPI1TWIDTH = 0
     SPI1CON2 = 3
     SPI1CON0 = 131
-    ready = True
-    lastStatus = 0
-    Result = 1
-End Function
-
-' Disables SPI1 and gives the pins back to their LATxy bits (pins as given to SpiInit).
-Public Sub SpiOff(ByVal sck As Byte, ByVal sdo As Byte)
-    SPI1CON0 = 0
-    If PinOk(sck) Then
-        SetPps(sck, 0)
-    End If
-    If PinOk(sdo) Then
-        SetPps(sdo, 0)
-    End If
-    ready = False
-End Sub
-
-' 0 after the last transfer completed, 1 after a timeout, 4 when not initialised.
-Public Function SpiStatus() As Byte
-    Result = lastStatus
-End Function
-
-' Sends one byte and returns the byte received at the same time (0 on an error, see SpiStatus).
-Public Function SpiTransfer(ByVal b As Byte) As Byte
-    Dim n As Word
-    Result = 0
-    lastStatus = 4
-    If Not ready Then
-        Exit
-    End If
-    SPI1TXB = b
-    lastStatus = 1
-    n = 0
-    While n < 60000
-        If RxIf = 1 Then
-            Result = SPI1RXB
-            lastStatus = 0
-            Exit
-        End If
-        Inc(n)
-    Wend
-End Function
-
-' Sends one byte and ignores the byte received.
-Public Sub SpiWrite(ByVal b As Byte)
-    Dim r As Byte
-    r = SpiTransfer(b)
-End Sub
-
-' Receives one byte (sends 255 on SDO).
-Public Function SpiRead() As Byte
-    Result = SpiTransfer(255)
-End Function
 #else
-Dim BitWcol As SSP1CON1.7
-#if _has(ADCON1.PREF)
-Const SckCode = 7
-Const SdoCode = 8
-#elseif _has(ADCON0.CHS)
-Const SckCode = 24
-Const SdoCode = 25
-#elseif Not _has(OSCCON1)
-Const SckCode = 21
-Const SdoCode = 22
-#else
-Const SckCode = 27
-Const SdoCode = 28
-#endif
-#if _has(PRODL)
-Dim ready As Boolean
-Dim lastStatus As Byte
-
-' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
-' [DS40002214G register summary: RA0PPS 0x0201 .. RC7PPS 0x0218] and the PIC18F27Q10 [DS40002043F: 0x0EE2 .. 0x0EF9], so one write
-' through FSR2 replaces a chain of one comparison per pin. Callers pass a pin PinOk accepted. FSR2 is saved and put back
-' (it is the stack pointer under the reentrant software stack); the Asm block names the parameters and save bytes so the
-' compiler keeps them.
-Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    Dim sl As Byte
-    Dim sh As Byte
-    sl = 0
-    sh = 0
-    Asm
-        movff FSR2L, SPI_SETPPS__SL
-        movff FSR2H, SPI_SETPPS__SH
-        lfsr 2, RA0PPS
-        movf SPI_SETPPS__PIN, w, c
-        addwf FSR2L, f, c
-        movf SPI_SETPPS__CODE, w, c
-        movwf INDF2, c
-        movff SPI_SETPPS__SL, FSR2L
-        movff SPI_SETPPS__SH, FSR2H
-    End Asm
-End Sub
-
-' Makes pin 8..23 a digital input (asInput) or output.
-Sub PinSetup(ByVal pin As Byte, ByVal asInput As Boolean)
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    If pin < 16 Then
-        ANSELB = ANSELB And (m Xor 255)
-        If asInput Then
-            TRISB = TRISB Or m
-        Else
-            TRISB = TRISB And (m Xor 255)
-        End If
-    Else
-        ANSELC = ANSELC And (m Xor 255)
-        If asInput Then
-            TRISC = TRISC Or m
-        Else
-            TRISC = TRISC And (m Xor 255)
-        End If
-    End If
-End Sub
-#endif
-
-' Sets up MSSP1 as an SPI host at about `hz` (1..16000000) in mode 0..3 with SCK on `sck`, data out
-' on `sdo` (255 = none) and data in on `sdi`. Returns 1, or 0 for a bad pin, a pin used twice, a
-' mode above 3, or a clock below FOSC / 1024. Use SpiOff before changing pins.
-Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As Byte, ByVal sdo As Byte, ByVal sdi As Byte) As Byte
-    Dim fosc As LongWord
-    Dim d As LongWord
-    Dim con As Byte
-    Result = 0
-    If mode > 3 Or hz = 0 Or hz > 16000000 Then
-        Exit
-    End If
-#if _has(PRODL)
-    If sck < 8 Or sck > 23 Or sdi < 8 Or sdi > 23 Or sck = sdi Then
-        Exit
-    End If
-    If sdo <> 255 Then
-        If sdo < 8 Or sdo > 23 Or sdo = sck Or sdo = sdi Then
-            Exit
-        End If
-    End If
-#else
-    If Not PinOk(sck) Or Not PinOk(sdi) Or sck = sdi Or sck = 3 Then
-        Exit
-    End If
-    If sdo <> 255 Then
-        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Or sdo = 3 Then
-            Exit
-        End If
-    End If
-#endif
-    fosc = LongWord(_Clock * 1000000)
-    ' SSPxADD = ceil(FOSC / (4 * hz)) - 1; 0 means FOSC / 4.
-    d = (fosc + LongWord(4) * hz - 1) / (LongWord(4) * hz) - 1
-    If d > 255 Then
-        Exit
-    End If
-    SSP1CON1 = 0
-    PinSetup(sck, False)
-    PinSetup(sdi, True)
-    SSP1CLKPPS = sck
-    SSP1DATPPS = sdi
-#if _has(PRODL)
-    SetPps(sck, 15)
-#else
-    SetPps(sck, SckCode)
-#endif
-    If sdo <> 255 Then
-        PinSetup(sdo, False)
-#if _has(PRODL)
-        SetPps(sdo, 16)
-#else
-        SetPps(sdo, SdoCode)
-#endif
-    End If
     If d = 0 Then
         con = 0
     Else
@@ -423,15 +296,20 @@ Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As B
     SSP1CON3 = 0
     SSP1CON1 = con
     SSP1CON1 = con Or 32
+#endif
     ready = True
     lastStatus = 0
     Result = 1
 End Function
 
-' Disables the MSSP and gives the pins back to their LATxy bits (pins as given to SpiInit).
+' Disables the module and gives the pins back to their LATxy bits (pins as given to SpiInit).
 Public Sub SpiOff(ByVal sck As Byte, ByVal sdo As Byte)
+#if _has(SPI1CON0)
+    SPI1CON0 = 0
+#else
     SSP1CON1 = 0
-#if _has(PRODL)
+#endif
+#if _has(PRODL) And Not _has(SPI1CON0)
     If sck >= 8 And sck <= 23 Then
         SetPps(sck, 0)
     End If
@@ -462,13 +340,21 @@ Public Function SpiTransfer(ByVal b As Byte) As Byte
     If Not ready Then
         Exit
     End If
+#if _has(SPI1CON0)
+    SPI1TXB = b
+#else
     BitWcol = 0
     SSP1BUF = b
+#endif
     lastStatus = 1
     n = 0
     While n < 60000
-        If (SSP1STAT And 1) = 1 Then
+        If RxIf = 1 Then
+#if _has(SPI1CON0)
+            Result = SPI1RXB
+#else
             Result = SSP1BUF
+#endif
             lastStatus = 0
             Exit
         End If
@@ -486,4 +372,3 @@ End Sub
 Public Function SpiRead() As Byte
     Result = SpiTransfer(255)
 End Function
-#endif

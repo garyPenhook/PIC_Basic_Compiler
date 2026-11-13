@@ -43,7 +43,8 @@ fixed in the module.
 | 20 | `rtcc` | reviewed (0.1.206) | all-routines probe 1487 → 1431 (18F27Q10), 1956 → 1895 (16F17146), 1628 → 1579 (18F16Q41) |
 | 21 | `rtccspi` | reviewed (0.1.207) | all-routines probe 1839 → 1812 (18F27Q10), 2700 → 2664 (16F17146), 1947 → 1922 (18F16Q41) |
 | 22 | `shift` | reviewed (0.1.208) | all-routines probe 570 → 524 (18F27Q10, 18F16Q41), 672 → 625 (16F17146) |
-| … | `spi` … `x10` | not started | |
+| 23 | `spi` | reviewed (0.1.209) | constant-pin programs: `lib_spi` 357 → 313 (18F27Q10), 120 → 103 (Q41), 731 → 722 (16F18056); `m4_spiflash` 470 → 436; run-time-pin probe 706 → 659 (16F17146), 417 → 425 (18F27Q10), 459 → 475 (Q41) |
+| … | `strings` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -678,6 +679,17 @@ Probe calls all four routines with values read from ports (program words, `--rep
 - **Cost:** a program that calls only `ShiftOut` once (`bench/modules/m3_motor`) is 5 words larger (742 → 747): the single-call case no longer folds the pin check as it did. Programs that use two or more of the routines gain.
 - **Tests:** `lib_shift` now also refuses 9 bits on `ShiftOut` / `ShiftIn` and 17 or 0 bits on the 16-bit routines; it passes on 18F27Q10 (optimised and `-O0`), 18F16Q41 and 16F17146. `bench/large/d_ctrl` passes on 18F27Q10 and 16F17146.
 
+## 23. `spi` (done 2026-11-13, 0.1.209)
+
+Measured with constant pins (what programs pass) and with run-time pins (probe). Constant-pin programs: `lib_spi` 357 → 313 (18F27Q10), 120 → 103 (18F16Q41), 731 → 722 (16F18056), 614 → 613 (16F17146); `bench/modules/m4_spiflash` 470 → 436. Probe with run-time pins: 16F17146 706 → 659, 18F27Q10 417 → 425, 18F16Q41 459 → 475.
+
+- **One `SpiInit` body for the MSSP and SPI1.** The two copies and the three copies of `SetPps` / `PinSetup` / pin checks are one source with `#if` only where registers differ; `SckCode` / `SdoCode` cover every family.
+- **`SetPps` is a comparison chain again on every part (Q10, Q41 and 16F), without the port A cases where the part does not take them.** The PIC18 FSR2 routine (17 words) is smaller for run-time pins but a constant call cannot fold into a private copy of an assembler routine: with constant pins the chain is 17..38 words smaller per program. A pin that is a constant is by far the usual case. Cost: a run-time-pin call keeps the whole chain (about 100 words), and a program heavier than `SPEC_MAX_WEIGHT` (about 3000+ words) gets no private copies at all (`library_all` 6445 → 6513, `library_q41` 5012 → 5093).
+- **Clock arithmetic.** `ceil(F / (4 hz)) - 1` is `(F - 1) / (4 hz)`: one add and one subtract fewer.
+- **Q10 pin checks** are inline comparisons (a `PinOk` call with constants leaves its result store behind), `SpiTransfer` uses a bit alias for BF.
+- **Tried and dropped:** shared `Route` function for the pin work (constant calls lose their folded checks, +91 words in `lib_spi`); FSR0 `SetPps` on the 16F and an FSR2 `PpsOff` for `SpiOff` (heavy programs gain, small ones lose); `Pinio.PinOutput` / `PinInput` instead of `PinSetup` (inlined single caller, larger alone); counting the receive timeout down.
+- **Tests:** new `lib_spi_pins` (18F27Q10 and 18F16Q41): every pin as SCK then SDO with run-time pin numbers, PPS codes and `SpiOff` checked; fails on a swapped chain entry. `lib_spi` passes on 18F27Q10 (also -O0), 18F16Q41, 16F17146, 15244, 18056, 18326; `pins8/14/20` on 16F13214/13224/13244; every part-list build test passes.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13) and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `strings` and on through the list in alphabetical order.

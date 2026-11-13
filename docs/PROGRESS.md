@@ -1433,3 +1433,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## shift module review (done 2026-11-13, 0.1.208)
 - `lib/shift.bas`: one `Setup` (pin check, binds, clock) and one `Pulse` replace four copies. All-routines probe 18F27Q10 570 -> 524, 16F17146 672 -> 625, 18F16Q41 570 -> 524 words; a single-`ShiftOut` program +5. `lib_shift` covers the bit-count refusals. See MODULE-REVIEWS section 22.
+
+## spi module review (done 2026-11-13, 0.1.209)
+- `lib/spi.bas`: one `SpiInit` for MSSP and SPI1, `SetPps` chain on every part (folds for constant pins), shorter clock arithmetic. `lib_spi` 357 -> 313 (18F27Q10), 120 -> 103 (Q41); `m4_spiflash` 470 -> 436; run-time-pin probe 16F17146 706 -> 659. New `lib_spi_pins`. See MODULE-REVIEWS section 23.
