@@ -3553,6 +3553,53 @@ s = I2cProbe(addr)
 
 An exported `Byte` array of 8 that holds the data of `I2cReadRegs` and `I2cWriteRegs`: `I2cBuf(i)`.
 
+## onewire  (`Include "onewire"`, 1-Wire master on any one pin)
+
+A 1-Wire master at standard speed for the temperature sensors, serial numbers and switches of that bus (DS18B20, DS2401,
+DS2413 and the like). Pins are numbered 0 to 23 as in `pinio`. The line is open drain: the pin is pulled low as an output
+and let go as an input, never driven high, so the bus needs an external pull-up (4.7 k to 5 k) and several devices share
+it. Slots are timed in microseconds from `Clock`. Each bit slot (70 us) runs with the global interrupt enable cleared and
+puts it back as it was, so an interrupt cannot stretch a low time past what a device accepts; between slots interrupts
+run. The module shares the bound-pin state of `pinio`, so it is not reentrant and cannot be used from a handler. It needs a
+`Clock` of at least 16 MHz on a PIC18 and 32 MHz on a PIC16 (the build stops with a message below that).
+
+| Routine | Effect |
+|---|---|
+| `OwInit(pin)` | sets the pin (released, digital, latch low); **call it first**. False for a pin above 23 or one the part lacks |
+| `OwReset()` | reset pulse; True when a device answers with a presence pulse. False for a line that is low before the pulse (no pull-up, a short) |
+| `OwWriteBit(b)`, `OwReadBit()` | one bit slot |
+| `OwWriteByte(b)`, `OwReadByte()` | a byte, least significant bit first |
+| `OwCrc8(crc, b)` | adds one byte to a CRC8 (x^8 + x^5 + x^4 + 1, shifted right, start 0); the 8 bytes of a ROM code, or the 9 of a DS18B20 scratchpad, end at 0 when intact |
+| `OwSearchFirst()`, `OwSearchNext()` | ROM search: the code of the first, then of each next device in `OwRom(0..7)` (family code first, CRC last). False when there is no device, no further device (the search then starts again at the next call) or the code read is damaged. A device added or taken off the line during a search can make it miss or repeat one |
+| `OwSelect()`, `OwSkip()` | after `OwReset`: Match ROM with the code in `OwRom`, or Skip ROM |
+
+Measured in the cycle-exact simulator (`scripts/test_onewire.py`) on PIC18F27Q10 and PIC18F16Q41 at 64 MHz and
+PIC16F17146 and PIC16F15244 at 32 MHz: reset low 489 to 490 us, write 1 low 2.6 to 2.8 us, write 0 low 61.8 to 61.9 us,
+read pulse 2.6 to 2.8 us with the line sampled about 10 us after the falling edge, slots of 75 to 79 us, 15 to 17 us of
+recovery between slots; the global interrupt enable is low inside every slot and set again after it; a simulated slave's
+presence pulse is seen, and a bit it holds low for 14 us reads 0 while one held for 6 us reads 1. The ROM search
+against three simulated slaves is checked by `scripts/test_onewire.py --search` (slow). **Nothing has run on a real part**,
+and the timings are the usual standard-speed values for the bus, not checked here against a device's data sheet.
+
+Example (one DS18B20 on RB1):
+```basic
+Include "onewire"
+Dim lo As Byte
+Dim hi As Byte
+If OwInit(9) Then
+    If OwReset() Then
+        OwSkip()
+        OwWriteByte($44)               ' convert T
+        DelayMs(750)
+        OwReset()
+        OwSkip()
+        OwWriteByte($BE)               ' read scratchpad
+        lo = OwReadByte()
+        hi = OwReadByte()              ' temperature = hi:lo / 16 degrees C
+    End If
+End If
+```
+
 ## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
 
 `Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a

@@ -339,6 +339,32 @@ PINIO_CLKPUT_END:
     End Asm
 End Sub
 
+' Open-drain pin, for a line that several devices share (`onewire`): the LATx bit must be 0 (PinSet(pin, False) once) and the pin
+' digital (PinInput once). BindOd picks the pin (not reentrant), then OdLow makes it an output (the line is pulled low), OdRelease
+' an input (a pull-up takes it high) and OdRead reads it. The three change TRISx or read PORTx only, a few instructions each: on
+' PIC18 they share the bound data pin of DataPut / DataRead, on the other cores they have a bound pin of their own.
+Public Sub OdLow()
+    Asm
+        movlw TRISA - LATA
+        addwf PINIO_DADDR, w, c
+        movwf FSR0L, c
+        movff PINIO_DADDR+1, FSR0H
+        comf PINIO_DMASK, w, c
+        andwf INDF0, f, c
+    End Asm
+End Sub
+
+Public Sub OdRelease()
+    Asm
+        movlw TRISA - LATA
+        addwf PINIO_DADDR, w, c
+        movwf FSR0L, c
+        movff PINIO_DADDR+1, FSR0H
+        movf PINIO_DMASK, w, c
+        iorwf INDF0, f, c
+    End Asm
+End Sub
+
 Public Function DataRead() As Boolean
     Asm
         clrf PINIO_DATAREAD__RESULT, c
@@ -352,6 +378,14 @@ Public Function DataRead() As Boolean
         incf PINIO_DATAREAD__RESULT, f, c
 PINIO_DATAREAD_END:
     End Asm
+End Function
+
+Public Sub BindOd(ByVal pin As Byte)
+    BindData(pin)
+End Sub
+
+Public Function OdRead() As Boolean
+    Result = DataRead()
 End Function
 #else
 Dim dPin As Byte
@@ -375,6 +409,78 @@ End Sub
 
 Public Function DataRead() As Boolean
     Result = PinGet(dPin)
+End Function
+
+' Open-drain pin (see the PIC18 copy): PORTx, TRISx and the pin's mask are found once by BindOd (all of them are at addresses
+' below 256 on every supported part, TRISA..C and PORTA..C consecutive), OdLow / OdRelease / OdRead use FSR0.
+Dim odT As Byte
+Dim odP As Byte
+Dim odM As Byte
+
+Public Sub BindOd(ByVal pin As Byte)
+    Asm
+        banksel PINIO_BINDOD__PIN
+        lsrf PINIO_BINDOD__PIN, w
+        lsrf WREG, w
+        lsrf WREG, w
+        movwf FSR0L
+        addlw low(TRISA)
+        banksel PINIO_ODT
+        movwf PINIO_ODT
+        movf FSR0L, w
+        addlw low(PORTA)
+        movwf PINIO_ODP
+        movlw 1
+        banksel PINIO_BINDOD__PIN
+        btfsc PINIO_BINDOD__PIN, 0
+        lslf WREG, w
+        btfsc PINIO_BINDOD__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_BINDOD__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_BINDOD__PIN, 2
+        swapf WREG, w
+        banksel PINIO_ODM
+        movwf PINIO_ODM
+    End Asm
+End Sub
+
+Public Sub OdLow()
+    Asm
+        banksel PINIO_ODT
+        movf PINIO_ODT, w
+        movwf FSR0L
+        clrf FSR0H
+        comf PINIO_ODM, w
+        andwf INDF0, f
+    End Asm
+End Sub
+
+Public Sub OdRelease()
+    Asm
+        banksel PINIO_ODT
+        movf PINIO_ODT, w
+        movwf FSR0L
+        clrf FSR0H
+        movf PINIO_ODM, w
+        iorwf INDF0, f
+    End Asm
+End Sub
+
+Public Function OdRead() As Boolean
+    Asm
+        banksel PINIO_ODREAD__RESULT
+        clrf PINIO_ODREAD__RESULT
+        banksel PINIO_ODP
+        movf PINIO_ODP, w
+        movwf FSR0L
+        clrf FSR0H
+        movf PINIO_ODM, w
+        andwf INDF0, w
+        banksel PINIO_ODREAD__RESULT
+        btfss STATUS, 2
+        incf PINIO_ODREAD__RESULT, f
+    End Asm
 End Function
 #endif
 

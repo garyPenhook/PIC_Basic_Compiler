@@ -17,7 +17,7 @@ USB (no supported part has it), the 12-bit core, polled-interrupt mode (`Interru
 | 1 | Number formatting with width, fill, radix, sign | `format` (new) | **done 0.1.220** (`FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin`; manual, `tests/exec/lib_format.bas`) |
 | 2 | Receive with timeout, line, wait-for-text, decimal parse | `serial`, `serial2` | **done 0.1.221** (`SerialReadTimeout`, `SerialReadLine`, `SerialWaitFor`, `SerialReadDec`; tests `lib_serial_rx`, `lib_serial2_rx` with a `' stim:` file) |
 | 3 | Software asynchronous serial on any pin | `softserial` (new) | **done 0.1.222** (`SoftInit`, `SoftWriteByte`, `SoftWrite`, `SoftNewLine`, `SoftReadByte` (-1 timeout, -2 framing error), `SoftAvailable`, `SoftHoldIrq`; `scripts/test_softserial.py`, bench program `tests/hw/softserial_echo.bas`) |
-| 4 | 1-Wire: reset/presence, bit and byte transfer, ROM search, CRC8 | `onewire` (new) | planned |
+| 4 | 1-Wire: reset/presence, bit and byte transfer, ROM search, CRC8 | `onewire` (new) | **done 0.1.223** (`OwInit`, `OwReset`, `OwWriteBit/Byte`, `OwReadBit/Byte`, `OwCrc8`, `OwSearchFirst/Next`, `OwSelect`, `OwSkip`; `pinio` `BindOd`/`OdLow`/`OdRelease`/`OdRead`; `scripts/test_onewire.py`, exec `lib_onewire`). The CRC differs from the `aht30` one (reflected 0x8C, start 0), so it is not shared. Open-drain `softserial` not done |
 | 5 | Pre-loaded data EEPROM image in the `.hex` | compiler (`Data` / `EData`) | planned, check no mechanism exists first |
 | 6 | 8-bit integer `Sin`, `Cos`, `Atn`, `Hyp` (binary radians, quarter-wave table) | `bits` or `imath` | planned |
 | 7 | `FreqCount(pin, ms)` pulse counting over a window | `timer` / `pulse` | planned |
