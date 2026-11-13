@@ -35,7 +35,9 @@ fixed in the module.
 | 12 | `gpio` | reviewed (0.1.178) | module unchanged (three register-write routines); probe 32 → 29 words (18F27Q10) from a compiler change: dead start-up clears; 180 programs −31 words |
 | 13 | `i2c` | reviewed (0.1.179) | typical use (init + `I2cWriteReg` + `I2cReadReg`) 389 → 309 words (18F27Q10), 554 → 422 (PIC16F17146, 13245, 18346), 469 → 460 (Q41); all-routines probe 864 → 777, 1166 → 1012 |
 | 14 | `lcd` | reviewed (0.1.180) | all-routines probe 691 → 609 words, typical use 554 → 472 (18F27Q10); 885 → 789 / 689 → 608 (PIC16F17146); `lib_lcd` 693 → 599; 5 bytes of RAM |
-| … | `oled` … `x10` | not started | |
+| 15 | `oled` | reviewed (0.1.181) | no size gain; bug fixed (`OledBufText` wrapped past column 255) |
+| 16 | `pinio` | reviewed (0.1.202) | 16F `PinSet` / `PinGet` 62 → 30 / 29 words, `PinOk` 20 → 8; 16F library programs −4 % (`lib_pulse` 1094 → 975, `lib_shift` 546 → 478); PIC18 `PinOk` −12 words per program; port-B-less parts no longer write port C for pins 8..15 |
+| … | `pwm` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -587,6 +589,28 @@ SSD1309 128 x 64 over I2C or 4-wire SPI, text, bitmaps and a 1 KB frame buffer f
 - **Not changed:** `OledRect`, `OledFillRect` and `OledBufBitmap` still wrap when `x + w` or `y + h` pass 255 (documented for the rectangles); the SSD1309 command values were not re-read
   against the data sheet in this review.
 
+## 16. `pinio` (done 2026-11-12, 0.1.202)
+
+Run-time pin access by number: `PinSet`, `PinGet`, `PinOutput`, `PinInput`, bound pins for `shift` / `pulse`, and whole-port access for `glcd`. Probes: A calls every routine with values read from ports. Words before and
+after: 18F27Q10 435 → 423, 16F18346 516 → 437. Library programs (copies of `tests/exec/lib_*.bas`, built for the part named): PIC18 `lib_lcd` 585 → 573, `lib_shift` 415 → 403, `lib_pulse` 730 → 718,
+`lib_rtccspi` 442 → 430, `lib_glcd` 2726 → 2714 (nine programs smaller, none larger); PIC16F17146 `lib_pulse` 1094 → 975, `lib_shift` 546 → 478, `lib_lcd` 753 → 711, `lib_rtccspi` 684 → 643, `lib_buttons` 287 → 260,
+`lib_glcd` 4104 → 4048 (total of eight 10 918 → 10 477, −4 %); PIC16F18346 11 030 → 10 552.
+
+- **16F `PinSet` and `PinGet` in assembler (62 → 30 and 62 → 29 words).** The PIC18 routines already went through FSR0 (0.1.125); the 16F ones were the straight comparison chain with a shift loop and a banked
+  read-modify-write per port. LATA, LATB, LATC (and PORTx) are consecutive on every supported part, so the port is `LATA + (pin >> 3)` through FSR0, and the mask `1 << (pin And 7)` is built from the three
+  low bits of the pin by conditional shifts (bit 2 as a nibble swap), with no loop and the pin left alone. The addresses were read from all 47 device files.
+- **`PinOk` is one comparison (20 → 8 words).** It was three chained comparisons; the part has ports A, A + B, A + C or A + B + C, so it is `pin < 24`, `pin < 16`, a bit test, or `pin < 8`.
+- **Bug fixed: `PinOutput` / `PinInput` on a part without port B.** The chain ended in `ElseIf pin < 24`, so pins 8..15 changed port C (PIC18F04/05/06Q41, PIC16F13123/13124/13125/13224/13225, 16F15223/15224, 16F17126,
+  16F18323..18326). The module documents that such pins are refused (`PinSet` / `PinGet` already did). They are now ignored; the guard exists only on those parts.
+- **Tried and dropped: `PinOutput` / `PinInput` in assembler.** 33 / 38 → 31 / 31 words on the PIC18 and 45 / 50 → 45 / 45 on the 16F, but `lib_buttons` grew 222 → 249: a call with a constant pin is folded
+  into a private copy of a Basic routine (6 words for `PinInput`), which an `Asm` routine cannot be. For the same reason a constant-pin call of the 16F `PinSet` / `PinGet` is now the 30-word routine instead of
+  a small folded copy; the library modules keep their pins in variables, so every module gains.
+- **Not done:** the whole-port routines (`PortWrite`, `PortRead`, ... about 18 words each, 8 routines, used only by `glcd`) could go through FSR0 the same way; `BindData` / `PinAddr` on the PIC18 are 24 words
+  for two pin numbers that are constants in most programs.
+- **Test:** `tests/exec/lib_pinio_ref.bas` runs `Pinio` against the plain-Basic reference for pins 0..35 (and 100..255), both levels, two start patterns, with `PinGet` reading back distinct patterns on each
+  port (MDB mirrors LATx into PORTx for output pins). It is in the 16F portable list and passes on 18F27Q10, 18F16Q41, 18F14Q41, 18F06Q41, 18F04Q41 and 16F17146, 17126, 18346, 18323, 15244, 15223, 13145,
+  13123, 13113, 13245, 18056. A mask bit changed in the 16F `PinGet` fails it (`PR_BAD=11`).
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `pinio` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `pwm` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).

@@ -10,18 +10,20 @@ Module Pinio
 ' The routines are not reentrant and change LATx/TRISx by read-modify-write: do not use them from an
 ' interrupt handler and the main program on the same port.
 
-' True for a pin 0..23 that the part has.
+' True for a pin 0..23 that the part has (one comparison: the part's ports are A, A + B, A + C or A + B + C).
 Public Function PinOk(ByVal pin As Byte) As Boolean
-    Result = pin < 8
 #if _has(LATB)
-    If pin >= 8 And pin < 16 Then
-        Result = True
-    End If
-#endif
 #if _has(LATC)
-    If pin >= 16 And pin < 24 Then
-        Result = True
-    End If
+    Result = pin < 24
+#else
+    Result = pin < 16
+#endif
+#else
+#if _has(LATC)
+    Result = (pin And 8) = 0 And pin < 24
+#else
+    Result = pin < 8
+#endif
 #endif
 End Function
 
@@ -67,32 +69,54 @@ PINIO_PINSET_END:
     End Asm
 End Sub
 #else
+' Enhanced mid-range: LATA, LATB, LATC are consecutive on every supported part [PIC16F131xx..F180xx: 0x18..0x1A, F183xx: 0x10C..0x10E,
+' from the device files] and a part without port B keeps LATC at LATA + 2, so the port is LATA + (pin >> 3), reached through FSR0. The
+' mask is 1 << (pin And 7) built from the three low bits of the pin by conditional shifts (no loop, the pin is not changed): bit 0
+' and bit 1 shift by 1 and 2 (a bit-1 shift is two steps), bit 2 is the nibble swap of a mask that is still in the low nibble.
 Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    If pin < 8 Then
-        If level Then
-            LATA = LATA Or m
-        Else
-            LATA = LATA And (m Xor 255)
-        End If
-#if _has(LATB)
-    ElseIf pin < 16 Then
-        If level Then
-            LATB = LATB Or m
-        Else
-            LATB = LATB And (m Xor 255)
-        End If
-#endif
-#if _has(LATC)
-    ElseIf pin < 24 Then
-        If level Then
-            LATC = LATC Or m
-        Else
-            LATC = LATC And (m Xor 255)
-        End If
-#endif
+#if Not _has(LATB)
+    If pin >= 8 And pin < 16 Then
+        Exit
     End If
+#endif
+#if Not _has(LATC)
+    If pin >= 16 Then
+        Exit
+    End If
+#endif
+    Asm
+        banksel PINIO_PINSET__PIN
+        movlw 24
+        subwf PINIO_PINSET__PIN, w
+        btfsc STATUS, 0
+        goto PINIO_PINSET_END
+        lsrf PINIO_PINSET__PIN, w
+        lsrf WREG, w
+        lsrf WREG, w
+        addlw low(LATA)
+        movwf FSR0L
+        movlw high(LATA)
+        movwf FSR0H
+        movlw 1
+        btfsc PINIO_PINSET__PIN, 0
+        lslf WREG, w
+        btfsc PINIO_PINSET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINSET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINSET__PIN, 2
+        swapf WREG, w
+        banksel PINIO_PINSET__LEVEL
+        movf PINIO_PINSET__LEVEL, f
+        btfsc STATUS, 2
+        goto PINIO_PINSET_LO
+        iorwf INDF0, f
+        goto PINIO_PINSET_END
+PINIO_PINSET_LO:
+        xorlw 255
+        andwf INDF0, f
+PINIO_PINSET_END:
+    End Asm
 End Sub
 #endif
 
@@ -133,25 +157,56 @@ PINIO_PINGET_END:
     End Asm
 End Function
 #else
+' Enhanced mid-range: PORTA, PORTB, PORTC are consecutive too; the scheme of PinSet. False for a pin that is not OK.
 Public Function PinGet(ByVal pin As Byte) As Boolean
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    Result = False
-    If pin < 8 Then
-        Result = (PORTA And m) <> 0
-#if _has(LATB)
-    ElseIf pin < 16 Then
-        Result = (PORTB And m) <> 0
-#endif
-#if _has(LATC)
-    ElseIf pin < 24 Then
-        Result = (PORTC And m) <> 0
-#endif
+#if Not _has(LATB)
+    If pin >= 8 And pin < 16 Then
+        Result = False
+        Exit
     End If
+#endif
+#if Not _has(LATC)
+    If pin >= 16 Then
+        Result = False
+        Exit
+    End If
+#endif
+    Asm
+        banksel PINIO_PINGET__RESULT
+        clrf PINIO_PINGET__RESULT
+        banksel PINIO_PINGET__PIN
+        movlw 24
+        subwf PINIO_PINGET__PIN, w
+        btfsc STATUS, 0
+        goto PINIO_PINGET_END
+        lsrf PINIO_PINGET__PIN, w
+        lsrf WREG, w
+        lsrf WREG, w
+        addlw low(PORTA)
+        movwf FSR0L
+        movlw high(PORTA)
+        movwf FSR0H
+        movlw 1
+        btfsc PINIO_PINGET__PIN, 0
+        lslf WREG, w
+        btfsc PINIO_PINGET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINGET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINGET__PIN, 2
+        swapf WREG, w
+        andwf INDF0, w
+        btfsc STATUS, 2
+        goto PINIO_PINGET_END
+        banksel PINIO_PINGET__RESULT
+        incf PINIO_PINGET__RESULT, f
+PINIO_PINGET_END:
+    End Asm
 End Function
 #endif
 
-' Pin as a digital output.
+' Pin as a digital output. (Plain Basic on purpose: a call with a constant pin is folded into a private copy of a few words, which an Asm
+' routine cannot be. A pin on a port the part lacks is ignored.)
 Public Sub PinOutput(ByVal pin As Byte)
     Dim m As Byte
     Dim n As Byte
@@ -166,7 +221,11 @@ Public Sub PinOutput(ByVal pin As Byte)
         TRISB = TRISB And n
 #endif
 #if _has(LATC)
+#if _has(LATB)
     ElseIf pin < 24 Then
+#else
+    ElseIf pin >= 16 And pin < 24 Then
+#endif
         ANSELC = ANSELC And n
         TRISC = TRISC And n
 #endif
@@ -186,7 +245,11 @@ Public Sub PinInput(ByVal pin As Byte)
         TRISB = TRISB Or m
 #endif
 #if _has(LATC)
+#if _has(LATB)
     ElseIf pin < 24 Then
+#else
+    ElseIf pin >= 16 And pin < 24 Then
+#endif
         ANSELC = ANSELC And (m Xor 255)
         TRISC = TRISC Or m
 #endif
