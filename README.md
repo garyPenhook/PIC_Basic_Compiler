@@ -99,7 +99,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `system` | reset cause, wake cause (`SysWakeCause`, `SysWakeFrom`, `SysClearWakeFlags`) and clock check |
 | `gpio` | port set-up, pull-ups, open-drain |
 | `delay` | millisecond/microsecond/second delays |
-| `timer` | Timer0, Timer1 (external clock, gate, pulse measurement), Timer2 (hardware-limit and one-shot modes) |
+| `timer` | Timer0, Timer1 (external clock, gate, pulse measurement, `FreqCount`), Timer2 (hardware-limit and one-shot modes) |
 | `serial`, `serial2` | EUSART1 and EUSART2: send/receive bytes, strings and numbers |
 | `adc` | 10-bit ADC reads (`ADin`, `AdcRead`), averaging, millivolts, FVR reference (silicon errata worked around) |
 | `eeprom` | data EEPROM read/write (bytes and words) |

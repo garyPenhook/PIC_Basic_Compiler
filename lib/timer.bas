@@ -1,4 +1,5 @@
 Module Timer
+Include "pinio"
 ' Timer0, Timer1 and Timer2 helpers (PIC18F27/47Q10: DS40002043F chapters 19, 20, 21; PIC16F17126/46:
 ' DS40002343F chapters 22, 23, 24; PIC18F0x/1xQ41: DS40002214G chapters 24, 25, 26). The control registers have
 ' the same layout on all of them; the interrupt flag registers and the source-selection constants below
@@ -535,6 +536,35 @@ Public Function Timer1Read() As Word
     Result = TMR1L
     Result.Byte1 = TMR1H
 #endif
+End Function
+
+' Rising edges on pin (numbered as in `Pinio`: RA0 = 0, RB0 = 8, RC0 = 16) in `ms` milliseconds, counted by Timer1 so no edge
+' is missed up to a quarter of the system clock. The pin is made a digital input and T1CKIPPS is left pointing at it. Timer1
+' is read every millisecond and the differences added, so the total is not limited to 65535 (a 32-bit count). The window is
+' `ms` times DelayMS(1) plus the read loop (a few cycles each, well under 0.1 per cent at 16 MHz and above); the first pulse
+' may be missed (see Timer1StartSource). Timer1 is left stopped. 0 for a pin the part lacks. The frequency in Hz is the count
+' * 1000 / ms.
+Public Function FreqCount(ByVal pin As Byte, ByVal ms As Word) As LongWord
+    Dim last As Word
+    Dim cur As Word
+    Dim d As Word
+    Result = 0
+    If Not Pinio.PinOk(pin) Then
+        Exit
+    End If
+    Pinio.PinInput(pin)
+    T1CKIPPS = pin
+    Timer1StartCounter(0)
+    last = 0
+    While ms > 0
+        DelayMS(1)
+        cur = Timer1Read()
+        d = cur - last
+        Result = Result + d
+        last = cur
+        ms = ms - 1
+    Wend
+    Timer1Stop()
 End Function
 
 ' True once per overflow; clears the flag when it reports it.

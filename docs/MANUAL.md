@@ -3201,6 +3201,28 @@ Dim g As Boolean
 g = Timer1GateState()
 ```
 
+### FreqCount
+
+**Syntax**
+```basic
+n = Timer.FreqCount(pin, ms)
+```
+**Overview** Counts the rising edges on `pin` (numbered `RA0` = 0, `RB0` = 8, `RC0` = 16) in `ms` milliseconds with Timer1, so no edge is missed up to about a quarter of the system clock
+(`Buttons.Counter` polls and loses the fast ones). The pin is made a digital input, routed to Timer1 with `T1CKIPPS`, and left routed. It takes Timer1 over (a running Timer1 is reset, and left stopped) so do not call it while Timer1 is in use. Timer1 is read every
+millisecond and the differences are added, so the count is not limited to 65535 (up to 65535 edges in each millisecond). The window is `ms` times `DelayMS(1)` plus the read loop, within
+0.1 per cent at 16 MHz and above; the first pulse after the start may be missed (see `Timer1StartSource`), and interrupts lengthen the window. A pin the part lacks, or `ms` = 0, returns 0.
+The frequency in Hz is the count * 1000 / `ms`. **Returns** `LongWord`.
+
+**Example**
+```basic
+Include "timer"
+Dim hz As LongWord
+hz = Timer.FreqCount(17, 100) * 10     ' RC1, 100 ms window
+```
+Test: `tests/exec/lib_freqcount.bas` (basil-sim with a stimulus file, on 5 parts). Not run on hardware.
+
+**See also** `Timer1StartCounter`, `Counter`
+
 ### Timer1Read / Timer1Expired / Timer1Ack / Timer1Stop
 
 **Syntax**
