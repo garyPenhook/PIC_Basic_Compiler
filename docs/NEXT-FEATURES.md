@@ -15,7 +15,7 @@ USB (no supported part has it), the 12-bit core, polled-interrupt mode (`Interru
 | # | Feature | Module | State |
 |---|---|---|---|
 | 1 | Number formatting with width, fill, radix, sign | `format` (new) | **done 0.1.220** (`FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin`; manual, `tests/exec/lib_format.bas`) |
-| 2 | Receive with timeout, line, wait-for-text, decimal parse | `serial`, `serial2` | planned |
+| 2 | Receive with timeout, line, wait-for-text, decimal parse | `serial`, `serial2` | **done 0.1.221** (`SerialReadTimeout`, `SerialReadLine`, `SerialWaitFor`, `SerialReadDec`; tests `lib_serial_rx`, `lib_serial2_rx` with a `' stim:` file) |
 | 3 | Software asynchronous serial on any pin | `softserial` (new) | planned |
 | 4 | 1-Wire: reset/presence, bit and byte transfer, ROM search, CRC8 | `onewire` (new) | planned |
 | 5 | Pre-loaded data EEPROM image in the `.hex` | compiler (`Data` / `EData`) | planned, check no mechanism exists first |
@@ -48,8 +48,10 @@ SerialWrite(FmtBuf)
 
 ## 2. Serial receive helpers
 
-`SerialReadTimeout(ms, ByRef ok)`, `SerialReadLine(ByRef s, ms)`, `SerialWaitFor(text, ms)` and
-`SerialReadDec(ms)`, on the existing receive ring, with a `Timer`-free millisecond count (`DelayUs` ticks).
+`SerialReadTimeout(ms)` (a byte or -1), `SerialReadLine(ms)` (into `SerialLine`), `SerialWaitFor(text, ms)` and
+`SerialReadDec(ms)` (into `SerialNumber`), on the polled receiver (there is no receive ring), with a Timer-free
+wait of `DelayUs(50)` polls. Results go in public module variables and a private byte, not `ByRef` parameters:
+a `ByRef` costs a pointer set-up at every access (measured: `SerialReadDec` 211 words with `ByRef`, 132 without).
 Same routines for `serial2`.
 
 ## 3. softserial

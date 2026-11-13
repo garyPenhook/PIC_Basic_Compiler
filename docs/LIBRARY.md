@@ -221,6 +221,7 @@ PIC16F183xx (DS40001839E chapters 26-28): Timer0 as above; Timer1 has `T1ClkFosc
 | `SerialWriteByte(b)`, `SerialWrite(text)`, `SerialNewLine()` | blocking send (`text` up to 80 characters) |
 | `SerialWriteWord(v)`, `SerialWriteHex(v)` | unsigned decimal, two hex digits |
 | `SerialAvailable()`, `SerialRead()` | receive; `SerialRead` waits and clears an overrun |
+| `SerialReadTimeout(ms)`, `SerialReadLine(ms)`, `SerialWaitFor(text, ms)`, `SerialReadDec(ms)` | receive that gives up: a byte or -1; a line into `SerialLine`; True when `text` came; a decimal number into `SerialNumber`. `ms` is the longest wait for one byte. The same with the prefix `Serial2` |
 | `SerialFlush()` | wait for the shift register to empty (`TRMT`) |
 | `SerialOnRx` | event variable of type `TRxEvent` (`Event(ByVal c As Byte)`); assign a handler `Event OnByte(ByVal c As Byte)` |
 | `SerialRxService()` | clear an overrun, and if a byte has arrived read it and call `SerialOnRx(byte)`; call from the main loop, or from your own `Interrupt` inside `Save(0, SerialRxService)` |

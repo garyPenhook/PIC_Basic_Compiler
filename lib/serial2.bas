@@ -212,6 +212,130 @@ Public Function Serial2Read() As Byte
 #endif
 End Function
 
+' ---- Receiving with a time limit ----------------------------------------------------------------------
+' None of these waits for ever: `ms` is the longest wait for ONE byte, in milliseconds (a little over, as the
+' wait is a poll every 50 us). A byte that is already waiting is returned at once, so a timeout of 0 only looks once.
+
+' The byte Wait2 found.
+Private Dim RxByte As Byte
+
+' Waits up to `ms` for a byte and leaves it in RxByte: True when one came. The other routines use this one
+' (fixed variables, so no pointers as a ByRef parameter would need). An overrun is cleared as Serial2Read does.
+Private Function Wait2(ByVal ms As Word) As Boolean
+    Dim t As Byte
+    t = 0
+    While True
+#if _has(U2CON0)
+        If RxEmpty = 0 Then
+            RxByte = U2RXB
+            Result = True
+            Exit
+        End If
+        If OverrunErr = 1 Then
+            OverrunErr = 0
+        End If
+#else
+        If RxIf = 1 Then
+            RxByte = RC2REG
+            Result = True
+            Exit
+        End If
+        If OverrunErr = 1 Then
+            RxEnable = 0
+            RxEnable = 1
+        End If
+#endif
+        If ms = 0 Then
+            Exit
+        End If
+        DelayUs(50)
+        Inc(t)
+        If t = 20 Then
+            t = 0
+            Dec(ms)
+        End If
+    Wend
+End Function
+
+' Waits up to `ms` for a byte: the byte (0 to 255), or -1 when none came.
+Public Function Serial2ReadTimeout(ByVal ms As Word) As Integer
+    If Wait2(ms) Then
+        Result = RxByte
+    Else
+        Result = -1
+    End If
+End Function
+
+' The text of the last Serial2ReadLine: up to 63 characters, no CR or LF, ended with a Null.
+Public Dim Serial2Line As String(63)
+
+' Reads one line into Serial2Line: True when it ended with CR or LF, False when `ms` passed without a byte (what had
+' arrived stays in Serial2Line). Empty lines are skipped, so CR LF is one end of line; characters past 63 are dropped.
+Public Function Serial2ReadLine(ByVal ms As Word) As Boolean
+    Dim n As Byte
+    n = 0
+    Serial2Line(0) = Char(0)
+    While Wait2(ms)
+        If RxByte = 13 Or RxByte = 10 Then
+            If n > 0 Then
+                Result = True
+                Exit
+            End If
+        ElseIf n < 63 Then
+            Serial2Line(n) = Char(RxByte)
+            Inc(n)
+            Serial2Line(n) = Char(0)
+        End If
+    Wend
+End Function
+
+' Reads until the text `t` (not empty) has arrived, up to `ms` between bytes: True when it has, False on a timeout.
+' A mismatch starts the match again at the first character, so a text whose start repeats inside itself
+' ("aab" in "aaab") can be missed.
+Public Function Serial2WaitFor(ByRefConst t As String(80), ByVal ms As Word) As Boolean
+    Dim k As Byte
+    k = 0
+    While Wait2(ms)
+        If RxByte <> Byte(t(k)) Then
+            k = 0
+        End If
+        If RxByte = Byte(t(k)) Then
+            Inc(k)
+            If t(k) = Char(0) Then
+                Result = True
+                Exit
+            End If
+        End If
+    Wend
+End Function
+
+' The number of the last Serial2ReadDec.
+Public Dim Serial2Number As LongInt
+
+' Reads a whole number written in decimal into Serial2Number: characters before the first digit are skipped (a "-"
+' right before it makes it negative); the number ends at the first other character, which is read and dropped, or
+' at a timeout after at least one digit. False (and 0) when no digit came; a value past 32 bits wraps.
+Public Function Serial2ReadDec(ByVal ms As Word) As Boolean
+    Dim d As Byte
+    Dim neg As Boolean
+    neg = False
+    Serial2Number = 0
+    While Wait2(ms)
+        d = RxByte - 48
+        If d < 10 Then
+            Serial2Number = Serial2Number * 10 + d
+            Result = True
+        ElseIf Result Then
+            Break
+        Else
+            neg = RxByte = 45
+        End If
+    Wend
+    If neg Then
+        Serial2Number = 0 - Serial2Number
+    End If
+End Function
+
 ' Waits until the last byte has left the shift register (TRMT, TX2STA bit 1).
 Public Sub Serial2Flush()
 #if _has(U2CON0)

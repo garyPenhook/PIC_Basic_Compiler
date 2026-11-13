@@ -11,6 +11,7 @@ Each program names its expectations in comments near the top:
     ' engine: sim              (optional: MDB does not model what the program tests, e.g. flash reads and writes; run it in basil-sim whatever --engine says)
                                   Skipped programs are counted, and a run in which every program is skipped fails)
     ' cycles: LO HI              (optional: total cycles to __halt must lie in LO..HI)
+    ' stim: file.stim.toml      (optional: stimulus file, next to the program, given to basil-sim as --stim; the program then runs in basil-sim only (MDB cannot be driven from a file); e.g. characters for the serial receiver)
 
 Usage: exec-test.py [--basil PATH] [--keep] prog.bas ...
 Variables are named by their assembly symbols (see `basil --report`). The program must reach
@@ -53,10 +54,12 @@ else:
 
 jobs = []
 sim_only = set()
+stims = {}
 mdb_only = set()
 fails = 0
 skipped = 0
 for src in a.files:
+    orig_src = src
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
     text = open(src).read()
@@ -135,6 +138,10 @@ for src in a.files:
             for kv in line.split():
                 k, v = kv.split("=")
                 dma["writes"][k] = [int(x, 0) for x in v.split(",")]
+    st = re.search(r"^'\s*stim:\s*(\S+)", head, re.M)
+    if st:
+        stims[name] = os.path.join(os.path.dirname(os.path.abspath(orig_src)), st.group(1))
+        sim_only.add(name)
     if re.search(r"^'\s*engine:\s*sim\b", head, re.M):
         sim_only.add(name)
     if re.search(r"^'\s*engine:\s*mdb\b", head, re.M):
@@ -147,6 +154,8 @@ def sim_run(name, hexf, syms, vars_, expect):
     cmd = [a.sim, hexf, "--device", a.device, "--asm", os.path.join(work, name + ".S")]
     if not os.path.exists(cmd[-1]):
         cmd[-1] = os.path.join(work, name + "_basil.S")
+    if name in stims:
+        cmd += ["--stim", stims[name]]
     r = subprocess.run(cmd + (["--dump", dump] if dump else []), capture_output=True, text=True, timeout=3600)
     m = re.search(r"stop: (\w+).*cycles: (\d+)", r.stdout)
     blocks = [l.split("(")[1].rstrip(")") for l in r.stdout.splitlines() if " = " in l and "(" in l]

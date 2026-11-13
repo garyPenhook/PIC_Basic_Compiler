@@ -1,0 +1,10 @@
+# A line, a number inside text, a wanted text, then silence.
+[[uart]]
+port = 2
+at = 20000
+bytes = "hello\r\nVAL -45,\r\nOK"
+
+[[uart]]
+port = 2
+at = 300000
+bytes = "Q"

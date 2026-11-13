@@ -3678,6 +3678,44 @@ b = SerialRead()
 SerialWriteByte(b)                ' echo
 ```
 
+### SerialReadTimeout, SerialReadLine, SerialWaitFor, SerialReadDec
+
+**Syntax**
+```basic
+c  = SerialReadTimeout(ms)          ' Integer: the byte (0..255), or -1 when none came in ms
+ok = SerialReadLine(ms)             ' text in SerialLine (String(63)); True when a CR or LF ended it
+ok = SerialWaitFor("OK", ms)        ' True when the text has arrived
+ok = SerialReadDec(ms)              ' number in SerialNumber (LongInt); True when a digit came
+```
+**Overview** Receive routines that give up. `ms` (a `Word`) is the longest wait for **one** byte, in milliseconds
+(a little more: the wait polls every 50 us, with interrupts allowed; a byte already waiting is returned at once and
+a `ms` of 0 looks once). An overrun is cleared as `SerialRead` does.
+
+* `SerialReadLine` collects characters into `SerialLine` until CR or LF; empty lines are skipped, so CR LF is one
+  end of line, and characters past 63 are dropped. On a timeout it returns False and `SerialLine` keeps what had
+  arrived.
+* `SerialWaitFor(text, ms)` discards bytes until `text` (not empty, up to 80 characters) has come in. After a
+  mismatch it starts again at the first character, so a text that repeats its own start (`aab` in `aaab`) can be missed.
+* `SerialReadDec` skips characters until a digit (a `-` right before it makes the number negative), then reads
+  digits; the first other character ends the number and is dropped, and so does a timeout after at least one digit.
+  False (and `SerialNumber` 0) when no digit came; a value past 32 bits wraps.
+
+`SerialLine` and `SerialNumber` are shared results, overwritten by the next call. Each routine alone, with the polling
+loop they share counted in, costs on the PIC18F27Q10 about 50 words (`SerialReadTimeout`), 71 (`SerialReadLine`),
+86 (`SerialWaitFor`) and 113 (`SerialReadDec`); using several adds only the difference.
+
+**Example**
+```basic
+SerialWrite("AT")
+SerialNewLine()
+If SerialWaitFor("OK", 200) Then
+    If SerialReadDec(500) Then
+        v = Integer(SerialNumber)         ' "+CSQ: 17,99" gives 17
+    End If
+End If
+If SerialReadLine(1000) Then SerialWrite(SerialLine)
+```
+
 ### SerialOnRx / SerialRxService
 
 **Syntax**
@@ -3720,9 +3758,10 @@ SerialFlush()
 
 ## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
 
-The same nine routines with the prefix `Serial2`: `Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
+The same routines with the prefix `Serial2`: `Serial2Init`, `Serial2WriteByte`, `Serial2Write`,
 `Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`,
-`Serial2Flush`. Syntax, parameters and returns are as in `serial`.
+`Serial2Flush`, and the receive-with-timeout routines `Serial2ReadTimeout`, `Serial2ReadLine`, `Serial2WaitFor`,
+`Serial2ReadDec` with the results `Serial2Line` and `Serial2Number`. Syntax, parameters and returns are as in `serial`.
 
 **Example**
 ```basic
@@ -5630,7 +5669,7 @@ reports these rather than miscompiling them.
 | `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
 | `Print`, `Cls`, `Cursor` on a character LCD | `lcd` module routines |
 | `Plot`, `UnPlot`, `Pixel`, `Line`, `LineTo`, `Box`, `Circle`, `LCDwrite`, `LCDread`, `Toshiba_Command`, `Toshiba_UDG`, graphic `Print` / `Cls` | `glcd` module (`GlcdPlot`, `GlcdUnplot`, `GlcdPixel`, `GlcdLine`, `GlcdLineTo`, `GlcdBox`, `GlcdCircle`, `GlcdWriteByte`, `GlcdReadByte`, `GlcdCommand`, `GlcdUdg`, `GlcdWrite`, `GlcdClear`); KS0108, T6963C and ST7920, `(x, y)` order |
-| `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
+| `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines (`SerialReadTimeout`, `SerialReadLine`, `SerialWaitFor` and `SerialReadDec` for the timeout, `Wait`, `Str` and `Dec` forms of the input) |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: `FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin` fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
