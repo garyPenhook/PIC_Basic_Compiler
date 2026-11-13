@@ -418,6 +418,8 @@ are plain bit operations and are allowed. A 4-byte Float is not read atomically 
   ```
   Any word not mentioned gets the pack's documented default and the compiler prints a note
   listing the defaulted words. (NEW)
+* **Data EEPROM image**: `EData [At offset,] byte-or-string, ...` header lines put bytes in the EEPROM part of the
+  `.hex` (0.1.224).
 
 ## 11. Preprocessor
 

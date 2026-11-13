@@ -438,6 +438,20 @@ pub struct ExportSig {
 }
 
 impl Program {
+    /// The `EData` runs as assembly: one absolute section per run at the part's EEPROM address (`delta` is the
+    /// address unit, 1 on the PIC18 and 2 on the PIC16, whose EEPROM is addressed in words).
+    pub fn edata_asm(&self, delta: u32) -> String {
+        let mut t = String::new();
+        for (i, (at, bytes)) in self.edata.iter().enumerate() {
+            t.push_str(&format!("PSECT eedata{i},class=EEDATA,abs,delta={delta},noexec\n    ORG 0x{at:X}\n"));
+            for row in bytes.chunks(16) {
+                let v: Vec<String> = row.iter().map(|b| format!("0x{b:02X}")).collect();
+                t.push_str(&format!("    DB {}\n", v.join(",")));
+            }
+        }
+        t
+    }
+
     /// The program is linked with C by `xc8-cc`.
     pub fn c_link(&self) -> bool {
         !self.externs.is_empty() || !self.exports.is_empty()
@@ -474,6 +488,8 @@ pub struct Program {
     pub clock_mhz: f64,
     /// `CONFIGnX` register name and the byte written to it.
     pub config: Vec<(String, u32, u16)>,
+    /// `EData`: runs of data EEPROM bytes as (address in the device's EEPROM units, bytes).
+    pub edata: Vec<(u32, Vec<u8>)>,
     /// Interrupt handlers (each is also an entry of `funcs`).
     pub isrs: Vec<(FuncId, Level)>,
     /// Number of `Save` blocks (`St::Save::id` is below this).

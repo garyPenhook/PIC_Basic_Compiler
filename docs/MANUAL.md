@@ -1832,6 +1832,36 @@ End Asm
 **Notes** Comments inside the block are assembler comments (`;`). The block ends at a line holding
 `End Asm`. Stack use of `call` in raw `Asm` is counted by the `E-STACK` check.
 
+## EData
+
+**Syntax**
+```basic
+EData item, item, ...
+EData At offset, item, item, ...
+```
+**Overview** `EData` puts bytes in the data EEPROM image of the `.hex`, so the part's EEPROM holds them after
+programming, before the program has run. An `item` is a constant expression from -128 to 255 (stored as one byte) or a
+string (its characters, one byte each, **no** terminating zero; add `, 0` for one).
+
+**Parameters** `offset` is a constant, the byte offset into the EEPROM (0 is the first byte; `EepromRead(offset)` of the
+`eeprom` module reads it back). Without `At` the bytes follow the previous `EData` line (the first line starts at 0).
+`EData` goes with the `Device`, `Clock` and `Config` lines, before the first `Include`, and can be given more than once.
+
+**Example**
+```basic
+Device = 18F27Q10
+Clock = 64
+EData "v1.2", 0          ' offsets 0..4
+EData At 16, 0x12, 0x34, 200, -1
+```
+**Notes**
+* `E-EDATA` for a part without data EEPROM (the PIC16F15xxx and PIC16F131xx families), an offset or an item outside the
+  EEPROM or a byte, and a byte given twice. Bytes not named stay erased (0xFF); nothing is written for them.
+* In the hex the bytes are at 0x310000 (PIC18F-Q10), 0x380000 (PIC18F-Q41) or, on the PIC16, at word address 0xF000
+  (byte address 0x1E000) with the data in the low byte of each word; the programmer must be set to write the
+  EEPROM. The image costs no program flash.
+* The simulator does not model data EEPROM reads, so `tests/backend.rs` checks the records in the hex.
+
 ## CFile, Extern
 
 **Syntax**
@@ -5784,7 +5814,7 @@ reports these rather than miscompiling them.
 | `HPWM` | `pwm` module (hardware PWM) |
 | `Freqout` | `Pulse.Freqout(pin, ms, f1)` and `Pulse.Freqout(pin, ms, f1, f2)` of the `pulse` module (square waves; no sine) |
 | `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
-| `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `Const` arrays |
+| `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `EData` header line (the pre-loaded EEPROM image); `Const` arrays |
 | `Branch`, `On GoTo` | `Branch index, l0, l1` and `On index GoTo l0, l1` (count from 0; out of range falls through) |
 | `On GoSub`, `GoSub`, `Return` | `GoSub label`, `On index GoSub l0, l1`, `Return` (labels of the same routine); `Call Name(args)` (same as `Name(args)`; `Call` is not reserved) |
 | `Select Case x` | `Select x` |

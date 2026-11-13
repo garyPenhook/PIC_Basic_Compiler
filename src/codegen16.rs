@@ -491,6 +491,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
     for (name, _, v) in &p.config {
         text.push_str(&format!("CONFIG {name} = 0x{v:04X}\n"));
     }
+    text.push_str(&p.edata_asm(2));
     text.push_str("\n; ---- data (addresses chosen by the compiler)\n");
     for (i, o) in objs.iter().enumerate() {
         if let Some(a) = layout.addr[i] {

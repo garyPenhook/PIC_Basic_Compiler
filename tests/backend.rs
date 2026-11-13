@@ -531,6 +531,44 @@ fn several_literals_share_a_flash_table() {
 }
 
 
+/// `EData` puts bytes in the data EEPROM image of the hex: byte addresses on the PIC18 (0x380000 on the Q41), word
+/// addresses doubled on the PIC16 (0xF000 words = 0x1E000), the data in the low byte of each word.
+#[test]
+fn edata_lands_in_the_eeprom_image_of_the_hex() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("edata");
+    // (device, hex address of the first byte, bytes at offset 0, bytes at offset 20)
+    let cases: [(&str, u32, &str, &str); 4] = [
+        ("18F27Q10", 0x31_0000, "0102034869", "AAFF"),
+        ("18F16Q41", 0x38_0000, "0102034869", "AAFF"),
+        ("16F18346", 0x1_E000, "01000200030048006900", "AA00FF00"),
+        ("16F13245", 0x1_E000, "01000200030048006900", "AA00FF00"),
+    ];
+    for (dev, base, first, second) in cases {
+        let src = out.join(format!("{dev}.bas"));
+        std::fs::write(&src, format!("Device = {dev}\nClock = 8\nEData 1, 2, 3, \"Hi\"\nEData At 20, 0xAA, -1\nDim x As Byte\nx = 1\n")).unwrap();
+        let hex = out.join(format!("{dev}.hex"));
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(&hex).output().unwrap();
+        assert!(r.status.success(), "{dev}: {}", String::from_utf8_lossy(&r.stderr));
+        // data records as (byte address, hex digits)
+        let (mut ext, mut recs) = (0u32, Vec::new());
+        for l in std::fs::read_to_string(&hex).unwrap().lines() {
+            let b: Vec<u8> = (1..l.len() - 1).step_by(2).map(|i| u8::from_str_radix(&l[i..i + 2], 16).unwrap()).collect();
+            match b[3] {
+                4 => ext = (u32::from(b[4]) << 24) | (u32::from(b[5]) << 16),
+                0 => recs.push((ext | (u32::from(b[1]) << 8) | u32::from(b[2]), b[4..4 + b[0] as usize].iter().map(|x| format!("{x:02X}")).collect::<String>())),
+                _ => {}
+            }
+        }
+        let at = |a: u32, want: &str| assert!(recs.iter().any(|(ra, d)| *ra == a && d == want), "{dev}: no record {want} at {a:#X}: {recs:?}");
+        let step = if dev.starts_with("16") { 2 } else { 1 };
+        at(base, first);
+        at(base + 20 * step, second);
+    }
+}
+
 /// `-g` points the asm's `#line` directives at the BASIC source and leaves the generated hex unchanged.
 #[test]
 fn debug_flag_maps_code_to_basic_lines_without_changing_the_hex() {

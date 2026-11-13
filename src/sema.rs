@@ -117,6 +117,10 @@ pub struct Analysis {
     pub clock_span: Option<Span>,
     pub options: Options,
     pub config: Vec<ConfigSetting>,
+    /// `EData`: the data EEPROM image, one entry per byte of the part's EEPROM (`None` = not given).
+    pub edata: Vec<Option<u8>>,
+    /// Offset where the next `EData` item without an `At` goes.
+    pub edata_next: usize,
     /// Type of every checked expression.
     pub types: HashMap<NodeId, Ty>,
     /// Value of every expression that folded to a constant.
@@ -758,6 +762,61 @@ impl<'p, 'd> Sema<'p, 'd> {
                         self.config_item(it, &mut seen_config);
                     }
                 }
+                HeaderKind::EData { at, items } => self.edata_header(h.span, at.as_ref(), items),
+            }
+        }
+    }
+
+    /// `EData [At offset,] item, ...`: puts bytes in the EEPROM image (`Analysis::edata`).
+    fn edata_header(&mut self, span: Span, at: Option<&'p Expr>, items: &'p [Expr]) {
+        let Some(dev) = self.a.device.clone() else { return };
+        let size = dev.memory.eeprom.size as usize;
+        if size == 0 {
+            self.diags.error("E-EDATA", span, format!("{} has no data EEPROM for EData", dev.device.name));
+            return;
+        }
+        if self.a.edata.len() != size {
+            self.a.edata = vec![None; size];
+        }
+        if let Some(e) = at {
+            let Some(v) = self.const_int(e) else { return };
+            if v < 0 || v as usize >= size {
+                self.diags.error("E-EDATA", e.span, format!("EData offset {v} is outside the {size}-byte data EEPROM"));
+                return;
+            }
+            self.a.edata_next = v as usize;
+        }
+        for e in items {
+            let bytes: Vec<u8> = if let ExprKind::Str(s) = &e.kind {
+                let mut b = Vec::new();
+                for c in s.chars() {
+                    if (c as u32) > 255 {
+                        self.diags.error("E-EDATA", e.span, format!("`{c}` is not a byte value"));
+                        return;
+                    }
+                    b.push(c as u8);
+                }
+                b
+            } else {
+                let Some(v) = self.const_int(e) else { return };
+                if !(-128..=255).contains(&v) {
+                    self.diags.error("E-EDATA", e.span, format!("EData item {v} does not fit a byte"));
+                    return;
+                }
+                vec![v as u8]
+            };
+            for b in bytes {
+                let o = self.a.edata_next;
+                if o >= size {
+                    self.diags.error("E-EDATA", e.span, format!("EData runs past the end of the {size}-byte data EEPROM"));
+                    return;
+                }
+                if self.a.edata[o].is_some() {
+                    self.diags.error("E-EDATA", e.span, format!("EEPROM byte {o} is given twice"));
+                    return;
+                }
+                self.a.edata[o] = Some(b);
+                self.a.edata_next += 1;
             }
         }
     }

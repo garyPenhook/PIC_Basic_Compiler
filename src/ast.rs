@@ -50,6 +50,9 @@ pub enum HeaderKind {
     Config(Vec<ConfigItem>),
     /// `CFile "crc.c"`: a C source file linked into the program (see `Extern`).
     CFile(String),
+    /// `EData [At offset,] item, ...`: bytes put in the data EEPROM image of the `.hex`; an item is a constant
+    /// expression (a byte) or a string (its characters, no terminator).
+    EData { at: Option<Expr>, items: Vec<Expr> },
 }
 
 #[derive(Debug)]

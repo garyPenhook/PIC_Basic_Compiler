@@ -440,6 +440,16 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         config.push((reg.name.clone(), reg.addr, v as u16));
     }
 
+    // The data EEPROM image: each run of given bytes at the part's EEPROM address (a word address on the PIC16).
+    let mut edata: Vec<(u32, Vec<u8>)> = Vec::new();
+    for (i, b) in a.edata.iter().enumerate() {
+        let Some(b) = *b else { continue };
+        match edata.last_mut() {
+            Some((at, run)) if *at as usize + run.len() == device.memory.eeprom.start as usize + i => run.push(b),
+            _ => edata.push((device.memory.eeprom.start + i as u32, vec![b])),
+        }
+    }
+
     let mut structs = std::collections::HashMap::new();
     for sid in 0..a.symbols.len() {
         let SymKind::Struct { fields, size } = a.symbols[sid].kind.clone() else { continue };
@@ -469,6 +479,7 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
         device: device.device.name.clone(),
         clock_mhz: a.clock_mhz.unwrap_or(0.0),
         config,
+        edata,
         isrs: lw.isrs,
         n_saves: lw.n_saves,
         isr_shadow: a.options.isr_shadow,

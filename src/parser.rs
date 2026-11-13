@@ -251,6 +251,23 @@ impl<'a> Parser<'a> {
                     let Tok::Str(name) = self.bump().tok else { unreachable!() };
                     self.end_stmt()?;
                     unit.headers.push(Header { kind: HeaderKind::CFile(name), span: sp });
+                } else if self.at_ident("edata") && !matches!(self.peek_at(1), Tok::Punct(_)) {
+                    if phase > 0 {
+                        self.diags.error("E-ORDER", sp, "EData must come before includes and declarations");
+                    }
+                    self.bump();
+                    let mut at = None;
+                    if self.at_ident("at") {
+                        self.bump();
+                        at = Some(self.expr()?);
+                        self.expect_punct(",")?;
+                    }
+                    let mut items = vec![self.expr()?];
+                    while self.eat_punct(",") {
+                        items.push(self.expr()?);
+                    }
+                    self.end_stmt()?;
+                    unit.headers.push(Header { kind: HeaderKind::EData { at, items }, span: sp });
                 } else if matches!(self.peek(), Tok::Kw("device" | "clock" | "config")) || (self.at_kw("declare") && !self.forward_ahead()) {
                     if phase > 0 {
                         self.diags.error("E-ORDER", sp, "Device, Clock and Config must come before includes and declarations");
