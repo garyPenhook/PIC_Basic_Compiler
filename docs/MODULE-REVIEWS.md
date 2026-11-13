@@ -48,6 +48,7 @@ fixed in the module.
 | 25 | `system` | reviewed (0.1.211) | all-routines probe 299 → 278 (18F27Q10, 18F16Q41), 375 → 356 (16F17146), 418 → 389 (16F18346), 353 → 334 (16F18056, 16F15244) |
 | 26 | `x10` | reviewed (0.1.212) | all-routines probe 768 → 741 (18F27Q10, 18F16Q41), 952 → 929 (16F17146, 16F18346) |
 | 27 | `irremote` | reviewed (0.1.213) | all-routines probe 436 → 357 (18F27Q10, 18F16Q41), 533 → 444 (16F17146) |
+| 28 | `epaper` | reviewed (0.1.214) | all-routines probe 1390 → 1167 (18F27Q10, 18F16Q41), 1950 → 1753 (16F17146); `lib_epaper` 2515 → 2307 (18F27Q10) |
 | … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -731,6 +732,18 @@ Probe calls `SonyIn` and `RC5In` with a run-time pin: 18F27Q10 and 18F16Q41 436 
 - **Left:** `Width` (a 16-bit count, a delay and a `PinGet` per poll) and the 5 ms of `WaitUs` per RC5 bit are the timing itself.
 - **Tests:** `tests/exec_pins/lib_pins_model` now decodes four RC5 lines (command below and above 64, toggle set, all ones, all zeros) as well as the Sony frame; the new test passes on the old library too, so the decode is unchanged. Passes on 18F27Q10, 18F16Q41, 16F17146 and 16F18346.
 
+## 28. `epaper` (done 2026-11-13, 0.1.214)
+
+Probe calls every public routine with run-time arguments: 18F27Q10 and 18F16Q41 1390 → 1167 words, 16F17146 1950 → 1753. `lib_epaper` (model) 2515 → 2307.
+
+- **One `SetWindow`** (validation and the five window commands) for `EpdWindow`, `EpdFillRect` and `EpdWriteChar`: `EpdFillRect` carried its own copy of `EpdWindow`'s checks. The window ends reuse the sums `x + w` and `y + h` the check computes, and `ye = 296 - (y + h)`.
+- **`PlaneBytes` (two `ByRef` bytes through pointers) is `PlaneByte(colour, p)`**, one value per plane; the fill loop writes a hoisted byte and counts down.
+- **`EpdWriteChar` reads each font byte once** (a column at a time, shifted into the five-bit rows) instead of the 35 reads with a variable shift of the old row-at-a-time build; the plane polarity is two masks computed per plane (`(row << 2 And am) Xor xm`) instead of a branch chain per byte; the array clear is the one every local array gets on entry; the column and row limits are two bytes set by `EpdInit` (`tCols`, `tRows`) instead of shifts of the width and height.
+- **`Setup` sends its commands from a `Const` table** (`InitTab`), and the 10 ms delay is one `Pause` routine (five inline copies of the delay loop before). `WaitIdle` counts down.
+- **`EpdInit`**: the pin checks that `PinOk` repeats are gone, and `Drive` sets a pin high and makes it an output for D/C#, CS# and RES#; `CsSet` is the CS# write of `CmdBegin` / `CmdEnd`.
+- **Left:** the font (475 bytes, 238 words) and the SPI calls themselves; a window outside the display is still tested with 16-bit sums, which wrap for an `x` or `y` near 65535 as before.
+- **Tests:** `tests/exec_epaper/lib_epaper` (the whole command stream, plane contents, text, wrap, windows, red ink, sleep and wake, 2.13" and no-pin cases) passes unchanged on 18F27Q10, 18F16Q41, 16F17146 and 16F18346.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `epaper`, `glcd`, `intosc`, `pulse`; `irremote` is done).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `glcd`, `intosc`, `pulse`; `irremote` and `epaper` are done).

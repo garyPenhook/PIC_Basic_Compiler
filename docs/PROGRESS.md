@@ -1448,3 +1448,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## irremote module review (done 2026-11-13, 0.1.213)
 - `lib/irremote.bas`: one `Begin` start-up for both decoders, the Sony threshold computed once, bits shifted in from the top, results stored as two bytes. All-routines probe 18F27Q10 / 18F16Q41 436 -> 357, 16F17146 533 -> 444 words. RC5 decode cases added to `tests/exec_pins/lib_pins_model`. See MODULE-REVIEWS section 27.
+
+## epaper module review (done 2026-11-13, 0.1.214)
+- `lib/epaper.bas`: one `SetWindow`, `PlaneByte` for `PlaneBytes`, `EpdWriteChar` reads each font byte once with per-plane masks, table-driven `Setup`, one `Pause`. All-routines probe 18F27Q10 / 18F16Q41 1390 -> 1167, 16F17146 1950 -> 1753 words. See MODULE-REVIEWS section 28.

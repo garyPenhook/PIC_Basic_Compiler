@@ -78,23 +78,28 @@ Dim width As Word
 Dim height As Word
 Dim tCol As Byte
 Dim tRow As Byte
+Dim tCols As Byte
+Dim tRows As Byte
 Dim ink As Byte
 Dim busyTimeout As Byte
+
+' CS# to `level`, unless the module ties it low (pin 255).
+Sub CsSet(ByVal level As Boolean)
+    If pCs <> 255 Then
+        Pinio.PinSet(pCs, level)
+    End If
+End Sub
 
 ' Opens a command: D/C# low, CS# low, the command byte; D/C# then high so data bytes may follow with CS# still low.
 Sub CmdBegin(ByVal c As Byte)
     Pinio.PinSet(pDc, False)
-    If pCs <> 255 Then
-        Pinio.PinSet(pCs, False)
-    End If
+    CsSet(False)
     Spi.SpiWrite(c)
     Pinio.PinSet(pDc, True)
 End Sub
 
 Sub CmdEnd()
-    If pCs <> 255 Then
-        Pinio.PinSet(pCs, True)
-    End If
+    CsSet(True)
 End Sub
 
 Sub Cmd0(ByVal c As Byte)
@@ -115,16 +120,21 @@ Sub Cmd2(ByVal c As Byte, ByVal a As Byte, ByVal b As Byte)
     CmdEnd()
 End Sub
 
+' 10 ms (one copy of the delay loop for the five places that wait).
+Sub Pause()
+    DelayMS(10)
+End Sub
+
 ' BUSY is high while the chip works [pin description, 7 Command Table 12h/20h]: waits up to about 40 s for it to fall. Sets
 ' busyTimeout = 1 when it does not.
 Sub WaitIdle()
     Dim n As Word
-    n = 0
+    n = 4000
     busyTimeout = 0
     While Pinio.PinGet(pBusy)
-        DelayMS(10)
-        Inc(n)
-        If n >= 4000 Then
+        Pause()
+        Dec(n)
+        If n = 0 Then
             busyTimeout = 1
             Exit
         End If
@@ -135,33 +145,41 @@ End Sub
 ' 01h = 127h (296 lines), TB = 1 [WeAct]; data entry mode 11h = 01h (X increment, Y decrement, X direction [8.3]); RAM window 44h =
 ' 0..15 bytes, 45h = 295..0; border waveform 3Ch = 05h; display update control 21h = 00h 80h (source S8..S167 [21h]) [WeAct]; internal
 ' temperature sensor 18h = 80h [18h].
+Const InitTab(29) As Byte = (3, 1, 39, 1, 1, 1, 17, 1, 2, 68, 0, 15, 4, 69, 39, 1, 0, 0, 1, 60, 5, 2, 33, 0, 128, 1, 24, 128, 0)
 Sub Setup()
+    Dim i As Byte
+    Dim n As Byte
     If pRes <> 255 Then
         Pinio.PinSet(pRes, False)
-        DelayMS(10)
+        Pause()
         Pinio.PinSet(pRes, True)
-        DelayMS(10)
+        Pause()
     End If
     WaitIdle()
     Cmd0(18)
-    DelayMS(10)
+    Pause()
     WaitIdle()
-    CmdBegin(1)
-    Spi.SpiWrite(39)
-    Spi.SpiWrite(1)
-    Spi.SpiWrite(1)
-    CmdEnd()
-    Cmd1(17, 1)
-    Cmd2(68, 0, 15)
-    CmdBegin(69)
-    Spi.SpiWrite(39)
-    Spi.SpiWrite(1)
-    Spi.SpiWrite(0)
-    Spi.SpiWrite(0)
-    CmdEnd()
-    Cmd1(60, 5)
-    Cmd2(33, 0, 128)
-    Cmd1(24, 128)
+    ' InitTab: for each command the number of data bytes (1..4), the command, the data bytes; a 0 ends it
+    i = 0
+    While InitTab(i) <> 0
+        n = InitTab(i)
+        CmdBegin(InitTab(i + 1))
+        i = i + 2
+        While n > 0
+            Spi.SpiWrite(InitTab(i))
+            Inc(i)
+            Dec(n)
+        Wend
+        CmdEnd()
+    Wend
+End Sub
+
+' Output, high (not for pin 255).
+Sub Drive(ByVal pin As Byte)
+    If pin <> 255 Then
+        Pinio.PinSet(pin, True)
+        Pinio.PinOutput(pin)
+    End If
 End Sub
 
 ' Starts the module: 2.13" (`size` 0, 122 x 250) or 2.9" (`size` 1, 128 x 296), `threeColour` True for the black / white / red
@@ -171,10 +189,7 @@ End Sub
 Public Function EpdInit(ByVal size As Byte, ByVal threeColour As Boolean, ByVal dc As Byte, ByVal cs As Byte, ByVal res As Byte, ByVal busy As Byte) As Byte
     Result = 0
     ready = False
-    If size > 1 Or dc > 23 Or busy > 23 Then
-        Exit
-    End If
-    If (cs <> 255 And cs > 23) Or (res <> 255 And res > 23) Then
+    If size > 1 Then
         Exit
     End If
     If Not Pinio.PinOk(dc) Or Not Pinio.PinOk(busy) Or dc = busy Then
@@ -198,24 +213,21 @@ Public Function EpdInit(ByVal size As Byte, ByVal threeColour As Boolean, ByVal 
     If size = 0 Then
         width = 122
         height = 250
+        tCols = 15
+        tRows = 31
     Else
         width = 128
         height = 296
+        tCols = 16
+        tRows = 37
     End If
     tCol = 0
     tRow = 0
     ink = 1
     Pinio.PinInput(busy)
-    Pinio.PinSet(dc, True)
-    Pinio.PinOutput(dc)
-    If cs <> 255 Then
-        Pinio.PinSet(cs, True)
-        Pinio.PinOutput(cs)
-    End If
-    If res <> 255 Then
-        Pinio.PinSet(res, True)
-        Pinio.PinOutput(res)
-    End If
+    Drive(dc)
+    Drive(cs)
+    Drive(res)
     ready = True
     Setup()
     Result = 1
@@ -233,36 +245,40 @@ Public Function EpdHeight() As Word
     Result = height
 End Function
 
+' Window for EpdWindow: False (nothing sent) when the module is not started or the window is empty, not on byte columns or
+' outside the display.
+Function SetWindow(ByVal x As Word, ByVal y As Word, ByVal w As Word, ByVal h As Word) As Boolean
+    Dim xb As Byte
+    Dim xe As Word
+    Dim ys As Word
+    Dim ye As Word
+    Result = False
+    xe = x + w
+    ye = y + h
+    If Not ready Or w = 0 Or h = 0 Or ((Byte(x) Or Byte(w)) And 7) <> 0 Or xe > 128 Or ye > height Then
+        Exit
+    End If
+    Result = True
+    xb = Byte(x) >> 3
+    Cmd2(68, xb, (Byte(xe) >> 3) - 1)
+    ys = 295 - y
+    ye = 296 - ye
+    CmdBegin(69)
+    Spi.SpiWrite(Byte(ys))
+    Spi.SpiWrite(Byte(ys >> 8))
+    Spi.SpiWrite(Byte(ye))
+    Spi.SpiWrite(Byte(ye >> 8))
+    CmdEnd()
+    Cmd1(78, xb)
+    Cmd2(79, Byte(ys), Byte(ys >> 8))
+End Function
+
 ' Sets the RAM window to x..x+w-1 (x and w multiples of 8, w >= 8), y..y+h-1 and the RAM pointer to its first byte; the next bytes of a
 ' plane fill it row by row (x fastest). 44h = x/8 .. (x+w)/8-1, 45h = 295-y .. 295-(y+h-1), 4Eh / 4Fh = the start [8.4-8.6]. A window
 ' outside the display (x + w above 8 * bytes per row, y + h above the height) is ignored.
 Public Sub EpdWindow(ByVal x As Word, ByVal y As Word, ByVal w As Word, ByVal h As Word)
-    Dim xb As Byte
-    Dim xe As Byte
-    Dim ys As Word
-    Dim ye As Word
-    If Not ready Then
-        Exit
-    End If
-    If w = 0 Or h = 0 Or (x And 7) <> 0 Or (w And 7) <> 0 Then
-        Exit
-    End If
-    If x + w > 128 Or y + h > height Then
-        Exit
-    End If
-    xb = Byte(x >> 3)
-    xe = xb + Byte(w >> 3) - 1
-    ys = 295 - y
-    ye = 295 - (y + h - 1)
-    Cmd2(68, xb, xe)
-    CmdBegin(69)
-    Spi.SpiWrite(Byte(ys And 255))
-    Spi.SpiWrite(Byte(ys >> 8))
-    Spi.SpiWrite(Byte(ye And 255))
-    Spi.SpiWrite(Byte(ye >> 8))
-    CmdEnd()
-    Cmd1(78, xb)
-    Cmd2(79, Byte(ys And 255), Byte(ys >> 8))
+    Dim ok As Boolean
+    ok = SetWindow(x, y, w, h)
 End Sub
 
 ' Starts writing bytes into plane 0 (black / white, 24h) or 1 (red, 26h) of the window: follow with EpdPut for each byte and EpdEnd.
@@ -286,46 +302,40 @@ Public Sub EpdEnd()
     CmdEnd()
 End Sub
 
-' The two plane bytes for a colour: 0 white, 1 black, 2 red.
-Sub PlaneBytes(ByVal colour As Byte, ByRef bw As Byte, ByRef rd As Byte)
-    bw = 255
-    rd = 0
-    If colour = 1 Then
-        bw = 0
-    ElseIf colour = 2 And tri Then
-        rd = 255
-    ElseIf colour = 2 Then
-        bw = 0
+' The byte that fills plane `p` for a colour: 0 white, 1 black, 2 red. The black / white plane holds 1 = white; the red plane holds
+' 1 = red, and on a black / white panel it gets the same bytes as the black / white plane.
+Function PlaneByte(ByVal colour As Byte, ByVal p As Byte) As Byte
+    If p = 1 And tri Then
+        Result = 0
+        If colour = 2 Then
+            Result = 255
+        End If
+    Else
+        Result = 255
+        If colour = 1 Or (colour = 2 And Not tri) Then
+            Result = 0
+        End If
     End If
-    If Not tri Then
-        rd = bw
-    End If
-End Sub
+End Function
 
 ' Fills the window x, y, w, h (as EpdWindow) with a colour.
 Public Sub EpdFillRect(ByVal x As Word, ByVal y As Word, ByVal w As Word, ByVal h As Word, ByVal colour As Byte)
-    Dim bw As Byte
-    Dim rd As Byte
     Dim n As Word
     Dim k As Word
     Dim p As Byte
-    If Not ready Or w = 0 Or h = 0 Or (x And 7) <> 0 Or (w And 7) <> 0 Or x + w > 128 Or y + h > height Then
-        Exit
-    End If
-    PlaneBytes(colour, bw, rd)
-    n = (w >> 3) * h
+    Dim v As Byte
+    n = Word(Byte(w) >> 3) * h
     p = 0
     While p < 2
-        EpdWindow(x, y, w, h)
+        If Not SetWindow(x, y, w, h) Then
+            Exit
+        End If
         EpdBegin(p)
-        k = 0
-        While k < n
-            If p = 0 Then
-                Spi.SpiWrite(bw)
-            Else
-                Spi.SpiWrite(rd)
-            End If
-            Inc(k)
+        v = PlaneByte(colour, p)
+        k = n
+        While k > 0
+            Spi.SpiWrite(v)
+            Dec(k)
         Wend
         EpdEnd()
         Inc(p)
@@ -393,56 +403,60 @@ Public Sub EpdWriteChar(ByVal ch As Byte)
     Dim base As Word
     Dim r As Byte
     Dim i As Byte
-    Dim b As Byte
+    Dim fb As Byte
     Dim p As Byte
-    Dim cols As Byte
+    Dim am As Byte
+    Dim xm As Byte
     If Not ready Then
         Exit
     End If
-    cols = Byte(width >> 3)
-    If tCol >= cols Then
+    If tCol >= tCols Then
         tCol = 0
         Inc(tRow)
     End If
-    If (Word(tRow) + 1) * 8 > height Then
+    If tRow >= tRows Then
         Exit
     End If
-    r = 0
-    While r < 8
-        g(r) = 0
-        If ch >= 32 And ch <= 126 And r < 7 Then
-            base = Word(ch - 32) * 5
-            b = 0
-            i = 0
-            While i < 5
-                b = (b << 1) Or ((Font(base + i) >> r) And 1)
-                Inc(i)
+    ' g is zero (a local array is cleared at every entry), so a character outside 32..126 is a blank cell
+    ' the font is stored a column (5 bytes, bit r = row r) at a time: the rows get its bits, the first column most significant
+    If ch >= 32 And ch <= 126 Then
+        base = Word(ch - 32) * 5
+        i = 0
+        While i < 5
+            fb = Font(base + i)
+            r = 0
+            While r < 7
+                g(r) = (g(r) << 1) Or (fb And 1)
+                fb = fb >> 1
+                Inc(r)
             Wend
-            g(r) = b << 2
-        End If
-        Inc(r)
-    Wend
+            Inc(i)
+        Wend
+    End If
     p = 0
     While p < 2
-        EpdWindow(Word(tCol) * 8, Word(tRow) * 8, 8, 8)
+        ' the byte written is (row << 2 And am) Xor xm: the black / white plane holds the inverse of the glyph, or all ones for red
+        ' ink on a red panel; the red plane holds the glyph for red ink on a red panel and zeros for black ink; a black / white panel
+        ' gets the inverse in both planes
+        am = 255
+        xm = 255
+        If p = 0 Then
+            If ink = 2 And tri Then
+                am = 0
+            End If
+        ElseIf tri Then
+            xm = 0
+            If ink <> 2 Then
+                am = 0
+            End If
+        End If
+        If Not SetWindow(Word(tCol) * 8, Word(tRow) * 8, 8, 8) Then
+            Exit
+        End If
         EpdBegin(p)
         r = 0
         While r < 8
-            b = g(r)
-            If p = 0 Then
-                If ink = 2 And tri Then
-                    b = 255
-                Else
-                    b = Not b
-                End If
-            ElseIf tri Then
-                If ink <> 2 Then
-                    b = 0
-                End If
-            ElseIf ink = 2 Or ink = 1 Then
-                b = Not b
-            End If
-            Spi.SpiWrite(b)
+            Spi.SpiWrite(((g(r) << 2) And am) Xor xm)
             Inc(r)
         Wend
         EpdEnd()
@@ -451,6 +465,7 @@ Public Sub EpdWriteChar(ByVal ch As Byte)
     Inc(tCol)
 End Sub
 
+' Writes a string at the text position with EpdWriteChar.
 Public Sub EpdWrite(ByRefConst s As String(80))
     Dim i As Byte
     i = 0
