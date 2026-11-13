@@ -192,3 +192,90 @@ Public Function Random() As Word
     rndState = rndState Xor (rndState << 8)
     Result = rndState
 End Function
+
+' ---- Angles in binary radians: 256 steps to the turn --------------------------------------
+' An angle is a Byte: 0 is the +x axis, 64 a quarter turn (+y), 128 a half turn, 192 three quarters
+' (-y); one step is 1.40625 degrees. Sines and cosines are ShortInts scaled to +-127.
+
+' A quarter of a sine wave: round(127 * sin(i / 256 turns)) for i = 0..64.
+Private Const SinTab(65) As Byte = ( _
+    0, 3, 6, 9, 12, 16, 19, 22, 25, 28, 31, 34, 37, _
+    40, 43, 46, 49, 51, 54, 57, 60, 63, 65, 68, 71, 73, _
+    76, 78, 81, 83, 85, 88, 90, 92, 94, 96, 98, 100, 102, _
+    104, 106, 107, 109, 111, 112, 113, 115, 116, 117, 118, 120, 121, _
+    122, 122, 123, 124, 125, 125, 126, 126, 126, 127, 127, 127, 127)
+
+' atan(2^-i) in steps of 1/256 turn, rounded, for i = 0..6 (the angles BAtn turns the vector through).
+Private Const AtnTab(7) As Byte = (32, 19, 10, 5, 3, 1, 1)
+
+' BSin: 127 * sin(angle), within half a unit. BSin(64) = 127, BSin(192) = -127.
+Public Function BSin(ByVal angle As Byte) As ShortInt
+    Dim i As Byte
+    i = angle And 127
+    If i > 64 Then
+        i = 128 - i
+    EndIf
+    Result = ShortInt(SinTab(i))
+    If angle >= 128 Then
+        Result = -Result
+    EndIf
+End Function
+
+' BCos: 127 * cos(angle).
+Public Function BCos(ByVal angle As Byte) As ShortInt
+    Result = BSin(angle + 64)
+End Function
+
+' BAtn: the angle of the vector (x, y), in steps of 1/256 turn, within two steps; the angle of (0, 0) is not defined.
+' Seven rotations by shifts and adds (no divide), the vector held 5 bits up for the rounding.
+Public Function BAtn(ByVal x As ShortInt, ByVal y As ShortInt) As Byte
+    Dim px As Integer
+    Dim py As Integer
+    Dim t As Integer
+    Dim a As Byte
+    Dim i As Byte
+    px = x
+    py = y
+    a = 0
+    If px < 0 Then
+        px = -px
+        py = -py
+        a = 128
+    EndIf
+    px = px << 5
+    py = py << 5
+    For i = 0 To 6
+        t = px
+        If py > 0 Then
+            px = px + (py >> i)
+            py = py - (t >> i)
+            a = a + AtnTab(i)
+        Else
+            px = px - (py >> i)
+            py = py + (t >> i)
+            a = a - AtnTab(i)
+        EndIf
+    Next
+    Result = a
+End Function
+
+' BHyp: sqrt(x * x + y * y), rounded down (0 to 181).
+Public Function BHyp(ByVal x As ShortInt, ByVal y As ShortInt) As Byte
+    Dim ax As Byte
+    Dim ay As Byte
+    Dim n As Word
+    Dim bt As Byte
+    Dim t As Byte
+    ax = Byte(Abs(Integer(x)))
+    ay = Byte(Abs(Integer(y)))
+    n = Word(ax) * ax + Word(ay) * ay
+    Result = 0
+    bt = 128
+    While bt <> 0
+        t = Result + bt
+        If Word(t) * t <= n Then
+            Result = t
+        EndIf
+        bt = bt >> 1
+    Wend
+End Function

@@ -5491,7 +5491,7 @@ End If
 
 ## Category: Bits, maths and strings
 
-## bits  (`Include "bits"`, bit tests, rotates, decoding, integer square root, random numbers)
+## bits  (`Include "bits"`, bit tests, rotates, decoding, integer square root, random numbers, binary-radian trigonometry)
 
 Counterparts of the classic `ClearBit`, `Dcd`, `Dig`, `GetBit`, `ISqr`, `LoadBit`, `Ncd`, `Random`,
 `Rol`, `Ror`, `Seed`, `SetBit` and `Swap` commands. Spelling differs where the original does not
@@ -5500,6 +5500,86 @@ fit: the original changes its argument in place, basil's routines **return the n
 `LongWord` forms are overloads of one name: the argument's type picks the form, so write
 `SetBit(Byte(0), 5)` when the argument is a bare constant. A bit number past the top of the type
 changes nothing and reads as 0.
+
+`BSin`, `BCos`, `BAtn` and `BHyp` are 8-bit integer trigonometry for small, fast jobs (a lookup table, a heading, a vector length). Angles are
+*binary radians*: one `Byte`, 256 steps to the turn. They are not the build-time `Sin` and `Cos`, which take radians and give a `Float`.
+
+### BAtn
+
+**Syntax**
+```basic
+a = BAtn(x, y)
+```
+**Overview** The angle of the vector from the origin to (`x`, `y`), in binary radians (see `BSin`): 0 along +x, 64 along +y, 128 along -x, 192 along -y.
+
+**Parameters** `x` and `y` are `ShortInt`s.
+
+**Returns** A `Byte`, within 2 steps (2.8 degrees) of the true angle; the axes come out within 1 step. The angle of (0, 0) is not defined.
+
+**Example**
+```basic
+a = BAtn(100, 100)        ' 33 (the true value is 32, 45 degrees)
+a = BAtn(0, 127)          ' 63
+```
+**Notes** Seven rotations by shifts and adds, no divide: 140 words on the PIC18F27Q10, 196 on the PIC16F18346.
+
+### BCos
+
+**Syntax**
+```basic
+c = BCos(angle)
+```
+**Overview** 127 times the cosine of `angle`, in binary radians (see `BSin`); `BSin(angle + 64)`.
+
+**Parameters** `angle` is a `Byte`.
+
+**Returns** A `ShortInt`, -127 to 127.
+
+**Example**
+```basic
+c = BCos(0)               ' 127
+c = BCos(128)             ' -127
+```
+**Notes** 62 words on the PIC18F27Q10 with the table of `BSin`, which both share.
+
+### BHyp
+
+**Syntax**
+```basic
+h = BHyp(x, y)
+```
+**Overview** The length of the vector (`x`, `y`): the square root of `x * x + y * y`, rounded down.
+
+**Parameters** `x` and `y` are `ShortInt`s.
+
+**Returns** A `Byte`, 0 to 181.
+
+**Example**
+```basic
+h = BHyp(3, 4)            ' 5
+h = BHyp(-128, -128)      ' 181
+```
+**Notes** Eight trial squares of a `Byte`: 71 words on the PIC18F27Q10 (which has the hardware multiply), 239 on the PIC16F18346 (software multiply).
+
+### BSin
+
+**Syntax**
+```basic
+s = BSin(angle)
+```
+**Overview** 127 times the sine of `angle`, with the angle in binary radians: 256 steps to the turn (one step is 1.40625 degrees, 64 is a quarter turn).
+
+**Parameters** `angle` is a `Byte`; it wraps round at 256, so any `Byte` is an angle.
+
+**Returns** A `ShortInt`, -127 to 127, within half a unit of 127 times the sine.
+
+**Example**
+```basic
+s = BSin(64)              ' 127
+s = BSin(192)             ' -127
+s = BSin(32)              ' 90 (45 degrees)
+```
+**Notes** A 65-byte table of a quarter wave and two folds: 60 words on the PIC18F27Q10, 94 on the PIC16F18346. The build-time `Sin` and `Cos` (floating point, radians) are unchanged.
 
 ### ClearBit
 
@@ -5820,7 +5900,7 @@ reports these rather than miscompiling them.
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
 | `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
-| `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*) |
+| `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*); the 8-bit run-time forms are `BSin`, `BCos`, `BAtn` and `BHyp` of the `bits` module (angles in 256 steps to the turn) |
 | `Tan`, `Log`, `Log10`, `Exp` | `FTan`, `FLog`, `FLog10`, `FExp` of the `fmath` module (also `FSqr`, `FSin`, `FCos`, `FPow`) |
 | `Div32`, `@`, `?` | not available |
 | `Len`, `Left$`, `Mid$`, `Right$`, `Str$` | `Len(s)` of the `strings` module; `Left$`, `Mid$`, `Right$`, `Str$` as expressions (zero-based positions) and `Left`, `Mid`, `Right`, `Str` as statements; string arrays are `Dim s(3) As String(8)` |

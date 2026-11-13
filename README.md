@@ -115,7 +115,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `rtccspi` | Microchip SPI RTCCs (MCP7951x/7952x, MCP795W1x/2x): the same, plus hundredths, watchdog and event detection |
 | `lcd` | HD44780 character LCD, 4-bit: text, numbers, cursor, custom characters |
 | `oled` | SSD1309 128 x 64 OLED over I2C or SPI: text (5 x 7 font), bitmaps, pixel/line/rectangle drawing in a frame buffer, fill, contrast, invert, flip |
-| `bits` | `SetBit`, `ClearBit`, `GetBit`, `Rol`, `Ror`, `Dcd`, `Ncd`, `ISqr`, `Random` ... on Byte, Word and LongWord |
+| `bits` | `SetBit`, `ClearBit`, `GetBit`, `Rol`, `Ror`, `Dcd`, `Ncd`, `ISqr`, `Random`, `BSin`, `BCos`, `BAtn`, `BHyp` ... on Byte, Word and LongWord |
 | `buttons` | `Counter` (pulse counting) and `Button` (debounced, auto-repeat) |
 | `glcd` | graphic LCDs: KS0108, T6963C (also dual scan) and ST7920 (8-bit, 4-bit or serial): pixels, lines, boxes, circles, bytes, text and numbers |
 | `epaper` | WeAct 2.13" and 2.9" e-paper (SSD1680, black / white or black / white / red) over SPI: rectangles, text, bitmap windows, refresh, sleep |
