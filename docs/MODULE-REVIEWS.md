@@ -49,6 +49,7 @@ fixed in the module.
 | 26 | `x10` | reviewed (0.1.212) | all-routines probe 768 → 741 (18F27Q10, 18F16Q41), 952 → 929 (16F17146, 16F18346) |
 | 27 | `irremote` | reviewed (0.1.213) | all-routines probe 436 → 357 (18F27Q10, 18F16Q41), 533 → 444 (16F17146) |
 | 28 | `epaper` | reviewed (0.1.214) | all-routines probe 1390 → 1167 (18F27Q10, 18F16Q41), 1950 → 1753 (16F17146); `lib_epaper` 2515 → 2307 (18F27Q10) |
+| 29 | `glcd` | reviewed (0.1.215) | all-routines probe 4653 → 4354 (18F27Q10, 18F16Q41), 6715 → 6432 (16F17146) |
 | … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -744,6 +745,19 @@ Probe calls every public routine with run-time arguments: 18F27Q10 and 18F16Q41 
 - **Left:** the font (475 bytes, 238 words) and the SPI calls themselves; a window outside the display is still tested with 16-bit sums, which wrap for an `x` or `y` near 65535 as before.
 - **Tests:** `tests/exec_epaper/lib_epaper` (the whole command stream, plane contents, text, wrap, windows, red ink, sleep and wake, 2.13" and no-pin cases) passes unchanged on 18F27Q10, 18F16Q41, 16F17146 and 16F18346.
 
+## 29. `glcd` (done 2026-11-13, 0.1.215)
+
+Probe calls every public routine with run-time arguments, all three controllers initialised in one program: 18F27Q10 and 18F16Q41 4653 → 4354 words, 16F17146 6715 → 6432.
+
+- **One read cycle per controller**: `KsIn(isData)` for `KsStatus` and `KsRead`, `TIn(cd)` for `TStatus` and `TReadData` (the two pairs differed only in the RS / C/D level).
+- **One digit routine**: `Digits(v, first)` over the `Pow10` LongWord table serves `GlcdWriteWord` (from index 5) and `GlcdWriteLong` (from 0); the table entry is read once per digit and the digit is built as its character. The Word-only loop with its `If` chain for the next power is gone. A program that writes only Words now links the 32-bit routine, a little slower per digit than before.
+- **`TPoint(x, y)`** points the address pointer and returns the bit with one division by the font width (`TByteAddr` and `TBit` each divided).
+- **`WrapText`** is the line and screen wrap of `GlcdWriteChar` and `GlcdWriteCode`; `cols` is now set by every init (21 for the KS0108 and folded ST7920, 42 unfolded), so the text width no longer costs a division by 6 per character.
+- **`Drive(pin, level)`** (set, then make an output) for `MakeOutputs` and `ResetPulse`; **`SCmd(v, us)`** for the ST7920 start-up instructions and their waits; **`HexDigit`** for the two hex digits.
+- **Tried and dropped:** the two bytes of a graphic RAM word as an array indexed by `(x >> 3) And 1` instead of `wHi` / `wLo`: 15 words larger.
+- **Left:** `SGlyph` and `Splice` (the ST7920's six-pixel cells straddling 16-bit words), the 475-byte font, and the clear loops, which are the display's own timing.
+- **Tests:** the three model suites (`tests/exec_glcd_ks`, `_t69`, `_st79`) pass optimised and at `-O0`, and `lib_glcd` on 18F27Q10, 18F16Q41, 16F17146 and 16F18346. `lib_glcd_ks` also writes `10050`, `0` and `AB` and checks the glyph column of each cell (passes on the old library too).
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `glcd`, `intosc`, `pulse`; `irremote` and `epaper` are done).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `intosc` and `pulse`; `glcd`, `irremote` and `epaper` are done).

@@ -1,4 +1,4 @@
-' expect: GK_BAD1=0 GK_BAD2=0 GK_BAD3=0 GK_OK=1 GK_ON0=1 GK_ON1=1 GK_CLR=0 GK_R1=4 GK_R2=128 GK_P1=1 GK_P2=0 GK_P3=1 GK_P4=0 GK_R3=0 GK_LINE=101 GK_LINETO=81 GK_BOX=36 GK_CIRC=112 GK_CLIP=25 GK_ERASE=0 GK_B1=3 GK_RB1=3 GK_B2=170 GK_RB2=170 GK_A0=124 GK_A1=18 GK_A3=124 GK_A5=0 GK_I1=72 GK_X1=64 GK_X2=128 GK_X3=122 GK_C0=0 GK_BB=126 GK_W1=68 GK_WRAP=124 GK_DONE=1
+' expect: GK_BAD1=0 GK_BAD2=0 GK_BAD3=0 GK_OK=1 GK_ON0=1 GK_ON1=1 GK_CLR=0 GK_R1=4 GK_R2=128 GK_P1=1 GK_P2=0 GK_P3=1 GK_P4=0 GK_R3=0 GK_LINE=101 GK_LINETO=81 GK_BOX=36 GK_CIRC=112 GK_CLIP=25 GK_ERASE=0 GK_B1=3 GK_RB1=3 GK_B2=170 GK_RB2=170 GK_A0=124 GK_A1=18 GK_A3=124 GK_A5=0 GK_I1=72 GK_X1=64 GK_X2=128 GK_X3=122 GK_C0=0 GK_BB=126 GK_W1=68 GK_WRAP=124 GK_D0=68 GK_D1=60 GK_D2=60 GK_D3=74 GK_D4=60 GK_HX0=18 GK_HX1=74 GK_Z=60 GK_DONE=1
 ' Runs the `Glcd` KS0108 backend against a model of two KS0108 chips (the `pinio.bas` next to this file is the model).
 Program Gk
 Device = 18F27Q10
@@ -42,6 +42,14 @@ Dim c0 As Byte
 Dim bb As Byte
 Dim w1 As Byte
 Dim wrap As Byte
+Dim d0 As Byte
+Dim d1 As Byte
+Dim d2 As Byte
+Dim d3 As Byte
+Dim d4 As Byte
+Dim hx0 As Byte
+Dim hx1 As Byte
+Dim z As Byte
 Dim done As Byte
 Pinio.Wire(0, 1, 2, 3, 4, 1)
 Pinio.Fill(255)
@@ -111,4 +119,20 @@ Glcd.GlcdTextAt(20, 0)
 Glcd.GlcdWriteChar(65)
 Glcd.GlcdWriteChar(65)
 wrap = Pinio.Ram(64)
+' Digits with zeros inside, a lone zero, and two hex digits (second column byte of each 6-wide cell, page 4, 5 and 6).
+Glcd.GlcdClear()
+Glcd.GlcdTextAt(0, 4)
+Glcd.GlcdWriteWord(10050)
+d0 = Pinio.Ram(257)
+d1 = Pinio.Ram(263)
+d2 = Pinio.Ram(269)
+d3 = Pinio.Ram(275)
+d4 = Pinio.Ram(281)
+Glcd.GlcdTextAt(0, 5)
+Glcd.GlcdWriteHex(171)
+hx0 = Pinio.Ram(321)
+hx1 = Pinio.Ram(327)
+Glcd.GlcdTextAt(0, 6)
+Glcd.GlcdWriteWord(0)
+z = Pinio.Ram(385)
 done = 1

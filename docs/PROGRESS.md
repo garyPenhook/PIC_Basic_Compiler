@@ -1451,3 +1451,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## epaper module review (done 2026-11-13, 0.1.214)
 - `lib/epaper.bas`: one `SetWindow`, `PlaneByte` for `PlaneBytes`, `EpdWriteChar` reads each font byte once with per-plane masks, table-driven `Setup`, one `Pause`. All-routines probe 18F27Q10 / 18F16Q41 1390 -> 1167, 16F17146 1950 -> 1753 words. See MODULE-REVIEWS section 28.
+
+## glcd module review (done 2026-11-13, 0.1.215)
+- `lib/glcd.bas`: one read cycle per controller (`KsIn`, `TIn`), one `Digits` routine for `GlcdWriteWord` and `GlcdWriteLong`, `TPoint`, `WrapText` with `cols` set by every init, `Drive`, `SCmd`, `HexDigit`. All-routines probe 18F27Q10 / 18F16Q41 4653 -> 4354, 16F17146 6715 -> 6432 words. `lib_glcd_ks` checks multi-digit and hex output. See MODULE-REVIEWS section 29.

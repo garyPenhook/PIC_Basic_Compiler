@@ -160,20 +160,21 @@ Sub Pulse(ByVal pin As Byte)
     Pinio.PinSet(pin, False)
 End Sub
 
+' Sets `pin` to `level`, then makes it an output.
+Sub Drive(ByVal pin As Byte, ByVal level As Boolean)
+    Pinio.PinSet(pin, level)
+    Pinio.PinOutput(pin)
+End Sub
+
 Sub MakeOutputs(ByVal count As Byte, ByVal idle As Boolean)
-    Pinio.PinSet(pA, False)
-    Pinio.PinOutput(pA)
-    Pinio.PinSet(pB, idle)
-    Pinio.PinOutput(pB)
-    Pinio.PinSet(pC, idle)
-    Pinio.PinOutput(pC)
+    Drive(pA, False)
+    Drive(pB, idle)
+    Drive(pC, idle)
     If count > 3 Then
-        Pinio.PinSet(pD, idle)
-        Pinio.PinOutput(pD)
+        Drive(pD, idle)
     End If
     If count > 4 Then
-        Pinio.PinSet(pE, idle)
-        Pinio.PinOutput(pE)
+        Drive(pE, idle)
     End If
     If smode = 1 Then
         Pinio.PortDigitalHigh(pData)
@@ -188,8 +189,7 @@ End Sub
 Sub ResetPulse()
     DelayMS(50)
     If pRst <> 255 Then
-        Pinio.PinSet(pRst, True)
-        Pinio.PinOutput(pRst)
+        Drive(pRst, True)
         Pinio.PinSet(pRst, False)
         DelayUS(20)
         Pinio.PinSet(pRst, True)
@@ -212,9 +212,10 @@ Sub KsSelect(ByVal chip As Byte)
     Pinio.PinSet(pE, b)
 End Sub
 
-Function KsStatus() As Byte
+' One read cycle: the status (`isData` False, busy flag DB7) or the data register.
+Function KsIn(ByVal isData As Boolean) As Byte
     Pinio.PortDirection(pData, True)
-    Pinio.PinSet(pA, False)
+    Pinio.PinSet(pA, isData)
     Pinio.PinSet(pB, True)
     Pinio.PinSet(pC, True)
     DelayUS(1)
@@ -226,7 +227,7 @@ End Function
 Sub KsWait()
     Dim n As Byte
     n = 200
-    While n > 0 And (KsStatus() And 128) <> 0
+    While n > 0 And (KsIn(False) And 128) <> 0
         Dec(n)
     Wend
 End Sub
@@ -242,13 +243,7 @@ End Sub
 
 Function KsRead() As Byte
     KsWait()
-    Pinio.PortDirection(pData, True)
-    Pinio.PinSet(pA, True)
-    Pinio.PinSet(pB, True)
-    Pinio.PinSet(pC, True)
-    DelayUS(1)
-    Result = Pinio.PortRead(pData)
-    Pinio.PinSet(pC, False)
+    Result = KsIn(True)
 End Function
 
 ' Selects chip 0 or 1 and points it at (page, column 0..63).
@@ -260,9 +255,10 @@ End Sub
 
 ' ---- T6963C: pA = C/D, pB = WR, pC = RD, pD = CE ----
 
-Function TStatus() As Byte
+' One read cycle: the status (`cd` True) or the data register.
+Function TIn(ByVal cd As Boolean) As Byte
     Pinio.PortDirection(pData, True)
-    Pinio.PinSet(pA, True)
+    Pinio.PinSet(pA, cd)
     Pinio.PinSet(pC, False)
     Pinio.PinSet(pD, False)
     DelayUS(1)
@@ -275,7 +271,7 @@ End Function
 Sub TWait(ByVal mask As Byte)
     Dim n As Byte
     n = 200
-    While n > 0 And (TStatus() And mask) <> mask
+    While n > 0 And (TIn(True) And mask) <> mask
         Dec(n)
     Wend
 End Sub
@@ -303,14 +299,7 @@ End Sub
 
 Function TReadData() As Byte
     TWait(3)
-    Pinio.PortDirection(pData, True)
-    Pinio.PinSet(pA, False)
-    Pinio.PinSet(pC, False)
-    Pinio.PinSet(pD, False)
-    DelayUS(1)
-    Result = Pinio.PortRead(pData)
-    Pinio.PinSet(pC, True)
-    Pinio.PinSet(pD, True)
+    Result = TIn(False)
 End Function
 
 Sub TCmd1(ByVal c As Byte, ByVal d As Byte)
@@ -338,9 +327,12 @@ Function TRowAddr(ByVal y As Word) As Word
     End If
 End Function
 
-' Address of the graphic byte holding pixel x of row y, and the bit of it.
-Function TByteAddr(ByVal x As Word, ByVal y As Word) As Word
-    Result = TRowAddr(y) + x / fw
+' Points the address pointer at the graphic byte holding pixel x of row y and returns the bit of it.
+Function TPoint(ByVal x As Word, ByVal y As Word) As Byte
+    Dim q As Word
+    q = x / fw
+    TAddr(TRowAddr(y) + q)
+    Result = fw - 1 - Byte(x - q * fw)
 End Function
 
 ' Address of the text cell (tCol, tRow); rows below the upper screen are on the lower one.
@@ -353,12 +345,6 @@ Function TTextAddr() As Word
         Result = Result + 32768
     End If
     Result = Result + r * cols + tCol
-End Function
-
-Function TBit(ByVal x As Word) As Byte
-    Dim q As Word
-    q = x / fw
-    Result = fw - 1 - Byte(x - q * fw)
 End Function
 
 ' ---- ST7920: pA = RS (CS in serial mode), pB = R/W (SID), pC = E (SCLK) ----
@@ -687,6 +673,7 @@ Public Function GlcdInitKs0108(ByVal bus As Byte, ByVal rs As Byte, ByVal rw As 
     csHigh = selHigh
     xres = 128
     yres = 64
+    cols = 21
     MakeOutputs(5, False)
     ResetPulse()
     ' Display on and start line 0 on both chips, then clear.
@@ -769,6 +756,12 @@ Sub SendNibble(ByVal v As Byte)
     Pulse(pC)
 End Sub
 
+' One start-up instruction and the wait after it.
+Sub SCmd(ByVal v As Byte, ByVal us As Byte)
+    SWrite(False, v)
+    DelayUS(us)
+End Sub
+
 Function St7920Init(ByVal mode As Byte, ByVal bus As Byte, ByVal rs As Byte, ByVal rw As Byte, ByVal en As Byte, ByVal rst As Byte, ByVal isFolded As Boolean) As Byte
     Dim busPins As Byte
     Result = 0
@@ -785,8 +778,10 @@ Function St7920Init(ByVal mode As Byte, ByVal bus As Byte, ByVal rs As Byte, ByV
     smode = mode
     folded = isFolded
     xres = 256
+    cols = 42
     If isFolded Then
         xres = 128
+        cols = 21
     End If
     yres = 64
     MakeOutputs(3, False)
@@ -797,19 +792,14 @@ Function St7920Init(ByVal mode As Byte, ByVal bus As Byte, ByVal rs As Byte, ByV
         ' controller that starts in the 8-bit mode over to the 4-bit mode.
         SendNibble(32)
         DelayUS(150)
-        SWrite(False, 32)
-        DelayUS(150)
-        SWrite(False, 32)
-        DelayUS(150)
+        SCmd(32, 150)
+        SCmd(32, 150)
     Else
         ' The 8-bit initialisation of [p.34].
-        SWrite(False, 48)
-        DelayUS(150)
-        SWrite(False, 48)
-        DelayUS(50)
+        SCmd(48, 150)
+        SCmd(48, 50)
     End If
-    SWrite(False, 12)
-    DelayUS(150)
+    SCmd(12, 150)
     SWrite(False, 1)
     DelayMS(12)
     SWrite(False, 6)
@@ -870,8 +860,7 @@ Sub PutPixel(ByVal x As Word, ByVal y As Word, ByVal on As Boolean)
         End If
         KsWrite(True, v)
     ElseIf kind = 2 Then
-        TAddr(TByteAddr(x, y))
-        b = TBit(x)
+        b = TPoint(x, y)
         If on Then
             b = b Or 248
         Else
@@ -901,6 +890,7 @@ End Sub
 
 Sub GetPixelBit(ByVal x As Word, ByVal y As Word, ByRef isSet As Boolean)
     Dim v As Byte
+    Dim b As Byte
     Dim w As Byte
     Dim row As Byte
     isSet = False
@@ -910,10 +900,10 @@ Sub GetPixelBit(ByVal x As Word, ByVal y As Word, ByRef isSet As Boolean)
         v = KsRead()
         isSet = (v And (1 << Byte(y And 7))) <> 0
     ElseIf kind = 2 Then
-        TAddr(TByteAddr(x, y))
+        b = TPoint(x, y)
         TCmd(197)
         v = TReadData()
-        isSet = (v And (1 << TBit(x))) <> 0
+        isSet = (v And (1 << b)) <> 0
     ElseIf kind = 3 Then
         SMap(x, y, w, row)
         SGetWord(w, row)
@@ -1127,34 +1117,31 @@ Public Sub GlcdTextAt(ByVal col As Byte, ByVal row As Byte)
     tRow = row
 End Sub
 
+' A full line goes on to the next row, and the end of the display wraps to the top. `cols` is the text columns of every controller
+' (set at init: xres / 6, or xres / fontWidth for the T6963C).
+Sub WrapText()
+    If tCol >= cols Then
+        tCol = 0
+        Inc(tRow)
+    End If
+    If tRow >= Byte(yres >> 3) Then
+        tRow = 0
+    End If
+End Sub
+
 ' Draws one character (code 32..126, else '?') at the text position and advances it; a line that is full wraps to the next,
 ' and the end of the display wraps to the top.
 Public Sub GlcdWriteChar(ByVal ch As Byte)
     Dim base As Word
     Dim i As Byte
     Dim b As Byte
-    Dim perRow As Byte
-    Dim rows As Byte
     If kind = 0 Then
         Exit
     End If
     If ch < 32 Or ch > 126 Then
         ch = 63
     End If
-    If kind = 2 Then
-        perRow = cols
-        rows = Byte(yres >> 3)
-    Else
-        perRow = Byte(xres / 6)
-        rows = Byte(yres >> 3)
-    End If
-    If tCol >= perRow Then
-        tCol = 0
-        Inc(tRow)
-    End If
-    If tRow >= rows Then
-        tRow = 0
-    End If
+    WrapText()
     If kind = 2 Then
         TAddr(TTextAddr())
         TCmd1(192, ch - 32)
@@ -1184,58 +1171,37 @@ Public Sub GlcdWrite(ByRefConst s As String(80))
     Wend
 End Sub
 
-' Unsigned decimal, no leading zeros.
-Public Sub GlcdWriteWord(ByVal v As Word)
+Const Pow10(10) As LongWord = (1000000000, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10, 1)
+
+' Decimal digits of `v` from the power of ten at index `first` of Pow10, no leading zeros (the last digit is always sent).
+Sub Digits(ByVal v As LongWord, ByVal first As Byte)
     Dim started As Boolean
-    Dim d As Word
     Dim digit As Byte
+    Dim d As LongWord
     started = False
-    d = 10000
-    While d > 0
-        digit = 0
+    While first < 10
+        d = Pow10(first)
+        digit = 48
         While v >= d
             v = v - d
             Inc(digit)
         Wend
-        If digit > 0 Or started Or d = 1 Then
-            GlcdWriteChar(48 + digit)
+        If digit > 48 Or started Or first = 9 Then
+            GlcdWriteChar(digit)
             started = True
         End If
-        If d = 10000 Then
-            d = 1000
-        ElseIf d = 1000 Then
-            d = 100
-        ElseIf d = 100 Then
-            d = 10
-        ElseIf d = 10 Then
-            d = 1
-        Else
-            d = 0
-        End If
+        Inc(first)
     Wend
 End Sub
 
-Const Pow10(10) As LongWord = (1000000000, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10, 1)
+' Unsigned decimal, no leading zeros.
+Public Sub GlcdWriteWord(ByVal v As Word)
+    Digits(LongWord(v), 5)
+End Sub
 
 ' Unsigned decimal of 0..4294967295, no leading zeros.
 Public Sub GlcdWriteLong(ByVal v As LongWord)
-    Dim started As Boolean
-    Dim i As Byte
-    Dim digit As Byte
-    started = False
-    i = 0
-    While i < 10
-        digit = 0
-        While v >= Pow10(i)
-            v = v - Pow10(i)
-            Inc(digit)
-        Wend
-        If digit > 0 Or started Or i = 9 Then
-            GlcdWriteChar(48 + digit)
-            started = True
-        End If
-        Inc(i)
-    Wend
+    Digits(v, 0)
 End Sub
 
 ' Signed decimal of -32768..32767.
@@ -1258,19 +1224,19 @@ Public Sub GlcdWriteLongInt(ByVal v As LongInt)
     End If
 End Sub
 
+' One hexadecimal digit (upper case) of the low four bits of `h`.
+Sub HexDigit(ByVal h As Byte)
+    h = h And 15
+    If h > 9 Then
+        h = h + 7
+    End If
+    GlcdWriteChar(48 + h)
+End Sub
+
 ' Two hexadecimal digits (upper case).
 Public Sub GlcdWriteHex(ByVal v As Byte)
-    Dim h As Byte
-    h = v >> 4
-    If h > 9 Then
-        h = h + 7
-    End If
-    GlcdWriteChar(48 + h)
-    h = v And 15
-    If h > 9 Then
-        h = h + 7
-    End If
-    GlcdWriteChar(48 + h)
+    HexDigit(v >> 4)
+    HexDigit(v)
 End Sub
 
 ' Four hexadecimal digits.
@@ -1331,13 +1297,7 @@ Public Sub GlcdWriteCode(ByVal code As Byte)
     If kind <> 2 Then
         Exit
     End If
-    If tCol >= cols Then
-        tCol = 0
-        Inc(tRow)
-    End If
-    If tRow >= Byte(yres >> 3) Then
-        tRow = 0
-    End If
+    WrapText()
     TAddr(TTextAddr())
     TCmd1(192, code)
     Inc(tCol)
