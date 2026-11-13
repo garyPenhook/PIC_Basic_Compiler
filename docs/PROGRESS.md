@@ -1454,3 +1454,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## glcd module review (done 2026-11-13, 0.1.215)
 - `lib/glcd.bas`: one read cycle per controller (`KsIn`, `TIn`), one `Digits` routine for `GlcdWriteWord` and `GlcdWriteLong`, `TPoint`, `WrapText` with `cols` set by every init, `Drive`, `SCmd`, `HexDigit`. All-routines probe 18F27Q10 / 18F16Q41 4653 -> 4354, 16F17146 6715 -> 6432 words. `lib_glcd_ks` checks multi-digit and hex output. See MODULE-REVIEWS section 29.
+
+## intosc module review (done 2026-11-13, 0.1.216)
+- `lib/intosc.bas`: `FrqCode` from a `Const` table of speeds, `Apply` returns one boolean expression. Run-time probe 18F27Q10 152 -> 137, 16F17146 184 -> 173, 16F18056 149 -> 141, 16F15244 128 -> 120 words. New `tests/exec_p16/lib_intosc.bas`. See MODULE-REVIEWS section 30.

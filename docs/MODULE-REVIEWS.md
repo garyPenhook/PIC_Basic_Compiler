@@ -50,6 +50,7 @@ fixed in the module.
 | 27 | `irremote` | reviewed (0.1.213) | all-routines probe 436 → 357 (18F27Q10, 18F16Q41), 533 → 444 (16F17146) |
 | 28 | `epaper` | reviewed (0.1.214) | all-routines probe 1390 → 1167 (18F27Q10, 18F16Q41), 1950 → 1753 (16F17146); `lib_epaper` 2515 → 2307 (18F27Q10) |
 | 29 | `glcd` | reviewed (0.1.215) | all-routines probe 4653 → 4354 (18F27Q10, 18F16Q41), 6715 → 6432 (16F17146) |
+| 30 | `intosc` | reviewed (0.1.216) | run-time `SetClock` / `SetClockDiv` probe 152 → 137 (18F27Q10), 184 → 173 (16F17146), 149 → 141 (16F18056), 128 → 120 (16F15244) |
 | … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -758,6 +759,15 @@ Probe calls every public routine with run-time arguments, all three controllers 
 - **Left:** `SGlyph` and `Splice` (the ST7920's six-pixel cells straddling 16-bit words), the 475-byte font, and the clear loops, which are the display's own timing.
 - **Tests:** the three model suites (`tests/exec_glcd_ks`, `_t69`, `_st79`) pass optimised and at `-O0`, and `lib_glcd` on 18F27Q10, 18F16Q41, 16F17146 and 16F18346. `lib_glcd_ks` also writes `10050`, `0` and `AB` and checks the glyph column of each cell (passes on the old library too).
 
+## 30. `intosc` (done 2026-11-13, 0.1.216)
+
+The start-up code is register writes with the `Clock` constants folded in (nothing to save), so the review is of the run-time routines. Probe calls `SetClock` and `SetClockDiv` with run-time values: 18F27Q10 152 → 137 words, 16F17146 184 → 173, 16F18056 149 → 141, 16F15244 128 → 120.
+
+- **`FrqCode` searches a `Const` table** of the speeds (`MhzTab`, the OSCFRQ code is the index) instead of an `If` chain: one table per family (9 entries on the Q10, 6 on the PIC16F171xx, 152xx, 18056).
+- **`Apply` on the Q10 / 16F171xx** returns one boolean expression (`Settle() And first And ...`) instead of an `If` with a `False` branch; `Settle()` is still evaluated first.
+- **Left:** the `WaitSettle` poll loops (bounded, 16-bit counters) and the compile-time `#if` ladder of `ClockFrq` / `ClockDiv`.
+- **Tests:** `lib_intosc`, `lib_intosc_div` (18F27Q10), `tests/exec_p152` (16F15244) and `tests/exec_p180` (16F18056) pass. New `tests/exec_p16/lib_intosc.bas` (16F17146: start-up code, 8 / 12 / 32 MHz, divider) checks the OSCFRQ / OSCCON1 values; the simulator does not raise ORDY / HFOR for that part, so the `True` result of a switch is not checked there (the previous library returns `False` there too).
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `intosc` and `pulse`; `glcd`, `irremote` and `epaper` are done).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `pulse`; `intosc`, `glcd`, `irremote` and `epaper` are done).

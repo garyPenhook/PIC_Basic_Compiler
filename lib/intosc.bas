@@ -219,43 +219,29 @@ Private Function Apply(ByVal frq As Byte, ByVal shift As Byte) As Boolean
         OSCFRQ = frq
         OSCCON1 = NoscHf + shift
     End If
-    If Settle() And first Then
-        Result = (OSCCON2 = NoscHf + shift) And ((OSCFRQ And 15) = frq)
-    Else
-        Result = False
-    End If
+    Result = Settle() And first And (OSCCON2 = NoscHf + shift) And ((OSCFRQ And 15) = frq)
 End Function
+#endif
+
+' The speeds in MHz by OSCFRQ code (the code is the index).
+#if _has(OSCFRQ.HFFRQ)
+Const MhzTab(9) As Byte = (1, 2, 4, 8, 12, 16, 32, 48, 64)
+Const MhzN As Byte = 9
+#else
+Const MhzTab(6) As Byte = (1, 2, 4, 8, 16, 32)
+Const MhzN As Byte = 6
 #endif
 
 ' The OSCFRQ code for `mhz` (Q10: 1, 2, 4, 8, 12, 16, 32, 48 or 64; PIC16F171xx: 1, 2, 4, 8, 16 or 32), or 255 for any other value.
 Private Function FrqCode(ByVal mhz As Byte) As Byte
+    Dim i As Byte
     Result = 255
-    If mhz = 1 Then
-        Result = 0
-    ElseIf mhz = 2 Then
-        Result = 1
-    ElseIf mhz = 4 Then
-        Result = 2
-    ElseIf mhz = 8 Then
-        Result = 3
-#if _has(OSCFRQ.HFFRQ)
-    ElseIf mhz = 12 Then
-        Result = 4
-    ElseIf mhz = 16 Then
-        Result = 5
-    ElseIf mhz = 32 Then
-        Result = 6
-    ElseIf mhz = 48 Then
-        Result = 7
-    ElseIf mhz = 64 Then
-        Result = 8
-#else
-    ElseIf mhz = 16 Then
-        Result = 4
-    ElseIf mhz = 32 Then
-        Result = 5
-#endif
-    End If
+    For i = 0 To MhzN - 1
+        If MhzTab(i) = mhz Then
+            Result = i
+            Exit
+        End If
+    Next
 End Function
 
 ' Runs HFINTOSC at `mhz` divided by 2^shift (shift 0..9, so 1:1 to 1:512; the PIC16F152xx and PIC16F18056/76 have no divider, shift must be 0). False, and nothing changed,
