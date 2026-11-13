@@ -543,15 +543,18 @@ Ranked by words recovered across these programs and by how many real programs th
 
 | Priority | Item | Why this order |
 |---|---|---|
-| 1 | **X5, 16F copy forwarding and result coalescing** (copy forwarding and result retargeting done in 0.1.175; in-place evaluation left) (the 16F half of M1-M3 and M8) | The whole remaining 16F gap (+6.9%, +17% in r09, +35% in r08) and the largest cost in every 16F module review (`SetAddr`, `FlashWriteWord`, `EepromWrite`). Every 16F program gains, library or not. |
+| 1 | **X5, 16F copy forwarding and result coalescing** (done: copy forwarding and result retargeting in 0.1.175, dead temporary stores, ALU operand forwarding and zero-extended in-place operands in 0.1.219; the 16F is now 5.4 % under XC8 `-Os` on the random set, what is left is repeated code, X1) (the 16F half of M1-M3 and M8) | The whole remaining 16F gap (+6.9%, +17% in r09, +35% in r08) and the largest cost in every 16F module review (`SetAddr`, `FlashWriteWord`, `EepromWrite`). Every 16F program gains, library or not. |
 | 2 | **X3 and X6, in-place array update and parameters built in place** (PIC18) | The `eeprom` + `delay` programs are +18% to +34% on the PIC18 and these two are the statements they repeat. General, small, safe. |
 | 3 | **X4, 16F `EepromWrite` / `EepromRead`** | 75 / 40 words against 48 / 31; mostly closed by item 1, so re-measure after it before doing anything module-specific. |
 | 4 | **X2, 16 × 16 → 32 multiply** | 67 words for `__mul4` against 38; the saving is in any program that multiplies two Words into a LongWord, one helper at a time. |
 | 5 | **X7, RAM** | basil is above XC8 on most programs (49 against 36 in r07). Smaller effect on flash, but every program pays it and the small parts have little RAM. |
 | 6 | **X1, outlining repeated sequences** | A new pass, and the generator repeats statements on purpose, so these programs overstate it. Last, and measured on `bench/large` and the library tests first. |
 
-The next module reviews (`floatlib` onward) will keep finding gaps of the item 1 kind; fixing it first means their measurements start from the
-better 16F baseline.
+The module reviews (`floatlib` onward) found gaps of the item 1 kind; they are all done now (MODULE-REVIEWS).
+
+### Measured again with 0.1.219 (2026-11-13)
+
+The same 12 programs, XC8 v4.00, flash in words on the 16F18346: basil 5704, `-Os` 6028, `-O2` 7130, so basil is **-5.4 % against `-Os`** (0.1.172: +6.9 %, 0.1.218: -4.7 %). Per program against `-Os`: smaller in r01-r05, r10, r12 (-2.8 % to -16.0 %), level in r11, larger in r06 (+5.1 %), r07 (+2.9 %), r08 (+13.0 %), r09 (+4.2 %), the programs that repeat identical statements (X1, procedural abstraction in XC8). 16F library and test programs (65): 32 908 -> 32 647 words (-0.8 %, 28 smaller, none larger); `bench/large` on the 16F18346: a_algo 957 -> 911, b_dsp 1650 -> 1594, c_text 1014 -> 1005, d_ctrl 918 -> 891. PIC18: 224 programs, 247 899 -> 247 893.
 
 ## 12. Third review: whole compiler output, both cores (0.1.181, 2026-11-11)
 

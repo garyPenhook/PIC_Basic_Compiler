@@ -384,7 +384,8 @@ impl<'p> G<'p> {
                 _ => {}
             }
         }
-        let o = self.operand(r);
+        // A zero-extended operand that needs code is worked out at its own width (`crc = crc Xor data(i)` on a LongWord): the upper bytes are zero.
+        let o = self.operand_nz(r);
         for i in 0..n {
             let s = self.opd_byte(&o, i);
             match (op, &s) {

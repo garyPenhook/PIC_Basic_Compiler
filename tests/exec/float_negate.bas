@@ -1,5 +1,4 @@
 ' expect: NF_B0=3279945728 NF_L0=4294967040 NF_B1=3347054592 NF_L1=4294901760 NF_B2=3414163456 NF_L2=4278190080 NF_B3=3472883712 NF_L3=2147483648 NF_B4=3212836864 NF_L4=4294967295 NF_B5=3281387520 NF_L5=4294966996 NF_B6=3355443200 NF_L6=4294836224 NF_B7=3405774848 NF_L7=4286578688
-' devices: 18F27Q10
 ' Negative LongInt to Float and back where the low bytes are zero (the carry of the two's-complement negate runs through every byte), built at run time.
 Program Nf
 Device = 18F27Q10
@@ -31,7 +30,7 @@ Dim v6 As LongInt
 Dim b7 As LongWord
 Dim l7 As LongInt
 Dim v7 As LongInt
-x = PORTA
+x = PORTA Xor PORTA
 v0 = x
 v0 = v0 - 256
 b0 = FloatLib.FFromLong(v0)

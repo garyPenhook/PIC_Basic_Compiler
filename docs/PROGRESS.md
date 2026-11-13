@@ -1463,3 +1463,10 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## floatlib module review completed (2026-11-13, 0.1.218)
 - `lib/floatlib.bas`: `negf` in the two's-complement negate of `FFromLong` and `FToLong` (PIC18), -2 words each; `NEGF`'s carry measured in MDB (set only for 0). New `tests/exec/float_negate.bas`. See MODULE-REVIEWS section 10.
+
+## 16F code size: dead temporary stores, ALU operand forwarding, in-place zero-extended operands (done 2026-11-13, 0.1.219)
+- `byte_dead_paths` (the search behind `pass_dead_temp_stores`) followed too little: it gave up at a skip on STATUS, `decfsz`, a label it had already passed (an endless `bra` back to a loop top used up its budget), a flag skip over a non-branch, `Keep` markers, `bra` written as an instruction in a protected region, `addfsr`, and every call. It now follows all of these (a call cannot read the caller's temporary); the budget is 3000 items. Temporaries nobody reads are deleted (`movwf TMP+1` after `movwf TMP` in element updates, the high bytes of a product kept for a sum).
+- `pass_forward16` also rewrites `addwf` / `addwfc` / `subwf` / `subwfb` / `andwf` / `iorwf` / `xorwf` `TMP, w` to read the byte `TMP` was copied from (`buf(i) = buf(i) + i * x`: `moviw` / `addwf __C0, w` / `movwi`).
+- `pass_wreg` tracks the other bytes that hold what `WREG` holds (`movf r, w` / `movwf x`), so a second `movf r, w` is dropped.
+- `in_place` (codegen16) works a zero-extended operand out at its own width (`crc = crc Xor data(i)` on a LongWord: 51 -> 29 words in the probe, no clears and xors of zero bytes).
+- Random set on the 16F18346: 5746 -> 5704 words, 5.4 % under XC8 `-Os` (was 4.7 %). 65 16F programs 32 908 -> 32 647, none larger. New `tests/exec/p16_inplace_ops.bas` (also on the 16F parts) and `float_negate` added to the 16F portable list. See EFFICIENCY "Measured again with 0.1.219".

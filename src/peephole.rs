@@ -470,6 +470,11 @@ fn effect16(t: &str) -> Option<Eff> {
                 e.writes.push(l);
             }
         }
+        // `addfsr FSRn, k` changes only the pointer (no flag, no `WREG`).
+        "addfsr" if ops.len() == 2 => {
+            e.rmem.push(ops[0].to_string());
+            e.wmem.push(mem_of(ops[0]));
+        }
         "nop" | "movlb" | "movlp" => {}
         _ => return None,
     }
@@ -793,9 +798,12 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
     let mut dead = vec![false; items.len()];
     let keep = protected(items);
     let mut w = W::Unknown;
+    // Other compiler-placed bytes that hold what `WREG` holds (`movf r, w` / `movwf x` leaves both `r` and `x` equal to it).
+    let mut also: Vec<String> = Vec::new();
     for i in 0..items.len() {
         if keep[i] {
             w = W::Unknown;
+            also.clear();
             continue;
         }
         match &items[i] {
@@ -803,6 +811,7 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
             Item::Ins(t) => {
                 let Some(e) = effect(t) else {
                     w = W::Unknown;
+                    also.clear();
                     continue;
                 };
                 // `movf __A0, w` when W already holds __A0 (it was just stored there or loaded from there).
@@ -825,7 +834,7 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                         continue;
                     }
                     if let (Some(m), W::Mem(h) | W::Both(_, h)) = (&e.w_mem, &w)
-                        && m == h
+                        && (m == h || also.contains(m))
                         && env.is_plain(m)
                         && (e.flags_w == 0 || !flags_live(items, i, e.flags_w))
                     {
@@ -835,6 +844,18 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                 }
                 // New state.
                 let wrote_w = e.writes.contains(&Loc::W);
+                let prev_mem = match &w {
+                    W::Mem(h) | W::Both(_, h) => Some(h.clone()),
+                    _ => None,
+                };
+                if wrote_w {
+                    also.clear();
+                } else {
+                    also.retain(|a| !e.wmem.iter().any(|m| match m {
+                        Mem::Unknown => true,
+                        Mem::Sym(s) => s == a,
+                    }));
+                }
                 let mut next = if wrote_w {
                     match (&e.w_imm, &e.w_mem) {
                         (Some(k), _) => W::Imm(*k),
@@ -860,6 +881,21 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
                         _ => W::Mem(m.clone()),
                     };
                 }
+                // `movwf m` while `WREG` mirrors `h`: `h` and `m` both hold it now (only plain bytes; `m` is `next`'s byte).
+                if !wrote_w
+                    && let Some(m) = &e.w_mem
+                    && e.reads == [Loc::W]
+                    && env.is_plain(m)
+                    && e.wmem == [Mem::Sym(m.clone())]
+                {
+                    also.retain(|a| a != m);
+                    if let Some(h) = &prev_mem
+                        && h != m
+                        && env.is_plain(h)
+                    {
+                        also.push(h.clone());
+                    }
+                }
                 // A scratch register written by this instruction no longer matches W.
                 if let W::Mem(h) | W::Both(_, h) = &next
                     && let Some(n) = scratch(h)
@@ -881,7 +917,10 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
             // branch that is not taken leaves `WREG` alone; the target is a label, which forgets it.
             Item::Fence => {}
             Item::Br(cc, _) if *cc != Cc::Always => {}
-            _ => w = W::Unknown,
+            _ => {
+                w = W::Unknown;
+                also.clear();
+            }
         }
     }
     let changed = dead.iter().any(|&d| d);
@@ -4402,6 +4441,14 @@ fn pass_forward16(items: &mut [Item], env: &Env) -> bool {
                     edits.push((i, format!("movf {src}, w")));
                     read = Some(src.clone());
                 }
+                // An ALU operation that reads the copy and leaves its result in WREG (`addwf TMP, w`) reads the source instead.
+                if matches!(mn.as_str(), "addwf" | "addwfc" | "subwf" | "subwfb" | "andwf" | "iorwf" | "xorwf")
+                    && ops.len() == 2
+                    && matches!(ops[1].trim(), "w" | "0")
+                    && let Some((_, src)) = pairs.iter().find(|(a, b)| same_byte(env, a, ops[0].trim()) && reach16(env, b, ops[0].trim()))
+                {
+                    edits.push((i, format!("{mn} {src}, w")));
+                }
                 if e.wmem.contains(&Mem::Unknown) {
                     pairs.clear();
                     wsrc = None;
@@ -4596,11 +4643,12 @@ fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
     let label_at = |target: &str| items.iter().position(|x| matches!(x, Item::Label(l) if l == target));
     let mut work = vec![from];
     let mut seen = std::collections::HashSet::new();
-    let mut budget = 400usize;
+    let mut budget = 3000usize;
     while let Some(mut k) = work.pop() {
         if !seen.insert(k) {
             continue;
         }
+        let start = k;
         loop {
             if budget == 0 {
                 return false;
@@ -4608,7 +4656,14 @@ fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
             budget -= 1;
             let Some(it) = items.get(k) else { return false };
             match it {
-                Item::Comment(_) | Item::Label(_) | Item::Fence => {}
+                // A protected region's markers: the instructions inside are inspected like any other.
+                Item::Comment(_) | Item::Fence | Item::Keep(_) => {}
+                // A label already reached: that path was (or is being) searched (an unconditional jump back to a loop top).
+                Item::Label(_) => {
+                    if k != start && !seen.insert(k) {
+                        break;
+                    }
+                }
                 Item::Br(cc, target) => {
                     let Some(p) = label_at(target) else { return false };
                     if *cc == Cc::Always {
@@ -4621,7 +4676,24 @@ fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
                     if matches!(parse(t), Some((m, _)) if m == "return" || m == "retlw" || m == "retfie") {
                         break;
                     }
-                    let Some(e) = effect(t) else { return false };
+                    // An unconditional jump written as an instruction (inside a protected region) goes to its label like `Br`.
+                    if let Some((m, o)) = parse(t)
+                        && matches!(m.as_str(), "bra" | "goto")
+                        && o.len() == 1
+                    {
+                        let Some(p) = label_at(o[0].trim()) else { return false };
+                        k = p;
+                        continue;
+                    }
+                    // A skip instruction names one register and does not write a RAM byte other than `decfsz` / `incfsz`' own: `effect` does not describe
+                    // them on every core (nor the bit test of STATUS), so a skip is judged by its operand alone.
+                    let skip_op = parse(t).filter(|(m, _)| matches!(m.as_str(), "btfsc" | "btfss" | "decfsz" | "incfsz" | "dcfsnz" | "infsnz")).map(|(_, o)| o);
+                    if let Some(o) = &skip_op
+                        && o.first().is_none_or(|o0| same_byte(env, o0.trim(), sym))
+                    {
+                        return false;
+                    }
+                    let Some(e) = (if skip_op.is_some() { Some(Eff::default()) } else { effect(t) }) else { return false };
                     if e.rmem.iter().any(|m| same_byte(env, m, sym)) {
                         return false;
                     }
@@ -4638,6 +4710,25 @@ fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
                     } else if written {
                         break;
                     }
+                }
+                // A call cannot read a temporary of the routine that makes it (temporaries are never address-taken, and a callee's own are written
+                // before they are read): the search goes on past it.
+                Item::Call(_) if is_temp(sym) => {}
+                // A skip over a branch: both the branch target and the item after the branch are followed.
+                Item::SkipBr(ins, target) => {
+                    let Some((m, o)) = parse(ins) else { return false };
+                    if matches!(m.as_str(), "btfsc" | "btfss") && o.len() == 2 {
+                        if same_byte(env, o[0].trim(), sym) {
+                            return false;
+                        }
+                    } else {
+                        let Some(e) = effect(ins) else { return false };
+                        if e.rmem.iter().any(|m| same_byte(env, m, sym)) || e.wmem.iter().any(|m| matches!(m, Mem::Sym(x) if same_byte(env, x, sym))) {
+                            return false;
+                        }
+                    }
+                    let Some(p) = label_at(target) else { return false };
+                    work.push(p);
                 }
                 _ => return false,
             }
