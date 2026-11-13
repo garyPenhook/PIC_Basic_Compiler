@@ -27,6 +27,62 @@ Public Sub WaitUs(ByVal us As Word)
     Wend
 End Sub
 
+' Half period, in 10 us ticks, of f Hz (50000 / f, at most 255); 0 below 197 Hz, which is silent.
+Private Function HalfTicks(ByVal f As Word) As Byte
+    Result = 0
+    If f >= 197 Then
+        Result = Byte(50000 / f)
+        If Result = 0 Then
+            Result = 1
+        End If
+    End If
+End Function
+
+' Two square waves from one 10 us time base for `ms` milliseconds: f1 on the data pin and f2 on the clock pin, or with `mix` both
+' exclusive-or'ed on the data pin.
+Private Sub TwoTone(ByVal ms As Word, ByVal f1 As Word, ByVal f2 As Word, ByVal mix As Boolean)
+    Dim h1 As Byte
+    Dim h2 As Byte
+    Dim c1 As Byte
+    Dim c2 As Byte
+    Dim l1 As Boolean
+    Dim l2 As Boolean
+    Dim ticks As LongWord
+    h1 = HalfTicks(f1)
+    h2 = HalfTicks(f2)
+    c1 = 0
+    c2 = 0
+    l1 = False
+    l2 = False
+    ticks = ms
+    ticks = ticks * 100
+    While ticks > 0
+        DelayUS(10)
+        If h1 > 0 Then
+            c1 = c1 + 1
+            If c1 >= h1 Then
+                c1 = 0
+                l1 = Not l1
+                Pinio.DataPut(l1 Xor (mix And l2))
+            End If
+        End If
+        If h2 > 0 Then
+            c2 = c2 + 1
+            If c2 >= h2 Then
+                c2 = 0
+                l2 = Not l2
+                If mix Then
+                    Pinio.DataPut(l1 Xor l2)
+                Else
+                    Pinio.ClkPut(l2)
+                End If
+            End If
+        End If
+        ticks = ticks - 1
+    Wend
+    Pinio.DataPut(False)
+End Sub
+
 ' Pulse of `period` units on pin, ending at the opposite of `level` (True = a high pulse). The pin is made an output.
 Public Sub PulseOut(ByVal pin As Byte, ByVal period As Word, ByVal level As Boolean)
     If Not Pinio.PinOk(pin) Then
@@ -56,36 +112,24 @@ End Sub
 ' (a wait of about 0.65 s for each of the three phases).
 Public Function PulseIn(ByVal pin As Byte, ByVal level As Boolean) As Word
     Dim n As Word
+    Dim phase As Byte
     Result = 0
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
     Pinio.BindData(pin)
     Pinio.PinInput(pin)
-    n = 0
-    While Pinio.DataRead() = level
-        DelayUS(10)
-        n = n + 1
-        If n = 0 Then
-            Exit
-        End If
-    Wend
-    n = 0
-    While Pinio.DataRead() <> level
-        DelayUS(10)
-        n = n + 1
-        If n = 0 Then
-            Exit
-        End If
-    Wend
-    n = 0
-    While Pinio.DataRead() = level
-        DelayUS(10)
-        n = n + 1
-        If n = 0 Then
-            Exit
-        End If
-    Wend
+    ' phase 0 waits out a pin already at `level`, phase 1 waits for it, phase 2 measures it
+    For phase = 0 To 2
+        n = 0
+        While Pinio.DataRead() = (level Xor (phase = 1))
+            DelayUS(10)
+            n = n + 1
+            If n = 0 Then
+                Exit
+            End If
+        Wend
+    Next
     Result = n
 End Function
 
@@ -114,7 +158,8 @@ End Function
 ' then the time for the pin to rise to a high level is measured with `RCin` and scaled: the result is
 ' (units * scale) / 256, at most 255. Find `scale` by reading once with scale = 255 at the largest resistance.
 Public Function Pot(ByVal pin As Byte, ByVal scale As Byte) As Byte
-    Dim t As LongWord
+    Dim t As Word
+    Dim h As Word
     Result = 0
     If Not Pinio.PinOk(pin) Then
         Exit
@@ -124,11 +169,12 @@ Public Function Pot(ByVal pin As Byte, ByVal scale As Byte) As Byte
     Pinio.PinOutput(pin)
     DelayMS(1)
     t = RCin(pin, False)
-    t = (t * scale) >> 8
-    If t > 255 Then
-        t = 255
+    ' (t * scale) >> 8 from the two bytes of t, so no 32-bit product
+    h = (t >> 8) * scale + (((t And 255) * scale) >> 8)
+    If h > 255 Then
+        h = 255
     End If
-    Result = Byte(t)
+    Result = Byte(h)
 End Function
 
 ' One servo pulse: pin high for `width` microseconds (500..2500, 1500 is centre), then low. The pin is made an
@@ -225,64 +271,16 @@ End Sub
 ' The two pins are driven from one 10 us time base, so the frequencies are rounded to a multiple of 10 us
 ' half periods and are exact only to about 10 %.
 Public Sub Sound2(ByVal pin1 As Byte, ByVal pin2 As Byte, ByVal f1 As Word, ByVal f2 As Word, ByVal ms As Word)
-    Dim h1 As Byte
-    Dim h2 As Byte
-    Dim c1 As Byte
-    Dim c2 As Byte
-    Dim l1 As Boolean
-    Dim l2 As Boolean
-    Dim ticks As LongWord
     If Not (Pinio.PinOk(pin1) And Pinio.PinOk(pin2)) Or pin1 = pin2 Then
         Exit
     End If
-    Pinio.BindData(pin1)
     Pinio.BindClk(pin2)
-    Pinio.DataPut(False)
     Pinio.ClkPut(False)
-    Pinio.PinOutput(pin1)
     Pinio.PinOutput(pin2)
-    ' half period in 10 us ticks: 50000 / f, at most 255 (about 196 Hz and up)
-    h1 = 0
-    h2 = 0
-    If f1 >= 197 Then
-        h1 = Byte(50000 / f1)
-        If h1 = 0 Then
-            h1 = 1
-        End If
-    End If
-    If f2 >= 197 Then
-        h2 = Byte(50000 / f2)
-        If h2 = 0 Then
-            h2 = 1
-        End If
-    End If
-    c1 = 0
-    c2 = 0
-    l1 = False
-    l2 = False
-    ticks = ms
-    ticks = ticks * 100
-    While ticks > 0
-        DelayUS(10)
-        If h1 > 0 Then
-            c1 = c1 + 1
-            If c1 >= h1 Then
-                c1 = 0
-                l1 = Not l1
-                Pinio.DataPut(l1)
-            End If
-        End If
-        If h2 > 0 Then
-            c2 = c2 + 1
-            If c2 >= h2 Then
-                c2 = 0
-                l2 = Not l2
-                Pinio.ClkPut(l2)
-            End If
-        End If
-        ticks = ticks - 1
-    Wend
+    Pinio.BindData(pin1)
     Pinio.DataPut(False)
+    Pinio.PinOutput(pin1)
+    TwoTone(ms, f1, f2, False)
     Pinio.ClkPut(False)
 End Sub
 
@@ -319,58 +317,11 @@ End Sub
 ' time base like `Sound2`: frequencies 197..32767 Hz are rounded to a whole number of 10 us half periods (exact only
 ' to about 10 %); a frequency below 197 Hz or 0 is silent.
 Public Sub Freqout(ByVal pin As Byte, ByVal ms As Word, ByVal f1 As Word, ByVal f2 As Word)
-    Dim h1 As Byte
-    Dim h2 As Byte
-    Dim c1 As Byte
-    Dim c2 As Byte
-    Dim l1 As Boolean
-    Dim l2 As Boolean
-    Dim ticks As LongWord
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
     Pinio.BindData(pin)
     Pinio.DataPut(False)
     Pinio.PinOutput(pin)
-    h1 = 0
-    h2 = 0
-    If f1 >= 197 Then
-        h1 = Byte(50000 / f1)
-        If h1 = 0 Then
-            h1 = 1
-        End If
-    End If
-    If f2 >= 197 Then
-        h2 = Byte(50000 / f2)
-        If h2 = 0 Then
-            h2 = 1
-        End If
-    End If
-    c1 = 0
-    c2 = 0
-    l1 = False
-    l2 = False
-    ticks = ms
-    ticks = ticks * 100
-    While ticks > 0
-        DelayUS(10)
-        If h1 > 0 Then
-            c1 = c1 + 1
-            If c1 >= h1 Then
-                c1 = 0
-                l1 = Not l1
-                Pinio.DataPut(l1 Xor l2)
-            End If
-        End If
-        If h2 > 0 Then
-            c2 = c2 + 1
-            If c2 >= h2 Then
-                c2 = 0
-                l2 = Not l2
-                Pinio.DataPut(l1 Xor l2)
-            End If
-        End If
-        ticks = ticks - 1
-    Wend
-    Pinio.DataPut(False)
+    TwoTone(ms, f1, f2, True)
 End Sub

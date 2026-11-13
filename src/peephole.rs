@@ -1608,6 +1608,17 @@ fn pass_hoist_movlb(items: &mut Vec<Item>) -> bool {
     false
 }
 
+/// Drops the statement ends between items `from` and `to`: the flags set at `from` now reach a branch past them, and no other pass lets flags
+/// live past a fence (`pass_wreg` drops a load of a byte `WREG` already holds when the flags are dead at the next fence, which would leave the branch
+/// reading stale flags).
+fn fences_dead(items: &[Item], from: usize, to: usize, dead: &mut [bool]) {
+    for n in from + 1..to {
+        if matches!(items[n], Item::Fence) {
+            dead[n] = true;
+        }
+    }
+}
+
 /// `movf s,w` / `movwf x` / `movf x,f`: the flags the first load set still describe `x`, so the
 /// test of `x` repeats them. Likewise `decf x,f` / `movf x,f` (`s = s - 1 : If s = 0`): an arithmetic or logic
 /// instruction that writes `x` has set Z (and on the PIC18 N) from the value `movf` would test, and leaves C alone
@@ -1638,6 +1649,7 @@ fn pass_repeat_test(items: &mut Vec<Item>, env: &Env) -> bool {
             && env.is_plain(ob[0])
         {
             dead[j] = true;
+            fences_dead(items, i, j, &mut dead);
         }
     }
     for w in real.windows(3) {
@@ -1651,6 +1663,7 @@ fn pass_repeat_test(items: &mut Vec<Item>, env: &Env) -> bool {
         let is_f = |o: &str| matches!(o, "f" | "1");
         if ma == "movf" && oa.len() >= 2 && is_w(oa[1]) && mb == "movwf" && !ob.is_empty() && mc == "movf" && oc.len() >= 2 && oc[0] == ob[0] && is_f(oc[1]) && env.is_plain(ob[0]) {
             dead[k] = true;
+            fences_dead(items, i, k, &mut dead);
         }
     }
     let changed = dead.iter().any(|&d| d);

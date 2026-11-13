@@ -1457,3 +1457,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## intosc module review (done 2026-11-13, 0.1.216)
 - `lib/intosc.bas`: `FrqCode` from a `Const` table of speeds, `Apply` returns one boolean expression. Run-time probe 18F27Q10 152 -> 137, 16F17146 184 -> 173, 16F18056 149 -> 141, 16F15244 128 -> 120 words. New `tests/exec_p16/lib_intosc.bas`. See MODULE-REVIEWS section 30.
+
+## pulse module review (done 2026-11-13, 0.1.217)
+- `lib/pulse.bas`: `Pot` multiplies in 16 bits, `PulseIn` one loop for three phases, `Sound2` and the two-frequency `Freqout` share `TwoTone` / `HalfTicks`. All-routines probe 18F27Q10 1339 -> 1212, 16F17146 1527 -> 1390 words; `Pot` alone 325 -> 254. Compiler: `pass_repeat_test` removes the statement ends it lets flags live across (a Boolean copy tested in the next statement read stale flags after `pass_wreg`); new `tests/exec/repeat_test_fence.bas`. See MODULE-REVIEWS section 31.

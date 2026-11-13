@@ -51,7 +51,8 @@ fixed in the module.
 | 28 | `epaper` | reviewed (0.1.214) | all-routines probe 1390 → 1167 (18F27Q10, 18F16Q41), 1950 → 1753 (16F17146); `lib_epaper` 2515 → 2307 (18F27Q10) |
 | 29 | `glcd` | reviewed (0.1.215) | all-routines probe 4653 → 4354 (18F27Q10, 18F16Q41), 6715 → 6432 (16F17146) |
 | 30 | `intosc` | reviewed (0.1.216) | run-time `SetClock` / `SetClockDiv` probe 152 → 137 (18F27Q10), 184 → 173 (16F17146), 149 → 141 (16F18056), 128 → 120 (16F15244) |
-| … | remaining modules | not started | |
+| 31 | `pulse` | reviewed (0.1.217) | all-routines probe 1339 → 1212 (18F27Q10), 1527 → 1390 (16F17146); `Pot` alone 325 → 254 (18F27Q10), 357 → 338 (16F17146); `PulseIn` alone 176 → 153, 213 → 176; compiler fix in `pass_repeat_test` |
+| … | remaining modules | none (`floatlib` partly reviewed) | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -768,6 +769,21 @@ The start-up code is register writes with the `Clock` constants folded in (nothi
 - **Left:** the `WaitSettle` poll loops (bounded, 16-bit counters) and the compile-time `#if` ladder of `ClockFrq` / `ClockDiv`.
 - **Tests:** `lib_intosc`, `lib_intosc_div` (18F27Q10), `tests/exec_p152` (16F15244) and `tests/exec_p180` (16F18056) pass. New `tests/exec_p16/lib_intosc.bas` (16F17146: start-up code, 8 / 12 / 32 MHz, divider) checks the OSCFRQ / OSCCON1 values; the simulator does not raise ORDY / HFOR for that part, so the `True` result of a switch is not checked there (the previous library returns `False` there too).
 
+## 31. `pulse` (done 2026-11-13, 0.1.217)
+
+Probe calls every public routine with run-time values (pin, level, widths from ports): 18F27Q10 1339 → 1212 words, 16F17146 1527 → 1390. Each change was also measured with one routine alone in a program, since a helper shared by two routines costs a call in each: a split was kept only when the program that uses one routine does not grow (`Sound2` and `Freqout` with two frequencies are 3 words larger alone on the PIC18, 4 smaller on the PIC16F17146, and 61 words smaller together).
+
+- **`Pot` multiplies in 16 bits**: `(t * scale) >> 8` is `(t >> 8) * scale + ((t And 255) * scale >> 8)`, exact for a 16-bit `t`, so the 32-bit product and shift go. `Pot` alone 325 → 254 (18F27Q10), 357 → 338 (16F17146).
+- **`PulseIn` is one loop run for three phases** (wait out the level, wait for it, measure it), the pin state to wait on being `level Xor (phase = 1)`, instead of three copies of the poll loop: 176 → 153 alone (18F27Q10), 213 → 176.
+- **`TwoTone` and `HalfTicks`**: `Sound2` and the two-frequency `Freqout` shared one tick loop (`mix` sends both waves, exclusive-or'ed, to the data pin; without it the second goes to the clock pin) and one half-period routine.
+- **Tried and dropped:** a shared `Wave` loop for `Sound` and `Freqout` (+13 and +12 words alone, no gain together), `OpenOut` / `OpenIn` helpers for the pin set-up (+3 to +6 alone), `Span` for the three poll loops of `PulseIn` and `RCin` (+5 and +6 alone).
+- **Left:** `WaitUs` (three loops of 100, 10 and 1 us), `PwmPin`, the noise generator of `Sound`.
+- **Tests:** `tests/exec/lib_pulse.bas` (18F27Q10) and the pin model suite `tests/exec_pins/lib_pins_model.bas` (pulse widths 299 / 124 / 100 / 200, pin write counts of every routine) pass; the 16F17146 library programs build smaller.
+
+### Compiler fix found by the review: `pass_repeat_test` across a statement end
+
+`Result = Ok(p) : If Result Then ...` with `Ok` inlined to a constant became `movlw 1 ; movwf R ; bz L`: `pass_repeat_test` had dropped the `movf R, f` after `movf Ok, w ; movwf R` (the first load's flags describe `R`), then `pass_wreg` dropped `movf Ok, w` because `WREG` already held the byte and the flags looked dead at the statement end between the store and the branch, so the branch read the flags of an earlier `clrf`. `pass_repeat_test` now also deletes the statement ends between the flag-setting instruction and the instruction it makes redundant, so every other pass sees the branch that reads the flags (`tests/exec/repeat_test_fence.bas`: the guarded call was skipped before). No size change over 130 programs apart from the pulse programs.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `pulse`; `intosc`, `glcd`, `irremote` and `epaper` are done).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Every other module in the list is done.
