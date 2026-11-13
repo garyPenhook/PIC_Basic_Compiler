@@ -680,6 +680,16 @@ Status as for `rtcc` (4 = `RtccspiInit` or `Spi` not done). Errata worked around
 
 Portable (no device registers); `tests/exec/lib_strings.bas` runs on the PIC18 and PIC16 parts.
 
+## format (numbers as text)
+| Routine | Effect |
+|---|---|
+| `FmtDec(n, width, fill)` | unsigned decimal (`Byte`, `Word`, `LongWord` overloads) into `FmtBuf`, padded to `width` with `fill` |
+| `FmtSDec(n, width, fill)` | signed decimal (`ShortInt`, `Integer`, `LongInt`); the sign counts in the width |
+| `FmtHex(n, digits)` / `FmtBin(n, digits)` | the low `digits` hexadecimal (at most 8) or binary (at most 32) digits, with leading zeros |
+
+`FmtBuf` is `Public Dim FmtBuf As String(32)`: pass it to `SerialWrite`, `LcdWrite`, `OledWrite` and the like. Portable (no device registers);
+`tests/exec/lib_format.bas` runs on the PIC18, 16F17146 and 16F15244 in the simulators (MDB).
+
 ## floatlib (Float arithmetic; included automatically)
 Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
 `+ - * /`, the six comparisons and the conversions into calls to `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong FToLong`

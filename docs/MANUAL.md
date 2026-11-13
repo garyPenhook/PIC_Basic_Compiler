@@ -45,7 +45,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 2. Language commands (in categories, alphabetical within each)
    - Branching and loops; Compiler and assembler; Delays; General; Math; Pin input and output
 3. Library modules (in categories, alphabetical within each)
-   - System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths and strings
+   - System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths, strings and formatting
 4. Diagnostics
 5. Appendix A: Alternative spellings and unsupported forms
 6. Appendix B: Test checklist
@@ -175,6 +175,32 @@ over the whole `tests/exec` suite). A build without `-g` carries none of this in
 The Basil simulator (`basil-sim`, `basil-sim-gui`) reads `prog.elf` beside `prog.hex` (or one folder up when the
 hex is in `dist/`): it needs no `prog.S`, shows the BASIC source with the executing line, steps by line, lists
 variables by name and type, and stops at `__halt`.
+
+### Running a program without hardware: `basil-sim`
+
+`basil-sim` is the command-line simulator of the separate `picsim` workspace (the window program, `pic-sim`, is
+for a person at a screen; scripts and tests use only `basil-sim`). It runs a `.hex` from reset, cycle exact, until
+`__halt` (or another symbol, or a cycle limit), then prints the stop line, serial text, pin and LED changes and the
+variables you ask for. Its exit status is 0 at the halt and 1 for a cycle limit or Sleep, so it works in scripts.
+It covers the PIC18F27Q10, the PIC18F0x/1xQ41 and the PIC16 enhanced mid-range parts basil builds for
+(the PIC16 path reports less: no SPI, I2C, pin or LED lines).
+
+```
+basil -g prog.bas                                         # prog.hex, prog.elf, prog.S
+basil-sim prog.hex --device 18F27Q10 --dump T_COUNT:2     # run to __halt, print the 2 bytes of T_COUNT
+basil-sim prog.hex --until T_LOOP --bp T_TICK --bp-max 5  # stop at a symbol, list five hits of another
+basil-sim prog.hex --stim board.toml --max-cycles 5000000 # drive pins, serial receive and ADC from a file
+basil-sim prog.hex --trace 1000-1100 --trace-regs WREG,STATUS   # every instruction of cycles 1000..1100
+```
+
+* `--device` names a file of `devices/` (`18F27Q10`, `18F16Q41`, `16F17146`); the part is not read from the `.elf`.
+* Variables are named by their assembly symbol (`basil --report` lists them: `T_COUNT`, `FORMAT_FMTBUF`).
+* The simulator is checked against the data sheets and, where one was possible, against MPLAB X's `mdb`; it has not
+  been compared with silicon. A peripheral without a model is plain storage, and the run ends with a
+  `note: unmodelled SFRs touched:` line naming the registers the program used.
+* `scripts/exec-test.py` uses it for the PIC18 programs of `tests/exec` (about 45 s for the whole set, against
+  minutes in `mdb`); the PIC16 parts and anything the model does not cover run in `mdb` (`--engine mdb`).
+* Its own manual is `picsim/docs/MANUAL.md` (options, the stimulus file, what is modelled).
 
 ### Debugging with the MPLAB X simulator (`mdb`)
 
@@ -2363,7 +2389,7 @@ first, as the language requires.
 
 ---
 
-Modules are grouped in categories, each alphabetical: System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths and strings.
+Modules are grouped in categories, each alphabetical: System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths, strings and formatting.
 
 ---
 
@@ -5507,6 +5533,36 @@ Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`,
 FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does when a program
 uses `Float`.
 
+## format  (`Include "format"`, numbers as text with a width, a fill and a radix)
+
+Fills the one shared `String` `FmtBuf` (32 characters and the `Null`), which you then pass to any routine that takes a
+`String`: `SerialWrite`, `LcdWrite`, `OledWrite`, `GlcdWrite`, an assignment, a comparison. The next call overwrites it, so
+use it before calling another `Fmt` routine, and not in a handler that interrupts a routine that is using it. One shared
+routine replaces the `Str` expansion at every call site, and the output modules need nothing new. The `Byte`, `Word` and
+`LongWord` forms (and the signed ones) are overloads of one name; a `Byte` pays for no 16-bit divide, and only the widths a
+program uses are compiled. A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and
+117 for a `LongWord` on the PIC18, start-up included.
+
+| Routine | Effect |
+|---|---|
+| `FmtDec(n, width, fill)` | unsigned decimal, at least `width` characters (0 to 32), padded on the left with the `Char` `fill` (`"0"` or `" "`); a longer number is never cut |
+| `FmtSDec(n, width, fill)` | the same for a signed number (`ShortInt`, `Integer`, `LongInt`); the minus sign counts in the width and comes before the zeros of a `"0"` fill and right before the digits of any other fill |
+| `FmtHex(n, digits)` | the low `digits` (0 to 8) hexadecimal digits, capitals, with leading zeros |
+| `FmtBin(n, digits)` | the low `digits` (0 to 32) binary digits, with leading zeros |
+
+```basic
+Include "format"
+Include "serial"
+FmtDec(w, 5, "0")          ' w = 42:  00042
+SerialWrite(FmtBuf)
+FmtSDec(t, 6, " ")         ' t = -42: "   -42"
+FmtHex(b, 2)               ' b = 42:  2A
+FmtBin(b, 8)               ' b = 5:   00000101
+```
+
+A width or digit count above the limit is taken as the limit. Portable (no device registers); `tests/exec/lib_format.bas`
+runs on the PIC18 and PIC16 parts.
+
 ## strings  (`Include "strings"`)
 
 `Len(s)` returns a `Byte`: the number of characters before the `Null` (0 for `Null` or an empty string, at most 255).
@@ -5575,7 +5631,7 @@ reports these rather than miscompiling them.
 | `Print`, `Cls`, `Cursor` on a character LCD | `lcd` module routines |
 | `Plot`, `UnPlot`, `Pixel`, `Line`, `LineTo`, `Box`, `Circle`, `LCDwrite`, `LCDread`, `Toshiba_Command`, `Toshiba_UDG`, graphic `Print` / `Cls` | `glcd` module (`GlcdPlot`, `GlcdUnplot`, `GlcdPixel`, `GlcdLine`, `GlcdLineTo`, `GlcdBox`, `GlcdCircle`, `GlcdWriteByte`, `GlcdReadByte`, `GlcdCommand`, `GlcdUdg`, `GlcdWrite`, `GlcdClear`); KS0108, T6963C and ST7920, `(x, y)` order |
 | `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines |
-| `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `SerialWriteWord`, `SerialWriteHex` only |
+| `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: `FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin` fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
 | `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
