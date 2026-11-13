@@ -1436,3 +1436,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## spi module review (done 2026-11-13, 0.1.209)
 - `lib/spi.bas`: one `SpiInit` for MSSP and SPI1, `SetPps` chain on every part (folds for constant pins), shorter clock arithmetic. `lib_spi` 357 -> 313 (18F27Q10), 120 -> 103 (Q41); `m4_spiflash` 470 -> 436; run-time-pin probe 16F17146 706 -> 659. New `lib_spi_pins`. See MODULE-REVIEWS section 23.
+
+## strings module review (done 2026-11-13, 0.1.210)
+- `point_fsr` (PIC18): a Byte index into a `ByRef` array or String is added to the pointer in W and written to FSRn (6 words, was 8 through `__A`). `Strings.Len` 17 -> 12 words; `str_slice_ref` 629 -> 559. See MODULE-REVIEWS section 24.

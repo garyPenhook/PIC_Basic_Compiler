@@ -1795,6 +1795,29 @@ impl<'p> Gen<'p> {
                 return;
             }
         }
+        // A Byte index (not scaled) into the array a `ByRef` parameter points at: `movf` index, `addwf` pointer low,
+        // `movwf` FSRnL, `movlw 0`, `addwfc` pointer high, `movwf` FSRnH; no `__A` and no `movff` pair.
+        if let Base::Ptr(v) = &p.base
+            && p.off == 0
+            && self.tgt.opt
+            && let Some(ix) = &p.idx
+            && let ExK::Conv(x) = &ix.k
+            && x.w == 8
+            && !x.signed
+        {
+            match self.simple(x) {
+                Some(s) => self.src_to_w(&s.byte(0)),
+                None => self.gen_val(x),
+            }
+            let m = self.mem_obj(*v, self.p.vars[*v].asm.clone());
+            let (fl, fh) = (self.sfr_mem(&format!("FSR{n}L")), self.sfr_mem(&format!("FSR{n}H")));
+            self.fop("addwf", &m, "w");
+            self.fo("movwf", &fl);
+            self.ins("movlw 0");
+            self.fop("addwfc", &m.at(1), "w");
+            self.fo("movwf", &fh);
+            return;
+        }
         // The pointee of a `ByRef` parameter itself (no index, no offset): the pointer goes straight to FSRn, not
         // through `__A`, so `pass_redundant_lfsr` can see a second access to it and drop the reload.
         if let Base::Ptr(v) = &p.base

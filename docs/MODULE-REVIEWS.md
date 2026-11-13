@@ -44,7 +44,8 @@ fixed in the module.
 | 21 | `rtccspi` | reviewed (0.1.207) | all-routines probe 1839 → 1812 (18F27Q10), 2700 → 2664 (16F17146), 1947 → 1922 (18F16Q41) |
 | 22 | `shift` | reviewed (0.1.208) | all-routines probe 570 → 524 (18F27Q10, 18F16Q41), 672 → 625 (16F17146) |
 | 23 | `spi` | reviewed (0.1.209) | constant-pin programs: `lib_spi` 357 → 313 (18F27Q10), 120 → 103 (Q41), 731 → 722 (16F18056); `m4_spiflash` 470 → 436; run-time-pin probe 706 → 659 (16F17146), 417 → 425 (18F27Q10), 459 → 475 (Q41) |
-| … | `strings` … `x10` | not started | |
+| 24 | `strings` | reviewed (0.1.210) | compiler change: `Len` 17 → 12 words (18F27Q10); `lib_strings` 139 → 134, `str_basic` 542 → 532, `str_slice_ref` 629 → 559 |
+| … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -690,6 +691,14 @@ Measured with constant pins (what programs pass) and with run-time pins (probe).
 - **Tried and dropped:** shared `Route` function for the pin work (constant calls lose their folded checks, +91 words in `lib_spi`); FSR0 `SetPps` on the 16F and an FSR2 `PpsOff` for `SpiOff` (heavy programs gain, small ones lose); `Pinio.PinOutput` / `PinInput` instead of `PinSetup` (inlined single caller, larger alone); counting the receive timeout down.
 - **Tests:** new `lib_spi_pins` (18F27Q10 and 18F16Q41): every pin as SCK then SDO with run-time pin numbers, PPS codes and `SpiOff` checked; fails on a swapped chain entry. `lib_spi` passes on 18F27Q10 (also -O0), 18F16Q41, 16F17146, 15244, 18056, 18326; `pins8/14/20` on 16F13214/13224/13244; every part-list build test passes.
 
+## 24. `strings` (done 2026-11-13, 0.1.210)
+
+The module is one routine, `Len`, 17 words (18F27Q10, run-time strings). Loop shapes (`For` with `Break`, `Do` / `Loop` with `Break`) were no smaller (20 and 17 words). The cost was in the compiler: `s(k)` with a Byte `k` through a `ByRef` / `ByRefConst` pointer built the address in `__A` (`movff`, `clrf`, `movf`, `addwf`, `movf`, `addwfc`, `movff`, `movff`: 8 words).
+
+- **Compiler (`point_fsr`).** A Byte index, not scaled, into the array a pointer parameter names is now `movf idx, w` / `addwf ptr, w` / `movwf FSRnL` / `movlw 0` / `addwfc ptr+1, w` / `movwf FSRnH`: 6 words, no `__A`. Applies to every program that indexes a `ByRef` array or String by a Byte.
+- **Result.** `Len` 17 → 12 words. Programs (18F27Q10): `lib_strings` 139 → 134, `str_basic` 542 → 532, `str_func` 991 → 986, `str_slice` 599 → 594, `str_slice_ref` 629 → 559, `lib_oled` 1748 → 1742. No other program in `tests/exec/lib_*`, `str_*`, `bench/large`, `library_*` changed.
+- **Tests:** new `tests/exec/byref_index` (Byte indices into `ByRef` arrays, a loop index, an expression index, 255); PIC18 gate (`tests/exec/*.bas`, `bench/large`, `tests/exec_rtcc/lib_*.bas`) 207 pass. The 16F back end is not touched.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `strings` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then the rest of the list in alphabetical order.
