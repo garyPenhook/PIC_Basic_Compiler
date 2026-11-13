@@ -41,7 +41,8 @@ fixed in the module.
 | 18 | `serial` | reviewed (0.1.204) | all-routines probe 166 → 144 (18F27Q10), 215 → 187 (16F), 167 → 145 (18F16Q41); `lib_serial` 133 → 113 / 165 → 142; `bench/modules` m1 575 → 547, m2 644 → 622, m4 488 → 470 |
 | 19 | `serial2` | reviewed (0.1.205) | all-routines probe 185 → 163 (18F27Q10), 241 → 213 (16F17146, 16F18056), 186 → 164 (18F16Q41) |
 | 20 | `rtcc` | reviewed (0.1.206) | all-routines probe 1487 → 1431 (18F27Q10), 1956 → 1895 (16F17146), 1628 → 1579 (18F16Q41) |
-| … | `rtccspi` … `x10` | not started | |
+| 21 | `rtccspi` | reviewed (0.1.207) | all-routines probe 1839 → 1812 (18F27Q10), 2700 → 2664 (16F17146), 1947 → 1922 (18F16Q41) |
+| … | `shift` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -657,6 +658,15 @@ Probe calls every public routine with values read from ports. Words before and a
 - **Tests:** `lib_rtcc_model` also calls `RtccEeProtect` (argument check, and a valid level), which no test reached before. The model tests pass on 18F27Q10 (optimised and `-O0`), 18F16Q41 (hardware I2C) and
   16F17146; `lib_rtcc` passes on 18F27Q10 and 16F17146.
 
+## 21. `rtccspi` (done 2026-11-13, 0.1.207)
+
+Probe calls every public routine with values read from ports (program words, `--report`). Before and after: 18F27Q10 1839 → 1812, 16F17146 2700 → 2664, 18F16Q41 1947 → 1922 (−27 / −36 / −25).
+
+- **One read-modify-write routine.** The same change as section 20: `Rmw(reg, keep, setb)` replaces the read, change, write code of `RtccspiStart`, `Stop`, `Battery`, `ClearPowerFail` (`WkWrite` is gone), `AlarmEnable`, `AlarmClear`, `AlarmPin`, `SquareWave`, `SquareWaveOff`, `WdtFlagClear` and the CONTROL step of `RtccspiTrim`. Bus traffic is unchanged (one read, one write).
+- **`GetByte` / `EeGet`.** One byte read into a `ByRef` value for `RtccspiReadReg`, `RamRead`, and (after the wait for a write cycle) `EeRead` and `IdRead`.
+- **Not done:** `RtccspiSet` and `RtccspiAlarm` (the errata sequence and register layout are as the data sheet gives them), `EeReady` / `StatusRead` (53 words, the timing loop), `Cmd1` / `Cmd2` / `ReadBlock` / `WriteBlock` (the chip-select framing, each a different byte pattern).
+- **Tests:** `lib_rtccspi_model` (18F27Q10, optimised and `-O0`) and `lib_rtccspi` (18F27Q10, 16F17146) pass; every changed routine is called by the model test.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `rtccspi` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `shift` and on through the list in alphabetical order.

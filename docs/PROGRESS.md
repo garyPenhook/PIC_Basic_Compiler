@@ -1427,3 +1427,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## rtcc module review (done 2026-11-13, 0.1.206)
 - `lib/rtcc.bas`: one `Rmw` read-modify-write routine replaces ten copies (`WkWrite` removed), `EeGet` / `EePut` shared by the EEPROM routines. All-routines probe 18F27Q10 1487 -> 1431, 16F17146 1956 -> 1895, 18F16Q41 1628 -> 1579 words. `lib_rtcc_model` now also exercises `RtccEeProtect`. See MODULE-REVIEWS section 20.
+
+## rtccspi module review (done 2026-11-13, 0.1.207)
+- `lib/rtccspi.bas`: one `Rmw` read-modify-write routine replaces eleven copies (`WkWrite` removed), `GetByte` / `EeGet` shared by the register, RAM, EEPROM and ID reads. All-routines probe 18F27Q10 1839 -> 1812, 16F17146 2700 -> 2664, 18F16Q41 1947 -> 1922 words. See MODULE-REVIEWS section 21.

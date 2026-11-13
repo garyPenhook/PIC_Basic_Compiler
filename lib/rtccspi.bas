@@ -168,6 +168,22 @@ Function WrReg(ByVal reg As Byte, ByVal v As Byte) As Byte
     Result = WriteBlock(18, reg, 1)
 End Function
 
+' Read-modify-write of register `reg`: new value = (old And keep) Or setb.
+Function Rmw(ByVal reg As Byte, ByVal keep As Byte, ByVal setb As Byte) As Byte
+    Result = RdReg(reg)
+    If Result = 0 Then
+        Result = WrReg(reg, (buf(0) And keep) Or setb)
+    End If
+End Function
+
+' One byte read with instruction `c` from address `a` into `value`.
+Function GetByte(ByVal c As Byte, ByVal a As Byte, ByRef value As Byte) As Byte
+    Result = ReadBlock(c, a, 1)
+    If Result = 0 Then
+        value = buf(0)
+    End If
+End Function
+
 ' Reads any register of the RTCC/SRAM space (0x00..0x5F) into `value`; for registers this module has no routine
 ' for (WDTCON 0x0A and EVDTCON 0x0B on the W parts, for instance). Returns the status.
 Public Function RtccspiReadReg(ByVal reg As Byte, ByRef value As Byte) As Byte
@@ -175,10 +191,7 @@ Public Function RtccspiReadReg(ByVal reg As Byte, ByRef value As Byte) As Byte
     If reg > 95 Then
         Exit
     End If
-    Result = RdReg(reg)
-    If Result = 0 Then
-        value = buf(0)
-    End If
+    Result = GetByte(19, reg, value)
 End Function
 
 ' Writes any register of the RTCC/SRAM space (0x00..0x5F). The caller is responsible for the contents.
@@ -354,43 +367,27 @@ End Function
 
 ' Starts the oscillator (ST = 1) without touching the time.
 Public Function RtccspiStart() As Byte
-    Result = RdReg(1)
-    If Result = 0 Then
-        Result = WrReg(1, buf(0) Or 128)
-    End If
+    Result = Rmw(1, 255, 128)
 End Function
 
 ' Stops the oscillator (ST = 0).
 Public Function RtccspiStop() As Byte
-    Result = RdReg(1)
-    If Result = 0 Then
-        Result = WrReg(1, buf(0) And 127)
-    End If
-End Function
-
-' Writes RTCWKDAY with the weekday kept and VBATEN = vb (8, 0, or 255 = as it is); also clears PWRFAIL.
-Function WkWrite(ByVal vb As Byte) As Byte
-    Result = RdReg(4)
-    If Result = 0 Then
-        If vb = 255 Then
-            vb = buf(0) And 8
-        End If
-        Result = WrReg(4, (buf(0) And 7) Or vb)
-    End If
+    Result = Rmw(1, 127, 0)
 End Function
 
 ' Enables or disables the VBAT input. Also clears PWRFAIL.
 Public Function RtccspiBattery(ByVal en As Boolean) As Byte
+    ' RTCWKDAY keeps the weekday and VBATEN = en; writing it always clears PWRFAIL.
     If en Then
-        Result = WkWrite(8)
+        Result = Rmw(4, 7, 8)
     Else
-        Result = WkWrite(0)
+        Result = Rmw(4, 7, 0)
     End If
 End Function
 
 ' Clears PWRFAIL (and so the time stamps) so that the next power loss is logged.
 Public Function RtccspiClearPowerFail() As Byte
-    Result = WkWrite(255)
+    Result = Rmw(4, 15, 0)
 End Function
 
 ' Reads the power-down (up = False) or power-up (up = True) time stamp [5.7.1] as month, day, hour (0..23)
@@ -465,13 +462,10 @@ Public Function RtccspiAlarmEnable(ByVal n As Byte, ByVal arm As Boolean) As Byt
         Exit
     End If
     m = 16 << n
-    Result = RdReg(8)
-    If Result = 0 Then
-        If arm Then
-            Result = WrReg(8, buf(0) Or m)
-        Else
-            Result = WrReg(8, buf(0) And (m Xor 255))
-        End If
+    If arm Then
+        Result = Rmw(8, 255, m)
+    Else
+        Result = Rmw(8, m Xor 255, 0)
     End If
 End Function
 
@@ -489,34 +483,24 @@ End Function
 
 ' Clears the alarm flag of alarm n (a 0 written to ALMxIF; it cannot be written to 1) [Register 5-13 note 3].
 Public Function RtccspiAlarmClear(ByVal n As Byte) As Byte
-    Dim r As Byte
     Result = 5
     If n > 1 Then
         Exit
     End If
-    r = 15 + 7 * n
-    Result = RdReg(r)
-    If Result = 0 Then
-        Result = WrReg(r, buf(0) And 247)
-    End If
+    Result = Rmw(15 + 7 * n, 247, 0)
 End Function
 
 ' W parts: assigns the output of alarm n to the WDO pin (wdo = True) or the IRQ pin (False) [DS20002280F Register
 ' 5-13, ALMxPIN]. The MCP7951X/2X ignore the bit.
 Public Function RtccspiAlarmPin(ByVal n As Byte, ByVal wdo As Boolean) As Byte
-    Dim r As Byte
     Result = 5
     If n > 1 Then
         Exit
     End If
-    r = 15 + 7 * n
-    Result = RdReg(r)
-    If Result = 0 Then
-        If wdo Then
-            Result = WrReg(r, (buf(0) Or 128) And 247)
-        Else
-            Result = WrReg(r, buf(0) And 119)
-        End If
+    If wdo Then
+        Result = Rmw(15 + 7 * n, 247, 128)
+    Else
+        Result = Rmw(15 + 7 * n, 119, 0)
     End If
 End Function
 
@@ -527,17 +511,11 @@ Public Function RtccspiSquareWave(ByVal sel As Byte) As Byte
     If sel > 3 Then
         Exit
     End If
-    Result = RdReg(8)
-    If Result = 0 Then
-        Result = WrReg(8, (buf(0) And 252) Or 64 Or sel)
-    End If
+    Result = Rmw(8, 252, 64 Or sel)
 End Function
 
 Public Function RtccspiSquareWaveOff() As Byte
-    Result = RdReg(8)
-    If Result = 0 Then
-        Result = WrReg(8, buf(0) And 191)
-    End If
+    Result = Rmw(8, 191, 0)
 End Function
 
 ' Digital trim [5.6, Register 5-17]: steps -255..255. Positive steps add 2 clock cycles per step (a slow clock is
@@ -569,13 +547,10 @@ Public Function RtccspiTrim(ByVal steps As Integer, ByVal coarse As Boolean) As 
         Result = WrReg(3, (buf(0) And 127) Or sgn)
     End If
     If Result = 0 Then
-        Result = RdReg(8)
-    End If
-    If Result = 0 Then
         If coarse Then
-            Result = WrReg(8, buf(0) Or 4)
+            Result = Rmw(8, 255, 4)
         Else
-            Result = WrReg(8, buf(0) And 251)
+            Result = Rmw(8, 251, 0)
         End If
     End If
 End Function
@@ -586,10 +561,7 @@ Public Function RtccspiRamRead(ByVal addr As Byte, ByRef value As Byte) As Byte
     If addr > 63 Then
         Exit
     End If
-    Result = RdReg(32 + addr)
-    If Result = 0 Then
-        value = buf(0)
-    End If
+    Result = GetByte(19, 32 + addr, value)
 End Function
 
 Public Function RtccspiRamWrite(ByVal addr As Byte, ByVal value As Byte) As Byte
@@ -646,18 +618,20 @@ Function WrEnable() As Byte
     End If
 End Function
 
+' One byte of the EEPROM (c = EEREAD) or protected EEPROM (c = IDREAD) after the wait for a running write cycle.
+Function EeGet(ByVal c As Byte, ByVal addr As Byte, ByRef value As Byte) As Byte
+    Result = EeReady()
+    If Result = 0 Then
+        Result = GetByte(c, addr, value)
+    End If
+End Function
+
 ' EEPROM: addr 0..255 on the MCP7952X, MCP795W2X (256 bytes) and 0..127 on the MCP7951X, MCP795W1X
 ' (128 bytes; the upper half is mapped back onto the lower [Figure 5-1]). A write starts a 5 ms cycle and the
 ' next EEPROM call waits for it; the RTCC and SRAM can be used meanwhile. A write to a protected area is
 ' silently ignored (see RtccspiEeProtect).
 Public Function RtccspiEeRead(ByVal addr As Byte, ByRef value As Byte) As Byte
-    Result = EeReady()
-    If Result = 0 Then
-        Result = ReadBlock(3, addr, 1)
-    End If
-    If Result = 0 Then
-        value = buf(0)
-    End If
+    Result = EeGet(3, addr, value)
 End Function
 
 Public Function RtccspiEeWrite(ByVal addr As Byte, ByVal value As Byte) As Byte
@@ -688,13 +662,7 @@ Public Function RtccspiIdRead(ByVal i As Byte, ByRef value As Byte) As Byte
     If i > 15 Then
         Exit
     End If
-    Result = EeReady()
-    If Result = 0 Then
-        Result = ReadBlock(51, i, 1)
-    End If
-    If Result = 0 Then
-        value = buf(0)
-    End If
+    Result = EeGet(51, i, value)
 End Function
 
 ' Writes one byte of the protected EEPROM: EEWREN, then UNLOCK with 0x55, UNLOCK with 0xAA (each its own chip
@@ -754,10 +722,7 @@ Public Function RtccspiWdtFlag(ByRef flag As Boolean) As Byte
 End Function
 
 Public Function RtccspiWdtFlagClear() As Byte
-    Result = RdReg(10)
-    If Result = 0 Then
-        Result = WrReg(10, buf(0) And 191)
-    End If
+    Result = Rmw(10, 191, 0)
 End Function
 
 ' W parts: event detection (EVDTCON 0x0B) [DS20002280F Register 5-17]. lowEnable arms the low-speed input with a
