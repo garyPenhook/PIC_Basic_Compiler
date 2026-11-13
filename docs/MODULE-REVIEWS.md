@@ -46,6 +46,7 @@ fixed in the module.
 | 23 | `spi` | reviewed (0.1.209) | constant-pin programs: `lib_spi` 357 → 313 (18F27Q10), 120 → 103 (Q41), 731 → 722 (16F18056); `m4_spiflash` 470 → 436; run-time-pin probe 706 → 659 (16F17146), 417 → 425 (18F27Q10), 459 → 475 (Q41) |
 | 24 | `strings` | reviewed (0.1.210) | compiler change: `Len` 17 → 12 words (18F27Q10); `lib_strings` 139 → 134, `str_basic` 542 → 532, `str_slice_ref` 629 → 559 |
 | 25 | `system` | reviewed (0.1.211) | all-routines probe 299 → 278 (18F27Q10, 18F16Q41), 375 → 356 (16F17146), 418 → 389 (16F18346), 353 → 334 (16F18056, 16F15244) |
+| 26 | `x10` | reviewed (0.1.212) | all-routines probe 768 → 741 (18F27Q10, 18F16Q41), 952 → 929 (16F17146, 16F18346) |
 | … | remaining modules | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -709,6 +710,15 @@ Probe calls every routine with run-time values: 18F27Q10 and 18F16Q41 299 → 27
 - **Left:** `SysResetCause` is a flag-priority chain with no shorter form; `SysWdtSleep` is already minimal.
 - **Tests:** `lib_system` passes on 18F27Q10 (also -O0), 16F15244, 16F18056, 16F18346.
 
+## 26. `x10` (done 2026-11-13, 0.1.212)
+
+Probe calls `Xout`, `Xin`, `CodeOf` and `NumberOf` with run-time pins and codes: 18F27Q10 and 18F16Q41 768 → 741 words, 16F17146 and 16F18346 952 → 929.
+
+- **`CodeOf` and `NumberOf` are 16-byte `Const` tables** (`CodeTab`, `NumTab`) instead of a LongWord nibble shift and a 16-pass search that called `CodeOf` each time: `CodeOf` 42 → 12 words, `NumberOf` 15 → 12 (18F27Q10, table included). Both mask their argument to 4 bits, so a value over 15 is read as its low nibble (`NumberOf` used to return 0 for a pattern outside 0..15).
+- **Tried and dropped:** one `Level` routine for the two loops of `Zero` (−3 words on the PIC18, −1 on the 16F, +3 bytes of RAM).
+- **Left:** `Frame`, `SendBit`, `Half` and `Zero` are already a chain of small calls; the rest is the 500 µs and 10 µs delays.
+- **Tests:** `tests/exec_pins/lib_pins_model` (all 16 codes both ways, frames sent and played back through `Xin`) passes on 18F27Q10 and 16F17146.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (`x10`, then the unlisted `epaper`, `glcd`, `intosc`, `irremote`, `pulse`).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `timer` is done; the rest of the list in alphabetical order (the unlisted `epaper`, `glcd`, `intosc`, `irremote`, `pulse`).

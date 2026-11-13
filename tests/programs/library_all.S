@@ -15,19 +15,19 @@ CONFIG CONFIG6H = 0xFF
 
 ; ---- data (addresses chosen by the compiler)
 ADC_LASTCH equ 0x066  ; lastCh (1 byte)
-PINIO_DADDR equ 0x052  ; dAddr (2 bytes)
+PINIO_DADDR equ 0x050  ; dAddr (2 bytes)
 PINIO_DMASK equ 0x067  ; dMask (1 byte)
 PINIO_CADDR equ 0x05A  ; cAddr (2 bytes)
 PINIO_CMASK equ 0x06A  ; cMask (1 byte)
-PWM_STEPS equ 0x054  ; steps (2 bytes)
+PWM_STEPS equ 0x052  ; steps (2 bytes)
 PWM_PERIOD equ 0x06B  ; period (1 byte)
 PWM_CKPS equ 0x06C  ; ckps (1 byte)
 PWM_NACT equ 0x056  ; nact (1 byte)
-PWM_FREQ equ 0x04D  ; freq (4 bytes)
-PWM_PINS equ 0x048  ; pins (4 bytes)
+PWM_FREQ equ 0x04B  ; freq (4 bytes)
+PWM_PINS equ 0x046  ; pins (4 bytes)
 PWM_POLV equ 0x05C  ; polv (4 bytes)
 PWM_READY equ 0x060  ; ready (1 byte)
-I2C_READY equ 0x051  ; ready (1 byte)
+I2C_READY equ 0x04F  ; ready (1 byte)
 I2C_LASTSTATUS equ 0x035  ; lastStatus (1 byte)
 I2C_I2CBUF equ 0x023  ; I2cBuf (8 bytes)
 SPI_READY equ 0x068  ; ready (1 byte)
@@ -39,12 +39,12 @@ OLED_MODE equ 0x03D  ; mode (1 byte)
 OLED_ADDR7 equ 0x06D  ; addr7 (1 byte)
 OLED_PDC equ 0x06E  ; pDc (1 byte)
 OLED_PCS equ 0x057  ; pCs (1 byte)
-OLED_ERR equ 0x047  ; err (1 byte)
+OLED_ERR equ 0x045  ; err (1 byte)
 AHT30_FRAME equ 0x03E  ; frame (7 bytes)
 RTCC_FRAME equ 0x076  ; frame (7 bytes)
 RTCCSPI_FRAME equ 0x07D  ; frame (8 bytes)
 RTCCSPI_BUF equ 0x01A  ; buf (8 bytes)
-RTCCSPI_CSPIN equ 0x04C  ; csPin (1 byte)
+RTCCSPI_CSPIN equ 0x04A  ; csPin (1 byte)
 RTCCSPI_READY equ 0x058  ; ready (1 byte)
 T_X equ 0x02B  ; x (2 bytes)
 T_X10OK equ 0x06F  ; x10ok (1 byte)
@@ -146,7 +146,7 @@ OLED_FONTBYTE__IDX equ 0x014  ; idx (2 bytes)
 OLED_FONTBYTE__RESULT equ 0x016  ; Result (1 byte)
 AHT30_AHT30START__RESULT equ 0x00F  ; Result (1 byte)
 AHT30_AHT30FETCH__TEMP equ 0x033  ; temp (2 bytes)
-AHT30_AHT30FETCH__RH equ 0x045  ; rh (2 bytes)
+AHT30_AHT30FETCH__RH equ 0x054  ; rh (2 bytes)
 AHT30_AHT30FETCH__RESULT equ 0x017  ; Result (1 byte)
 AHT30_AHT30MEASURE__TEMP equ 0x062  ; temp (2 bytes)
 AHT30_AHT30MEASURE__RH equ 0x064  ; rh (2 bytes)
@@ -167,12 +167,12 @@ PULSE_PULSEIN__RESULT equ 0x012  ; Result (2 bytes)
 PULSE_RCIN__RESULT equ 0x012  ; Result (2 bytes)
 PULSE_POT__RESULT equ 0x014  ; Result (1 byte)
 IRREMOTE_SONYIN__PIN equ 0x062  ; pin (1 byte)
-IRREMOTE_SONYIN__RESULT equ 0x045  ; Result (2 bytes)
+IRREMOTE_SONYIN__RESULT equ 0x054  ; Result (2 bytes)
 IRREMOTE_RC5IN__PIN equ 0x02E  ; pin (1 byte)
 IRREMOTE_RC5IN__RESULT equ 0x030  ; Result (2 bytes)
 X10_XOUT__REPS equ 0x02F  ; reps (1 byte)
-X10_XOUT__RESULT equ 0x046  ; Result (1 byte)
-X10_XIN__VALUE equ 0x062  ; value (2 bytes)
+X10_XOUT__RESULT equ 0x034  ; Result (1 byte)
+X10_XIN__VALUE equ 0x032  ; value (2 bytes)
 X10_XIN__RESULT equ 0x034  ; Result (1 byte)
 X10_XIN__HIST equ 0x014  ; hist (1 byte)
 X10_XIN__N equ 0x016  ; n (2 bytes)
@@ -181,21 +181,17 @@ X10_XIN__A equ 0x011  ; a (1 byte)
 X10_XIN__B equ 0x02E  ; b (1 byte)
 X10_XIN__H equ 0x019  ; h (1 byte)
 X10_XIN__K equ 0x02D  ; k (1 byte)
-X10_XIN__F equ 0x02F  ; f (1 byte)
+X10_XIN__F equ 0x031  ; f (1 byte)
 X10_XIN__GOOD equ 0x00F  ; good (1 byte)
 PINIO_PINOK__PIN equ 0x059  ; pin (1 byte)
 PINIO_PINOK__RESULT equ 0x015  ; Result (1 byte)
 PINIO_PININPUT__PIN equ 0x059  ; pin (1 byte)
-X10_ZERO__ZPIN equ 0x032  ; zpin (1 byte)
+X10_ZERO__ZPIN equ 0x054  ; zpin (1 byte)
 X10_ZERO__RESULT equ 0x010  ; Result (1 byte)
 PINIO_PINGET__PIN equ 0x059  ; pin (1 byte)
 PINIO_PINGET__RESULT equ 0x015  ; Result (1 byte)
-X10_NUMBEROF__CODE equ 0x015  ; code (1 byte)
-X10_NUMBEROF__RESULT equ 0x012  ; Result (1 byte)
-X10_NUMBEROF__I equ 0x010  ; i (1 byte)
-X10_CODEOF__N equ 0x059  ; n (1 byte)
-X10_CODEOF__RESULT equ 0x013  ; Result (1 byte)
-X10_CODEOF__T equ 0x030  ; t (4 bytes)
+X10_NUMBEROF__CODE equ 0x012  ; code (1 byte)
+X10_NUMBEROF__RESULT equ 0x010  ; Result (1 byte)
 X10_ZERO__N equ 0x012  ; n (2 bytes)
 PINIO_PININPUT__M equ 0x015  ; m (1 byte)
 X10_XOUT__N equ 0x017  ; n (1 byte)
@@ -207,10 +203,12 @@ X10_XOUT__H1 equ 0x02E  ; (hidden) (1 byte)
 X10_FRAME__RESULT equ 0x016  ; Result (1 byte)
 X10_XOUT__H2 equ 0x011  ; (hidden) (1 byte)
 X10_FRAME__I equ 0x014  ; i (1 byte)
-X10_FRAME__H equ 0x034  ; h (1 byte)
-X10_FRAME__K equ 0x045  ; k (1 byte)
-X10_HALF__BURST equ 0x031  ; burst (1 byte)
-X10_HALF__RESULT equ 0x030  ; Result (1 byte)
+X10_FRAME__H equ 0x030  ; h (1 byte)
+X10_FRAME__K equ 0x031  ; k (1 byte)
+X10_CODEOF__N equ 0x012  ; n (1 byte)
+X10_CODEOF__RESULT equ 0x010  ; Result (1 byte)
+X10_HALF__BURST equ 0x033  ; burst (1 byte)
+X10_HALF__RESULT equ 0x032  ; Result (1 byte)
 X10_SENDBIT__B equ 0x019  ; b (1 byte)
 X10_SENDBIT__RESULT equ 0x02D  ; Result (1 byte)
 PINIO_PINOUTPUT__M equ 0x030  ; m (1 byte)
@@ -296,7 +294,7 @@ RTCC_WRITEBLOCK__RESULT equ 0x012  ; Result (1 byte)
 RTCC_WRITEBLOCK__I equ 0x011  ; i (1 byte)
 RTCC_WRITEBLOCK__S equ 0x062  ; s (1 byte)
 RTCC_OPEN__CTL equ 0x034  ; ctl (1 byte)
-RTCC_OPEN__REG equ 0x045  ; reg (1 byte)
+RTCC_OPEN__REG equ 0x054  ; reg (1 byte)
 RTCC_OPEN__RESULT equ 0x02D  ; Result (1 byte)
 RTCC_EEREADY__N equ 0x011  ; n (1 byte)
 RTCC_EEREADY__S equ 0x00F  ; s (1 byte)
@@ -315,7 +313,7 @@ RTCC_READBLOCK__I equ 0x011  ; i (1 byte)
 RTCC_READBLOCK__S equ 0x030  ; s (1 byte)
 RTCC_RTCCREAD__I equ 0x00F  ; i (1 byte)
 RTCC_RTCCSET__CTL equ 0x033  ; ctl (1 byte)
-RTCC_RTCCSET__VB equ 0x046  ; vb (1 byte)
+RTCC_RTCCSET__VB equ 0x055  ; vb (1 byte)
 RTCC_RTCCSET__N equ 0x010  ; n (1 byte)
 RTCC_DAYSIN__RESULT equ 0x011  ; Result (1 byte)
 RTCC_WRREG__REG equ 0x017  ; reg (1 byte)
@@ -363,7 +361,7 @@ SYSTEM_SYSCLOCKFROM__MHZ equ 0x017  ; mhz (1 byte)
 SYSTEM_SYSRESETCAUSE__F equ 0x010  ; f (1 byte)
 SPI_SETPPS__PIN equ 0x010  ; pin (1 byte)
 SPI_SETPPS__CODE equ 0x00F  ; code (1 byte)
-SPI_SPIWRITE__R equ 0x045  ; r (1 byte)
+SPI_SPIWRITE__R equ 0x054  ; r (1 byte)
 SPI_SPITRANSFER__N equ 0x014  ; n (2 bytes)
 SPI_PINSETUP__PIN equ 0x010  ; pin (1 byte)
 SPI_PINSETUP__ASINPUT equ 0x011  ; asInput (1 byte)
@@ -406,7 +404,7 @@ PWM_PINOK__RESULT equ 0x015  ; Result (1 byte)
 FLASHWRITE_FLASHUPDATEWORD__CUR equ 0x031  ; cur (2 bytes)
 FLASHWRITE_FLASHUPDATEWORD__IE equ 0x034  ; ie (1 byte)
 FLASHWRITE_SETADDR__ADDR equ 0x017  ; addr (2 bytes)
-FLASHWRITE_FLASHWRITEWORD__IE equ 0x045  ; ie (1 byte)
+FLASHWRITE_FLASHWRITEWORD__IE equ 0x054  ; ie (1 byte)
 FLASHWRITE_FLASHERASESECTOR__IE equ 0x012  ; ie (1 byte)
 EEPROM_EEPROMWRITE__IE equ 0x019  ; ie (1 byte)
 ADC_ADCREADAVG__SUM equ 0x011  ; sum (2 bytes)
@@ -452,14 +450,14 @@ RTCCSPI_RTCCSPISET__TMP equ 0x034
 RTCCSPI_RTCCSPIREAD__TMP equ 0x010
 IRREMOTE_SONYIN__TMP equ 0x00F
 IRREMOTE_RC5IN__TMP equ 0x032
-X10_XIN__TMP equ 0x045
+X10_XIN__TMP equ 0x02F
 RTCCSPI_TOBCD__TMP equ 0x015
 RTCCSPI_READBLOCK__TMP equ 0x013
 RTCC_TOBCD__TMP equ 0x015
 RTCC_READBLOCK__TMP equ 0x019
 SYSTEM_SYSCLOCKFROM__TMP equ 0x013
 PWM_SETDUTY__TMP equ 0x02F
-FLASHWRITE_SETADDR__TMP equ 0x046
+FLASHWRITE_SETADDR__TMP equ 0x055
 
 PSECT code,class=CODE,abs,delta=1
     ORG 0x0000
@@ -563,11 +561,11 @@ _L7:
     movwf TX1STA, c
     movlw 0x90
     movwf RC1STA, c
-    movlw low(__SLIT4)
+    movlw low(__SLIT6)
     movwf TBLPTRL, c
-    movlw high(__SLIT4)
+    movlw high(__SLIT6)
     movwf TBLPTRH, c
-    movlw highword(__SLIT4)
+    movlw highword(__SLIT6)
     movwf TBLPTRU, c
 _L14:
     tblrd*+
@@ -585,9 +583,9 @@ _Lr10:
 _L19:
     movf SERIAL_SERIALWRITEWORD__K, w, c
     addwf WREG, w, c
-    addlw low(__CA3)
+    addlw low(__CA5)
     movwf TBLPTRL, c
-    movlw high(__CA3)
+    movlw high(__CA5)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -695,9 +693,9 @@ _L37:
     bra _L42
 _L41:
     movf SERIAL2_SERIAL2WRITE__I, w, c
-    addlw low(__SLIT5)
+    addlw low(__SLIT7)
     movwf TBLPTRL, c
-    movlw high(__SLIT5)
+    movlw high(__SLIT7)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -708,9 +706,9 @@ _L41:
     incf SERIAL2_SERIAL2WRITE__I, f, c
 _L42:
     movf SERIAL2_SERIAL2WRITE__I, w, c
-    addlw low(__SLIT5)
+    addlw low(__SLIT7)
     movwf TBLPTRL, c
-    movlw high(__SLIT5)
+    movlw high(__SLIT7)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -727,9 +725,9 @@ _L42:
 _L44:
     movf SERIAL2_SERIAL2WRITEWORD__K, w, c
     addwf WREG, w, c
-    addlw low(__CA2)
+    addlw low(__CA4)
     movwf TBLPTRL, c
-    movlw high(__CA2)
+    movlw high(__CA4)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1220,12 +1218,12 @@ _L166:
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf I2C_I2CPROBE__RESULT, c
-    bnz _L971
+    bnz _L964
     movlw 0xA0
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf I2C_I2CPROBE__RESULT, c
-_L971:
+_L964:
     call I2C_I2CSTOP
     movff I2C_I2CPROBE__RESULT, I2C_LASTSTATUS
     movf I2C_I2CPROBE__RESULT, w, c
@@ -1697,9 +1695,9 @@ _Lr53:
     bra _L301
 _L300:
     movf LCD_LCDWRITE__I, w, c
-    addlw low(__SLIT6)
+    addlw low(__SLIT8)
     movwf TBLPTRL, c
-    movlw high(__SLIT6)
+    movlw high(__SLIT8)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1710,9 +1708,9 @@ _L300:
     incf LCD_LCDWRITE__I, f, c
 _L301:
     movf LCD_LCDWRITE__I, w, c
-    addlw low(__SLIT6)
+    addlw low(__SLIT8)
     movwf TBLPTRL, c
-    movlw high(__SLIT6)
+    movlw high(__SLIT8)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1931,9 +1929,9 @@ _Lr68:
     bra _L360
 _L359:
     movf OLED_OLEDWRITE__I, w, c
-    addlw low(__SLIT7)
+    addlw low(__SLIT9)
     movwf TBLPTRL, c
-    movlw high(__SLIT7)
+    movlw high(__SLIT9)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -1944,9 +1942,9 @@ _L359:
     incf OLED_OLEDWRITE__I, f, c
 _L360:
     movf OLED_OLEDWRITE__I, w, c
-    addlw low(__SLIT7)
+    addlw low(__SLIT9)
     movwf TBLPTRL, c
-    movlw high(__SLIT7)
+    movlw high(__SLIT9)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -2377,32 +2375,32 @@ _L467:
     movlw 1
     movwf RTCC_ENCHOUR__TWELVE, c
     movf RTCC_ENCHOUR__TWELVE, f, c
-    bnz _L863
+    bnz _L856
     movf RTCC_ENCHOUR__H, w, c
     call RTCC_TOBCD
     movf RTCC_TOBCD__RESULT, w, c
     movwf RTCC_ENCHOUR__RESULT, c
-    bra _L862
-_L863:
+    bra _L855
+_L856:
     movlw 0x40
     movwf RTCC_ENCHOUR__RESULT, c
     movlw 0x0C
     subwf RTCC_ENCHOUR__H, w, c
-    bnc _L865
+    bnc _L858
     movlw 0x20
     iorwf RTCC_ENCHOUR__RESULT, f, c
     movlw 0x0C
     subwf RTCC_ENCHOUR__H, f, c
-_L865:
+_L858:
     movf RTCC_ENCHOUR__H, f, c
-    bnz _L867
+    bnz _L860
     movlw 0x0C
     movwf RTCC_ENCHOUR__H, c
-_L867:
+_L860:
     movf RTCC_ENCHOUR__H, w, c
     call RTCC_TOBCD
     iorwf RTCC_ENCHOUR__RESULT, f, c
-_L862:
+_L855:
     movf RTCC_ENCHOUR__RESULT, w, c
     movwf I2C_I2CBUF+2, c
     movlw 0x00
@@ -2440,54 +2438,54 @@ _Lr77:
     movlw 0x06
     movwf RTCC_EEREADY__RESULT, c
     clrf RTCC_EEREADY__N, c
-    bra _L841
-_L840:
+    bra _L834
+_L833:
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf RTCC_EEREADY__S, c
-    bnz _L844
+    bnz _L837
     movlw 0xAE
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf RTCC_EEREADY__S, c
-_L844:
+_L837:
     call I2C_I2CSTOP
     movf RTCC_EEREADY__S, f, c
-    bnz _L846
+    bnz _L839
     clrf RTCC_EEREADY__RESULT, c
     bra _Lr105
-_L846:
+_L839:
     movf RTCC_EEREADY__S, w, c
     xorlw 0x03
-    bz _L848
+    bz _L841
     movff RTCC_EEREADY__S, RTCC_EEREADY__RESULT
     bra _Lr105
-_L848:
+_L841:
     clrf __D0, c
-_L849:
+_L842:
     movlw 19
     movwf __D1, c
-_L850:
+_L843:
     decfsz __D1, f, c
-    bra _L850
+    bra _L843
     nop
     decfsz __D0, f, c
-    bra _L849
+    bra _L842
     movlw 42
     movwf __D0, c
-_L851:
+_L844:
     decfsz __D0, f, c
-    bra _L851
+    bra _L844
     nop
     incf RTCC_EEREADY__N, f, c
-_L841:
+_L834:
     movlw 0x14
     subwf RTCC_EEREADY__N, w, c
-    bnc _L840
+    bnc _L833
 _Lr105:
     movf RTCC_EEREADY__RESULT, w, c
     movwf RTCC_EEPUT__RESULT, c
-    bnz _L839
+    bnz _L832
     movff RTCC_EEPUT__VALUE, I2C_I2CBUF
     movlw 0xAE
     movwf RTCC_WRITEBLOCK__CTL, c
@@ -2497,7 +2495,7 @@ _Lr105:
     call RTCC_WRITEBLOCK
     movf RTCC_WRITEBLOCK__RESULT, w, c
     movwf RTCC_EEPUT__RESULT, c
-_L839:
+_L832:
     movf RTCC_EEPUT__RESULT, w, c
     movwf T_R, c
     clrf RTCCSPI_RTCCSPIINIT__RESULT, c
@@ -2793,31 +2791,31 @@ _L543:
     movwf RTCCSPI_ENCHOUR__H, c
     movff RTCCSPI_RTCCSPIALARM__TWELVE, RTCCSPI_ENCHOUR__TWELVE
     movf RTCCSPI_ENCHOUR__TWELVE, f, c
-    bnz _L827
+    bnz _L820
     call RTCCSPI_TOBCD
     movf RTCCSPI_TOBCD__RESULT, w, c
     movwf RTCCSPI_ENCHOUR__RESULT, c
-    bra _L826
-_L827:
+    bra _L819
+_L820:
     movlw 0x40
     movwf RTCCSPI_ENCHOUR__RESULT, c
     movlw 0x0C
     subwf RTCCSPI_ENCHOUR__H, w, c
-    bnc _L829
+    bnc _L822
     movlw 0x20
     iorwf RTCCSPI_ENCHOUR__RESULT, f, c
     movlw 0x0C
     subwf RTCCSPI_ENCHOUR__H, f, c
-_L829:
+_L822:
     movf RTCCSPI_ENCHOUR__H, f, c
-    bnz _L831
+    bnz _L824
     movlw 0x0C
     movwf RTCCSPI_ENCHOUR__H, c
-_L831:
+_L824:
     movf RTCCSPI_ENCHOUR__H, w, c
     call RTCCSPI_TOBCD
     iorwf RTCCSPI_ENCHOUR__RESULT, f, c
-_L826:
+_L819:
     movf RTCCSPI_ENCHOUR__RESULT, w, c
     movwf RTCCSPI_BUF+3, c
     movf RTCCSPI_RTCCSPIALARM__PIN, w, c
@@ -2843,14 +2841,14 @@ _Lr82:
     movlw 0x06
     movwf RTCCSPI_EEREADY__RESULT, c
     clrf RTCCSPI_EEREADY__N, c
-    bra _L812
-_L811:
+    bra _L805
+_L804:
     movlw 0x04
     movwf RTCCSPI_STATUSREAD__RESULT, c
     movf RTCCSPI_READY, f, c
-    bnz _L825
+    bnz _L818
     bra _Lr101
-_L825:
+_L818:
     movff RTCCSPI_CSPIN, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     call PINIO_PINSET
@@ -2869,47 +2867,47 @@ _L825:
 _Lr101:
     movf RTCCSPI_STATUSREAD__RESULT, w, c
     movwf RTCCSPI_EEREADY__RESULT, c
-    bz _L815
+    bz _L808
     bra _Lr99
-_L815:
+_L808:
     btfsc RTCCSPI_BUF, 0, c
-    bra _L817
+    bra _L810
     bra _Lr99
-_L817:
+_L810:
     movlw 0x06
     movwf RTCCSPI_EEREADY__RESULT, c
     clrf __D0, c
-_L819:
+_L812:
     movlw 19
     movwf __D1, c
-_L820:
+_L813:
     decfsz __D1, f, c
-    bra _L820
+    bra _L813
     nop
     decfsz __D0, f, c
-    bra _L819
+    bra _L812
     movlw 42
     movwf __D0, c
-_L821:
+_L814:
     decfsz __D0, f, c
-    bra _L821
+    bra _L814
     nop
     incf RTCCSPI_EEREADY__N, f, c
-_L812:
+_L805:
     movlw 0x14
     subwf RTCCSPI_EEREADY__N, w, c
-    bnc _L811
+    bnc _L804
 _Lr99:
     movf RTCCSPI_EEREADY__RESULT, w, c
     movwf RTCCSPI_WRENABLE__RESULT, c
-    bnz _L805
+    bnz _L798
     movwf RTCCSPI_CMD1__C, c
     movlw 0x04
     movwf RTCCSPI_CMD1__RESULT, c
     movf RTCCSPI_READY, f, c
-    bnz _L823
+    bnz _L816
     bra _Lr100
-_L823:
+_L816:
     movff RTCCSPI_CSPIN, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     call PINIO_PINSET
@@ -2925,7 +2923,7 @@ _L823:
 _Lr100:
     movf RTCCSPI_CMD1__RESULT, w, c
     movwf RTCCSPI_WRENABLE__RESULT, c
-_L805:
+_L798:
     movf RTCCSPI_WRENABLE__RESULT, w, c
     movwf RTCCSPI_RTCCSPIEEWRITE__RESULT, c
     bnz _L546
@@ -2961,29 +2959,29 @@ _L548:
     movlw 0x08
     call PINIO_PINOK
     movf PINIO_PINOK__RESULT, w, c
-    bnz _L799
+    bnz _L792
     bra _Lr97
-_L799:
+_L792:
     movlw 0x08
     call PINIO_BINDDATA
     movf PULSE_PULSEOUT_2__LEVEL, w, c
     call PINIO_DATAPUT
     movlw 0x08
     call PINIO_PINOUTPUT
-    bra _L801
-_L800:
+    bra _L794
+_L793:
     movlw 53
     movwf __D0, c
-_L803:
+_L796:
     decfsz __D0, f, c
-    bra _L803
+    bra _L796
     decf PULSE_PULSEOUT_2__PERIOD, f, c
     btfss STATUS, 0, c
     decf PULSE_PULSEOUT_2__PERIOD+1, f, c
-_L801:
+_L794:
     movf PULSE_PULSEOUT_2__PERIOD, w, c
     iorwf PULSE_PULSEOUT_2__PERIOD+1, w, c
-    bnz _L800
+    bnz _L793
     movf PULSE_PULSEOUT_2__LEVEL, w, c
     xorlw 1
     call PINIO_DATAPUT
@@ -3666,27 +3664,55 @@ _L662:
     movwf X10_HALF__BURST, c
     call X10_HALF
     movf X10_HALF__RESULT, w, c
-    bz _L753
+    bz _L746
     movlw 0x01
     movwf X10_HALF__BURST, c
     call X10_HALF
     movf X10_HALF__RESULT, w, c
-    bz _L753
+    bz _L746
     movlw 0x01
     movwf X10_HALF__BURST, c
     call X10_HALF
     movf X10_HALF__RESULT, w, c
-    bz _L753
+    bz _L746
     clrf X10_HALF__BURST, c
     call X10_HALF
     movf X10_HALF__RESULT, w, c
-    bz _L753
+    bz _L746
     movlw 1
-    bra _L754
-_L753:
+    bra _L747
+_L746:
     movlw 0
-_L754:
+_L747:
     movwf X10_FRAME__RESULT, c
+    clrf X10_FRAME__I, c
+_L748:
+    movf X10_FRAME__RESULT, f, c
+    bz _L751
+    movf X10_FRAME__I, w, c
+    movwf __D1, c
+    movlw 0x08
+    movwf __A0, c
+    call __shr1
+    movf __A0, w, c
+    andwf X10_FRAME__H, w, c
+    movlw 0
+    btfss STATUS, 2, c
+    movlw 1
+    movwf X10_SENDBIT__B, c
+    call X10_SENDBIT
+    movf X10_SENDBIT__RESULT, w, c
+    bz _L751
+    movlw 1
+    bra _L752
+_L751:
+    movlw 0
+_L752:
+    movwf X10_FRAME__RESULT, c
+    movf X10_FRAME__I, w, c
+    incf X10_FRAME__I, f, c
+    xorlw 0x03
+    bnz _L748
     clrf X10_FRAME__I, c
 _L755:
     movf X10_FRAME__RESULT, f, c
@@ -3697,7 +3723,7 @@ _L755:
     movwf __A0, c
     call __shr1
     movf __A0, w, c
-    andwf X10_FRAME__H, w, c
+    andwf X10_FRAME__K, w, c
     movlw 0
     btfss STATUS, 2, c
     movlw 1
@@ -3715,46 +3741,18 @@ _L759:
     incf X10_FRAME__I, f, c
     xorlw 0x03
     bnz _L755
-    clrf X10_FRAME__I, c
-_L762:
     movf X10_FRAME__RESULT, f, c
-    bz _L765
-    movf X10_FRAME__I, w, c
-    movwf __D1, c
-    movlw 0x08
-    movwf __A0, c
-    call __shr1
-    movf __A0, w, c
-    andwf X10_FRAME__K, w, c
-    movlw 0
-    btfss STATUS, 2, c
-    movlw 1
-    movwf X10_SENDBIT__B, c
-    call X10_SENDBIT
-    movf X10_SENDBIT__RESULT, w, c
-    bz _L765
-    movlw 1
-    bra _L766
-_L765:
-    movlw 0
-_L766:
-    movwf X10_FRAME__RESULT, c
-    movf X10_FRAME__I, w, c
-    incf X10_FRAME__I, f, c
-    xorlw 0x03
-    bnz _L762
-    movf X10_FRAME__RESULT, f, c
-    bz _L769
+    bz _L762
     movlw 0x01
     movwf X10_SENDBIT__B, c
     call X10_SENDBIT
     movf X10_SENDBIT__RESULT, w, c
-    bz _L769
+    bz _L762
     movlw 1
-    bra _L770
-_L769:
+    bra _L763
+_L762:
     movlw 0
-_L770:
+_L763:
     movwf X10_FRAME__RESULT, c
     movwf X10_XOUT__SENT, c
 _L666:
@@ -3782,13 +3780,12 @@ _L668:
     xorwf X10_XOUT__H1, w, c
     bnz _L662
 _L664:
-    movff X10_XOUT__SENT, X10_XOUT__RESULT
 _Lr93:
     movlb 0
     movlw low(T_X)
-    movwf X10_XIN__VALUE, b
+    movwf X10_XIN__VALUE, c
     movlw high(T_X)
-    movwf X10_XIN__VALUE+1, b
+    movwf X10_XIN__VALUE+1, c
     clrf X10_XIN__RESULT, c
     movlw 0x08
     call PINIO_PINOK
@@ -4302,38 +4299,38 @@ PWM_PWMSTART:
     bz _L134
     clrf PWM_PINOK__RESULT, c
     decf PWM_PWMSTART__CH, w, c
-    bz _L1002
+    bz _L995
     movf PWM_PWMSTART__CH, w, c
     xorlw 0x02
-    bnz _L1001
-_L1002:
+    bnz _L994
+_L995:
     movf PWM_PWMSTART__PIN, w, c
     addlw 0xF8
     sublw 0x0F
-    bnc _L1000
+    bnc _L993
     movlw 0x01
     movwf PWM_PINOK__RESULT, c
-    bra _L1000
-_L1001:
+    bra _L993
+_L994:
     xorlw 0x01
-    bz _L1006
+    bz _L999
     movf PWM_PWMSTART__CH, w, c
     xorlw 0x04
-    bnz _L1005
-_L1006:
+    bnz _L998
+_L999:
     movlw 0x08
     subwf PWM_PWMSTART__PIN, w, c
-    bnc _L1009
+    bnc _L1002
     movf PWM_PWMSTART__PIN, w, c
     addlw 0xF0
     sublw 0x07
-    bnc _L1008
-_L1009:
+    bnc _L1001
+_L1002:
     movlw 0x01
     movwf PWM_PINOK__RESULT, c
-_L1008:
-_L1005:
-_L1000:
+_L1001:
+_L998:
+_L993:
     movf PWM_PINOK__RESULT, w, c
     bnz _L133
 _L134:
@@ -4702,18 +4699,18 @@ SYSTEM_SYSCLOCKHZ:
     bnz _Lr110
     movlw 0x0A
     subwf SYSTEM_SYSCLOCKFROM__CDIV, w, c
-    bnc _L939
+    bnc _L932
     return
-_L939:
+_L932:
     movlw 0x09
     subwf SYSTEM_SYSCLOCKFROM__HFFRQ, w, c
-    bnc _L942
+    bnc _L935
     return
-_L942:
+_L935:
     movf SYSTEM_SYSCLOCKFROM__HFFRQ, w, c
-    addlw low(__CA1)
+    addlw low(__CA3)
     movwf TBLPTRL, c
-    movlw high(__CA1)
+    movlw high(__CA3)
     movwf TBLPTRH, c
     movlw 0
     addwfc TBLPTRH, f, c
@@ -4829,7 +4826,7 @@ _L348:
     clrf OLED_OLEDGOTO__PAGE, c
     rcall OLED_OLEDGOTO
     movlw 0x01
-    call OLED_BEGIN
+    rcall OLED_BEGIN
     clrf OLED_OLEDFILL__N, c
     clrf OLED_OLEDFILL__N+1, c
     bra _L350
@@ -4877,21 +4874,21 @@ _L356:
     movwf OLED_FONTBYTE__IDX+1, c
     rcall OLED_FONTBYTE
     movf OLED_FONTBYTE__RESULT, w, c
-    call OLED_PUT
+    rcall OLED_PUT
     incf OLED_OLEDWRITECHAR__I, f, c
 _L357:
     movlw 0x05
     subwf OLED_OLEDWRITECHAR__I, w, c
     bnc _L356
     movlw 0x00
-    call OLED_PUT
-    goto OLED_FINISH
+    rcall OLED_PUT
+    bra OLED_FINISH
     ; Sub/Function FontByte
 OLED_FONTBYTE:
-    movlw low(__CA0)
+    movlw low(__CA2)
     addwf OLED_FONTBYTE__IDX, w, c
     movwf TBLPTRL, c
-    movlw high(__CA0)
+    movlw high(__CA2)
     addwfc OLED_FONTBYTE__IDX+1, w, c
     movwf TBLPTRH, c
     clrf TBLPTRU, c
@@ -4993,31 +4990,31 @@ _L404:
 _L408:
     setf AHT30_CRC8__C, c
     clrf AHT30_CRC8__I, c
-    bra _L882
-_L881:
+    bra _L875
+_L874:
     movf AHT30_CRC8__I, w, c
     lfsr 0, AHT30_FRAME
     movf PLUSW0, w, c
     xorwf AHT30_CRC8__C, f, c
     clrf AHT30_CRC8__K, c
-    bra _L885
-_L884:
+    bra _L878
+_L877:
     bcf STATUS, 0, c
     rlcf AHT30_CRC8__C, f, c
-    bnc _L887
+    bnc _L880
     movlw 0x31
     xorwf AHT30_CRC8__C, f, c
-_L887:
+_L880:
     incf AHT30_CRC8__K, f, c
-_L885:
+_L878:
     movlw 0x08
     subwf AHT30_CRC8__K, w, c
-    bnc _L884
+    bnc _L877
     incf AHT30_CRC8__I, f, c
-_L882:
+_L875:
     movlw 0x06
     subwf AHT30_CRC8__I, w, c
-    bnc _L881
+    bnc _L874
     movf AHT30_CRC8__C, w, c
     xorwf AHT30_FRAME+6, w, c
     bz _L410
@@ -5351,62 +5348,17 @@ PINIO_PINGET:
     ; Sub/Function NumberOf
 X10_NUMBEROF:
     movwf X10_NUMBEROF__CODE, c
-    clrf X10_NUMBEROF__RESULT, c
-    clrf X10_NUMBEROF__I, c
-_L742:
-    movf X10_NUMBEROF__I, w, c
-    rcall X10_CODEOF
-    xorwf X10_NUMBEROF__CODE, w, c
-    bnz _L746
-    movff X10_NUMBEROF__I, X10_NUMBEROF__RESULT
-_L746:
-    movf X10_NUMBEROF__I, w, c
-    incf X10_NUMBEROF__I, f, c
-    xorlw 0x0F
-    bnz _L742
-    movf X10_NUMBEROF__RESULT, w, c
-    return
-    ; Sub/Function CodeOf
-X10_CODEOF:
-    movwf X10_CODEOF__N, c
-    movlw 0x0F
-    andwf X10_CODEOF__N, f, c
-    movlw 0x08
-    subwf X10_CODEOF__N, w, c
-    bc _L748
-    movlw 0xE6
-    movwf X10_CODEOF__T, c
-    movlw 0xA2
-    movwf X10_CODEOF__T+1, c
-    movlw 0x91
-    movwf X10_CODEOF__T+2, c
-    movlw 0xD5
-    movwf X10_CODEOF__T+3, c
-    bra _L747
-_L748:
-    movlw 0xF7
-    movwf X10_CODEOF__T, c
-    movlw 0xB3
-    movwf X10_CODEOF__T+1, c
-    movlw 0x80
-    movwf X10_CODEOF__T+2, c
-    movlw 0xC4
-    movwf X10_CODEOF__T+3, c
-    movlw 0x08
-    subwf X10_CODEOF__N, f, c
-_L747:
-    movf X10_CODEOF__N, w, c
-    mullw 0x04
-    movf PRODL, w, c
-    movwf __D1, c
-    movff X10_CODEOF__T, __A0
-    movff X10_CODEOF__T+1, __A0+1
-    movff X10_CODEOF__T+2, __A0+2
-    movff X10_CODEOF__T+3, __A0+3
-    call __shr4
-    movf __A0, w, c
     andlw 0x0F
-    movwf X10_CODEOF__RESULT, c
+    addlw low(__CA0)
+    movwf TBLPTRL, c
+    movlw high(__CA0)
+    movwf TBLPTRH, c
+    movlw 0
+    addwfc TBLPTRH, f, c
+    clrf TBLPTRU, c
+    tblrd*+
+    movf TABLAT, w, c
+    movwf X10_NUMBEROF__RESULT, c
     return
     ; Sub/Function PinSet
 PINIO_PINSET:
@@ -5450,173 +5402,188 @@ PINIO_PINOUTPUT:
     movwf PINIO_PINOUTPUT__N, c
     movlw 0x08
     subwf PINIO_PINOUTPUT__PIN, w, c
-    bc _L750
+    bc _L743
     movf PINIO_PINOUTPUT__N, w, c
     movlb 15
     andwf ANSELA, f, b
     andwf TRISA, f, c
     return
-_L750:
+_L743:
     movlw 0x10
     subwf PINIO_PINOUTPUT__PIN, w, c
-    bc _L751
+    bc _L744
     movf PINIO_PINOUTPUT__N, w, c
     movlb 15
     andwf ANSELB, f, b
     andwf TRISB, f, c
     return
-_L751:
+_L744:
     movlw 0x18
     subwf PINIO_PINOUTPUT__PIN, w, c
-    bc _L752
+    bc _L745
     movf PINIO_PINOUTPUT__N, w, c
     movlb 15
     andwf ANSELC, f, b
     andwf TRISC, f, c
-_L752:
+_L745:
+    return
+    ; Sub/Function CodeOf
+X10_CODEOF:
+    movwf X10_CODEOF__N, c
+    andlw 0x0F
+    addlw low(__CA1)
+    movwf TBLPTRL, c
+    movlw high(__CA1)
+    movwf TBLPTRH, c
+    movlw 0
+    addwfc TBLPTRH, f, c
+    clrf TBLPTRU, c
+    tblrd*+
+    movf TABLAT, w, c
+    movwf X10_CODEOF__RESULT, c
     return
     ; Sub/Function Half
 X10_HALF:
     rcall X10_ZERO
     movf X10_ZERO__RESULT, w, c
     movwf X10_HALF__RESULT, c
-    bz _L772
+    bz _L765
     movf X10_HALF__BURST, f, c
-    bz _L772
+    bz _L765
     movlw 0x08
     movwf PINIO_PINSET__PIN, c
     movlw 0x01
     movwf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
     clrf __D0, c
-_L773:
+_L766:
     movlw 19
     movwf __D1, c
-_L774:
+_L767:
     decfsz __D1, f, c
-    bra _L774
+    bra _L767
     nop
     decfsz __D0, f, c
-    bra _L773
+    bra _L766
     movlw 42
     movwf __D0, c
-_L775:
+_L768:
     decfsz __D0, f, c
-    bra _L775
+    bra _L768
     nop
     movlw 0x08
     movwf PINIO_PINSET__PIN, c
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
-_L772:
+_L765:
     return
     ; Sub/Function SendBit
 X10_SENDBIT:
     movff X10_SENDBIT__B, X10_HALF__BURST
     rcall X10_HALF
     movf X10_HALF__RESULT, w, c
-    bz _L776
+    bz _L769
     movf X10_SENDBIT__B, w, c
     xorlw 1
     movwf X10_HALF__BURST, c
     rcall X10_HALF
     movf X10_HALF__RESULT, w, c
-    bz _L776
+    bz _L769
     movlw 1
-    bra _L777
-_L776:
+    bra _L770
+_L769:
     movlw 0
-_L777:
+_L770:
     movwf X10_SENDBIT__RESULT, c
     return
     ; Sub/Function Width
 IRREMOTE_WIDTH:
     clrf IRREMOTE_WIDTH__N, c
     clrf IRREMOTE_WIDTH__N+1, c
-    bra _L779
-_L778:
+    bra _L772
+_L771:
     movf IRREMOTE_WIDTH__N, w, c
     subwf IRREMOTE_WIDTH__LIMIT, w, c
     movf IRREMOTE_WIDTH__N+1, w, c
     subwfb IRREMOTE_WIDTH__LIMIT+1, w, c
-    bc _L782
+    bc _L775
     movff IRREMOTE_WIDTH__N, IRREMOTE_WIDTH__RESULT
     movff IRREMOTE_WIDTH__N+1, IRREMOTE_WIDTH__RESULT+1
     return
-_L782:
+_L775:
     movlw 53
     movwf __D0, c
-_L783:
+_L776:
     decfsz __D0, f, c
-    bra _L783
+    bra _L776
     infsnz IRREMOTE_WIDTH__N, f, c
     incf IRREMOTE_WIDTH__N+1, f, c
-_L779:
+_L772:
     movlw 0x09
     rcall PINIO_PINGET
     movf PINIO_PINGET__RESULT, w, c
     xorwf IRREMOTE_WIDTH__LEVEL, w, c
-    bz _L778
+    bz _L771
     movff IRREMOTE_WIDTH__N, IRREMOTE_WIDTH__RESULT
     movff IRREMOTE_WIDTH__N+1, IRREMOTE_WIDTH__RESULT+1
     return
     ; Sub/Function WaitUs
 PULSE_WAITUS:
-    bra _L785
-_L784:
+    bra _L778
+_L777:
     clrf __D0, c
-_L787:
-    bra _L788
-_L788:
+_L780:
+    bra _L781
+_L781:
     nop
     decfsz __D0, f, c
-    bra _L787
+    bra _L780
     movlw 21
     movwf __D0, c
-_L789:
+_L782:
     decfsz __D0, f, c
-    bra _L789
+    bra _L782
     movlw 0x64
     subwf PULSE_WAITUS__US, f, c
     movlw 0x00
     subwfb PULSE_WAITUS__US+1, f, c
-_L785:
+_L778:
     movlw 0x64
     subwf PULSE_WAITUS__US, w, c
     movlw 0x00
     subwfb PULSE_WAITUS__US+1, w, c
-    bc _L784
-    bra _L791
-_L790:
+    bc _L777
+    bra _L784
+_L783:
     movlw 53
     movwf __D0, c
-_L793:
+_L786:
     decfsz __D0, f, c
-    bra _L793
+    bra _L786
     movlw 0x0A
     subwf PULSE_WAITUS__US, f, c
     movlw 0x00
     subwfb PULSE_WAITUS__US+1, f, c
-_L791:
+_L784:
     movlw 0x0A
     subwf PULSE_WAITUS__US, w, c
     movlw 0x00
     subwfb PULSE_WAITUS__US+1, w, c
-    bc _L790
-    bra _L795
-_L794:
+    bc _L783
+    bra _L788
+_L787:
     movlw 5
     movwf __D0, c
-_L797:
+_L790:
     decfsz __D0, f, c
-    bra _L797
+    bra _L790
     decf PULSE_WAITUS__US, f, c
     btfss STATUS, 0, c
     decf PULSE_WAITUS__US+1, f, c
-_L795:
+_L788:
     movf PULSE_WAITUS__US, w, c
     iorwf PULSE_WAITUS__US+1, w, c
-    bnz _L794
+    bnz _L787
     return
     ; Sub/Function BindData
 PINIO_BINDDATA:
@@ -5700,9 +5667,9 @@ RTCCSPI_WRITEBLOCK:
     movlw 0x04
     movwf RTCCSPI_WRITEBLOCK__RESULT, c
     movf RTCCSPI_READY, f, c
-    bnz _L807
+    bnz _L800
     return
-_L807:
+_L800:
     movff RTCCSPI_CSPIN, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
@@ -5711,17 +5678,17 @@ _L807:
     movf RTCCSPI_WRITEBLOCK__A, w, c
     rcall SPI_SPIWRITE
     clrf RTCCSPI_WRITEBLOCK__I, c
-    bra _L809
-_L808:
+    bra _L802
+_L801:
     movf RTCCSPI_WRITEBLOCK__I, w, c
     lfsr 0, RTCCSPI_BUF
     movf PLUSW0, w, c
     rcall SPI_SPIWRITE
     incf RTCCSPI_WRITEBLOCK__I, f, c
-_L809:
+_L802:
     movf RTCCSPI_WRITEBLOCK__N, w, c
     subwf RTCCSPI_WRITEBLOCK__I, w, c
-    bnc _L808
+    bnc _L801
     rcall SPI_SPISTATUS
     movf SPI_SPISTATUS__RESULT, w, c
     movwf RTCCSPI_WRITEBLOCK__RESULT, c
@@ -5767,29 +5734,29 @@ RTCCSPI_READBLOCK:
     movlw 0x04
     movwf RTCCSPI_READBLOCK__RESULT, c
     movf RTCCSPI_READY, f, c
-    bnz _L833
+    bnz _L826
     return
-_L833:
+_L826:
     movff RTCCSPI_CSPIN, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
     movlw 0x13
     rcall SPI_SPIWRITE
     movf RTCCSPI_READBLOCK__A, w, c
-    call SPI_SPIWRITE
+    rcall SPI_SPIWRITE
     clrf RTCCSPI_READBLOCK__I, c
-    bra _L835
-_L834:
-    call SPI_SPIREAD
+    bra _L828
+_L827:
+    rcall SPI_SPIREAD
     movf RTCCSPI_READBLOCK__I, w, c
     lfsr 0, RTCCSPI_BUF
     movff SPI_SPIREAD__RESULT, PLUSW0
     incf RTCCSPI_READBLOCK__I, f, c
-_L835:
+_L828:
     movf RTCCSPI_READBLOCK__N, w, c
     subwf RTCCSPI_READBLOCK__I, w, c
-    bnc _L834
-    call SPI_SPISTATUS
+    bnc _L827
+    rcall SPI_SPISTATUS
     movf SPI_SPISTATUS__RESULT, w, c
     movwf RTCCSPI_READBLOCK__RESULT, c
     movff RTCCSPI_CSPIN, PINIO_PINSET__PIN
@@ -5816,8 +5783,8 @@ RTCC_WRITEBLOCK:
     movf RTCC_OPEN__RESULT, w, c
     movwf RTCC_WRITEBLOCK__RESULT, c
     clrf RTCC_WRITEBLOCK__I, c
-    bra _L853
-_L852:
+    bra _L846
+_L845:
     movf RTCC_WRITEBLOCK__I, w, c
     lfsr 0, I2C_I2CBUF
     movf PLUSW0, w, c
@@ -5825,39 +5792,39 @@ _L852:
     movf I2C_I2CSEND__RESULT, w, c
     movwf RTCC_WRITEBLOCK__RESULT, c
     incf RTCC_WRITEBLOCK__I, f, c
-_L853:
+_L846:
     movf RTCC_WRITEBLOCK__RESULT, f, c
-    bnz _L855
+    bnz _L848
     movf RTCC_WRITEBLOCK__N, w, c
     subwf RTCC_WRITEBLOCK__I, w, c
-    bnc _L852
-_L855:
+    bnc _L845
+_L848:
     call I2C_I2CSTOP
     movlb 0
     movwf RTCC_WRITEBLOCK__S, b
     movf RTCC_WRITEBLOCK__RESULT, f, c
-    bnz _L857
+    bnz _L850
     movff RTCC_WRITEBLOCK__S, RTCC_WRITEBLOCK__RESULT
-_L857:
+_L850:
     return
     ; Sub/Function Open
 RTCC_OPEN:
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf RTCC_OPEN__RESULT, c
-    bnz _L859
+    bnz _L852
     movf RTCC_OPEN__CTL, w, c
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf RTCC_OPEN__RESULT, c
-_L859:
+_L852:
     movf RTCC_OPEN__RESULT, f, c
-    bnz _L861
+    bnz _L854
     movf RTCC_OPEN__REG, w, c
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf RTCC_OPEN__RESULT, c
-_L861:
+_L854:
     return
     ; Sub/Function RdReg
 RTCC_RDREG:
@@ -5900,21 +5867,21 @@ RTCC_READBLOCK:
     rcall RTCC_OPEN
     movf RTCC_OPEN__RESULT, w, c
     movwf RTCC_READBLOCK__RESULT, c
-    bnz _L869
+    bnz _L862
     call I2C_I2CRESTART
     movf I2C_I2CRESTART__RESULT, w, c
     movwf RTCC_READBLOCK__RESULT, c
-_L869:
+_L862:
     movf RTCC_READBLOCK__RESULT, f, c
-    bnz _L871
+    bnz _L864
     movlw 0xDF
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf RTCC_READBLOCK__RESULT, c
-_L871:
+_L864:
     clrf RTCC_READBLOCK__I, c
-    bra _L873
-_L872:
+    bra _L866
+_L865:
     decf RTCC_READBLOCK__N, w, c
     subwf RTCC_READBLOCK__I, w, c
     movlw 0
@@ -5927,18 +5894,18 @@ _L872:
     call I2C_I2CSTATUS
     movwf RTCC_READBLOCK__RESULT, c
     incf RTCC_READBLOCK__I, f, c
-_L873:
+_L866:
     movf RTCC_READBLOCK__RESULT, f, c
-    bnz _L877
+    bnz _L870
     movf RTCC_READBLOCK__N, w, c
     subwf RTCC_READBLOCK__I, w, c
-    bnc _L872
-_L877:
+    bnc _L865
+_L870:
     call I2C_I2CSTOP
     movf RTCC_READBLOCK__RESULT, f, c
-    bnz _L879
+    bnz _L872
     movff I2C_I2CSTOP__RESULT, RTCC_READBLOCK__RESULT
-_L879:
+_L872:
     return
     ; Sub/Function WrReg
 RTCC_WRREG:
@@ -5956,116 +5923,116 @@ RTCC_WRREG:
 OLED_BEGIN:
     movwf OLED_BEGIN__ISDATA, c
     decf OLED_MODE, w, c
-    bnz _L889
+    bnz _L882
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf OLED_BEGIN__S, c
-    bnz _L891
+    bnz _L884
     movlb 0
     movf OLED_ADDR7, w, b
     addwf WREG, w, c
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf OLED_BEGIN__S, c
-_L891:
+_L884:
     movf OLED_BEGIN__S, f, c
-    bnz _L893
+    bnz _L886
     clrf OLED_BEGIN__S, c
     movf OLED_BEGIN__ISDATA, f, c
-    bz _L895
+    bz _L888
     movlw 0x40
     movwf OLED_BEGIN__S, c
-_L895:
+_L888:
     movf OLED_BEGIN__S, w, c
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf OLED_BEGIN__S, c
-_L893:
+_L886:
     movf OLED_BEGIN__S, f, c
-    bz _L888
+    bz _L881
     movf OLED_ERR, f, c
-    bnz _L888
+    bnz _L881
     movff OLED_BEGIN__S, OLED_ERR
     return
-_L889:
+_L882:
     movf OLED_MODE, w, c
     xorlw 0x02
-    bnz _L898
+    bnz _L891
     movff OLED_PDC, PINIO_PINSET__PIN
     movff OLED_BEGIN__ISDATA, PINIO_PINSET__LEVEL
     rcall PINIO_PINSET
     incf OLED_PCS, w, c
-    bz _L900
+    bz _L893
     movff OLED_PCS, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
-_L900:
-_L898:
-_L888:
+_L893:
+_L891:
+_L881:
     return
     ; Sub/Function Put
 OLED_PUT:
     movwf OLED_PUT__B, c
     decf OLED_MODE, w, c
-    bnz _L902
+    bnz _L895
     movf OLED_ERR, f, c
-    bnz _L901
+    bnz _L894
     movf OLED_PUT__B, w, c
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
-    bz _L901
+    bz _L894
     movff I2C_I2CSEND__RESULT, OLED_ERR
     return
-_L902:
+_L895:
     movf OLED_MODE, w, c
     xorlw 0x02
-    bnz _L907
+    bnz _L900
     movf OLED_PUT__B, w, c
     call SPI_SPIWRITE
-_L907:
-_L901:
+_L900:
+_L894:
     return
     ; Sub/Function Finish
 OLED_FINISH:
     decf OLED_MODE, w, c
-    bnz _L909
+    bnz _L902
     call I2C_I2CSTOP
     movf I2C_I2CSTOP__RESULT, w, c
-    bz _L908
+    bz _L901
     movf OLED_ERR, f, c
-    bnz _L908
+    bnz _L901
     movff I2C_I2CSTOP__RESULT, OLED_ERR
     return
-_L909:
+_L902:
     movf OLED_MODE, w, c
     xorlw 0x02
-    bnz _L912
+    bnz _L905
     incf OLED_PCS, w, c
-    bz _L914
+    bz _L907
     movff OLED_PCS, PINIO_PINSET__PIN
     movlw 0x01
     movwf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
-_L914:
-_L912:
-_L908:
+_L907:
+_L905:
+_L901:
     return
     ; Sub/Function Cmd
 OLED_CMD:
     movf OLED_MODE, f, c
-    bnz _L916
+    bnz _L909
     return
-_L916:
+_L909:
     movlw 0x00
     rcall OLED_BEGIN
     movf OLED_CMD__C, w, c
     rcall OLED_PUT
     movlw 0x02
     subwf OLED_CMD__N, w, c
-    bnc _L918
+    bnc _L911
     movf OLED_CMD__A, w, c
     rcall OLED_PUT
-_L918:
+_L911:
     movlw 0x03
     subwf OLED_CMD__N, w, c
     bnc OLED_FINISH
@@ -6076,7 +6043,7 @@ _L918:
 OLED_RESET:
     movwf OLED_RESET__RES, c
     addlw 0x01
-    bz _L922
+    bz _L915
     movff OLED_RESET__RES, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
@@ -6084,31 +6051,31 @@ OLED_RESET:
     rcall PINIO_PINOUTPUT
     movlw 53
     movwf __D0, c
-_L923:
+_L916:
     decfsz __D0, f, c
-    bra _L923
+    bra _L916
     movff OLED_RESET__RES, PINIO_PINSET__PIN
     movlw 0x01
     movwf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
     clrf __D0, c
-_L924:
+_L917:
     movlw 102
     movwf __D1, c
-_L925:
+_L918:
     decfsz __D1, f, c
-    bra _L925
-    bra _L926
-_L926:
+    bra _L918
+    bra _L919
+_L919:
     decfsz __D0, f, c
-    bra _L924
+    bra _L917
     movlw 42
     movwf __D0, c
-_L927:
+_L920:
     decfsz __D0, f, c
-    bra _L927
+    bra _L920
     nop
-_L922:
+_L915:
     return
     ; Sub/Function Setup
 OLED_SETUP:
@@ -6185,14 +6152,14 @@ LCD_SEND:
     andlw 0x0F
     rcall LCD_NIBBLE
     clrf __D0, c
-_L928:
+_L921:
     decfsz __D0, f, c
-    bra _L928
+    bra _L921
     movlw 10
     movwf __D0, c
-_L929:
+_L922:
     decfsz __D0, f, c
-    bra _L929
+    bra _L922
     nop
     return
     ; Sub/Function Nibble
@@ -6200,7 +6167,7 @@ LCD_NIBBLE:
     movwf LCD_NIBBLE__NIB, c
     movlw 0x02
     movwf LCD_NIBBLE__I, c
-_L930:
+_L923:
     movf LCD_NIBBLE__I, w, c
     lfsr 0, LCD_PINS
     movf PLUSW0, w, c
@@ -6215,27 +6182,37 @@ _L930:
     movf LCD_NIBBLE__I, w, c
     incf LCD_NIBBLE__I, f, c
     xorlw 0x05
-    bnz _L930
+    bnz _L923
     movff LCD_PINS+1, PINIO_PINSET__PIN
     movlw 0x01
     movwf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
     movlw 5
     movwf __D0, c
-_L936:
+_L929:
     decfsz __D0, f, c
-    bra _L936
+    bra _L929
     movff LCD_PINS+1, PINIO_PINSET__PIN
     clrf PINIO_PINSET__LEVEL, c
     rcall PINIO_PINSET
     movlw 5
     movwf __D0, c
-_L937:
+_L930:
     decfsz __D0, f, c
-    bra _L937
+    bra _L930
     return
     ; Sub/Function SetPps
 SPI_SETPPS:
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
     nop
     nop
     nop
@@ -6248,16 +6225,9 @@ SPI_SETPPS:
     movf SPI_SETPPS__PIN, w, c
     addlw 0xF8
     sublw 0x0F
-    bnc _L943
+    bnc _L936
     rlncf WREG, w, c
     addwf PCL, f, c
-    bra _L959
-    bra _L958
-    bra _L957
-    bra _L956
-    bra _L955
-    bra _L954
-    bra _L953
     bra _L952
     bra _L951
     bra _L950
@@ -6267,86 +6237,93 @@ SPI_SETPPS:
     bra _L946
     bra _L945
     bra _L944
-_L944:
+    bra _L943
+    bra _L942
+    bra _L941
+    bra _L940
+    bra _L939
+    bra _L938
+    bra _L937
+_L937:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB0PPS, b
     return
-_L945:
+_L938:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB1PPS, b
     return
-_L946:
+_L939:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB2PPS, b
     return
-_L947:
+_L940:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB3PPS, b
     return
-_L948:
+_L941:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB4PPS, b
     return
-_L949:
+_L942:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB5PPS, b
     return
-_L950:
+_L943:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB6PPS, b
     return
-_L951:
+_L944:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RB7PPS, b
     return
-_L952:
+_L945:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC0PPS, b
     return
-_L953:
+_L946:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC1PPS, b
     return
-_L954:
+_L947:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC2PPS, b
     return
-_L955:
+_L948:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC3PPS, b
     return
-_L956:
+_L949:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC4PPS, b
     return
-_L957:
+_L950:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC5PPS, b
     return
-_L958:
+_L951:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC6PPS, b
     return
-_L959:
+_L952:
     movf SPI_SETPPS__CODE, w, c
     movlb 14
     movwf RC7PPS, b
-_L943:
+_L936:
     return
     ; Sub/Function PinSetup
 SPI_PINSETUP:
@@ -6360,32 +6337,32 @@ SPI_PINSETUP:
     movwf SPI_PINSETUP__M, c
     movlw 0x10
     subwf SPI_PINSETUP__PIN, w, c
-    bc _L961
+    bc _L954
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     movlb 15
     andwf ANSELB, f, b
     movf SPI_PINSETUP__ASINPUT, f, c
-    bz _L963
+    bz _L956
     movf SPI_PINSETUP__M, w, c
     iorwf TRISB, f, c
     return
-_L963:
+_L956:
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     andwf TRISB, f, c
     return
-_L961:
+_L954:
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     movlb 15
     andwf ANSELC, f, b
     movf SPI_PINSETUP__ASINPUT, f, c
-    bz _L965
+    bz _L958
     movf SPI_PINSETUP__M, w, c
     iorwf TRISC, f, c
     return
-_L965:
+_L958:
     movf SPI_PINSETUP__M, w, c
     xorlw 0xFF
     andwf TRISC, f, c
@@ -6409,19 +6386,19 @@ I2C_OPEN:
     call I2C_I2CSTART
     movf I2C_I2CSTART__RESULT, w, c
     movwf I2C_OPEN__RESULT, c
-    bnz _L967
+    bnz _L960
     movlw 0xA0
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf I2C_OPEN__RESULT, c
-_L967:
+_L960:
     movf I2C_OPEN__RESULT, f, c
-    bnz _L969
+    bnz _L962
     movlw 0x01
     call I2C_I2CSEND
     movf I2C_I2CSEND__RESULT, w, c
     movwf I2C_OPEN__RESULT, c
-_L969:
+_L962:
     return
     ; Sub/Function Condition
 I2C_CONDITION:
@@ -6430,7 +6407,7 @@ I2C_CONDITION:
     rcall I2C_WAITIDLE
     movf I2C_WAITIDLE__RESULT, w, c
     movwf I2C_CONDITION__RESULT, c
-    bnz _L973
+    bnz _L966
     movlb 14
     bcf PIR3, 0, b
     movf I2C_CONDITION__MSK, w, c
@@ -6438,7 +6415,7 @@ I2C_CONDITION:
     rcall I2C_WAITIDLE
     movf I2C_WAITIDLE__RESULT, w, c
     movwf I2C_CONDITION__RESULT, c
-_L973:
+_L966:
     return
     ; Sub/Function WaitIdle
 I2C_WAITIDLE:
@@ -6447,30 +6424,30 @@ I2C_WAITIDLE:
     clrf I2C_WAITIDLE__N+1, c
     movlw 0x01
     movwf I2C_WAITIDLE__RESULT, c
-    bra _L975
-_L974:
+    bra _L968
+_L967:
     movlb 14
     btfss PIR3, 1, b
-    bra _L978
+    bra _L971
     bcf PIR3, 1, b
     movlw 0x02
     movwf I2C_WAITIDLE__RESULT, c
     return
-_L978:
+_L971:
     movf SSP1CON2, w, c
     andwf I2C_WAITIDLE__MSK, w, c
-    bnz _L980
+    bnz _L973
     clrf I2C_WAITIDLE__RESULT, c
     return
-_L980:
+_L973:
     infsnz I2C_WAITIDLE__N, f, c
     incf I2C_WAITIDLE__N+1, f, c
-_L975:
+_L968:
     movlw 0x60
     subwf I2C_WAITIDLE__N, w, c
     movlw 0xEA
     subwfb I2C_WAITIDLE__N+1, w, c
-    bnc _L974
+    bnc _L967
     return
     ; Sub/Function WaitIf
 I2C_WAITIF:
@@ -6478,30 +6455,30 @@ I2C_WAITIF:
     clrf I2C_WAITIF__N+1, c
     movlw 0x01
     movwf I2C_WAITIF__RESULT, c
-    bra _L982
-_L981:
+    bra _L975
+_L974:
     movlb 14
     btfss PIR3, 1, b
-    bra _L985
+    bra _L978
     bcf PIR3, 1, b
     movlw 0x02
     movwf I2C_WAITIF__RESULT, c
     return
-_L985:
+_L978:
     btfss PIR3, 0, b
-    bra _L987
+    bra _L980
     bcf PIR3, 0, b
     clrf I2C_WAITIF__RESULT, c
     return
-_L987:
+_L980:
     infsnz I2C_WAITIF__N, f, c
     incf I2C_WAITIF__N+1, f, c
-_L982:
+_L975:
     movlw 0x60
     subwf I2C_WAITIF__N, w, c
     movlw 0xEA
     subwfb I2C_WAITIF__N+1, w, c
-    bnc _L981
+    bnc _L974
     return
     ; Sub/Function PinSetup
 I2C_PINSETUP:
@@ -6515,14 +6492,14 @@ I2C_PINSETUP:
     movwf I2C_PINSETUP__M, c
     movlw 0x10
     subwf I2C_PINSETUP__PIN, w, c
-    bc _L989
+    bc _L982
     movf I2C_PINSETUP__M, w, c
     iorwf TRISB, f, c
     xorlw 0xFF
     movlb 15
     andwf ANSELB, f, b
     return
-_L989:
+_L982:
     movf I2C_PINSETUP__M, w, c
     iorwf TRISC, f, c
     xorlw 0xFF
@@ -6532,24 +6509,24 @@ _L989:
     ; Sub/Function SetCon
 PWM_SETCON:
     decf PWM_SETCON__CH, w, c
-    bnz _L991
+    bnz _L984
     movf PWM_SETCON__V, w, c
     movwf CCP1CON, c
     return
-_L991:
+_L984:
     movf PWM_SETCON__CH, w, c
     xorlw 0x02
-    bnz _L992
+    bnz _L985
     movf PWM_SETCON__V, w, c
     movwf CCP2CON, c
     return
-_L992:
+_L985:
     xorlw 0x01
-    bnz _L993
+    bnz _L986
     movf PWM_SETCON__V, w, c
     movwf PWM3CON, c
     return
-_L993:
+_L986:
     movf PWM_SETCON__V, w, c
     movwf PWM4CON, c
     return
@@ -6571,11 +6548,11 @@ PWM_SETPPS:
 PWM_SETDUTY:
     movlw 4
     subwf PWM_SETDUTY__D+1, w, c
-    bnc _L995
+    bnc _L988
     setf PWM_SETDUTY__D, c
     movlw 0x03
     movwf PWM_SETDUTY__D+1, c
-_L995:
+_L988:
     movf PWM_SETDUTY__D+1, w, c
     mullw 64
     movf PRODL, w, c
@@ -6591,30 +6568,30 @@ _L995:
     movf PRODL, w, c
     movwf PWM_SETDUTY__LO, c
     decf PWM_SETDUTY__CH, w, c
-    bnz _L997
+    bnz _L990
     movf PWM_SETDUTY__LO, w, c
     movwf CCPR1L, c
     movf PWM_SETDUTY__HI, w, c
     movwf CCPR1H, c
     return
-_L997:
+_L990:
     movf PWM_SETDUTY__CH, w, c
     xorlw 0x02
-    bnz _L998
+    bnz _L991
     movf PWM_SETDUTY__LO, w, c
     movwf CCPR2L, c
     movf PWM_SETDUTY__HI, w, c
     movwf CCPR2H, c
     return
-_L998:
+_L991:
     xorlw 0x01
-    bnz _L999
+    bnz _L992
     movf PWM_SETDUTY__LO, w, c
     movwf PWM3DCL, c
     movf PWM_SETDUTY__HI, w, c
     movwf PWM3DCH, c
     return
-_L999:
+_L992:
     movf PWM_SETDUTY__LO, w, c
     movwf PWM4DCL, c
     movf PWM_SETDUTY__HI, w, c
@@ -6642,9 +6619,9 @@ FLASHWRITE_SETADDR:
 ADC_CONVERT:
     movlb 15
     bsf ADCON0, 0, b
-_L1010:
+_L1003:
     btfsc ADCON0, 0, b
-    bra _L1010
+    bra _L1003
     movff ADRESL, ADC_CONVERT__RESULT
     movff ADRESH, ADC_CONVERT__RESULT+1
     return
@@ -6660,9 +6637,9 @@ ADC_SETCLOCK:
 SERIAL2_SERIAL2WRITEBYTE:
     movwf SERIAL2_SERIAL2WRITEBYTE__B, c
     movlb 14
-_L1013:
+_L1006:
     btfss PIR3, 6, b
-    bra _L1013
+    bra _L1006
     movf SERIAL2_SERIAL2WRITEBYTE__B, w, c
     movwf TX2REG, b
     return
@@ -6670,9 +6647,9 @@ _L1013:
 SERIAL_SERIALWRITEBYTE:
     movwf SERIAL_SERIALWRITEBYTE__B, c
     movlb 14
-_L1016:
+_L1009:
     btfss PIR3, 4, b
-    bra _L1016
+    bra _L1009
     movf SERIAL_SERIALWRITEBYTE__B, w, c
     movwf TX1REG, c
     return
@@ -6682,7 +6659,7 @@ __div2:
     clrf __C1, c
     movlw 16
     movwf __D0, c
-_L1019:
+_L1012:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     rlcf __A1, f, c
@@ -6692,17 +6669,17 @@ _L1019:
     subwf __C0, f, c
     movf __B1, w, c
     subwfb __C1, f, c
-    bc _L1020
+    bc _L1013
     movf __B0, w, c
     addwf __C0, f, c
     movf __B1, w, c
     addwfc __C1, f, c
-    bra _L1021
-_L1020:
+    bra _L1014
+_L1013:
     bsf __A0, 0, c
-_L1021:
+_L1014:
     decfsz __D0, f, c
-    bra _L1019
+    bra _L1012
     return
     ; helper div4
 __div4:
@@ -6712,7 +6689,7 @@ __div4:
     clrf __C3, c
     movlw 32
     movwf __D0, c
-_L1022:
+_L1015:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     rlcf __A1, f, c
@@ -6730,7 +6707,7 @@ _L1022:
     subwfb __C2, f, c
     movf __B3, w, c
     subwfb __C3, f, c
-    bc _L1023
+    bc _L1016
     movf __B0, w, c
     addwf __C0, f, c
     movf __B1, w, c
@@ -6739,187 +6716,193 @@ _L1022:
     addwfc __C2, f, c
     movf __B3, w, c
     addwfc __C3, f, c
-    bra _L1024
-_L1023:
+    bra _L1017
+_L1016:
     bsf __A0, 0, c
-_L1024:
+_L1017:
     decfsz __D0, f, c
-    bra _L1022
+    bra _L1015
     return
     ; helper shl1
 __shl1:
     movf __D1, f, c
-    bz _L1026
-_L1025:
+    bz _L1019
+_L1018:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     decfsz __D1, f, c
-    bra _L1025
-_L1026:
+    bra _L1018
+_L1019:
     return
     ; helper shl2
 __shl2:
     movf __D1, f, c
-    bz _L1028
-_L1027:
+    bz _L1021
+_L1020:
     bcf STATUS, 0, c
     rlcf __A0, f, c
     rlcf __A1, f, c
     decfsz __D1, f, c
-    bra _L1027
-_L1028:
+    bra _L1020
+_L1021:
     return
     ; helper shr1
 __shr1:
     movf __D1, f, c
-    bz _L1030
-_L1029:
+    bz _L1023
+_L1022:
     bcf STATUS, 0, c
     rrcf __A0, f, c
     decfsz __D1, f, c
-    bra _L1029
-_L1030:
+    bra _L1022
+_L1023:
     return
     ; helper shr4
 __shr4:
     movf __D1, f, c
-    bz _L1032
-_L1031:
+    bz _L1025
+_L1024:
     bcf STATUS, 0, c
     rrcf __A3, f, c
     rrcf __A2, f, c
     rrcf __A1, f, c
     rrcf __A0, f, c
     decfsz __D1, f, c
-    bra _L1031
-_L1032:
+    bra _L1024
+_L1025:
     return
 __CA0:
-    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5E, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x0E, 0x00, 0x28, 0x7C, 0x28, 0x7C, 0x28, 0x08, 0x54, 0x7C, 0x54, 0x20, 0x26, 0x10, 0x08, 0x64, 0x00, 0x28, 0x54, 0x28, 0x40, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x00, 0x00, 0x00, 0x42, 0x3C, 0x00, 0x00, 0x00, 0x54, 0x38, 0x54, 0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x00, 0x80, 0x60, 0x20, 0x00, 0x10, 0x10, 0x10, 0x10, 0x00, 0x00, 0x60, 0x60, 0x00, 0x00, 0x20, 0x10, 0x08, 0x04, 0x00, 0x00, 0x3C, 0x42, 0x3C, 0x00, 0x00, 0x44, 0x7E, 0x40, 0x00, 0x44, 0x62, 0x52, 0x4C, 0x00, 0x22, 0x4A, 0x4A, 0x36, 0x00, 0x18, 0x14, 0x7E, 0x10, 0x00, 0x2E, 0x4A, 0x4A, 0x32, 0x00, 0x3C, 0x4A, 0x4A, 0x30, 0x00, 0x02, 0x62, 0x1A, 0x06, 0x00, 0x34, 0x4A, 0x4A, 0x34, 0x00, 0x0C, 0x52, 0x52, 0x3C, 0x00, 0x00, 0x6C, 0x6C, 0x00, 0x00, 0x80, 0x6C, 0x2C, 0x00, 0x00, 0x00, 0x10, 0x28, 0x44, 0x00, 0x28, 0x28, 0x28, 0x28, 0x00, 0x00, 0x44, 0x28, 0x10, 0x00, 0x00, 0x04, 0x52, 0x0C, 0x00, 0x3C, 0x42, 0x5A, 0x1C, 0x00, 0x7C, 0x12, 0x12, 0x7C, 0x00, 0x7E, 0x4A, 0x4A, 0x34, 0x00, 0x3C, 0x42, 0x42, 0x24, 0x00, 0x7E, 0x42, 0x42, 0x3C, 0x00, 0x7E, 0x4A, 0x4A, 0x42, 0x00, 0x7E, 0x0A, 0x0A, 0x02, 0x00, 0x3C, 0x42, 0x52, 0x74, 0x00, 0x7E, 0x08, 0x08, 0x7E, 0x00, 0x00, 0x42, 0x7E, 0x42, 0x00, 0x20, 0x40, 0x40, 0x3E, 0x00, 0x7E, 0x18, 0x24, 0x42, 0x00, 0x7E, 0x40, 0x40, 0x40, 0x00, 0x7E, 0x0C, 0x0C, 0x7E, 0x00, 0x7E, 0x0C, 0x30, 0x7E, 0x00, 0x3C, 0x42, 0x42, 0x3C, 0x00, 0x7E, 0x12, 0x12, 0x0C, 0x00, 0x3C, 0x62, 0x42, 0xBC, 0x00, 0x7E, 0x12, 0x32, 0x4C, 0x00, 0x24, 0x4A, 0x52, 0x24, 0x00, 0x00, 0x02, 0x7E, 0x02, 0x00, 0x3E, 0x40, 0x40, 0x3E, 0x00, 0x1E, 0x60, 0x60, 0x1E, 0x00, 0x7E, 0x30, 0x30, 0x7E, 0x00, 0x66, 0x18, 0x18, 0x66, 0x00, 0x00, 0x0E, 0x70, 0x0E, 0x00, 0x62, 0x52, 0x4A, 0x46, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x00, 0x04, 0x08, 0x10, 0x20, 0x00, 0x00, 0x42, 0x42, 0x7E, 0x00, 0x00, 0x04, 0x02, 0x04, 0x00, 0x40, 0x40, 0x40, 0x40, 0x00, 0x00, 0x02, 0x04, 0x00, 0x00, 0x30, 0x48, 0x28, 0x78, 0x00, 0x7E, 0x48, 0x48, 0x30, 0x00, 0x30, 0x48, 0x48, 0x00, 0x00, 0x30, 0x48, 0x48, 0x7E, 0x00, 0x30, 0x68, 0x58, 0x10, 0x00, 0x10, 0x7C, 0x12, 0x04, 0x00, 0x50, 0xA8, 0xA8, 0x98, 0x00, 0x7E, 0x08, 0x08, 0x70, 0x00, 0x00, 0x48, 0x7A, 0x40, 0x00, 0x00, 0x40, 0x80, 0x7A, 0x00, 0x7E, 0x10, 0x28, 0x40, 0x00, 0x00, 0x42, 0x7E, 0x40, 0x00, 0x78, 0x10, 0x18, 0x70, 0x00, 0x78, 0x08, 0x08, 0x70, 0x00, 0x30, 0x48, 0x48, 0x30, 0x00, 0xF8, 0x48, 0x48, 0x30, 0x00, 0x30, 0x48, 0x48, 0xF8, 0x00, 0x78, 0x08, 0x08, 0x10, 0x00, 0x50, 0x58, 0x68, 0x28, 0x00, 0x08, 0x3E, 0x48, 0x40, 0x00, 0x38, 0x40, 0x40, 0x78, 0x00, 0x00, 0x38, 0x40, 0x38, 0x00, 0x78, 0x60, 0x60, 0x78, 0x00, 0x48, 0x30, 0x30, 0x48, 0x00, 0x18, 0xA0, 0x40, 0x38, 0x00, 0x48, 0x68, 0x58, 0x48, 0x00, 0x00, 0x08, 0x3C, 0x42, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x42, 0x3C, 0x08, 0x00, 0x04, 0x02, 0x04, 0x02, 0x00, 0x00
+    db 0x0C, 0x04, 0x02, 0x0A, 0x0E, 0x06, 0x00, 0x08, 0x0D, 0x05, 0x03, 0x0B, 0x0F, 0x07, 0x01, 0x09
 __CA1:
-    db 0x01, 0x02, 0x04, 0x08, 0x0C, 0x10, 0x20, 0x30, 0x40, 0x00
+    db 0x06, 0x0E, 0x02, 0x0A, 0x01, 0x09, 0x05, 0x0D, 0x07, 0x0F, 0x03, 0x0B, 0x00, 0x08, 0x04, 0x0C
 __CA2:
-    db 0x10, 0x27, 0xE8, 0x03, 0x64, 0x00, 0x0A, 0x00
+    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5E, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x0E, 0x00, 0x28, 0x7C, 0x28, 0x7C, 0x28, 0x08, 0x54, 0x7C, 0x54, 0x20, 0x26, 0x10, 0x08, 0x64, 0x00, 0x28, 0x54, 0x28, 0x40, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x00, 0x00, 0x00, 0x42, 0x3C, 0x00, 0x00, 0x00, 0x54, 0x38, 0x54, 0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x00, 0x80, 0x60, 0x20, 0x00, 0x10, 0x10, 0x10, 0x10, 0x00, 0x00, 0x60, 0x60, 0x00, 0x00, 0x20, 0x10, 0x08, 0x04, 0x00, 0x00, 0x3C, 0x42, 0x3C, 0x00, 0x00, 0x44, 0x7E, 0x40, 0x00, 0x44, 0x62, 0x52, 0x4C, 0x00, 0x22, 0x4A, 0x4A, 0x36, 0x00, 0x18, 0x14, 0x7E, 0x10, 0x00, 0x2E, 0x4A, 0x4A, 0x32, 0x00, 0x3C, 0x4A, 0x4A, 0x30, 0x00, 0x02, 0x62, 0x1A, 0x06, 0x00, 0x34, 0x4A, 0x4A, 0x34, 0x00, 0x0C, 0x52, 0x52, 0x3C, 0x00, 0x00, 0x6C, 0x6C, 0x00, 0x00, 0x80, 0x6C, 0x2C, 0x00, 0x00, 0x00, 0x10, 0x28, 0x44, 0x00, 0x28, 0x28, 0x28, 0x28, 0x00, 0x00, 0x44, 0x28, 0x10, 0x00, 0x00, 0x04, 0x52, 0x0C, 0x00, 0x3C, 0x42, 0x5A, 0x1C, 0x00, 0x7C, 0x12, 0x12, 0x7C, 0x00, 0x7E, 0x4A, 0x4A, 0x34, 0x00, 0x3C, 0x42, 0x42, 0x24, 0x00, 0x7E, 0x42, 0x42, 0x3C, 0x00, 0x7E, 0x4A, 0x4A, 0x42, 0x00, 0x7E, 0x0A, 0x0A, 0x02, 0x00, 0x3C, 0x42, 0x52, 0x74, 0x00, 0x7E, 0x08, 0x08, 0x7E, 0x00, 0x00, 0x42, 0x7E, 0x42, 0x00, 0x20, 0x40, 0x40, 0x3E, 0x00, 0x7E, 0x18, 0x24, 0x42, 0x00, 0x7E, 0x40, 0x40, 0x40, 0x00, 0x7E, 0x0C, 0x0C, 0x7E, 0x00, 0x7E, 0x0C, 0x30, 0x7E, 0x00, 0x3C, 0x42, 0x42, 0x3C, 0x00, 0x7E, 0x12, 0x12, 0x0C, 0x00, 0x3C, 0x62, 0x42, 0xBC, 0x00, 0x7E, 0x12, 0x32, 0x4C, 0x00, 0x24, 0x4A, 0x52, 0x24, 0x00, 0x00, 0x02, 0x7E, 0x02, 0x00, 0x3E, 0x40, 0x40, 0x3E, 0x00, 0x1E, 0x60, 0x60, 0x1E, 0x00, 0x7E, 0x30, 0x30, 0x7E, 0x00, 0x66, 0x18, 0x18, 0x66, 0x00, 0x00, 0x0E, 0x70, 0x0E, 0x00, 0x62, 0x52, 0x4A, 0x46, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x00, 0x04, 0x08, 0x10, 0x20, 0x00, 0x00, 0x42, 0x42, 0x7E, 0x00, 0x00, 0x04, 0x02, 0x04, 0x00, 0x40, 0x40, 0x40, 0x40, 0x00, 0x00, 0x02, 0x04, 0x00, 0x00, 0x30, 0x48, 0x28, 0x78, 0x00, 0x7E, 0x48, 0x48, 0x30, 0x00, 0x30, 0x48, 0x48, 0x00, 0x00, 0x30, 0x48, 0x48, 0x7E, 0x00, 0x30, 0x68, 0x58, 0x10, 0x00, 0x10, 0x7C, 0x12, 0x04, 0x00, 0x50, 0xA8, 0xA8, 0x98, 0x00, 0x7E, 0x08, 0x08, 0x70, 0x00, 0x00, 0x48, 0x7A, 0x40, 0x00, 0x00, 0x40, 0x80, 0x7A, 0x00, 0x7E, 0x10, 0x28, 0x40, 0x00, 0x00, 0x42, 0x7E, 0x40, 0x00, 0x78, 0x10, 0x18, 0x70, 0x00, 0x78, 0x08, 0x08, 0x70, 0x00, 0x30, 0x48, 0x48, 0x30, 0x00, 0xF8, 0x48, 0x48, 0x30, 0x00, 0x30, 0x48, 0x48, 0xF8, 0x00, 0x78, 0x08, 0x08, 0x10, 0x00, 0x50, 0x58, 0x68, 0x28, 0x00, 0x08, 0x3E, 0x48, 0x40, 0x00, 0x38, 0x40, 0x40, 0x78, 0x00, 0x00, 0x38, 0x40, 0x38, 0x00, 0x78, 0x60, 0x60, 0x78, 0x00, 0x48, 0x30, 0x30, 0x48, 0x00, 0x18, 0xA0, 0x40, 0x38, 0x00, 0x48, 0x68, 0x58, 0x48, 0x00, 0x00, 0x08, 0x3C, 0x42, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x42, 0x3C, 0x08, 0x00, 0x04, 0x02, 0x04, 0x02, 0x00, 0x00
 __CA3:
+    db 0x01, 0x02, 0x04, 0x08, 0x0C, 0x10, 0x20, 0x30, 0x40, 0x00
+__CA4:
     db 0x10, 0x27, 0xE8, 0x03, 0x64, 0x00, 0x0A, 0x00
-__SLIT4:
-    db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
-__SLIT5:
-    db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
+__CA5:
+    db 0x10, 0x27, 0xE8, 0x03, 0x64, 0x00, 0x0A, 0x00
 __SLIT6:
-    db 0x68, 0x69, 0x00, 0x00
+    db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
 __SLIT7:
+    db 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00
+__SLIT8:
     db 0x68, 0x69, 0x00, 0x00
-;SYM ADC_ADCREAD 0x1C8A
-;SYM ADC_CONVERT 0x2FC2
-;SYM ADC_SETCLOCK 0x2FD4
-;SYM AHT30_AHT30FETCH 0x2396
-;SYM AHT30_AHT30START 0x2356
-;SYM EEPROM_EEPROMREAD 0x1CAE
-;SYM EEPROM_EEPROMWRITE 0x1CD0
-;SYM FLASHWRITE_FLASHERASESECTOR 0x1D44
-;SYM FLASHWRITE_FLASHREADWORD 0x1D28
-;SYM FLASHWRITE_FLASHUPDATEWORD 0x1DF0
-;SYM FLASHWRITE_FLASHWRITEWORD 0x1D88
-;SYM FLASHWRITE_SETADDR 0x2FA2
-;SYM I2C_CONDITION 0x2E4C
-;SYM I2C_I2CRECEIVE 0x20D4
-;SYM I2C_I2CRESTART 0x211E
-;SYM I2C_I2CSEND 0x208A
-;SYM I2C_I2CSTART 0x2072
-;SYM I2C_I2CSTATUS 0x214E
-;SYM I2C_I2CSTOP 0x2136
-;SYM I2C_OPEN 0x2E28
-;SYM I2C_PINSETUP 0x2ECE
-;SYM I2C_SETPPS 0x2E06
-;SYM I2C_WAITIDLE 0x2E68
-;SYM I2C_WAITIF 0x2E9C
-;SYM IRREMOTE_WIDTH 0x27E4
-;SYM LCD_LCDCOMMAND 0x2266
-;SYM LCD_LCDSETADDRESS 0x2248
-;SYM LCD_LCDWRITECHAR 0x2250
-;SYM LCD_NIBBLE 0x2CB4
-;SYM LCD_SEND 0x2C8A
-;SYM OLED_BEGIN 0x2AF6
-;SYM OLED_CMD 0x2BAC
-;SYM OLED_FINISH 0x2B80
-;SYM OLED_FONTBYTE 0x2340
-;SYM OLED_OLEDFILL 0x22C0
-;SYM OLED_OLEDGOTO 0x2292
-;SYM OLED_OLEDWRITECHAR 0x22F0
-;SYM OLED_PUT 0x2B58
-;SYM OLED_RESET 0x2BD0
-;SYM OLED_SETUP 0x2C10
-;SYM PINIO_BINDDATA 0x2878
-;SYM PINIO_CLKPUT 0x28B2
-;SYM PINIO_CLKPUT_END 0x28CA
-;SYM PINIO_CLKPUT_HI 0x28C8
-;SYM PINIO_DATAPUT 0x2898
-;SYM PINIO_DATAPUT_END 0x28B0
-;SYM PINIO_DATAPUT_HI 0x28AE
-;SYM PINIO_DATAREAD 0x28EA
-;SYM PINIO_DATAREAD_END 0x28FE
-;SYM PINIO_PINADDR 0x28CC
-;SYM PINIO_PINADDR_END 0x28E8
-;SYM PINIO_PINGET 0x2674
-;SYM PINIO_PINGET_END 0x26A0
-;SYM PINIO_PINGET_GOT 0x269A
-;SYM PINIO_PINGET_SHL 0x2692
-;SYM PINIO_PININPUT 0x25C4
-;SYM PINIO_PINOK 0x25B4
-;SYM PINIO_PINOUTPUT 0x2746
-;SYM PINIO_PINSET 0x2716
-;SYM PINIO_PINSET_END 0x2744
-;SYM PINIO_PINSET_GOT 0x2738
-;SYM PINIO_PINSET_HI 0x2742
-;SYM PINIO_PINSET_SHL 0x2730
-;SYM PULSE_RCIN 0x2572
-;SYM PULSE_WAITUS 0x281E
-;SYM PWM_PWMDUTY 0x200E
-;SYM PWM_PWMSTART 0x1ED2
-;SYM PWM_PWMSTOP 0x2030
-;SYM PWM_SETCON 0x2EFC
-;SYM PWM_SETDUTY 0x2F44
-;SYM PWM_SETPPS 0x2F22
-;SYM RTCCSPI_RDREG 0x2940
-;SYM RTCCSPI_READBLOCK 0x297C
-;SYM RTCCSPI_TOBCD 0x2952
-;SYM RTCCSPI_WRITEBLOCK 0x2900
-;SYM RTCCSPI_WRREG 0x29C4
-;SYM RTCC_OPEN 0x2A1C
-;SYM RTCC_RDREG 0x2A40
-;SYM RTCC_READBLOCK 0x2A7C
-;SYM RTCC_TOBCD 0x2A52
-;SYM RTCC_WRITEBLOCK 0x29DC
-;SYM RTCC_WRREG 0x2ADE
-;SYM SERIAL2_SERIAL2WRITEBYTE 0x2FE0
-;SYM SERIAL_SERIALWRITEBYTE 0x2FEE
-;SYM SPI_PINSETUP 0x2DBC
-;SYM SPI_SETPPS 0x2CFE
-;SYM SPI_SPIREAD 0x219A
-;SYM SPI_SPISTATUS 0x21A4
-;SYM SPI_SPITRANSFER 0x2156
-;SYM SPI_SPIWRITE 0x2192
-;SYM SYSTEM_SYSCLOCKHZ 0x21AA
-;SYM X10_CODEOF 0x26C0
-;SYM X10_HALF 0x278A
-;SYM X10_NUMBEROF 0x26A2
-;SYM X10_SENDBIT 0x27C4
-;SYM X10_ZERO 0x2612
-;SYM __CA0 0x30B4
-;SYM __CA1 0x3290
-;SYM __CA2 0x329A
-;SYM __CA3 0x32A2
-;SYM __SLIT4 0x32AA
-;SYM __SLIT5 0x32B0
-;SYM __SLIT6 0x32B6
-;SYM __SLIT7 0x32BA
-;SYM __div2 0x2FFC
-;SYM __div4 0x302A
-;SYM __halt 0x1C88
+__SLIT9:
+    db 0x68, 0x69, 0x00, 0x00
+;SYM ADC_ADCREAD 0x1C86
+;SYM ADC_CONVERT 0x2F84
+;SYM ADC_SETCLOCK 0x2F96
+;SYM AHT30_AHT30FETCH 0x238A
+;SYM AHT30_AHT30START 0x234A
+;SYM EEPROM_EEPROMREAD 0x1CAA
+;SYM EEPROM_EEPROMWRITE 0x1CCC
+;SYM FLASHWRITE_FLASHERASESECTOR 0x1D40
+;SYM FLASHWRITE_FLASHREADWORD 0x1D24
+;SYM FLASHWRITE_FLASHUPDATEWORD 0x1DEC
+;SYM FLASHWRITE_FLASHWRITEWORD 0x1D84
+;SYM FLASHWRITE_SETADDR 0x2F64
+;SYM I2C_CONDITION 0x2E0E
+;SYM I2C_I2CRECEIVE 0x20D0
+;SYM I2C_I2CRESTART 0x211A
+;SYM I2C_I2CSEND 0x2086
+;SYM I2C_I2CSTART 0x206E
+;SYM I2C_I2CSTATUS 0x214A
+;SYM I2C_I2CSTOP 0x2132
+;SYM I2C_OPEN 0x2DEA
+;SYM I2C_PINSETUP 0x2E90
+;SYM I2C_SETPPS 0x2DC8
+;SYM I2C_WAITIDLE 0x2E2A
+;SYM I2C_WAITIF 0x2E5E
+;SYM IRREMOTE_WIDTH 0x2798
+;SYM LCD_LCDCOMMAND 0x2262
+;SYM LCD_LCDSETADDRESS 0x2244
+;SYM LCD_LCDWRITECHAR 0x224C
+;SYM LCD_NIBBLE 0x2C62
+;SYM LCD_SEND 0x2C38
+;SYM OLED_BEGIN 0x2AA4
+;SYM OLED_CMD 0x2B5A
+;SYM OLED_FINISH 0x2B2E
+;SYM OLED_FONTBYTE 0x2334
+;SYM OLED_OLEDFILL 0x22BC
+;SYM OLED_OLEDGOTO 0x228E
+;SYM OLED_OLEDWRITECHAR 0x22EA
+;SYM OLED_PUT 0x2B06
+;SYM OLED_RESET 0x2B7E
+;SYM OLED_SETUP 0x2BBE
+;SYM PINIO_BINDDATA 0x282C
+;SYM PINIO_CLKPUT 0x2866
+;SYM PINIO_CLKPUT_END 0x287E
+;SYM PINIO_CLKPUT_HI 0x287C
+;SYM PINIO_DATAPUT 0x284C
+;SYM PINIO_DATAPUT_END 0x2864
+;SYM PINIO_DATAPUT_HI 0x2862
+;SYM PINIO_DATAREAD 0x289E
+;SYM PINIO_DATAREAD_END 0x28B2
+;SYM PINIO_PINADDR 0x2880
+;SYM PINIO_PINADDR_END 0x289C
+;SYM PINIO_PINGET 0x2668
+;SYM PINIO_PINGET_END 0x2694
+;SYM PINIO_PINGET_GOT 0x268E
+;SYM PINIO_PINGET_SHL 0x2686
+;SYM PINIO_PININPUT 0x25B8
+;SYM PINIO_PINOK 0x25A8
+;SYM PINIO_PINOUTPUT 0x26E0
+;SYM PINIO_PINSET 0x26B0
+;SYM PINIO_PINSET_END 0x26DE
+;SYM PINIO_PINSET_GOT 0x26D2
+;SYM PINIO_PINSET_HI 0x26DC
+;SYM PINIO_PINSET_SHL 0x26CA
+;SYM PULSE_RCIN 0x2566
+;SYM PULSE_WAITUS 0x27D2
+;SYM PWM_PWMDUTY 0x200A
+;SYM PWM_PWMSTART 0x1ECE
+;SYM PWM_PWMSTOP 0x202C
+;SYM PWM_SETCON 0x2EBE
+;SYM PWM_SETDUTY 0x2F06
+;SYM PWM_SETPPS 0x2EE4
+;SYM RTCCSPI_RDREG 0x28F4
+;SYM RTCCSPI_READBLOCK 0x2930
+;SYM RTCCSPI_TOBCD 0x2906
+;SYM RTCCSPI_WRITEBLOCK 0x28B4
+;SYM RTCCSPI_WRREG 0x2972
+;SYM RTCC_OPEN 0x29CA
+;SYM RTCC_RDREG 0x29EE
+;SYM RTCC_READBLOCK 0x2A2A
+;SYM RTCC_TOBCD 0x2A00
+;SYM RTCC_WRITEBLOCK 0x298A
+;SYM RTCC_WRREG 0x2A8C
+;SYM SERIAL2_SERIAL2WRITEBYTE 0x2FA2
+;SYM SERIAL_SERIALWRITEBYTE 0x2FB0
+;SYM SPI_PINSETUP 0x2D7E
+;SYM SPI_SETPPS 0x2CAC
+;SYM SPI_SPIREAD 0x2196
+;SYM SPI_SPISTATUS 0x21A0
+;SYM SPI_SPITRANSFER 0x2152
+;SYM SPI_SPIWRITE 0x218E
+;SYM SYSTEM_SYSCLOCKHZ 0x21A6
+;SYM X10_CODEOF 0x2724
+;SYM X10_HALF 0x273E
+;SYM X10_NUMBEROF 0x2696
+;SYM X10_SENDBIT 0x2778
+;SYM X10_ZERO 0x2606
+;SYM __CA0 0x3076
+;SYM __CA1 0x3086
+;SYM __CA2 0x3096
+;SYM __CA3 0x3272
+;SYM __CA4 0x327C
+;SYM __CA5 0x3284
+;SYM __SLIT6 0x328C
+;SYM __SLIT7 0x3292
+;SYM __SLIT8 0x3298
+;SYM __SLIT9 0x329C
+;SYM __div2 0x2FBE
+;SYM __div4 0x2FEC
+;SYM __halt 0x1C84
 ;SYM __reset 0x0000
-;SYM __shl1 0x3074
-;SYM __shl2 0x3082
-;SYM __shr1 0x3092
-;SYM __shr4 0x30A0
+;SYM __shl1 0x3036
+;SYM __shl2 0x3044
+;SYM __shr1 0x3054
+;SYM __shr4 0x3062
     END __reset

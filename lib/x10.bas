@@ -20,27 +20,15 @@ Public Const Bright = 22
 Public Const DimIt = 30
 
 ' The 4-bit pattern sent for house or unit number n (0..15), first bit sent in bit 3: A = 0110, B = 1110, C = 0010 ...
+Const CodeTab(16) As Byte = (6, 14, 2, 10, 1, 9, 5, 13, 7, 15, 3, 11, 0, 8, 4, 12)
 Public Function CodeOf(ByVal n As Byte) As Byte
-    Dim t As LongWord
-    n = n And 15
-    If n < 8 Then
-        t = 3583091430
-    Else
-        t = 3296769015
-        n = n - 8
-    End If
-    Result = Byte((t >> (n * 4)) And 15)
+    Result = CodeTab(n And 15)
 End Function
 
 ' Number for a 4-bit pattern, the inverse of CodeOf.
+Const NumTab(16) As Byte = (12, 4, 2, 10, 14, 6, 0, 8, 13, 5, 3, 11, 15, 7, 1, 9)
 Public Function NumberOf(ByVal code As Byte) As Byte
-    Dim i As Byte
-    Result = 0
-    For i = 0 To 15
-        If CodeOf(i) = code Then
-            Result = i
-        End If
-    Next
+    Result = NumTab(code And 15)
 End Function
 
 ' Waits for the next zero-crossing pulse (the pin goes low). False when none comes within about 50 ms.

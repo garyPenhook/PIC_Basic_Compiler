@@ -1442,3 +1442,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## system module review (done 2026-11-13, 0.1.211)
 - `lib/system.bas`: `SysClockFrom` and `SysWakeFrom` use `Const` tables instead of `If` chains. All-routines probe 18F27Q10 299 -> 278, 16F17146 375 -> 356, 16F18346 418 -> 389 words. See MODULE-REVIEWS section 25.
+
+## x10 module review (done 2026-11-13, 0.1.212)
+- `lib/x10.bas`: `CodeOf` and `NumberOf` from 16-byte `Const` tables. All-routines probe 18F27Q10 / 18F16Q41 768 -> 741, 16F17146 / 16F18346 952 -> 929 words. See MODULE-REVIEWS section 26.
