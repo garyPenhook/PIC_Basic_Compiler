@@ -40,7 +40,8 @@ fixed in the module.
 | 17 | `pwm` | reviewed (0.1.203) | Probes 18F27Q10 911 → 758, 16F18346 1323 → 1106, 16F17146 1410 → 1333, 18F16Q41 1041 → 1004 words; 23 pwm-using programs 40 076 → 38 024 words (22 smaller, 1 larger); one `SetPps` for all 16F parts |
 | 18 | `serial` | reviewed (0.1.204) | all-routines probe 166 → 144 (18F27Q10), 215 → 187 (16F), 167 → 145 (18F16Q41); `lib_serial` 133 → 113 / 165 → 142; `bench/modules` m1 575 → 547, m2 644 → 622, m4 488 → 470 |
 | 19 | `serial2` | reviewed (0.1.205) | all-routines probe 185 → 163 (18F27Q10), 241 → 213 (16F17146, 16F18056), 186 → 164 (18F16Q41) |
-| … | `rtcc` … `x10` | not started | |
+| 20 | `rtcc` | reviewed (0.1.206) | all-routines probe 1487 → 1431 (18F27Q10), 1956 → 1895 (16F17146), 1628 → 1579 (18F16Q41) |
+| … | `rtccspi` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -644,6 +645,18 @@ Probe calls every routine with values read from ports (`Serial2Init(115200)`, `S
 - **Not done:** `LcdWriteWord` and `OledWriteWord` keep the old ladder for their own turns; `Serial2Init` with a run-time baud rate links the 32-bit divide, as `SerialInit` does.
 - **Tests:** new `serial2_word_digits` (`tests/exec_p16`, 16F17146) reads the last byte the library leaves in `TX2REG` after 65535, 40000, 9, `$AF`, `$05` and 0. Passes on 16F17146, 16F18056 and 16F13245; changing the hex `+ 7` in the library to `+ 8` fails `T_L4`. Skipped on the parts without EUSART2 (16F183xx, 16F152xx) and on the 16F13145 list, as `lib_serial2` is. The 18F27Q10 and Q41 simulators never set TX2IF / drain the UART2 buffer, so no copy there; their digit code is the one `serial_word_digits` models. `lib_serial2` passes on 18F27Q10, 16F17146 and 16F18056.
 
+## 20. `rtcc` (done 2026-11-13, 0.1.206)
+
+Probe calls every public routine with values read from ports. Words before and after: 18F27Q10 1487 → 1431, 16F17146 1956 → 1895, 18F16Q41 1628 → 1579 (−56 / −61 / −49).
+
+- **One read-modify-write routine.** `Start`, `Stop`, `Battery`, `ClearPowerFail`, `AlarmEnable`, `AlarmClear`, `AlarmPolarity`, `SquareWave`, `PinLevel` and the `RtccTrim` CRSTRIM step each read a register,
+  changed bits and wrote it back with their own code. `Rmw(reg, keep, setb)` does it (value = `(old And keep) Or setb`); `WkWrite` is gone. The bus traffic is the same, one read then one write.
+- **`EeGet` / `EePut`** are the wait-for-ready, transfer and copy shared by `RtccEeRead` / `RtccIdRead` and `RtccEeWrite` / `RtccEeProtect`. `RtccIdWrite` keeps its own sequence: the unlock bytes must
+  follow the ready check directly, with no further EEPROM probe between them and the data.
+- **Not done:** `ReadBlock` (84 words, software I2C) and `RtccSet` are the bulk of what is left; the loop shapes are those of the errata sequence and were not touched.
+- **Tests:** `lib_rtcc_model` also calls `RtccEeProtect` (argument check, and a valid level), which no test reached before. The model tests pass on 18F27Q10 (optimised and `-O0`), 18F16Q41 (hardware I2C) and
+  16F17146; `lib_rtcc` passes on 18F27Q10 and 16F17146.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `rtcc` and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `rtccspi` and on through the list in alphabetical order.

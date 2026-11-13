@@ -158,6 +158,14 @@ Function WrReg(ByVal reg As Byte, ByVal v As Byte) As Byte
     Result = WriteBlock(222, reg, 1)
 End Function
 
+' Read-modify-write of register `reg` of the RTCC block: new value = (old And keep) Or setb.
+Function Rmw(ByVal reg As Byte, ByVal keep As Byte, ByVal setb As Byte) As Byte
+    Result = RdReg(reg)
+    If Result = 0 Then
+        Result = WrReg(reg, (I2c.I2cBuf(0) And keep) Or setb)
+    End If
+End Function
+
 ' Copies the time and date registers 0x00..0x06 for the accessors below. Returns the status.
 Public Function RtccRead() As Byte
     Dim i As Byte
@@ -316,44 +324,28 @@ End Function
 
 ' Starts the oscillator (ST = 1) without touching the time.
 Public Function RtccStart() As Byte
-    Result = RdReg(0)
-    If Result = 0 Then
-        Result = WrReg(0, I2c.I2cBuf(0) Or 128)
-    End If
+    Result = Rmw(0, 255, 128)
 End Function
 
 ' Stops the oscillator (ST = 0); the time is kept but does not advance. OSCRUN clears about 1 ms later.
 Public Function RtccStop() As Byte
-    Result = RdReg(0)
-    If Result = 0 Then
-        Result = WrReg(0, I2c.I2cBuf(0) And 127)
-    End If
-End Function
-
-' Writes RTCWKDAY with the weekday kept and VBATEN = vb (8, 0, or 255 = as it is). Writing RTCWKDAY always
-' clears PWRFAIL and so resets the power-fail time stamps [DS20002266K Register 5-4 note 2].
-Function WkWrite(ByVal vb As Byte) As Byte
-    Result = RdReg(3)
-    If Result = 0 Then
-        If vb = 255 Then
-            vb = I2c.I2cBuf(0) And 8
-        End If
-        Result = WrReg(3, (I2c.I2cBuf(0) And 7) Or vb)
-    End If
+    Result = Rmw(0, 127, 0)
 End Function
 
 ' Enables or disables the VBAT input (MCP7940N, MCP794xx). Also clears PWRFAIL.
 Public Function RtccBattery(ByVal en As Boolean) As Byte
+    ' RTCWKDAY keeps the weekday and VBATEN = en; writing it always clears PWRFAIL and so resets the power-fail time
+    ' stamps [DS20002266K Register 5-4 note 2].
     If en Then
-        Result = WkWrite(8)
+        Result = Rmw(3, 7, 8)
     Else
-        Result = WkWrite(0)
+        Result = Rmw(3, 7, 0)
     End If
 End Function
 
 ' Clears PWRFAIL (and so the time stamps) so that the next power loss is logged.
 Public Function RtccClearPowerFail() As Byte
-    Result = WkWrite(255)
+    Result = Rmw(3, 15, 0)
 End Function
 
 ' Reads the power-down (up = False) or power-up (up = True) time stamp [DS20002266K 5.7.1] as month, day, hour
@@ -414,13 +406,10 @@ Public Function RtccAlarmEnable(ByVal n As Byte, ByVal arm As Boolean) As Byte
         Exit
     End If
     m = 16 << n
-    Result = RdReg(7)
-    If Result = 0 Then
-        If arm Then
-            Result = WrReg(7, I2c.I2cBuf(0) Or m)
-        Else
-            Result = WrReg(7, I2c.I2cBuf(0) And (m Xor 255))
-        End If
+    If arm Then
+        Result = Rmw(7, 255, m)
+    Else
+        Result = Rmw(7, m Xor 255, 0)
     End If
 End Function
 
@@ -445,22 +434,16 @@ Public Function RtccAlarmClear(ByVal n As Byte) As Byte
         Exit
     End If
     r = 13 + 7 * n
-    Result = RdReg(r)
-    If Result = 0 Then
-        Result = WrReg(r, I2c.I2cBuf(0))
-    End If
+    Result = Rmw(r, 255, 0)
 End Function
 
 ' Sets the polarity of the alarm output on MFP: activeHigh = True gives a high level when asserted (ALMPOL = 1).
 ' Both alarms share it; the write also clears the flag of alarm 0.
 Public Function RtccAlarmPolarity(ByVal activeHigh As Boolean) As Byte
-    Result = RdReg(13)
-    If Result = 0 Then
-        If activeHigh Then
-            Result = WrReg(13, I2c.I2cBuf(0) Or 128)
-        Else
-            Result = WrReg(13, I2c.I2cBuf(0) And 127)
-        End If
+    If activeHigh Then
+        Result = Rmw(13, 255, 128)
+    Else
+        Result = Rmw(13, 127, 0)
     End If
 End Function
 
@@ -471,22 +454,16 @@ Public Function RtccSquareWave(ByVal sel As Byte) As Byte
     If sel > 3 Then
         Exit
     End If
-    Result = RdReg(7)
-    If Result = 0 Then
-        Result = WrReg(7, (I2c.I2cBuf(0) And 252) Or 64 Or sel)
-    End If
+    Result = Rmw(7, 252, 64 Or sel)
 End Function
 
 ' MFP as a general purpose output (SQWEN = 0, both alarms disarmed): level True = high. The pin is open drain,
 ' so it needs a pull-up to VCC [DS20002266K 5.5].
 Public Function RtccPinLevel(ByVal level As Boolean) As Byte
-    Result = RdReg(7)
-    If Result = 0 Then
-        If level Then
-            Result = WrReg(7, (I2c.I2cBuf(0) And 15) Or 128)
-        Else
-            Result = WrReg(7, I2c.I2cBuf(0) And 15)
-        End If
+    If level Then
+        Result = Rmw(7, 15, 128)
+    Else
+        Result = Rmw(7, 15, 0)
     End If
 End Function
 
@@ -510,13 +487,10 @@ Public Function RtccTrim(ByVal steps As Integer, ByVal coarse As Boolean) As Byt
     End If
     Result = WrReg(8, v)
     If Result = 0 Then
-        Result = RdReg(7)
-    End If
-    If Result = 0 Then
         If coarse Then
-            Result = WrReg(7, I2c.I2cBuf(0) Or 4)
+            Result = Rmw(7, 255, 4)
         Else
-            Result = WrReg(7, I2c.I2cBuf(0) And 251)
+            Result = Rmw(7, 251, 0)
         End If
     End If
 End Function
@@ -571,14 +545,8 @@ Function EeReady() As Byte
     Wend
 End Function
 
-' EEPROM, 128 bytes (MCP79410/1/2 only), addr 0..127. A write starts a 5 ms cycle; the next EEPROM call waits
-' for it. The RTCC and SRAM can be used meanwhile. Writes to the area protected by RtccEeProtect are not
-' acknowledged (status 3).
-Public Function RtccEeRead(ByVal addr As Byte, ByRef value As Byte) As Byte
-    Result = 5
-    If addr > 127 Then
-        Exit
-    End If
+' One byte of the EEPROM block at `addr`, after the wait for a running write cycle.
+Function EeGet(ByVal addr As Byte, ByRef value As Byte) As Byte
     Result = EeReady()
     If Result = 0 Then
         Result = ReadBlock(174, addr, 1)
@@ -588,16 +556,31 @@ Public Function RtccEeRead(ByVal addr As Byte, ByRef value As Byte) As Byte
     End If
 End Function
 
-Public Function RtccEeWrite(ByVal addr As Byte, ByVal value As Byte) As Byte
-    Result = 5
-    If addr > 127 Then
-        Exit
-    End If
+Function EePut(ByVal addr As Byte, ByVal value As Byte) As Byte
     Result = EeReady()
     If Result = 0 Then
         I2c.I2cBuf(0) = value
         Result = WriteBlock(174, addr, 1)
     End If
+End Function
+
+' EEPROM, 128 bytes (MCP79410/1/2 only), addr 0..127. A write starts a 5 ms cycle; the next EEPROM call waits
+' for it. The RTCC and SRAM can be used meanwhile. Writes to the area protected by RtccEeProtect are not
+' acknowledged (status 3).
+Public Function RtccEeRead(ByVal addr As Byte, ByRef value As Byte) As Byte
+    Result = 5
+    If addr > 127 Then
+        Exit
+    End If
+    Result = EeGet(addr, value)
+End Function
+
+Public Function RtccEeWrite(ByVal addr As Byte, ByVal value As Byte) As Byte
+    Result = 5
+    If addr > 127 Then
+        Exit
+    End If
+    Result = EePut(addr, value)
 End Function
 
 ' Write protection of the EEPROM array (STATUS register BP<1:0>, nonvolatile) [Table 6-1]: 0 none, 1 upper
@@ -607,11 +590,7 @@ Public Function RtccEeProtect(ByVal level As Byte) As Byte
     If level > 3 Then
         Exit
     End If
-    Result = EeReady()
-    If Result = 0 Then
-        I2c.I2cBuf(0) = level << 2
-        Result = WriteBlock(174, 255, 1)
-    End If
+    Result = EePut(255, level << 2)
 End Function
 
 ' Protected EEPROM, 8 bytes at 0xF0..0xF7 (MCP79400/1/2 and MCP79410/1/2): i = 0..7. On the EUI parts it holds
@@ -621,13 +600,7 @@ Public Function RtccIdRead(ByVal i As Byte, ByRef value As Byte) As Byte
     If i > 7 Then
         Exit
     End If
-    Result = EeReady()
-    If Result = 0 Then
-        Result = ReadBlock(174, 240 + i, 1)
-    End If
-    If Result = 0 Then
-        value = I2c.I2cBuf(0)
-    End If
+    Result = EeGet(240 + i, value)
 End Function
 
 ' Writes one byte of the protected EEPROM after the unlock sequence: 0x55 then 0xAA to EEUNLOCK (RTCC address

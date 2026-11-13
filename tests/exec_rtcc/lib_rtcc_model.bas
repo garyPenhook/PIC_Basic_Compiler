@@ -162,6 +162,8 @@ Chk(e8, I2c.ModelId(3), 119)
 Chk(e8, Rtcc.RtccIdRead(3, v), 0)
 Chk(e8, v, 119)
 Chk(e8, Rtcc.RtccIdRead(8, v), 5)
+Chk(e8, Rtcc.RtccEeProtect(4), 5)
+Chk(e8, Rtcc.RtccEeProtect(1), 0)
 ' 9. Time stamps: 23:42 on 15 July, weekday bits in the month byte are ignored.
 I2c.ModelPoke(24, 66)
 I2c.ModelPoke(25, 35)

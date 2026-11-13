@@ -1424,3 +1424,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## serial2 module review (done 2026-11-13, 0.1.205)
 - `lib/serial2.bas`: `Serial2WriteWord` and `Serial2WriteHex` use the `serial` changes (`Const` table of powers of ten, last digit sent as it stands, two-pass hex loop). All-routines probe 18F27Q10 185 -> 163, 16F17146 / 16F18056 241 -> 213, 18F16Q41 186 -> 164 words. New test `serial2_word_digits` (16F17146, library's last `TX2REG` byte). See MODULE-REVIEWS section 19.
+
+## rtcc module review (done 2026-11-13, 0.1.206)
+- `lib/rtcc.bas`: one `Rmw` read-modify-write routine replaces ten copies (`WkWrite` removed), `EeGet` / `EePut` shared by the EEPROM routines. All-routines probe 18F27Q10 1487 -> 1431, 16F17146 1956 -> 1895, 18F16Q41 1628 -> 1579 words. `lib_rtcc_model` now also exercises `RtccEeProtect`. See MODULE-REVIEWS section 20.
