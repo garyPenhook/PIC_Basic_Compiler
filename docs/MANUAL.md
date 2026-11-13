@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.228**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.229**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -4660,8 +4660,9 @@ ok = FlashUpdateWord(a + 1, 99)
 
 ## lcd  (`Include "lcd"`, HD44780 character LCD, 4-bit)
 
-Six port pins are used: RS, E and DB4..DB7 (pins 0..23). R/W is not used: tie it to ground. The busy
-flag is not read; every instruction is followed by a fixed wait longer than its worst case. The pins
+Six port pins are used: RS, E and DB4..DB7 (pins 0..23). R/W is not used unless `LcdRwInit` is called: tie it
+to ground. Writes never read the busy flag; every instruction is followed by a fixed wait longer than its worst
+case. Reading the display (`LcdStatus`, `LcdRead`) needs the R/W pin. The pins
 are set by read-modify-write of `LATA/B/C`, so do not use the module from a handler and from the main
 program together, and do not change those `LATx` registers elsewhere while a routine runs.
 
@@ -4851,6 +4852,64 @@ LcdWriteChar(0)
 ```
 **Notes** The write leaves the address counter in CGRAM: call `LcdGoto`, `LcdClear` or `LcdHome` before
 writing text.
+
+### LcdRwInit
+
+**Syntax**
+```basic
+ok = LcdRwInit(rw)
+```
+**Overview** Claims the display's R/W pin as a digital output, low (write), so that `LcdStatus` and `LcdRead` can
+read the display. Call it after a successful `LcdInit`; a second call moves the pin.
+
+**Parameters** `rw` pin 0..23, none of the six pins of `LcdInit`.
+
+**Returns** `Byte`: 1, or 0 when `LcdInit` has not succeeded, the pin is above 23 (or missing on the part) or it is one
+of the six pins. Calling `LcdInit` again forgets the R/W pin.
+
+**Example**
+```basic
+ok = LcdInit(16, 17, 18, 19, 20, 21, 2)
+ok = LcdRwInit(22)                ' R/W on RC6
+```
+
+### LcdStatus
+
+**Syntax**
+```basic
+s = LcdStatus()
+```
+**Overview** Reads the busy flag and the address counter.
+
+**Returns** `Byte`: bit 7 is the busy flag, bits 0..6 the address counter. 0 when `LcdRwInit` has not succeeded.
+
+**Example**
+```basic
+While (LcdStatus() And 128) <> 0
+Wend
+```
+**Notes** The data bus pins are inputs for the read and outputs again after it, so the display must be the only
+thing on them.
+
+### LcdRead
+
+**Syntax**
+```basic
+ch = LcdRead()
+```
+**Overview** Waits for the busy flag to clear (at most 255 reads, so a missing display cannot hang the program), then
+reads the byte at the address counter: DDRAM, or CGRAM after `LcdCommand(64 + address)`. The address then moves as the
+entry mode says.
+
+**Returns** `Byte`: 0 when `LcdRwInit` has not succeeded.
+
+**Example**
+```basic
+LcdGoto(3, 1)
+ch = LcdRead()                    ' the character at column 3 of line 2
+```
+**Notes** The byte is valid straight after `LcdGoto`, `LcdSetAddress` or a cursor shift. After writing characters the
+byte at the counter cannot be read: call one of those first (HD44780U, "Read data from CG or DDRAM").
 
 ## glcd  (`Include "glcd"`, graphic LCDs: KS0108, T6963C, ST7920)
 

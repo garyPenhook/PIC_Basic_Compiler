@@ -1,0 +1,5 @@
+[[port]]
+port = "C"
+mask = 0x3C
+value = 0x14
+at = 0

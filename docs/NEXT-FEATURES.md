@@ -23,7 +23,7 @@ USB (no supported part has it), the 12-bit core, polled-interrupt mode (`Interru
 | 7 | `FreqCount(pin, ms)` pulse counting over a window | `timer` | **done 0.1.226** (`Timer.FreqCount`: Timer1 counter on any pin through `T1CKIPPS` (the PPS value is the pin number), read every millisecond so the count is a `LongWord`; 106 words on 18F27Q10; exec `lib_freqcount` in basil-sim with a stimulus on 5 parts; not run on hardware) |
 | 8 | `DtmfOut(pin, ms, key)`, `DtmfOut(pin, ms, gap, text)` | `pulse` (over the two-tone `Freqout`) | **done 0.1.227** (rows 697..941 Hz and columns 1209..1633 Hz on one pin, within 2 %; 145 words for one key on 18F27Q10, 328 words total on 16F17146; pin-write counts in `tests/exec_pins/lib_pins_model`, set-up in `lib_pulse`; not run on hardware) |
 | 9 | `ClrWdt()` intrinsic | compiler | **done 0.1.228** (`ClrWdt()`, no arguments, lowers to the `Asm` statement `clrwdt`: one word on both cores; exec `clrwdt` on 18F27Q10 and `tests/exec_p16/clrwdt` on 16F17146) |
-| 10 | `LcdRead` (busy flag, RW pin) | `lcd` | later |
+| 10 | `LcdRead` (busy flag, RW pin) | `lcd` | **done 0.1.229** (`LcdRwInit(rw)`, `LcdStatus()`, `LcdRead()`: both nibbles read with E high, RW pin optional so `LcdInit` is unchanged; 79 + 35 words for the shared read on 18F27Q10; exec `lib_lcd_read` with a stimulus holding the bus, on 5 parts; not run on a real display) |
 
 ## 1. format
 

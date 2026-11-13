@@ -496,7 +496,7 @@ PIC16F183xx: no window-violation cause (`PCON0` has no such bit); `SysClockFrom`
 PIC16F152xx: no window-violation cause; `SysClockFrom(cosc, 0, frq)` takes COSC 0 or 2 and `OSCFRQ.FRQ` 0..5 = 1, 2, 4, 8, 16, 32 MHz (any divider code gives 0).
 
 ## lcd (HD44780U character LCD, 4-bit)
-Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "Initializing by Instruction" (Figure 24), DDRAM map, bus timing. Pins `0..23` (RA0 = 0, RB0 = 8, RC0 = 16 ...); R/W tied to ground, the busy flag is not read (fixed waits: 50 us, 2 ms after Clear/Home).
+Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "Initializing by Instruction" (Figure 24), DDRAM map, bus timing. Pins `0..23` (RA0 = 0, RB0 = 8, RC0 = 16 ...); R/W tied to ground unless `LcdRwInit` is called; writes never read the busy flag (fixed waits: 50 us, 2 ms after Clear/Home). Test: `tests/exec/lib_lcd_read` (basil-sim with a stimulus holding the bus; not run on a real display).
 
 | Routine | Effect |
 |---|---|
@@ -508,6 +508,8 @@ Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "I
 | `LcdGoto(col, row)` | `col` 0..39, `row` 0..1 (second line at DDRAM 40H); one-line displays: `col` 0..79, `row` 0 |
 | `LcdSetAddress(a)` | raw DDRAM address (for four-line displays, whose wiring the data sheet does not describe) |
 | `LcdWriteChar(ch)` / `LcdWrite(s)` / `LcdWriteWord(v)` / `LcdWriteHex(v)` | character, string, unsigned decimal, two hex digits |
+| `LcdRwInit(rw)` | claims the R/W pin (output, low); 1, or 0 for a bad pin or no `LcdInit` yet |
+| `LcdStatus()` / `LcdRead()` | busy flag (bit 7) and address counter / the byte at the address counter after waiting for not busy (255 reads at most); 0 without `LcdRwInit`. Valid straight after `LcdGoto` |
 | `LcdCustomRow(slot, row, bits)` | one row of user character 0..7; follow with `LcdGoto` before writing text |
 
 Uses read-modify-write on `LATA/B/C`: not for use from a handler and the main program together.

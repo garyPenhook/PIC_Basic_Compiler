@@ -2,8 +2,8 @@ Module Lcd
 Include "pinio"
 ' Character LCD with an HD44780U controller, 4-bit interface (HD44780U data sheet, Hitachi
 ' ADE-207-272(Z) Rev 0.0; page numbers are not given because the copy is unnumbered, tables and
-' figures are). Six port pins are used: RS, E and DB4..DB7. R/W is not used: tie it to ground. The
-' busy flag is not read; every instruction is followed by a wait longer than its worst case time
+' figures are). Six port pins are used: RS, E and DB4..DB7. R/W is not used unless LcdRwInit is called:
+' tie it to ground. Writes do not read the busy flag; every instruction is followed by a wait longer than its worst case time
 ' [Table 6]: 50 us for 37 us instructions, 2 ms for Clear display (1.52 ms) and Return home.
 '
 ' Pins are numbered 0..23: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23 (the Adc/I2c/Spi
@@ -25,6 +25,9 @@ Include "pinio"
 Dim pins(6) As Byte
 Dim twoLines As Boolean
 Dim ready As Boolean
+Dim hasRw As Boolean
+Dim rwPin As Byte
+Dim rx As Byte
 
 ' One enable pulse with the data nibble already on DB4..DB7.
 Sub Pulse()
@@ -64,6 +67,7 @@ Public Function LcdInit(ByVal rs As Byte, ByVal en As Byte, ByVal d4 As Byte, By
     Dim j As Byte
     Result = 0
     ready = False
+    hasRw = False
     If lines < 1 Or lines > 2 Then
         Exit
     End If
@@ -268,3 +272,90 @@ Public Sub LcdCustomRow(ByVal slot As Byte, ByVal row As Byte, ByVal bits As Byt
     LcdCommand(64 Or (slot << 3) Or row)
     Send(bits And 31, True)
 End Sub
+
+' Reading [Table 1, "Read busy flag and address", "Read data from CG or DDRAM"] needs the R/W pin,
+' which LcdInit leaves unused (tie it to ground if LcdRwInit is not called).
+
+' Claims the R/W pin `rw` (0..23, none of the six pins of LcdInit) as a digital output, low (write).
+' Call it after a successful LcdInit; a second call moves the pin. Returns 1, or 0 when LcdInit has not
+' succeeded, the pin is above 23 or one of the six pins.
+Public Function LcdRwInit(ByVal rw As Byte) As Byte
+    Dim i As Byte
+    Result = 0
+    If Not ready Then
+        Exit
+    End If
+    If Not Pinio.PinOk(rw) Then
+        Exit
+    End If
+    For i = 0 To 5
+        If pins(i) = rw Then
+            Exit
+        End If
+    Next
+    rwPin = rw
+    Pinio.PinSet(rw, False)
+    Pinio.PinOutput(rw)
+    hasRw = True
+    Result = 1
+End Function
+
+' One nibble read with E high, shifted into `rx` from the right: the display drives DB4..DB7 for at most
+' 360 ns after E rises (tDDR) and holds them 5 ns after it falls. DB7 is read first, so DB4 ends in bit 0.
+Sub RecvNibble()
+    Dim i As Byte
+    Pinio.PinSet(pins(1), True)
+    DelayUS(1)
+    For i = 0 To 3
+        rx = rx << 1
+        If Pinio.PinGet(pins(5 - i)) Then
+            rx = rx Or 1
+        End If
+    Next
+    Pinio.PinSet(pins(1), False)
+    DelayUS(1)
+End Sub
+
+' A whole byte read, high nibble first; rs = False reads the busy flag and address counter, True the data.
+Function Recv(ByVal rs As Boolean) As Byte
+    Dim i As Byte
+    For i = 2 To 5
+        Pinio.PinInput(pins(i))
+    Next
+    Pinio.PinSet(pins(0), rs)
+    Pinio.PinSet(rwPin, True)
+    rx = 0
+    RecvNibble()
+    RecvNibble()
+    Pinio.PinSet(rwPin, False)
+    For i = 2 To 5
+        Pinio.PinOutput(pins(i))
+    Next
+    Result = rx
+End Function
+
+' Busy flag (bit 7) and address counter (bits 0..6). Returns 0 when LcdRwInit has not succeeded.
+Public Function LcdStatus() As Byte
+    Result = 0
+    If hasRw Then
+        Result = Recv(False)
+    End If
+End Function
+
+' Waits for the busy flag to clear (at most 255 reads, so an absent display cannot hang the program),
+' then reads the byte at the address counter (DDRAM, or CGRAM after LcdCommand(64 + a)); the address
+' then moves as the entry mode says. Valid straight after LcdGoto, LcdSetAddress or a cursor shift;
+' after writing characters call one of those first, because the byte at the counter cannot be read
+' then. Returns 0 when LcdRwInit has not succeeded.
+Public Function LcdRead() As Byte
+    Dim n As Byte
+    Result = 0
+    If Not hasRw Then
+        Exit
+    End If
+    n = 255
+    While n > 0 And (Recv(False) And 128) <> 0
+        Dec(n)
+    Wend
+    Result = Recv(True)
+End Function
