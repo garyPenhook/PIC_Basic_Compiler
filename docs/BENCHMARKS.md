@@ -260,20 +260,23 @@ Sinks equal in basil-sim (PIC18) and MDB (PIC16F17146). Cycles, `bench/kernels` 
 re-measured for this step; the kernel table above is from before review 3.
 
 
-## Peripheral-module programs, 2026-11-12
+## Peripheral-module programs, 2026-11-12 (0.1.199, then 0.1.200)
 
-`bench/modules/m1..m4`: four new programs that call the library modules (`gpio`, `pinio`, `serial`, `adc`, `eeprom`,
+`bench/modules/m1..m4`: four programs that call the library modules (`gpio`, `pinio`, `serial`, `adc`, `eeprom`,
 `timer`, `i2c`, `spi`, `pwm`, `shift`), each with an XC8 twin written at register level (XC8 has no peripheral
 library). `bench/modules/cmp.sh` builds all of them. PIC18F27Q10, 64 MHz, XC8 v4.00. Flash and data RAM in bytes
 (basil: words x 2 and the RAM total of `--report`; XC8: the "Program space" and "Data space" lines).
 
-| program | modules | basil | RAM | XC8 -Os | RAM | XC8 -O2 | RAM | basil / -Os |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| m1_logger | gpio serial adc eeprom timer | 1158 | 43 | 1439 | 45 | 1539 | 45 | 0.80 |
-| m2_i2cnode | gpio pinio serial i2c timer | 1340 | 45 | 1366 | 45 | 1478 | 46 | 0.98 |
-| m3_motor | gpio pinio adc pwm shift eeprom timer | 1896 | 59 | 1573 | 56 | 1701 | 56 | 1.21 |
-| m4_spiflash | gpio pinio spi serial eeprom timer | 1066 | 26 | 924 | 25 | 998 | 26 | 1.15 |
-| total | | 5460 | 173 | 5302 | 171 | 5716 | 172 | 1.03 |
+| program | modules | basil 0.1.199 | basil 0.1.200 | RAM | XC8 -Os | RAM | XC8 -O2 | RAM | 0.1.200 / -Os |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| m1_logger | gpio serial adc eeprom timer | 1158 | 1150 | 43 | 1439 | 45 | 1539 | 45 | 0.80 |
+| m2_i2cnode | gpio pinio serial i2c timer | 1340 | 1288 | 44 | 1366 | 45 | 1478 | 46 | 0.94 |
+| m3_motor | gpio pinio adc pwm shift eeprom timer | 1896 | 1794 | 59 | 1573 | 56 | 1701 | 56 | 1.14 |
+| m4_spiflash | gpio pinio spi serial eeprom timer | 1066 | 976 | 24 | 924 | 25 | 998 | 26 | 1.06 |
+| total | | 5460 | 5208 | 170 | 5302 | 171 | 5716 | 172 | 0.98 |
+
+0.1.199 was 3% larger than XC8 `-Os` in total; 0.1.200 (constant-argument copies of routines,
+`docs/EFFICIENCY.md` section 13) is 2% smaller, and 9% smaller than `-O2`. RAM is within a few bytes everywhere.
 
 Read this with the following in mind:
 
@@ -286,6 +289,32 @@ Read this with the following in mind:
   a basil program that wrote the registers itself would be too.
 * Where the C leaves a PPS input at its power-on default (RX1PPS, SSP1CLKPPS, SSP1DATPPS) it still writes it, as the
   library does; leaving those out would save about a dozen bytes per program.
-* `m3_motor` is where basil loses: `PWM_PWMSTART` is 235 words and `PwmPercent` pulls in the 32-bit multiply and divide
-  by the run-time step count (`__mul4`, `__divk2`, `__divk4`, 107 words together); the twin multiplies by a value it
-  keeps in a variable too but has one channel layout and no pin table.
+* `m3_motor` is where basil still loses (1794 against 1573). `PWM_PWMSTART` alone is 252 words: it validates a
+  run-time pin, checks that no other channel uses it, and picks CCP or PWM registers with `If ch = ...` chains. Two
+  copies of it, one per channel, are larger than the shared routine, so the pass leaves it alone. `PwmPercent`
+  multiplies and divides by the run-time step count (`__mul4`, `__divk2`, `__divk4`, 107 words); XC8 links 32-bit
+  helpers for the same expression, so that is not what the difference is. The rest is the routines that take pin
+  numbers (`Pinio`, `Shift`) against direct `LATB1`-style bit writes in the C. Folding more of that needs a library
+  change (table-driven register addresses for the channels) more than a compiler one.
+
+## Larger programs and library tests, 0.1.200, 2026-11-12
+
+`bench/large/run.sh`, flash in bytes, PIC18F27Q10, XC8 v4.00 (`-Os`); the 16F column is words, PIC16F18346. Sinks are
+equal to the `-Os` values in basil-sim (PIC18) and MDB (PIC16F17146).
+
+| program | basil 0.1.199 | basil 0.1.200 | XC8 -Os | basil vs -Os |
+|---|---:|---:|---:|---:|
+| a_algo | 1314 | 1314 | 1826 | 0.72 |
+| b_dsp | 2292 | 2038 | 2606 | 0.78 |
+| c_text | 1296 | 1296 | 1738 | 0.75 |
+| d_ctrl | 1108 | 1108 | 1390 | 0.80 |
+| total | 6010 | 5756 | 7560 | 0.76 |
+| 16F18346, words | 4617 | 4539 | | |
+
+Library test programs that call routines with differing constants shrank the most (words, PIC18F27Q10):
+`lib_spi` 547 to 357, `lib_i2c` 650 to 437, `lib_pulse` 832 to 730, `lib_bits` 510 to 452, `lib_system` 460 to 396,
+`lib_floatlib_cmp` 2178 to 1702, `lib_pwm_out` 314 to 282. None grew (the pass only keeps a change that builds smaller).
+
+Compile time: a program with a routine called with differing constants costs up to 12 more trial builds (a few
+seconds for the largest library test, `lib_glcd`: 1.3 s to 9 s); a program with nothing to copy, or an IR larger than
+4000 nodes (`tests/programs/library_all.bas`), costs nothing.

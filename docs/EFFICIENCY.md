@@ -794,3 +794,41 @@ Measured, not counted: `bench/large` built with each version, sinks checked in b
 | R13 | done | `pass_div_share` |
 | R14 | done | `ord_core` |
 | R15 | done: joined start-up zero runs, a `ByVal` parameter as the result of a leaf routine. Not done: a result that is the low bytes of a wider local, the entry clear of a local array, the three-variable rotate | `startup`, `coalesce_results` |
+
+## 13. Constant-argument copies of routines (0.1.200, 2026-11-12)
+
+**Finding.** A routine called with *different* constants was compiled once, for run-time values. `propagate_params`
+only helps when every call passes the same constant, so `PwmStart(1, 18, 0)` and `PwmStart(2, 17, 0)` shared one body
+that validated its pin, picked registers with an `If ch = ...` chain and shifted by `ch - 1` at run time. The library
+modules take pin and channel numbers as arguments, so this was most of the gap to hand-written register code
+(`docs/BENCHMARKS.md`, peripheral-module programs: basil 3% larger than XC8 `-Os`).
+
+**What was done** (`opt.rs`, run by `optimize_sized` in `main.rs`):
+* `const_result_calls`: a call of a routine whose body only stores constants into `Result` is that constant; a call of
+  an empty routine with effect-free arguments goes. `NoInline` routines are left alone.
+* `specialize_func`: calls that pass the same constants for read-only ByVal parameters get their own copy of the
+  routine (own variables, labels and asm names `NAME_S<n>`), the call is redirected, and the existing passes do the
+  rest: `propagate_params` makes the parameters constants, the folding passes drop the `If` chains, a copy with a
+  single call is inlined, `PinOk(18)` becomes `True`. Not copied: a routine with `Asm`, `Save`, a call cycle, a
+  handler, one whose address is taken or named from assembly, one that writes its parameter or whose result is its
+  parameter. After copying, a check that no place in the copy still names a variable of the original (a missed place
+  would make the two routines share storage) gives the copy up.
+* `specialize_best` decides by building, not by guessing: it makes the copies one routine at a time (all constant
+  parameters fixed, then each of the first four alone) and all at once, builds the program, and keeps the smallest
+  (including the program as it was). Sizes include the hardware-stack check of the real build. The number of trial
+  builds is at most 12 and falls with the size of the program; programs with an IR of more than 4000 nodes, or with
+  nothing to copy, are not touched. `BASIL_SPEC_DEBUG=1` prints each trial.
+
+**Measured** (`docs/BENCHMARKS.md`): `bench/large` 6010 to 5756 bytes (PIC18; `b_dsp` 2292 to 2038), 4617 to 4539 words
+(16F); the peripheral-module programs 5460 to 5208 bytes (now 2% under XC8 `-Os`); library tests up to a third smaller (`lib_spi` 547 to 357 words).
+
+**Two faults found on the way**, both pre-existing and only reachable through the new code shape:
+* `pass_warg` took the first `movwf` within three items of a `warg` marker for the parameter store. Dead code removal
+  around inlined copies left a marker next to `movwf ARG3`, which was deleted. The marker now names its parameter
+  (`warg P`) and the pass checks it.
+* `propagate_params` would have replaced a parameter by a constant when `coalesce_results` had made that parameter the
+  routine's result. Skipped now.
+
+**Not done.** Table-driven channel registers in `pwm` (the remaining gap in `m3_motor`); making the copy decision
+without a trial build (an IR weight with a call-overhead term was tried and mispredicted `lib_i2c`); copying routines
+with `ByRef` parameters on their array or string argument.

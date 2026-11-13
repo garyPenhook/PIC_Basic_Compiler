@@ -5185,9 +5185,12 @@ fn keeps_w(t: &str) -> bool {
 fn pass_warg(items: &mut Vec<Item>) -> bool {
     let keep = protected(items);
     for c in 0..items.len() {
-        if !matches!(&items[c], Item::Comment(t) if t == "warg") {
+        let Item::Comment(mark) = &items[c] else { continue };
+        if !(mark == "warg" || mark.starts_with("warg ")) {
             continue;
         }
+        // The marker names the parameter (`warg P`); a bare `warg` (unit tests) accepts the first store.
+        let named = mark["warg".len()..].trim().to_string();
         let Some(m) = (c + 1..items.len().min(c + 4)).find(|&k| matches!(&items[k], Item::Ins(t) if t.trim_start().starts_with("movwf "))) else { continue };
         if (c + 1..m).any(|k| !matches!(&items[k], Item::Ins(t) if t.trim_start().starts_with("movlb "))) || keep[m] {
             continue;
@@ -5195,6 +5198,9 @@ fn pass_warg(items: &mut Vec<Item>) -> bool {
         let Item::Ins(store) = &items[m] else { continue };
         let Some((_, ops)) = parse(store) else { continue };
         let sym = ops[0].to_string();
+        if !named.is_empty() && sym != named {
+            continue;
+        }
         let mentions = |t: &str| t.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')).any(|tok| tok == sym);
         let mut others = Vec::new();
         let mut opaque = false;
@@ -5662,7 +5668,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     // Last of all: the dead-store passes above take `WREG` to be dead at a `return`, so they must not run
     // after this one, which makes the result in `WREG` something callers depend on.
     pass_w_return(&mut items, env);
-    items.retain(|it| !matches!(it, Item::Comment(t) if t == "warg"));
+    items.retain(|it| !matches!(it, Item::Comment(t) if t == "warg" || t.starts_with("warg ")));
     items
 }
 

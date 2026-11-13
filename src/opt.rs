@@ -5,6 +5,9 @@
 //!   writes, becomes that constant inside the routine.
 //! * Straight-line propagation of constants held in a routine's own locals.
 //! * Removal of stores to locals and parameters nothing reads, and of the matching arguments.
+//! * A call of a routine that only returns a constant is replaced by the constant.
+//! * `specialize_best`: calls that pass constants get a private copy of the routine (so `PinOk(18)` and
+//!   `PinOk(17)` each fold to a constant); a copy is kept only when the generated program is smaller.
 //!
 //! Together these turn `SerialInit(115200)` into a handful of register writes instead of a
 //! run-time 32-bit divide.
@@ -525,7 +528,7 @@ fn propagate_params(p: &mut Program) -> bool {
         let Some(sites) = all.sites.get(&fi) else { continue };
         for &pv in &p.funcs[fi].params.clone() {
             let var = &p.vars[pv];
-            if var.kind != VarKind::Param || var.by_ref || all.addr.contains(&pv) || per[fi].written.contains(&pv) {
+            if var.kind != VarKind::Param || var.by_ref || all.addr.contains(&pv) || per[fi].written.contains(&pv) || p.funcs[fi].result == Some(pv) {
                 continue;
             }
             let mut value: Option<Ex> = None;
@@ -1958,19 +1961,607 @@ pub fn any_ex(p: &Program, f: &dyn Fn(&Ex) -> bool) -> bool {
     a.1
 }
 
+// ---- constant-result routines and call-site specialisation -------------------------------------
+
+/// A call of a routine whose whole body stores constants into its `Result` (the last one is the value), with
+/// arguments that have no effect, is that constant. A call statement of a routine with an empty body and
+/// effect-free arguments is dropped. After `specialize_best` has given `PinOk(18)` its own copy, that copy is
+/// `Result = True` and the test in the caller disappears.
+fn const_result_calls(p: &mut Program) -> bool {
+    let mut known: HashMap<FuncId, Option<(u32, u8)>> = HashMap::new();
+    for (i, f) in p.funcs.iter().enumerate() {
+        if f.reg || f.ext || f.no_inline || p.isrs.iter().any(|(h, _)| *h == i) || p.exports.iter().any(|e| e.func == i || e.thunk == i) || p.ext_funcs.contains(&i) {
+            continue;
+        }
+        if f.body.is_empty() && f.result.is_none() {
+            known.insert(i, None);
+            continue;
+        }
+        let Some(r) = f.result else { continue };
+        let mut last: Option<(u32, u8)> = None;
+        let mut ok = !f.body.is_empty();
+        for s in &f.body {
+            match &s.st {
+                St::Assign(pl, e) if matches!(pl.base, Base::Var(v) if v == r) && pl.off == 0 && pl.bit.is_none() && pl.idx.is_none() && pl.dbit.is_none() && pl.width() == e.w && e.as_const().is_some() && !p.vars[r].volatile => {
+                    last = Some((e.as_const().unwrap(), e.w));
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok && last.is_some() {
+            known.insert(i, last);
+        }
+    }
+    if known.is_empty() {
+        return false;
+    }
+    let mut hit = false;
+    for (_, body) in all_bodies(p) {
+        m_block(body, &mut |e: &mut Ex| {
+            if let ExK::Call(g, args) = &e.k
+                && let Some(Some((k, w))) = known.get(g)
+                && *w == e.w
+                && args.iter().all(|(pl, a)| pure(a) && pl.idx.is_none())
+            {
+                *e = Ex::konst(*k, e.w, e.signed);
+                hit = true;
+            }
+        });
+        retain_stmts(body, &mut |s: &mut S| {
+            if let St::Call(g, args) = &s.st
+                && known.contains_key(g)
+                && args.iter().all(|(pl, a)| pure(a) && pl.idx.is_none())
+            {
+                hit = true;
+                return false;
+            }
+            true
+        });
+    }
+    hit
+}
+
+/// Labels, `Save` blocks and raw assembly of a routine body: what makes copying it harder.
+#[derive(Default)]
+struct Shape {
+    save: bool,
+    labels: Vec<LabelId>,
+}
+
+impl Visit for Shape {
+    fn stmt(&mut self, s: &S) {
+        match &s.st {
+            St::Save { .. } => self.save = true,
+            St::Label(l) | St::Goto(l) | St::GoSub(l) => {
+                if !self.labels.contains(l) {
+                    self.labels.push(*l);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whether `target` can run again while `from` runs (a call cycle through `from`).
+fn calls_reach(p: &Program, from: FuncId, target: FuncId) -> bool {
+    let mut seen: HashSet<FuncId> = HashSet::new();
+    let mut work = vec![from];
+    while let Some(x) = work.pop() {
+        if !seen.insert(x) {
+            continue;
+        }
+        for g in scan(&p.funcs[x].body).sites.keys() {
+            if *g == target {
+                return true;
+            }
+            work.push(*g);
+        }
+    }
+    false
+}
+
+/// Applies `g` to every place written in the statements of `b` (not those inside expressions) and every label.
+fn stmt_places(b: &mut [S], g: &mut dyn FnMut(&mut Place), lab: &mut dyn FnMut(&mut LabelId)) {
+    fn src(s: &mut StrSrc, g: &mut dyn FnMut(&mut Place)) {
+        match s {
+            StrSrc::Ram(p) => g(p),
+            StrSrc::Lit(_) | StrSrc::Char(_) => {}
+            StrSrc::Cat { tmp, parts } => {
+                g(tmp);
+                for q in parts {
+                    src(q, g);
+                }
+            }
+        }
+    }
+    for s in b {
+        match &mut s.st {
+            St::Assign(p, _) | St::Add(p, _) | St::SetBit(p, _) | St::ToggleBit(p) | St::Clear(p) | St::ClearMem(p, _) | St::Direction { place: p, .. } => g(p),
+            St::Copy { dst, src, .. } => {
+                g(dst);
+                g(src);
+            }
+            St::StrSet { dst, parts, .. } => {
+                g(dst);
+                for q in parts {
+                    src(q, g);
+                }
+            }
+            St::Call(_, args) => {
+                for (p, _) in args {
+                    g(p);
+                }
+            }
+            St::If(arms, other) => {
+                for (_, blk) in arms {
+                    stmt_places(blk, g, lab);
+                }
+                stmt_places(other, g, lab);
+            }
+            St::While(_, blk) | St::Repeat(blk, _) | St::Save { body: blk, .. } => stmt_places(blk, g, lab),
+            St::For { var, body, .. } => {
+                g(var);
+                stmt_places(body, g, lab);
+            }
+            St::Count { counter, body, step, .. } => {
+                g(counter);
+                if let Some((p, _)) = step {
+                    g(p);
+                }
+                stmt_places(body, g, lab);
+            }
+            St::Goto(l) | St::GoSub(l) | St::Label(l) => lab(l),
+            _ => {}
+        }
+    }
+}
+
+/// Applies `g` to every call, in statements and in expressions.
+fn each_call(b: &mut [S], g: &mut dyn FnMut(&mut FuncId, &mut Vec<(Place, Ex)>)) {
+    fn blocks(b: &mut [S], g: &mut dyn FnMut(&mut FuncId, &mut Vec<(Place, Ex)>)) {
+        for s in b {
+            match &mut s.st {
+                St::Call(f, args) => g(f, args),
+                St::If(arms, other) => {
+                    for (_, blk) in arms {
+                        blocks(blk, g);
+                    }
+                    blocks(other, g);
+                }
+                St::While(_, blk) | St::Repeat(blk, _) | St::For { body: blk, .. } | St::Count { body: blk, .. } | St::Save { body: blk, .. } => blocks(blk, g),
+                _ => {}
+            }
+        }
+    }
+    blocks(b, g);
+    m_block(b, &mut |e: &mut Ex| {
+        if let ExK::Call(f, args) = &mut e.k {
+            g(f, args);
+        }
+    });
+}
+
+/// The constant arguments of one call: (index into `spec`, value) for each parameter of `spec` given a constant.
+fn site_key(args: &[(Place, Ex)], spec: &[(VarId, u32)], mask: u32) -> Vec<(usize, u32)> {
+    let mut key = Vec::new();
+    for (i, (pv, bytes)) in spec.iter().enumerate() {
+        if mask >> i & 1 == 0 {
+            continue;
+        }
+        let arg = args.iter().find(|(pl, _)| matches!(pl.base, Base::Var(v) if v == *pv) && pl.off == 0 && pl.bit.is_none() && pl.idx.is_none());
+        if let Some((_, e)) = arg
+            && let Some(k) = e.as_const()
+            && e.w as u32 == bytes * 8
+        {
+            key.push((i, k));
+        }
+    }
+    key
+}
+
+/// What `specialize_func` needs to know about the whole program, worked out once per version of it.
+struct SpecCtx {
+    all: Facts,
+    other: HashSet<FuncId>,
+}
+
+fn spec_ctx(p: &Program) -> SpecCtx {
+    let mut all = Facts::default();
+    for body in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut all, body);
+    }
+    SpecCtx { all, other: reachable_otherwise(p) }
+}
+
+/// Gives every group of calls of `f` that pass the same constants their own copy of `f`, so that
+/// `propagate_params` and the folding passes can use the constants. Only the parameters whose bit is set in `mask`
+/// (by position among the read-only ByVal ones) are fixed. Returns whether any copy was made.
+fn specialize_func(p: &mut Program, f: FuncId, mask: u32, tried: Option<&mut HashSet<Vec<Vec<usize>>>>, ctx: &SpecCtx, dry: bool) -> bool {
+    const MAX_COPIES: usize = 6;
+    let all = &ctx.all;
+    let fa = scan(&p.funcs[f].body);
+    let mut shape = Shape::default();
+    w_block(&mut shape, &p.funcs[f].body);
+    let func = &p.funcs[f];
+    if func.reg || func.ext || func.no_inline || fa.asm || fa.save_func || all.save_func || shape.save || p.isrs.iter().any(|(i, _)| *i == f) || ctx.other.contains(&f) {
+        return false;
+    }
+    // Parameters whose value a copy can fix: read-only ByVal scalars.
+    let mut spec: Vec<(VarId, u32)> = Vec::new();
+    for &pv in &func.params {
+        let var = &p.vars[pv];
+        if var.kind == VarKind::Param && !var.by_ref && var.bytes <= 4 && !all.addr.contains(&pv) && !fa.written.contains(&pv) && func.result != Some(pv) {
+            spec.push((pv, var.bytes));
+        }
+    }
+    spec.truncate(16);
+    if spec.is_empty() {
+        return false;
+    }
+    // A copy can only fold what reads the parameters it fixes.
+    {
+        let mut reads = Facts::default();
+        w_block(&mut reads, &p.funcs[f].body);
+        if !spec.iter().any(|(pv, _)| reads.read.contains(pv)) {
+            return false;
+        }
+    }
+    let Some(sites) = all.sites.get(&f) else { return false };
+    let mut groups: Vec<(Vec<(usize, u32)>, Vec<usize>)> = Vec::new();
+    for (si, site) in sites.iter().enumerate() {
+        let key = site_key(site, &spec, mask);
+        if key.is_empty() {
+            continue;
+        }
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, v)) => v.push(si),
+            None => groups.push((key, vec![si])),
+        }
+    }
+    // One group that holds every call is `propagate_params`' business.
+    if groups.is_empty() || (groups.len() == 1 && groups[0].1.len() == sites.len()) {
+        return false;
+    }
+    groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.1[0].cmp(&b.1[0])));
+    groups.truncate(MAX_COPIES);
+    // The same split of the calls from another mask gives the same program.
+    if let Some(t) = tried {
+        let split: Vec<Vec<usize>> = groups.iter().map(|(_, v)| v.clone()).collect();
+        if dry {
+            if t.contains(&split) {
+                return false;
+            }
+        } else if !t.insert(split) {
+            return false;
+        }
+    }
+    let count: Vec<(Vec<(usize, u32)>, usize)> = groups.into_iter().map(|(k, v)| (k, v.len())).collect();
+
+    if dry {
+        return !calls_reach(p, f, f);
+    }
+    if calls_reach(p, f, f) {
+        return false;
+    }
+    // One copy per group.
+    let first_copy = p.funcs.len();
+    let mut copies: Vec<(Vec<(usize, u32)>, FuncId, HashMap<VarId, VarId>)> = Vec::new();
+    for (key, _) in &count {
+        let nf = p.funcs.len();
+        let old = p.funcs[f].clone();
+        let mut vmap: HashMap<VarId, VarId> = HashMap::new();
+        for i in 0..p.vars.len() {
+            if p.vars[i].owner == Some(f) {
+                let mut v = p.vars[i].clone();
+                v.asm = format!("{}_S{nf}", v.asm);
+                v.owner = Some(nf);
+                p.vars.push(v);
+                vmap.insert(i, p.vars.len() - 1);
+            }
+        }
+        let mut lmap: HashMap<LabelId, LabelId> = HashMap::new();
+        for &l in &shape.labels {
+            let name = format!("{}_S{nf}", p.label_names[l]);
+            p.label_names.push(name);
+            lmap.insert(l, p.label_names.len() - 1);
+        }
+        let mut body = old.body.clone();
+        let fix = |pl: &mut Place| {
+            if let Base::Var(v) | Base::Ptr(v) = &mut pl.base
+                && let Some(n) = vmap.get(v)
+            {
+                *v = *n;
+            }
+        };
+        stmt_places(&mut body, &mut |pl| fix(pl), &mut |l| {
+            if let Some(n) = lmap.get(l) {
+                *l = *n;
+            }
+        });
+        fn src_fix(s: &mut StrSrc, fix: &dyn Fn(&mut Place)) {
+            match s {
+                StrSrc::Ram(p) => fix(p),
+                StrSrc::Lit(_) => {}
+                StrSrc::Char(_) => {}
+                StrSrc::Cat { tmp, parts } => {
+                    fix(tmp);
+                    for q in parts {
+                        src_fix(q, fix);
+                    }
+                }
+            }
+        }
+        m_block(&mut body, &mut |e: &mut Ex| match &mut e.k {
+            ExK::Load(pl) | ExK::Addr(pl) => fix(pl),
+            ExK::Call(_, args) => {
+                for (pl, _) in args {
+                    fix(pl);
+                }
+            }
+            ExK::StrEq(a, b) => {
+                src_fix(a, &fix);
+                src_fix(b, &fix);
+            }
+            _ => {}
+        });
+        // Places inside the index expressions of statement places were visited by m_block (as expressions);
+        // the index of a place that is itself rewritten above needs nothing more.
+        let mapped = |v: VarId| *vmap.get(&v).unwrap_or(&v);
+        p.funcs.push(Func { asm: format!("{}_S{nf}", old.asm), name: format!("{}_S{nf}", old.name), params: old.params.iter().map(|&v| mapped(v)).collect(), result: old.result.map(mapped), body, span: old.span, reg: false, ext: false, no_inline: old.no_inline });
+        // The copy must not name any object of the original's frame: a place the walkers above did not know about
+        // would leave both routines sharing storage. Give the copy up (and every copy made so far) when one does.
+        let mut seen = Facts::default();
+        w_block(&mut seen, &p.funcs[nf].body);
+        let stale = |v: &VarId| vmap.contains_key(v);
+        if seen.read.iter().chain(&seen.written).chain(&seen.raw).chain(&seen.addr).chain(&seen.ptr_stmt).chain(&seen.ptr_written).any(stale) {
+            p.funcs.truncate(first_copy);
+            return false;
+        }
+        copies.push((key.clone(), nf, vmap));
+    }
+
+    // Send each group's calls to its copy; the arguments are re-pointed at the copy's parameters.
+    let mut redirect = |g: &mut FuncId, args: &mut Vec<(Place, Ex)>| {
+        if *g != f {
+            return;
+        }
+        let key = site_key(args, &spec, mask);
+        if key.is_empty() {
+            return;
+        }
+        if let Some((_, nf, vmap)) = copies.iter().find(|(k, _, _)| *k == key) {
+            *g = *nf;
+            for (pl, _) in args.iter_mut() {
+                if let Base::Var(v) = &mut pl.base
+                    && let Some(n) = vmap.get(v)
+                {
+                    *v = *n;
+                }
+            }
+        }
+    };
+    let nfuncs = p.funcs.len() - copies.len();
+    for (i, fun) in p.funcs.iter_mut().enumerate() {
+        if i < nfuncs {
+            each_call(&mut fun.body, &mut redirect);
+        }
+    }
+    each_call(&mut p.main.body, &mut redirect);
+    true
+}
+
+/// Routines called at least twice, most calls first.
+fn spec_candidates(p: &Program) -> Vec<FuncId> {
+    let mut all = Facts::default();
+    for body in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut all, body);
+    }
+    // The most calls times the largest body first: that is where a copy that folds saves the most.
+    let mut cands: Vec<(FuncId, usize)> = all
+        .sites
+        .iter()
+        .filter(|(f, s)| s.len() >= 2 && **f < p.funcs.len())
+        .map(|(f, s)| {
+            let mut w = Facts::default();
+            w_block(&mut w, &p.funcs[*f].body);
+            (*f, s.len() * (p.funcs[*f].body.len() + w.read.len()))
+        })
+        .collect();
+    cands.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    cands.into_iter().map(|(f, _)| f).collect()
+}
+
+/// Statements and expression nodes in every routine and the main program: a stand-in for how long a trial build takes.
+fn ir_weight(p: &Program) -> usize {
+    #[derive(Default)]
+    struct W(usize);
+    impl Visit for W {
+        fn ex(&mut self, _: &Ex) {
+            self.0 += 1;
+        }
+        fn stmt(&mut self, _: &S) {
+            self.0 += 1;
+        }
+    }
+    let mut w = W::default();
+    for b in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut w, b);
+    }
+    w.0
+}
+
+/// Programs heavier than this keep the shared routines (see `specialize_best`).
+const SPEC_MAX_WEIGHT: usize = 4_000;
+
+/// Trial builds `specialize_best` may make for a program of this IR weight: more for the small programs, whose builds
+/// are quick, and always between 4 and 12, so the work is the same on every run.
+fn spec_builds(weight: usize) -> u32 {
+    (9_000 / weight.max(1)).clamp(4, 12) as u32
+}
+
+/// One routine at a time: a copy is kept when the built program shrinks. Returns the smallest program reached.
+fn specialize_greedy(start: Program, start_w: u32, size: &dyn Fn(&Program) -> Option<u32>, builds: &std::cell::Cell<u32>, max_builds: u32, debug: bool) -> (u32, Program) {
+    let mut cur = start;
+    let mut cur_w = start_w;
+    for _round in 0..3 {
+        let mut improved = false;
+        let mut ctx = spec_ctx(&cur);
+        for f in spec_candidates(&cur) {
+            // All constant parameters fixed, then each of the first four alone: the smallest result wins.
+            let mut masks: Vec<u32> = vec![u32::MAX];
+            masks.extend((0..4).map(|i| 1u32 << i));
+            let mut tried: HashSet<Vec<Vec<usize>>> = HashSet::new();
+            let mut pick: Option<(u32, Program)> = None;
+            for mask in masks {
+                if builds.get() >= max_builds {
+                    break;
+                }
+                // Worked out without touching the program; only a split of the calls not seen yet is built.
+                if !specialize_func(&mut cur, f, mask, Some(&mut tried), &ctx, true) {
+                    continue;
+                }
+                let mut q = cur.clone();
+                if !specialize_func(&mut q, f, mask, Some(&mut tried), &ctx, false) {
+                    continue;
+                }
+                optimize_core(&mut q);
+                let sz = size(&q);
+                if debug {
+                    eprintln!("spec {} mask {mask}: {sz:?} words (now {cur_w})", cur.funcs[f].asm);
+                }
+                if let Some(w) = sz
+                    && w < pick.as_ref().map_or(cur_w, |(b, _)| *b)
+                {
+                    pick = Some((w, q));
+                }
+            }
+            if let Some((w, q)) = pick {
+                cur_w = w;
+                cur = q;
+                ctx = spec_ctx(&cur);
+                improved = true;
+            }
+        }
+        if !improved || builds.get() >= max_builds {
+            break;
+        }
+    }
+    (cur_w, cur)
+}
+
+/// Two ways to use `specialize_func`, the smaller built program wins (`size` is the words of the generated program,
+/// `None` when it does not build). One goes routine by routine and keeps a copy when the program shrinks. The other
+/// gives copies to every routine called with differing constants, callers first, until nothing is left to copy: a
+/// copy of a caller often only pays once its callees have copies too, which the first way never sees.
+fn specialize_best(p: &mut Program, size: &dyn Fn(&Program) -> Option<u32>) {
+    // Nothing to try, or a program too big to try on: no trial build is made at all.
+    let weight = ir_weight(p);
+    let debug = std::env::var("BASIL_SPEC_DEBUG").is_ok();
+    if debug {
+        eprintln!("spec: IR weight {weight}");
+    }
+    if weight > SPEC_MAX_WEIGHT
+        || !{
+            let ctx = spec_ctx(p);
+            spec_candidates(p).into_iter().any(|f| specialize_func(p, f, u32::MAX, None, &ctx, true))
+        }
+    {
+        return;
+    }
+    // Sizes are of the finished program: the settling passes run on a copy.
+    let builds = std::cell::Cell::new(0u32);
+    let measure = |q: &Program| {
+        builds.set(builds.get() + 1);
+        let mut r = q.clone();
+        optimize_post(&mut r);
+        size(&r)
+    };
+    let size: &dyn Fn(&Program) -> Option<u32> = &measure;
+    let Some(base) = size(p) else { return };
+    let max_builds = spec_builds(weight);
+    let mut best = base;
+    let mut winner: Option<Program> = None;
+
+    // One at a time, from the program as it is.
+    let (w, q) = specialize_greedy(p.clone(), base, size, &builds, max_builds, debug);
+    if w < best {
+        best = w;
+        winner = Some(q);
+    }
+
+    // Everything at once.
+    let mut all = p.clone();
+    let limit = all.funcs.len() * 3 + 50;
+    for _ in 0..4 {
+        let mut any = false;
+        let mut ctx = spec_ctx(&all);
+        for f in spec_candidates(&all) {
+            if all.funcs.len() > limit {
+                break;
+            }
+            if specialize_func(&mut all, f, u32::MAX, None, &ctx, false) {
+                any = true;
+                ctx = spec_ctx(&all);
+            }
+        }
+        if !any {
+            break;
+        }
+        optimize_core(&mut all);
+    }
+    if let Some(aw) = size(&all) {
+        if debug {
+            eprintln!("spec all at once: {aw} words (best {best})");
+        }
+        // Whatever budget is left goes to one-at-a-time copies on top of it.
+        let (w2, q2) = specialize_greedy(all, aw, size, &builds, max_builds, debug);
+        if w2 < best {
+            best = w2;
+            winner = Some(q2);
+        }
+    }
+    if debug {
+        eprintln!("spec result: {best} words (was {base}), {} trial builds", builds.get());
+    }
+    if let Some(w) = winner {
+        *p = w;
+    }
+}
+
 pub fn optimize(p: &mut Program) {
+    optimize_core(p);
+    optimize_post(p);
+}
+
+/// `optimize`, with calls that pass constants given copies of their routine where `size` (words of the generated
+/// program, `None` when it does not build) says that is smaller (see `specialize_best`).
+pub fn optimize_sized(p: &mut Program, size: &dyn Fn(&Program) -> Option<u32>) {
+    optimize_core(p);
+    specialize_best(p, size);
+    optimize_post(p);
+}
+
+fn optimize_core(p: &mut Program) {
     for _ in 0..8 {
         fold_all(p);
         let mut changed = range_checks(p);
         changed |= propagate_params(p);
         changed |= specialize_literals(p);
         fold_all(p);
+        changed |= const_result_calls(p);
         changed |= propagate_locals(p);
         changed |= drop_dead(p);
         if !changed {
             break;
         }
     }
+}
+
+/// The passes that settle storage and loops; nothing is propagated after them.
+fn optimize_post(p: &mut Program) {
     share_counters(p);
     coalesce_results(p);
     if share_results(p) {

@@ -214,12 +214,8 @@ fn main() -> ExitCode {
     if front_errors == 0 && !check_only {
         program = lower(&project, &analysis, &mut diags);
     }
-    if optimise && let Some(p) = &mut program {
-        basil::opt::optimize(p);
-    }
-    let mut generated = None;
-    if let Some(p) = &program {
-        let dev = analysis.device.as_ref().unwrap();
+    // The target is built once: the size trials of the optimiser and the final build see the same options.
+    let target = analysis.device.as_ref().map(|dev| {
         let mut target = target_of(dev);
         target.opt = optimise;
         target.keep_vars = keep_vars;
@@ -227,7 +223,24 @@ fn main() -> ExitCode {
             // Absolute paths, so the debugger finds the sources wherever it is started.
             target.debug_files = project.sources.names().map(|n| std::fs::canonicalize(n).map(|p| p.display().to_string()).unwrap_or_else(|_| n.to_string())).collect();
         }
-        let g = generate(p, &target);
+        target
+    });
+    if optimise && let Some(p) = &mut program {
+        if let Some(t) = &target {
+            // Calls that pass constants may get their own copy of the routine; kept only where the program shrinks
+            // and still builds (no errors, and the hardware return stack is deep enough).
+            basil::opt::optimize_sized(p, &|q| {
+                let g = generate(q, t);
+                if g.errors.is_empty() && g.stack_levels <= t.hw_stack { Some(g.out.words) } else { None }
+            });
+        } else {
+            basil::opt::optimize(p);
+        }
+    }
+    let mut generated = None;
+    if let Some(p) = &program {
+        let target = target.as_ref().unwrap();
+        let g = generate(p, target);
         for (span, msg) in &g.errors {
             diags.error(if msg.starts_with("out of data RAM") { "E-RAM" } else { "E-BACKEND" }, *span, msg.clone());
         }

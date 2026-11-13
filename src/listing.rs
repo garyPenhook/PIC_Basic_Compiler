@@ -133,7 +133,7 @@ pub fn listing(asm: &str, lookup: &dyn Fn(&str, u32) -> Option<String>) -> Strin
             let c = c.trim();
             if c.starts_with("Sub/Function ") || c.starts_with("helper ") || c.starts_with("Interrupt ") {
                 pending_banner = Some(c.to_string());
-            } else if c != "warg" {
+            } else if !(c == "warg" || c.starts_with("warg ")) {
                 rows.push(Row::Note(c.to_string()));
             }
             continue;

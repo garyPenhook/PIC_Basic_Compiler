@@ -1404,3 +1404,8 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 ## Review 3, step 11: IR-level items (done 2026-11-12, 0.1.193)
 - `opt::fold`: `(x - c) - v` -> `x - (v + c)` for a plain variable `v`. `opt::coalesce_results`: `Result = r` with `r` wider, in a routine that calls nothing. The `Abs` idiom already compiled to the `Abs` sequence; test only (`abs_idiom`).
 - `bench/large`: PIC18 6118 -> 6108 bytes; 16F 4653 -> 4642 words. New tests `sub_reassoc`, `narrow_result`, `abs_idiom`.
+
+## Constant-argument copies of routines (done 2026-11-12, 0.1.200)
+- `opt::specialize_best`, `const_result_calls`: see `docs/EFFICIENCY.md` section 13. `bench/large` PIC18 6010 -> 5756 bytes, 16F 4617 -> 4539 words; peripheral-module programs (`bench/modules`) 5460 -> 5208 bytes against XC8 `-Os` 5302.
+- Fixed: `pass_warg` matched an unrelated `movwf` after a stale marker; `propagate_params` on a parameter that had become the result.
+- New test `tests/exec/spec_calls`. New `bench/modules` (four programs over ten library modules, each with an XC8 twin).

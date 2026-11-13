@@ -6625,7 +6625,8 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
         g.label(&func.asm);
         if g.warg.contains(&f) {
             let m = g.mem_obj(func.params[0], p.vars[func.params[0]].asm.clone());
-            g.items.push(Item::Comment("warg".into()));
+            // The marker names the parameter, so a pass can tell its store from any other `movwf` that ends up next to it.
+            g.items.push(Item::Comment(format!("warg {}", p.vars[func.params[0]].asm)));
             g.fo("movwf", &m);
         }
         g.block(&func.body);
