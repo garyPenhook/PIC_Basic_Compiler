@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "basil"
-version = "0.1.227"
+version = "0.1.228"
 dependencies = [
  "devdesc",
 ]

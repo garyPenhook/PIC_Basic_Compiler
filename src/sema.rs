@@ -281,7 +281,7 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
-const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "left$", "mid$", "right$", "str$", "toupper", "tolower", "str", "val", "stop", "sizeof", "tern", "pinmode", "pinset", "pinclear", "pinpullup"];
+const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "left$", "mid$", "right$", "str$", "toupper", "tolower", "str", "val", "stop", "sizeof", "tern", "pinmode", "pinset", "pinclear", "pinpullup", "clrwdt"];
 
 pub struct Sema<'p, 'd> {
     proj: &'p Project,
@@ -2779,7 +2779,7 @@ impl<'p, 'd> Sema<'p, 'd> {
             Cur::Reg(r) => Some((EI::place(r.ty, Place::Var), false)),
             Cur::Handler(h) => Some((EI::new(Ty::EventAny(h)), false)),
             Cur::Intrinsic(name) => {
-                if name == "terminate" || name == "stop" {
+                if name == "terminate" || name == "stop" || name == "clrwdt" {
                     Some((self.check_intrinsic(&name, &[], d.span, d)?, false))
                 } else {
                     self.err("E-CALL", d.span, format!("`{}` needs its arguments in parentheses", d.head.name))
@@ -3160,7 +3160,7 @@ impl<'p, 'd> Sema<'p, 'd> {
                     _ => EI::new(LONGINT),
                 })
             }
-            "terminate" | "stop" => {
+            "terminate" | "stop" | "clrwdt" => {
                 if !want(self, 0) {
                     return None;
                 }

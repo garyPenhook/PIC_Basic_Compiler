@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.227**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.228**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -1780,6 +1780,25 @@ If errors > 3 Then
 End If
 ```
 **See also** `Terminate`, `System.Sleep`.
+
+## ClrWdt
+
+**Syntax**
+```basic
+ClrWdt()
+```
+**Overview** Restarts the watchdog count: one `clrwdt` instruction (one word), on every supported part. Call it inside a long loop when the
+watchdog is on (`WDTE = ON` or `SWDTEN`), more often than the watchdog period. It also sets `TO` and `PD` to 1. Takes no arguments.
+
+**Example**
+```basic
+Dim i As Byte
+For i = 1 To 200
+    ClrWdt()               ' the watchdog is fed on every pass
+    DelayMs(20)
+Next
+```
+**See also** `System.Snooze`, `SysClearWakeFlags`.
 
 ## While ... Wend
 
@@ -6094,6 +6113,7 @@ reports these rather than miscompiling them.
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: `FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin` fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
+| `ClrWdt` | `ClrWdt()` (the `clrwdt` instruction) |
 | `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
 | `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout`, `DtmfOut` | `pulse` module (see *pulse, irremote and x10*) |
 | `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |

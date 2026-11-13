@@ -3426,6 +3426,7 @@ impl<'a> Lowerer<'a> {
                 Self::push(out, if name == "delayms" { St::DelayMs(x) } else { St::DelayUs(x) }, span);
             }
             "terminate" | "stop" => Self::push(out, St::Halt, span),
+            "clrwdt" => Self::push(out, St::Asm(vec!["clrwdt".to_string()]), span),
             "left" | "mid" | "right" => self.str_slice(&name, args, span, out),
             "toupper" | "tolower" => self.case_change(name == "toupper", args, span, out),
             "str" => self.str_of_num(args, span, out),
