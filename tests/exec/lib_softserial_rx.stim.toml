@@ -1,0 +1,114 @@
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 0
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 12000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 13667
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 15333
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 17000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 18667
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 20333
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 22000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 23667
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 25333
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 27000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 32000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 33667
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 37000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 43667
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 52000
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 53667
+
+[[pin]]
+port = "B"
+bit = 1
+level = 0
+at = 60333
+
+[[pin]]
+port = "B"
+bit = 1
+level = 1
+at = 68667
+

@@ -3773,6 +3773,63 @@ Serial2NewLine()
 be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
 unproven.
 
+## softserial  (`Include "softserial"`, asynchronous serial on any two pins, 8N1)
+
+Serial on pins the EUSART cannot reach, on a part with one EUSART or none to spare, or on a line that idles low
+(RS-232 levels through a driver chip). Pins are numbered 0 to 23 as in `pinio` (RA0 = 0, RB0 = 8, RC0 = 16). Bit
+times are counted in instruction cycles from `Clock`; no timer. A byte that arrives while the program is elsewhere is
+lost: `SoftReadByte` is a poll, not a buffer (for an always-listening, buffered UART use the hardware EUSART,
+`serial`). Interrupts are held off for the length of a byte (see `SoftHoldIrq`). The module shares the bound-pin state of `pinio` (as `pulse`
+and `shift` do), so it is not reentrant and its routines cannot be used from a handler.
+
+| Routine | Effect |
+|---|---|
+| `SoftInit(tx, rx, baud, inverted)` | sets the pins and the speed; **call it first**. A `tx` or `rx` above 23, or a pin the part lacks, is not used. `inverted` is True for a line that idles low. Returns False (both pins unused) when the baud rate is too high for the `Clock`, or so low that one bit is over 65535 cycles (below about 980 baud at 64 MHz) |
+| `SoftWriteByte(b)`, `SoftWrite(text)`, `SoftNewLine()` | send a byte; send a `String` (up to 80 characters); send CR LF |
+| `SoftReadByte(ms)` | waits up to `ms` milliseconds for a start bit, then returns the byte (0 to 255), **-1** when none came, or **-2** when the stop bit was not at the idle level (a framing error: wrong baud rate, noise or a break); it then waits one more bit, so a line that stays low answers -2 again at every call. An `ms` of 0 looks once |
+| `SoftHoldIrq(on)` | True (the default): a byte is sent, or received from its start edge on, with the global interrupt enable (bit 7 of `INTCON`, `INTCON0` on the PIC18-Q41) cleared, and put back as it was, so an interrupt cannot stretch a bit. A received byte therefore stops other interrupts for 10 bit times (about 1 ms at 9600 baud). False: nothing is touched, and an interrupt that runs during a byte distorts it, which a low baud rate and a short handler can live with |
+| `SoftAvailable()` | True when the receive pin is at its start-bit level, so a `SoftReadByte` now returns the byte |
+
+How accurate: a bit is a wait of whole passes of a counting loop (7 cycles a pass on the PIC18, 9 on the PIC16) plus a
+fixed number of cycles, so the bit time is within half a pass of the ideal one, and the start edge of a received byte
+is found to within one poll of the pin (about 30 cycles on the PIC18, 60 on the PIC16). Measured in the cycle-exact
+simulator (`scripts/test_softserial.py`): the transmitted edges are within 0.6 % of the ideal bit time up to 38400
+baud at 64 MHz on the PIC18 (2.1 % at 115200) and up to 9600 at 32 MHz on the PIC16 (1.1 % at 19200); above 19200 the
+9-cycle pass of the PIC16 is too coarse. The receiver takes a sender whose bit time is 3 % fast or 3 % slow on every part
+and rate in the table below, with a window of about -5 % to +6 %.
+
+| Part and clock | Rates tested (send and receive) |
+|---|---|
+| PIC18F27Q10, PIC18F16Q41, 64 MHz | 1200, 9600, 38400, 115200 (Q41: 9600, 115200) |
+| PIC16F17146, 32 MHz | 1200, 9600, 19200 |
+| PIC16F15244, PIC16F18056, 32 MHz | 9600 |
+
+Sizes on the PIC18F27Q10 with the start-up and a `SoftInit` call counted in (76 words): `SoftWriteByte` +83, `SoftWrite`
++99 (it contains `SoftWriteByte`), `SoftReadByte` +157, `SoftAvailable` +46, `SoftHoldIrq` +3. The interrupt hold is
+13 of the 83 and 20 of the 157; the stop-bit check about 6.
+
+Not done: parity or other than 8N1, an open-drain output for a shared line, a receive buffer. Tests: the simulator
+checks everything above (`scripts/test_softserial.py`: edge timing, the interrupt enable low for the whole frame and
+restored after it, the receive window; `tests/exec/lib_softserial_rx.bas`: bytes, a framing error, a timeout). **Nothing
+has run on a real part**: `tests/hw/softserial_echo.bas` is the bench program (a USB-serial adapter and a terminal; its
+header lists the checks, from 9600 to 115200 baud and a sender 3 % fast and slow).
+
+**Example**
+```basic
+Include "softserial"
+Include "format"
+Dim c As Integer
+If SoftInit(9, 10, 9600, False) Then       ' TX on RB1, RX on RB2
+    SoftWrite("ready")
+    SoftNewLine()
+    c = SoftReadByte(1000)                   ' up to 1 s
+    If c >= 0 Then
+        FmtHex(Byte(c), 2)
+        SoftWrite(FmtBuf)                    ' echo it as hexadecimal
+    End If
+End If
+```
+
 ## spi  (`Include "spi"`, MSSP1 host)
 
 SPI host (master). SCK, SDO and SDI go to pins of ports B and C (8..23); SDO can be 255 for a
@@ -5669,7 +5726,8 @@ reports these rather than miscompiling them.
 | `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
 | `Print`, `Cls`, `Cursor` on a character LCD | `lcd` module routines |
 | `Plot`, `UnPlot`, `Pixel`, `Line`, `LineTo`, `Box`, `Circle`, `LCDwrite`, `LCDread`, `Toshiba_Command`, `Toshiba_UDG`, graphic `Print` / `Cls` | `glcd` module (`GlcdPlot`, `GlcdUnplot`, `GlcdPixel`, `GlcdLine`, `GlcdLineTo`, `GlcdBox`, `GlcdCircle`, `GlcdWriteByte`, `GlcdReadByte`, `GlcdCommand`, `GlcdUdg`, `GlcdWrite`, `GlcdClear`); KS0108, T6963C and ST7920, `(x, y)` order |
-| `HRsout`, `HRsin`, `HSerout`, `Rsout`, `Serin`, `Serout` | `serial` / `serial2` routines (`SerialReadTimeout`, `SerialReadLine`, `SerialWaitFor` and `SerialReadDec` for the timeout, `Wait`, `Str` and `Dec` forms of the input) |
+| `Serin`, `Serout`, `Serin2`, `Serout2` | `softserial` module (any pin, inverted line, timeout); `serial` / `serial2` for the hardware EUSART |
+| `HRsout`, `HRsin`, `HSerout`, `Rsout` | `serial` / `serial2` routines (`SerialReadTimeout`, `SerialReadLine`, `SerialWaitFor` and `SerialReadDec` for the timeout, `Wait`, `Str` and `Dec` forms of the input) |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: `FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin` fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
 | `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |

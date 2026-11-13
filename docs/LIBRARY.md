@@ -424,6 +424,16 @@ PIC16F183xx: the same hardware host; `RxyPPS` 24 = SCL1 and 25 = SDA1; `SSP1IF`/
 
 PIC16F152xx: the same hardware host; `RxyPPS` 07h = SCL1 and 08h = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 1 and 2.
 
+## softserial (asynchronous serial on any two pins)
+| Routine | Effect |
+|---|---|
+| `SoftInit(tx, rx, baud, inverted)` | pins 0..23 (as `pinio`), speed from `Clock`; False when the rate cannot be made |
+| `SoftWriteByte(b)`, `SoftWrite(text)`, `SoftNewLine()` | send |
+| `SoftReadByte(ms)`, `SoftAvailable()` | receive a byte (-1 after `ms` ms, -2 for a framing error) / the start bit is there |
+| `SoftHoldIrq(on)` | hold the global interrupt enable off during a byte (default True) |
+
+Portable (PIC18 and PIC16 enhanced mid-range). Bit times in cycles, so the baud rate is checked in the simulator: `scripts/test_softserial.py`; `tests/exec/lib_softserial_rx.bas` runs received bytes through basil-sim; `tests/hw/softserial_echo.bas` is the bench program for a real part.
+
 ## spi (MSSP1 host)
 PIC16F17126/46: pins numbered 0..23 as on the Q41 (RA0..RA5 except RA3, RB4..RB7 and RC0..RC7 as the part has them; SCK on RA3 is refused);
 `RxyPPS` 27 = SCK1, 28 = SDO1 (Table 18-2), `SSP1CLKPPS`/`SSP1DATPPS` = the pin number. The rest is as for the Q10 below.
