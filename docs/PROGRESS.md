@@ -1409,3 +1409,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `opt::specialize_best`, `const_result_calls`: see `docs/EFFICIENCY.md` section 13. `bench/large` PIC18 6010 -> 5756 bytes, 16F 4617 -> 4539 words; peripheral-module programs (`bench/modules`) 5460 -> 5208 bytes against XC8 `-Os` 5302.
 - Fixed: `pass_warg` matched an unrelated `movwf` after a stale marker; `propagate_params` on a parameter that had become the result.
 - New test `tests/exec/spec_calls`. New `bench/modules` (four programs over ten library modules, each with an XC8 twin).
+
+## pwm library size (done 2026-11-13, 0.1.201)
+- `lib/pwm.bas` (Q10 and the other Timer2 parts): no `CCPTMRS` write (reset 55h = Timer2, DS40002043F p.359/367), a restart releases only a changed pin instead of inlining `PwmStop`, `PwmPercent` in a Word. `m3_motor` 1794 -> 1542 bytes, now under XC8 `-Os` (1573); the peripheral-module programs total 4956 against 5302. New test `tests/exec/lib_pwm_pct`.

@@ -869,8 +869,11 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
         End If
         Inc(c)
     Wend
-    If (active And msk) <> 0 Then
-        PwmStop(ch)
+    ' A running channel is restarted: only a pin it leaves goes back to its LATxy bit, the rest is written again below
+    ' (the module and Timer2 keep running, so the period is not cut short).
+    If (active And msk) <> 0 And pins(ch - 1) <> pin Then
+        PinInput(pins(ch - 1), True)
+        SetPps(pins(ch - 1), 0)
     End If
     pins(ch - 1) = pin
     PinInput(pin, True)
@@ -902,9 +905,9 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     SetPps(pin, ch)
 #else
     SetPps(pin, ch + 4)
-    ' CCPTMRS: CnTSEL / PnTSEL = 01 selects Timer2 for PWM [22.6.4, 23.12.2].
-    sh = (ch - 1) * 2
-    CCPTMRS = (CCPTMRS And ((3 << sh) Xor 255)) Or (1 << sh)
+    ' CCPTMRS: CnTSEL / PnTSEL = 01 selects Timer2 for PWM; all four fields reset to 01 (CCPTMRS = 55h) [DS40002043F 22.6.4
+    ' p.359, 23.12.2 p.367], so it is left alone, as on the other parts. A program that gives a channel another timer has to
+    ' give it back before PwmStart.
 #endif
     If ch <= 2 Then
         ' EN = 1, FMT = 1, MODE = 11xx (PWM) [22.6.1]
@@ -955,12 +958,14 @@ End Sub
 ' Duty cycle as a percentage 0..100 of the period (rounded down to a step; 100 gives the highest
 ' duty, see the header).
 Public Sub PwmPercent(ByVal ch As Byte, ByVal pct As Byte)
-    Dim d As LongWord
+    Dim d As Word
     If pct > 100 Then
         pct = 100
     End If
-    d = LongWord(pct) * steps / 100
-    PwmDuty(ch, Word(d))
+    ' steps is 4 * n with n at most 256 (PwmInit), so steps * pct / 100 is n * pct / 25 to the last bit, and n * pct is at
+    ' most 25600: a Word, where steps * pct (up to 102400) is a LongWord and links the 32-bit multiply and divide.
+    d = (steps >> 2) * pct / 25
+    PwmDuty(ch, d)
 End Sub
 
 ' Output polarity of PWM3 or PWM4 [PWMxCON.POL, 23.2]; on a running channel it applies at once.

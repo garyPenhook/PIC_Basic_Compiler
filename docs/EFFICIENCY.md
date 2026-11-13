@@ -829,6 +829,8 @@ modules take pin and channel numbers as arguments, so this was most of the gap t
 * `propagate_params` would have replaced a parameter by a constant when `coalesce_results` had made that parameter the
   routine's result. Skipped now.
 
-**Not done.** Table-driven channel registers in `pwm` (the remaining gap in `m3_motor`); making the copy decision
+**The `m3_motor` gap (0.1.201)** came from the `pwm` library, not from the compiler: an unneeded `CCPTMRS` write, an inlined `PwmStop` on every start, and a LongWord percentage; fixed there, `m3_motor` 1794 to 1542 bytes (see `docs/BENCHMARKS.md`).
+
+**Not done.** A fixed-pin `PwmStart` (it is still 212 words); making the copy decision
 without a trial build (an IR weight with a call-overhead term was tried and mispredicted `lib_i2c`); copying routines
 with `ByRef` parameters on their array or string argument.

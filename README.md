@@ -81,7 +81,10 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
   state machine) basil's images were 24% smaller than XC8 `-Os` in total: 5756 bytes against 7560 (smaller on
   all four; the fixed-point DSP program is the closest, 2038 against 2606). Results were identical in the
   simulator. These programs were also used to find the optimisations, so expect parity on other code rather
-  than a reliable win.
+  than a reliable win. Four programs that use ten library modules (ADC, EEPROM, serial, I2C, SPI, PWM, timers, shift
+  out, pin I/O), each with an XC8 twin written at register level, came out 7% smaller than XC8 `-Os` in total (4956
+  bytes against 5302; smaller on three of the four) with RAM within a few bytes. They were built, not run, and the
+  library does more than the twins (run-time pin numbers, validation, time-outs); see `docs/BENCHMARKS.md`.
 * Optimisations include constant folding, narrowing, Access Bank placement, overlapping of
   routines' variables that are never live together, counted-loop forms, tail calls, inlining of routines called once, private copies of a routine for the calls that pass different constants (kept only when the program gets smaller), a Byte argument passed in
   `WREG` and a peephole pass, and literal strings read through

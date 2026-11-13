@@ -260,23 +260,24 @@ Sinks equal in basil-sim (PIC18) and MDB (PIC16F17146). Cycles, `bench/kernels` 
 re-measured for this step; the kernel table above is from before review 3.
 
 
-## Peripheral-module programs, 2026-11-12 (0.1.199, then 0.1.200)
+## Peripheral-module programs, 2026-11-12 (0.1.199, 0.1.200, 0.1.201)
 
 `bench/modules/m1..m4`: four programs that call the library modules (`gpio`, `pinio`, `serial`, `adc`, `eeprom`,
 `timer`, `i2c`, `spi`, `pwm`, `shift`), each with an XC8 twin written at register level (XC8 has no peripheral
 library). `bench/modules/cmp.sh` builds all of them. PIC18F27Q10, 64 MHz, XC8 v4.00. Flash and data RAM in bytes
 (basil: words x 2 and the RAM total of `--report`; XC8: the "Program space" and "Data space" lines).
 
-| program | modules | basil 0.1.199 | basil 0.1.200 | RAM | XC8 -Os | RAM | XC8 -O2 | RAM | 0.1.200 / -Os |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| m1_logger | gpio serial adc eeprom timer | 1158 | 1150 | 43 | 1439 | 45 | 1539 | 45 | 0.80 |
-| m2_i2cnode | gpio pinio serial i2c timer | 1340 | 1288 | 44 | 1366 | 45 | 1478 | 46 | 0.94 |
-| m3_motor | gpio pinio adc pwm shift eeprom timer | 1896 | 1794 | 59 | 1573 | 56 | 1701 | 56 | 1.14 |
-| m4_spiflash | gpio pinio spi serial eeprom timer | 1066 | 976 | 24 | 924 | 25 | 998 | 26 | 1.06 |
-| total | | 5460 | 5208 | 170 | 5302 | 171 | 5716 | 172 | 0.98 |
+| program | modules | basil 0.1.199 | 0.1.200 | 0.1.201 | RAM | XC8 -Os | RAM | XC8 -O2 | RAM | 0.1.201 / -Os |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| m1_logger | gpio serial adc eeprom timer | 1158 | 1150 | 1150 | 43 | 1439 | 45 | 1539 | 45 | 0.80 |
+| m2_i2cnode | gpio pinio serial i2c timer | 1340 | 1288 | 1288 | 44 | 1366 | 45 | 1478 | 46 | 0.94 |
+| m3_motor | gpio pinio adc pwm shift eeprom timer | 1896 | 1794 | 1542 | 50 | 1573 | 56 | 1701 | 56 | 0.98 |
+| m4_spiflash | gpio pinio spi serial eeprom timer | 1066 | 976 | 976 | 24 | 924 | 25 | 998 | 26 | 1.06 |
+| total | | 5460 | 5208 | 4956 | 161 | 5302 | 171 | 5716 | 172 | 0.93 |
 
 0.1.199 was 3% larger than XC8 `-Os` in total; 0.1.200 (constant-argument copies of routines,
-`docs/EFFICIENCY.md` section 13) is 2% smaller, and 9% smaller than `-O2`. RAM is within a few bytes everywhere.
+`docs/EFFICIENCY.md` section 13) is 2% smaller; 0.1.201 (the `pwm` library, below) is 7% smaller, and 13% smaller
+than `-O2`. RAM is within a few bytes everywhere, and 10 bytes under XC8 in total.
 
 Read this with the following in mind:
 
@@ -289,13 +290,14 @@ Read this with the following in mind:
   a basil program that wrote the registers itself would be too.
 * Where the C leaves a PPS input at its power-on default (RX1PPS, SSP1CLKPPS, SSP1DATPPS) it still writes it, as the
   library does; leaving those out would save about a dozen bytes per program.
-* `m3_motor` is where basil still loses (1794 against 1573). `PWM_PWMSTART` alone is 252 words: it validates a
-  run-time pin, checks that no other channel uses it, and picks CCP or PWM registers with `If ch = ...` chains. Two
-  copies of it, one per channel, are larger than the shared routine, so the pass leaves it alone. `PwmPercent`
-  multiplies and divides by the run-time step count (`__mul4`, `__divk2`, `__divk4`, 107 words); XC8 links 32-bit
-  helpers for the same expression, so that is not what the difference is. The rest is the routines that take pin
-  numbers (`Pinio`, `Shift`) against direct `LATB1`-style bit writes in the C. Folding more of that needs a library
-  change (table-driven register addresses for the channels) more than a compiler one.
+* `m3_motor` was the one loss (1794 against 1573 at 0.1.200) and is fixed in the library, not the compiler (0.1.201,
+  1542 bytes, 50 bytes of RAM; the twin has 56): `PwmStart` no longer writes `CCPTMRS` on the Q10 (all four fields
+  reset to Timer2, DS40002043F p.359 and p.367: -20 words), restarts a running channel by releasing only a pin it
+  leaves instead of an inlined `PwmStop` (-20 words), and `PwmPercent` works out `(PwmSteps / 4) * pct / 25` in a Word
+  instead of `PwmSteps * pct / 100` in a LongWord (the two are equal because `PwmSteps` is `4 * n`, `n <= 256`), which
+  drops the 32-bit multiply and divide (-86 words). `tests/exec/lib_pwm_pct` pins the duty register for several
+  percentages. What is left against XC8 is `PwmStart` at 212 words (it validates a run-time pin and checks the other
+  channels' pins) and the routines that take pin numbers (`Pinio`, `Shift`).
 
 ## Larger programs and library tests, 0.1.200, 2026-11-12
 

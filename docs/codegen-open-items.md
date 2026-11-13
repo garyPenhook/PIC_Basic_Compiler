@@ -131,7 +131,7 @@ Seen while reading the listings, not on the original list
 ### Follow-ups not done
 - `bench/kernels` (`scripts/bench.py`) and `bench/random` not re-measured; the kernel table in
   `docs/BENCHMARKS.md` is still stale. Best done once, after the code-generation work stops.
-- README size claim still quotes 7092 bytes against 7560.
+- README size claim: updated in 0.1.200 (5756 against 7560 for `bench/large`).
 - `docs/EFFICIENCY.md` 12.4, `docs/PROGRESS.md` and `docs/BENCHMARKS.md` do not yet record this work.
 - Hardware check: everything is simulator-only; nothing has run on a real part.
 
