@@ -845,6 +845,9 @@ fn p16_parts_build_the_standard_programs() {
         let mut programs: Vec<PathBuf> = P16_PORTABLE.iter().map(|p| for_p16(&root().join(format!("tests/exec/{p}.bas")), dev, &out.join(format!("{p}_{dev}.bas")))).collect();
         for f in bas_files(&root().join("tests/exec_p16")) {
             let name = f.file_stem().unwrap().to_string_lossy().into_owned();
+            if name == "lib_pwm_pins" && dev == "16F17126" {
+                continue; // reads RB4PPS and RB5PPS; the 16F17126 has no port B
+            }
             programs.push(for_p16(&f, dev, &out.join(format!("{name}_{dev}.bas"))));
         }
         for src in programs {
@@ -880,7 +883,7 @@ const P13_PARTS: [&str; 9] = ["16F13113", "16F13114", "16F13115", "16F13123", "1
 
 /// Programs of the PIC16F171xx sets that cannot run on the PIC16F13145: too big for its 1 KB of RAM or 8K words of flash, or about a
 /// peripheral it lacks (second EUSART, data EEPROM, the 16-bit PWM); `tests/exec_p13` has the 13145 versions of the last few.
-const P13_SKIP: &[&str] = &["arith_integer", "arith_word", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_eeprom", "eeprom_word_edge", "lib_serial2", "lib_pwm", "lib_adc", "lib_flashwrite"];
+const P13_SKIP: &[&str] = &["arith_integer", "arith_word", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_eeprom", "eeprom_word_edge", "lib_serial2", "lib_pwm", "lib_pwm_pins", "lib_adc", "lib_flashwrite"];
 
 /// The programs for the PIC16F13145: the portable ones and `tests/exec_p16` that fit and apply, then `tests/exec_p13`.
 fn p13_programs() -> Vec<PathBuf> {
@@ -1074,7 +1077,7 @@ const P183_PARTS: [&str; 16] = [
 
 /// Programs of the PIC16F171xx sets that do not apply to the PIC16F183xx: Timer1 and Timer2 with their clock-select and hardware-limit registers, and the library
 /// modules whose registers differ (`tests/exec_p183` has the PIC16F183xx versions).
-const P183_SKIP: &[&str] = &["lib_timer12", "lib_timer_hw", "lib_adc", "lib_eeprom", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_serial", "lib_serial2", "lib_spi"];
+const P183_SKIP: &[&str] = &["lib_timer12", "lib_timer_hw", "lib_adc", "lib_eeprom", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_pwm_pins", "lib_serial", "lib_serial2", "lib_spi"];
 
 /// The programs for the PIC16F183xx: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p183`.
 fn p183_programs() -> Vec<PathBuf> {
@@ -1148,7 +1151,7 @@ const P152_PARTS: [&str; 6] = ["16F15213", "16F15214", "16F15223", "16F15224", "
 
 /// Programs of the PIC16F171xx sets that do not apply to the PIC16F152xx (or do not fit its 512 bytes of RAM and 4K words of flash): the library
 /// modules whose registers differ (`tests/exec_p152` has the PIC16F152xx versions) and the programs that are too big.
-const P152_SKIP: &[&str] = &["arith_byte", "arith_integer", "arith_shortint", "arith_word", "agg_byval", "arrays_full", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_adc", "lib_eeprom", "eeprom_word_edge", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_serial2", "lib_serial", "lib_spi"];
+const P152_SKIP: &[&str] = &["arith_byte", "arith_integer", "arith_shortint", "arith_word", "agg_byval", "arrays_full", "lib_oled", "float_compare", "float_pow2", "lib_floatlib_edge", "lib_adc", "lib_eeprom", "eeprom_word_edge", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_pwm_pins", "lib_serial2", "lib_serial", "lib_spi"];
 
 /// The programs for the PIC16F152xx: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p152`.
 fn p152_programs() -> Vec<PathBuf> {
@@ -1225,7 +1228,7 @@ const P180_PARTS: [&str; 2] = ["16F18056", "16F18076"];
 /// PIC16F17146 model: in each, a 4-byte (or longer) variable that sits at data address 5A0h loses its first bytes (`float_compare`: `vGe`, `lib_floatlib_edge`: `r217`, and
 /// the last results of `arith_integer` and `arith_word`). Cause found: the simulator's PIC16F18056 and PIC16F18076 models ignore every write to 5A0h..5A3h
 /// (linear 2370h..2373h), direct or through an FSR; a hand-written fill of all RAM leaves only those four bytes unwritten. The generated code and the device files are not at fault.
-const P180_SKIP: &[&str] = &["i2c_pps_edges", "arith_integer", "arith_word", "float_compare", "lib_floatlib_edge", "lib_adc", "lib_i2c", "lib_pwm", "lib_serial", "lib_serial2", "lib_spi"];
+const P180_SKIP: &[&str] = &["i2c_pps_edges", "arith_integer", "arith_word", "float_compare", "lib_floatlib_edge", "lib_adc", "lib_i2c", "lib_pwm", "lib_pwm_pins", "lib_serial", "lib_serial2", "lib_spi"];
 
 /// The programs for the PIC16F18056/76: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p180`.
 fn p180_programs() -> Vec<PathBuf> {

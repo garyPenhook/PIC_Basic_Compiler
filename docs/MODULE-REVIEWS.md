@@ -38,7 +38,8 @@ fixed in the module.
 | 15 | `oled` | reviewed (0.1.181) | no size gain; bug fixed (`OledBufText` wrapped past column 255) |
 | 16 | `pinio` | reviewed (0.1.202) | 16F `PinSet` / `PinGet` 62 → 30 / 29 words, `PinOk` 20 → 8; 16F library programs −4 % (`lib_pulse` 1094 → 975, `lib_shift` 546 → 478); PIC18 `PinOk` −12 words per program; port-B-less parts no longer write port C for pins 8..15 |
 | 17 | `pwm` | reviewed (0.1.203) | Probes 18F27Q10 911 → 758, 16F18346 1323 → 1106, 16F17146 1410 → 1333, 18F16Q41 1041 → 1004 words; 23 pwm-using programs 40 076 → 38 024 words (22 smaller, 1 larger); one `SetPps` for all 16F parts |
-| … | `pwm` … `x10` | not started | |
+| 18 | `serial` | reviewed (0.1.204) | all-routines probe 166 → 144 (18F27Q10), 215 → 187 (16F), 167 → 145 (18F16Q41); `lib_serial` 133 → 113 / 165 → 142; `bench/modules` m1 575 → 547, m2 644 → 622, m4 488 → 470 |
+| … | `rtcc` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -624,6 +625,16 @@ Four designs: Timer2 CCP/PWM (18F27Q10 and the 16F183xx / 152xx / 18056 / 13145 
 - **Not done:** the Q41 / 17146 register chains (`Setup`, `SetDuty`, `LoadDuty`, `SetCon`, about 200 words); the register stride differs per part.
 - **Tests:** new `lib_pwm_pins` on 18F27Q10, 16F18346 and 16F17146 (pin sweep, restart on another pin, collision, same-pin restart, init frequency and steps). Passes on the old and new library; the 16F18346 one fails on a mutated `SetPps`. `lib_pwm` passes on 16F17146, 18346, 15244, 18056, 13145, 18F16Q41 and 18F27Q10.
 
+## 18. `serial` (done 2026-11-13, 0.1.204)
+
+Probes call every routine with values read from ports (`SerialInit(115200)`, `SerialWrite`, `SerialNewLine`, `SerialWriteWord`, `SerialWriteHex`, `SerialAvailable`, `SerialRead`, `SerialFlush`). Words before and after: 18F27Q10 166 → 144, 16F18346 / 16F17146 / 16F18056 215 → 187, 16F15244 214 → 186, 18F16Q41 167 → 145. Programs that include `serial` (copies of the exec tests, built for their own part): `lib_serial` 133 → 113 (18F27Q10), 165 → 142 (16F17146, 16F18326, 16F18056), 164 → 141 (16F15244), `bench/modules` m1_logger 575 → 547, m2_i2cnode 644 → 622, m4_spiflash 488 → 470; the Q41 programs −7 and the `small.bas` programs unchanged (they call no digit routine).
+
+- **`SerialWriteWord`.** The power of ten was a variable stepped down by a five-way `If` ladder (a 16-bit compare per rung, about 35 words inlined). It is now `Const Pow10(4) As Word = (10000, 1000, 100, 10)` read once per digit into a Word `d` (reading the table in the loop condition and again in the body cost two table fetches a pass and saved only 4 words), and the last digit is `48 + v` after the tens are taken out, so the `d = 1` pass, its `started Or d = 1` test and the fifth table entry go. Leading zeros are still dropped; 0 prints "0".
+- **`SerialWriteHex`.** A two-pass loop (`v >> 4`, then `v << 4`) instead of the nibble code written out twice (−2 / −3 words).
+- **Tried:** the table read twice per pass (−4 words only, see above).
+- **Not done:** `Serial2WriteWord`, `LcdWriteWord` and `OledWriteWord` have the same ladder (`Serial2` and the others are reviewed in their own turns); `SerialInit` with a run-time baud rate links the 32-bit divide (a constant rate folds to two register writes); the 16F `SerialAvailable` stores `Result` and tests it again (`movlw 0` / `btfsc` / `movlw 1` / `movwf` / `movf` / `bz`), a code-generation matter for `Result = bit = value` followed by a test.
+- **Tests:** `serial_word_digits` (18F27Q10, 16F17146) models the new digit and hex code with stored bytes (0, 7, 10, 100, 1000, 9999, 12345, 40000, 65535; `$A5`, `$0F`) and reads the last byte the library itself leaves in `TX1REG` after 65535, 40000, 9, `$AF`, `$05`. Passes on 18F27Q10, 16F17146, 16F15244, 16F18326 and 16F18056; changing the hex `+ 7` in the library to `+ 8` fails `T_L4`. The simulators do not capture UART output, so only the last byte of the library's own calls is observed; there is no Q41 copy because the simulated UART there never drains its transmit buffer.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13) and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `serial2` (the same digit routine as section 18) and on through the list in alphabetical order.

@@ -1418,3 +1418,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## pwm module review (done 2026-11-13, 0.1.203)
 - `lib/pwm.bas`: uses `pinio`, `pins` slots instead of the `active` mask, shorter `PwmInit`, one FSR0 `SetPps` for all 16F parts. Probes 18F27Q10 911 -> 758, 16F18346 1323 -> 1106, 16F17146 1410 -> 1333, 18F16Q41 1041 -> 1004 words; pwm-using programs 40076 -> 38024 words. New tests `lib_pwm_pins` (18F27Q10, 16F18346, 16F17146). See MODULE-REVIEWS section 17.
+
+## serial module review (done 2026-11-13, 0.1.204)
+- `lib/serial.bas`: `SerialWriteWord` takes its powers of ten from a `Const` table, loads each once into a Word and sends the last digit without a pass of its own; `SerialWriteHex` is a two-pass loop. All-routines probe 18F27Q10 166 -> 144, 16F 215 -> 187, 18F16Q41 167 -> 145 words; `lib_serial` 133 -> 113 (18F27Q10), 165 -> 142 (16F). `serial_word_digits` now also checks the library's own last byte in `TX1REG` (18F27Q10 and 16F). See MODULE-REVIEWS section 18.
