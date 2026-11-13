@@ -1421,3 +1421,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## serial module review (done 2026-11-13, 0.1.204)
 - `lib/serial.bas`: `SerialWriteWord` takes its powers of ten from a `Const` table, loads each once into a Word and sends the last digit without a pass of its own; `SerialWriteHex` is a two-pass loop. All-routines probe 18F27Q10 166 -> 144, 16F 215 -> 187, 18F16Q41 167 -> 145 words; `lib_serial` 133 -> 113 (18F27Q10), 165 -> 142 (16F). `serial_word_digits` now also checks the library's own last byte in `TX1REG` (18F27Q10 and 16F). See MODULE-REVIEWS section 18.
+
+## serial2 module review (done 2026-11-13, 0.1.205)
+- `lib/serial2.bas`: `Serial2WriteWord` and `Serial2WriteHex` use the `serial` changes (`Const` table of powers of ten, last digit sent as it stands, two-pass hex loop). All-routines probe 18F27Q10 185 -> 163, 16F17146 / 16F18056 241 -> 213, 18F16Q41 186 -> 164 words. New test `serial2_word_digits` (16F17146, library's last `TX2REG` byte). See MODULE-REVIEWS section 19.

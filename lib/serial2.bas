@@ -148,48 +148,39 @@ Public Sub Serial2NewLine()
 End Sub
 
 ' Unsigned decimal, no leading zeros. Each digit is found by subtracting the power of ten, so no divide routine is linked.
+Const Pow10(4) As Word = (10000, 1000, 100, 10)
 Public Sub Serial2WriteWord(ByVal v As Word)
     Dim started As Boolean
-    Dim d As Word
+    Dim k As Byte
     Dim digit As Byte
+    Dim d As Word
     started = False
-    d = 10000
-    While d > 0
-        digit = 0
+    For k = 0 To 3
+        d = Pow10(k)
+        digit = 48
         While v >= d
             v = v - d
             Inc(digit)
         Wend
-        If digit > 0 Or started Or d = 1 Then
-            Serial2WriteByte(48 + digit)
+        If digit > 48 Or started Then
+            Serial2WriteByte(digit)
             started = True
         End If
-        If d = 10000 Then
-            d = 1000
-        ElseIf d = 1000 Then
-            d = 100
-        ElseIf d = 100 Then
-            d = 10
-        ElseIf d = 10 Then
-            d = 1
-        Else
-            d = 0
-        End If
-    Wend
+    Next
+    Serial2WriteByte(48 + Byte(v))
 End Sub
 
 Public Sub Serial2WriteHex(ByVal v As Byte)
     Dim h As Byte
-    h = v >> 4
-    If h > 9 Then
-        h = h + 7
-    End If
-    Serial2WriteByte(48 + h)
-    h = v And 15
-    If h > 9 Then
-        h = h + 7
-    End If
-    Serial2WriteByte(48 + h)
+    Dim i As Byte
+    For i = 0 To 1
+        h = v >> 4
+        v = v << 4
+        If h > 9 Then
+            h = h + 7
+        End If
+        Serial2WriteByte(48 + h)
+    Next
 End Sub
 
 ' True when a received byte is waiting.

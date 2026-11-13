@@ -39,6 +39,7 @@ fixed in the module.
 | 16 | `pinio` | reviewed (0.1.202) | 16F `PinSet` / `PinGet` 62 → 30 / 29 words, `PinOk` 20 → 8; 16F library programs −4 % (`lib_pulse` 1094 → 975, `lib_shift` 546 → 478); PIC18 `PinOk` −12 words per program; port-B-less parts no longer write port C for pins 8..15 |
 | 17 | `pwm` | reviewed (0.1.203) | Probes 18F27Q10 911 → 758, 16F18346 1323 → 1106, 16F17146 1410 → 1333, 18F16Q41 1041 → 1004 words; 23 pwm-using programs 40 076 → 38 024 words (22 smaller, 1 larger); one `SetPps` for all 16F parts |
 | 18 | `serial` | reviewed (0.1.204) | all-routines probe 166 → 144 (18F27Q10), 215 → 187 (16F), 167 → 145 (18F16Q41); `lib_serial` 133 → 113 / 165 → 142; `bench/modules` m1 575 → 547, m2 644 → 622, m4 488 → 470 |
+| 19 | `serial2` | reviewed (0.1.205) | all-routines probe 185 → 163 (18F27Q10), 241 → 213 (16F17146, 16F18056), 186 → 164 (18F16Q41) |
 | … | `rtcc` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -635,6 +636,14 @@ Probes call every routine with values read from ports (`SerialInit(115200)`, `Se
 - **Not done:** `Serial2WriteWord`, `LcdWriteWord` and `OledWriteWord` have the same ladder (`Serial2` and the others are reviewed in their own turns); `SerialInit` with a run-time baud rate links the 32-bit divide (a constant rate folds to two register writes); the 16F `SerialAvailable` stores `Result` and tests it again (`movlw 0` / `btfsc` / `movlw 1` / `movwf` / `movf` / `bz`), a code-generation matter for `Result = bit = value` followed by a test.
 - **Tests:** `serial_word_digits` (18F27Q10, 16F17146) models the new digit and hex code with stored bytes (0, 7, 10, 100, 1000, 9999, 12345, 40000, 65535; `$A5`, `$0F`) and reads the last byte the library itself leaves in `TX1REG` after 65535, 40000, 9, `$AF`, `$05`. Passes on 18F27Q10, 16F17146, 16F15244, 16F18326 and 16F18056; changing the hex `+ 7` in the library to `+ 8` fails `T_L4`. The simulators do not capture UART output, so only the last byte of the library's own calls is observed; there is no Q41 copy because the simulated UART there never drains its transmit buffer.
 
+## 19. `serial2` (done 2026-11-13, 0.1.205)
+
+Probe calls every routine with values read from ports (`Serial2Init(115200)`, `Serial2Write`, `Serial2NewLine`, `Serial2WriteWord`, `Serial2WriteHex`, `Serial2Available`, `Serial2Read`, `Serial2Flush`). Words before and after: 18F27Q10 185 → 163, 16F17146 and 16F18056 241 → 213, 18F16Q41 186 → 164 (−22 / −28 / −22). The PIC16F183xx and PIC16F152xx parts the header comment names have no EUSART2 in the device files, so they are not probed.
+
+- **`Serial2WriteWord` / `Serial2WriteHex`.** The same changes as section 18: a `Const Pow10(4)` table read once per digit into a Word, the last digit sent as `48 + Byte(v)`, the hex nibbles in a two-pass loop. Leading zeros are dropped; 0 prints "0".
+- **Not done:** `LcdWriteWord` and `OledWriteWord` keep the old ladder for their own turns; `Serial2Init` with a run-time baud rate links the 32-bit divide, as `SerialInit` does.
+- **Tests:** new `serial2_word_digits` (`tests/exec_p16`, 16F17146) reads the last byte the library leaves in `TX2REG` after 65535, 40000, 9, `$AF`, `$05` and 0. Passes on 16F17146, 16F18056 and 16F13245; changing the hex `+ 7` in the library to `+ 8` fails `T_L4`. Skipped on the parts without EUSART2 (16F183xx, 16F152xx) and on the 16F13145 list, as `lib_serial2` is. The 18F27Q10 and Q41 simulators never set TX2IF / drain the UART2 buffer, so no copy there; their digit code is the one `serial_word_digits` models. `lib_serial2` passes on 18F27Q10, 16F17146 and 16F18056.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `serial2` (the same digit routine as section 18) and on through the list in alphabetical order.
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13), `rtcc` and on through the list in alphabetical order.
