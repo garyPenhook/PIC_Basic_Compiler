@@ -1460,3 +1460,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## pulse module review (done 2026-11-13, 0.1.217)
 - `lib/pulse.bas`: `Pot` multiplies in 16 bits, `PulseIn` one loop for three phases, `Sound2` and the two-frequency `Freqout` share `TwoTone` / `HalfTicks`. All-routines probe 18F27Q10 1339 -> 1212, 16F17146 1527 -> 1390 words; `Pot` alone 325 -> 254. Compiler: `pass_repeat_test` removes the statement ends it lets flags live across (a Boolean copy tested in the next statement read stale flags after `pass_wreg`); new `tests/exec/repeat_test_fence.bas`. See MODULE-REVIEWS section 31.
+
+## floatlib module review completed (2026-11-13, 0.1.218)
+- `lib/floatlib.bas`: `negf` in the two's-complement negate of `FFromLong` and `FToLong` (PIC18), -2 words each; `NEGF`'s carry measured in MDB (set only for 0). New `tests/exec/float_negate.bas`. See MODULE-REVIEWS section 10.

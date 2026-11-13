@@ -30,7 +30,7 @@ fixed in the module.
 | 7 | `eeprom` | reviewed (0.1.168) | `lib_eeprom` 124 → 121 (18F27Q10), 229 → 189 (every 16F part, 197 in 0.1.168), 128 → 125 (Q41) |
 | 8 | `timer` | reviewed (0.1.171) | all-routines probe 464 → 393 words (16F17146), 408 → 332 (16F18346), 332 → 300 (18F27Q10); `lib_timer_f152` 324 → 300 |
 | 9 | `flashwrite` | reviewed (0.1.172) | all-routines probe 352 → 320 (18F27Q10), 353 → 322 (18F16Q41), 553 → 516 (16F17146); `lib_flashwrite` 343 → 311, 361 → 330, 607 → 566 |
-| 10 | `floatlib` | partly reviewed (0.1.175) | all-operations probe 965 → 933 words (18F27Q10), 988 → 956 (16F18346) |
+| 10 | `floatlib` | reviewed (0.1.218) | all-operations probe 965 → 933 words (18F27Q10), 988 → 956 (16F18346) in 0.1.175; `negf` for the negate −2 words in each of `FFromLong`, `FToLong` (18F27Q10) |
 | 11 | `fmath` | reviewed (0.1.177) | `FSqr` one Newton step fewer (same bits); `FLog` 9 % fewer cycles and 26 words fewer (error 2e-7 → 2.5e-7) |
 | 12 | `gpio` | reviewed (0.1.178) | module unchanged (three register-write routines); probe 32 → 29 words (18F27Q10) from a compiler change: dead start-up clears; 180 programs −31 words |
 | 13 | `i2c` | reviewed (0.1.179) | typical use (init + `I2cWriteReg` + `I2cReadReg`) 389 → 309 words (18F27Q10), 554 → 422 (PIC16F17146, 13245, 18346), 469 → 460 (Q41); all-routines probe 864 → 777, 1166 → 1012 |
@@ -52,7 +52,7 @@ fixed in the module.
 | 29 | `glcd` | reviewed (0.1.215) | all-routines probe 4653 → 4354 (18F27Q10, 18F16Q41), 6715 → 6432 (16F17146) |
 | 30 | `intosc` | reviewed (0.1.216) | run-time `SetClock` / `SetClockDiv` probe 152 → 137 (18F27Q10), 184 → 173 (16F17146), 149 → 141 (16F18056), 128 → 120 (16F15244) |
 | 31 | `pulse` | reviewed (0.1.217) | all-routines probe 1339 → 1212 (18F27Q10), 1527 → 1390 (16F17146); `Pot` alone 325 → 254 (18F27Q10), 357 → 338 (16F17146); `PulseIn` alone 176 → 153, 213 → 176; compiler fix in `pass_repeat_test` |
-| … | remaining modules | none (`floatlib` partly reviewed) | |
+| … | remaining modules | none: every module is reviewed | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
 68 smaller and none larger: 84 139 → 82 955 words (−1 184). For example `tests/programs/library_all.bas` 7302 → 7187,
@@ -498,13 +498,16 @@ compares, `-`, `Abs`) on values read from ports, so nothing folds. Baseline 965 
   16F18346: 6441 -> 6334 words (-107, -1.7%); the Float probe is unchanged.
 
 Read for gaps on the PIC18 side with nothing worth changing: `Pack`, `FromMag`, `FToLong`, the `FFrom*` entries, `Cmp`,
-`FSign`, `FScale`. One saving left unapplied: the two's-complement negate in `FFromLong`/`FToLong` could use `negf`
-(2 words each), but DS40002043F p.661 does not say how `NEGF` sets C, so it needs an MDB check before use.
+`FSign`, `FScale`. The two's-complement negate in `FFromLong`/`FToLong` uses `negf` (done in 0.1.218, below).
 
 Left as opportunities:
 
-- The 16F routines (second half of `lib/floatlib.bas`) were not read.
+- Nothing in the 16F routines (second half of `lib/floatlib.bas`): they are the PIC18 routines rewritten without a hardware multiplier or `negf`, and the 16F negate (`comf` x4, `movlw 1`, `addwf`, `movlw 0`, `addwfc` x3, 10 words) is shorter than an `incf` / skip chain (14).
 
+### Completed (0.1.218)
+
+- **`negf` for the two's-complement negate.** DS40002214G / DS40002242F say `NEGF` affects C but not how, so it was measured in the MPLAB simulator (`NEGF` of 0 sets C; of 1, 2 and 128 clears it, the result is the two's complement): C is the carry out of `0 - f`, set only when the byte is 0, which is exactly the carry the next byte needs. `comf` does not touch C. The sequence `negf A0 ; comf A1..A3 ; movlw 0 ; addwfc A1..A3` is 8 words instead of 10, in `FFromLong` (18 → 16 words) and `FToLong` (76 → 74), 18F27Q10.
+- **Tests:** new `tests/exec/float_negate.bas` (negative values with zero low bytes, -256 to -2^31, built at run time, bit patterns and round trip; basil-sim and MDB). The `float_*` and `lib_floatlib*` programs pass on both engines.
 ## 11. `fmath` (done 2026-11-11, 0.1.177)
 
 Every function is a fixed-length series or iteration on the Float operations of `floatlib`, so the only savings are fewer terms or steps, and each one is a question of accuracy.
@@ -786,4 +789,4 @@ Probe calls every public routine with run-time values (pin, level, widths from p
 
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Every other module in the list is done.
+Every module in the list is reviewed.

@@ -803,12 +803,10 @@ Public Function FFromLong(ByVal v As LongInt) As LongWord
         andlw 0x80
         movwf __D0, c
         bz FLL_P
-        comf __A0, f, c
+        negf __A0, c
         comf __A1, f, c
         comf __A2, f, c
         comf __A3, f, c
-        movlw 1
-        addwf __A0, f, c
         movlw 0
         addwfc __A1, f, c
         addwfc __A2, f, c
@@ -923,12 +921,10 @@ Public Function FToLong(ByVal a As LongWord) As LongInt
     FLT_NEG:
         btfss __D0, 7, c
         bra FLT_OUT
-        comf __A0, f, c
+        negf __A0, c
         comf __A1, f, c
         comf __A2, f, c
         comf __A3, f, c
-        movlw 1
-        addwf __A0, f, c
         movlw 0
         addwfc __A1, f, c
         addwfc __A2, f, c
