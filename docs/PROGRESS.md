@@ -1415,3 +1415,6 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 
 ## pwm library size (done 2026-11-13, 0.1.201)
 - `lib/pwm.bas` (Q10 and the other Timer2 parts): no `CCPTMRS` write (reset 55h = Timer2, DS40002043F p.359/367), a restart releases only a changed pin instead of inlining `PwmStop`, `PwmPercent` in a Word. `m3_motor` 1794 -> 1542 bytes, now under XC8 `-Os` (1573); the peripheral-module programs total 4956 against 5302. New test `tests/exec/lib_pwm_pct`.
+
+## pwm module review (done 2026-11-13, 0.1.203)
+- `lib/pwm.bas`: uses `pinio`, `pins` slots instead of the `active` mask, shorter `PwmInit`, one FSR0 `SetPps` for all 16F parts. Probes 18F27Q10 911 -> 758, 16F18346 1323 -> 1106, 16F17146 1410 -> 1333, 18F16Q41 1041 -> 1004 words; pwm-using programs 40076 -> 38024 words. New tests `lib_pwm_pins` (18F27Q10, 16F18346, 16F17146). See MODULE-REVIEWS section 17.

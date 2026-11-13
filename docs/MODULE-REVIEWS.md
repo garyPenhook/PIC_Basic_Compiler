@@ -37,6 +37,7 @@ fixed in the module.
 | 14 | `lcd` | reviewed (0.1.180) | all-routines probe 691 → 609 words, typical use 554 → 472 (18F27Q10); 885 → 789 / 689 → 608 (PIC16F17146); `lib_lcd` 693 → 599; 5 bytes of RAM |
 | 15 | `oled` | reviewed (0.1.181) | no size gain; bug fixed (`OledBufText` wrapped past column 255) |
 | 16 | `pinio` | reviewed (0.1.202) | 16F `PinSet` / `PinGet` 62 → 30 / 29 words, `PinOk` 20 → 8; 16F library programs −4 % (`lib_pulse` 1094 → 975, `lib_shift` 546 → 478); PIC18 `PinOk` −12 words per program; port-B-less parts no longer write port C for pins 8..15 |
+| 17 | `pwm` | reviewed (0.1.203) | Probes 18F27Q10 911 → 758, 16F18346 1323 → 1106, 16F17146 1410 → 1333, 18F16Q41 1041 → 1004 words; 23 pwm-using programs 40 076 → 38 024 words (22 smaller, 1 larger); one `SetPps` for all 16F parts |
 | … | `pwm` … `x10` | not started | |
 
 The compiler changes made during these reviews apply to every program. Over the 102 programs measured, 0.1.165 makes
@@ -611,6 +612,18 @@ after: 18F27Q10 435 → 423, 16F18346 516 → 437. Library programs (copies of `
   port (MDB mirrors LATx into PORTx for output pins). It is in the 16F portable list and passes on 18F27Q10, 18F16Q41, 18F14Q41, 18F06Q41, 18F04Q41 and 16F17146, 17126, 18346, 18323, 15244, 15223, 13145,
   13123, 13113, 13245, 18056. A mask bit changed in the 16F `PinGet` fails it (`PR_BAD=11`).
 
+## 17. `pwm` (done 2026-11-13, 0.1.203)
+
+Four designs: Timer2 CCP/PWM (18F27Q10 and the 16F183xx / 152xx / 18056 / 13145 families) and the 16-bit PWM modules (18F-Q41, 16F17126 / 17146 / 132xx). Probes call every routine with run-time values. Words before and after: 18F27Q10 911 → 758, 18F16Q41 1041 → 1004, 16F17146 1410 → 1333, 16F18346 1323 → 1106. Of the 24 existing programs that use `pwm`, 22 got smaller and 1 larger (`exec_p132_parts/small.bas`, +11 from array indexing in `ModuleActive`); total 40 076 → 38 024 words. `m3_motor` 771 → 742, `library_all` 6559 → 6463.
+
+- **`pinio` instead of local pin routines.** `PinInput` / `PinDigital` are gone; the module calls `Pinio.PinInput` / `Pinio.PinOutput`.
+- **`pins` slots replace the `active` bitmask.** `pins(ch-1)` holds pin + 1 for a running channel and 0 when idle, `nact` counts running channels; the `1 << n` shifts go. `PwmStart` checks for a pin collision over the four slots.
+- **`PwmInit` arithmetic.** One 32-bit divide, then shifts. Checked against the original algorithm on the host over 2.4 M cases (clocks 1..64 MHz, hz 1..1 000 000): 0 differences. The frequency is still computed inside `PwmInit` from locals, because writing it from a global stopped a constant `PwmInit(hz)` from folding.
+- **One 16F `SetPps`.** `RxyPPS` registers are contiguous by pin number, so one FSR0 write replaces the 16-way chains (each parameter gets its own `banksel`).
+- **Tried and dropped:** lazy `PwmFrequency` (saved words in the probe, grew constant-`hz` programs by 40..60), a Word-only `PwmPercent` on 16F and Q41 (+13..+51).
+- **Not done:** the Q41 / 17146 register chains (`Setup`, `SetDuty`, `LoadDuty`, `SetCon`, about 200 words); the register stride differs per part.
+- **Tests:** new `lib_pwm_pins` on 18F27Q10, 16F18346 and 16F17146 (pin sweep, restart on another pin, collision, same-pin restart, init frequency and steps). Passes on the old and new library; the 16F18346 one fails on a mutated `SetPps`. `lib_pwm` passes on 16F17146, 18346, 15244, 18056, 13145, 18F16Q41 and 18F27Q10.
+
 ## Next
 
-Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `pwm` and on through the list in alphabetical order (`pwm` and `spi` first re-check their `SetPps`, see section 13).
+Module 10 (`floatlib`): the 16F routines were read (`FMul`, `FAdd`, `Pack` are the PIC18 routines rewritten without a hardware multiplier, nothing worth changing). Then `spi` (re-check its `SetPps`, see section 13) and on through the list in alphabetical order.

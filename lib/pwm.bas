@@ -1,4 +1,5 @@
 Module Pwm
+Include "pinio"
 ' Four PWM outputs on Timer2: channel 1 = CCP1 and 2 = CCP2 (CCP modules in PWM mode, chapter 22)
 ' and 3 = PWM3 and 4 = PWM4 (the 10-bit PWM modules, chapter 23), DS40002043F. All channels share
 ' the Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a
@@ -22,6 +23,8 @@ Module Pwm
 ' PWM4 on ports A and C [Table 18-2]. The pin is routed through RxyPPS = 5 + channel - 1 (CCP1 5,
 ' CCP2 6, PWM3 7, PWM4 8) and made a digital output.
 ' The module is not reentrant: do not call it from a handler and from the main program.
+' The pin is made a digital input, then an output, and given back as an input, by the `Pinio` module (`Include "pinio"` above).
+' Which channels run is kept in `pins`: a running channel holds its pin number plus one, an idle channel 0 (so no bit masks are shifted at run time).
 ' PIC18F0x/1xQ41 (chosen with `#if _has(PWMEN)`, DS40002214G chapter 30): the six outputs of the three 16-bit PWM modules
 ' replace the four Q10 channels: channel 1 = PWM1S1P1, 2 = PWM1S1P2, 3 = PWM2S1P1, 4 = PWM2S1P2, 5 = PWM3S1P1, 6 = PWM3S1P2
 ' (the CCP1 PWM is not offered). The modules run left aligned from FOSC (PWMxCLK = 2) with a prescale CPRE + 1 and a
@@ -65,7 +68,8 @@ Const PpsBase = 10
 Dim steps As Word
 Dim cpre As Byte
 Dim prv As Word
-Dim active As Byte
+' A running channel has its pin number plus one in pins, an idle one 0; nact counts the running channels.
+Dim nact As Byte
 Dim freq As LongWord
 Dim pins(Channels) As Byte
 Dim polv(Channels) As Byte
@@ -73,31 +77,36 @@ Dim ready As Boolean
 
 ' Chooses the PWM clock prescale (CPRE, 1..256) and period (PR) for `hz` and returns 1, or 0 when no setting
 ' within 16 bits reaches it or a channel is running (the period is shared by all). Starts nothing.
+' With q = floor(2 * fosc / hz) (one divide): floor(fosc / hz) = q >> 1 and the period count rounded to nearest,
+' floor((fosc + p * hz / 2) / (p * hz)), is floor((q + p) / (2 * p)) (p * hz / 2 is only odd where the two agree).
 Public Function PwmInit(ByVal hz As LongWord) As Byte
-    Dim fosc As LongWord
+    Dim q As LongWord
+    Dim hi As Word
+    Dim p As Word
     Dim n As LongWord
-    Dim p As LongWord
     Result = 0
-    If active <> 0 Or hz = 0 Or hz > 1000000 Then
+    If nact <> 0 Or hz = 0 Or hz > 1000000 Then
         Exit
     End If
-    fosc = LongWord(_Clock * 1000000)
-    ' smallest prescale p = CPRE + 1 with fosc / (p * hz) <= 65535
-    p = (fosc / hz + 65534) / 65535
-    If p < 1 Then
-        p = 1
+    q = LongWord(_Clock * 1000000 * 2) / hz
+    ' p = ceil(floor(fosc / hz) / 65535) = a + 1, plus one when the low 16 bits b of floor(fosc / hz) = 65536 * a + b are above 65535 - a.
+    n = q >> 1
+    hi = Word(n >> 16)
+    p = hi + 1
+    If Word(n) > 65535 - hi Then
+        Inc(p)
     End If
     If p > 256 Then
         Exit
     End If
-    n = (fosc + p * hz / 2) / (p * hz)
+    n = (q + p) / (LongWord(p) << 1)
     If n < 2 Or n > 65535 Then
         Exit
     End If
     cpre = Byte(p - 1)
     prv = Word(n - 1)
     steps = Word(n)
-    freq = fosc / (p * n)
+    freq = LongWord(_Clock * 1000000) / (LongWord(p) * n)
     ready = True
     Result = 1
 End Function
@@ -137,51 +146,6 @@ Function PinOk(ByVal pin As Byte) As Boolean
     End If
 #endif
 End Function
-
-' Makes the pin an input (the output driver off) or an output.
-Sub PinInput(ByVal pin As Byte, ByVal asInput As Boolean)
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    If pin < 8 Then
-        If asInput Then
-            TRISA = TRISA Or m
-        Else
-            TRISA = TRISA And (m Xor 255)
-        End If
-#if _has(TRISB)
-    ElseIf pin < 16 Then
-        If asInput Then
-            TRISB = TRISB Or m
-        Else
-            TRISB = TRISB And (m Xor 255)
-        End If
-#endif
-#if _has(TRISC)
-    Else
-        If asInput Then
-            TRISC = TRISC Or m
-        Else
-            TRISC = TRISC And (m Xor 255)
-        End If
-#endif
-    End If
-End Sub
-
-Sub PinDigital(ByVal pin As Byte)
-    Dim m As Byte
-    m = (1 << (pin And 7)) Xor 255
-    If pin < 8 Then
-        ANSELA = ANSELA And m
-#if _has(TRISB)
-    ElseIf pin < 16 Then
-        ANSELB = ANSELB And m
-#endif
-#if _has(TRISC)
-    Else
-        ANSELC = ANSELC And m
-#endif
-    End If
-End Sub
 
 ' RxyPPS = code for a pin the part has (code 0 gives the pin back to its LATxy bit).
 #if _has(PRODL)
@@ -365,21 +329,22 @@ End Sub
 
 ' True when module m has a running channel.
 Function ModuleActive(ByVal m As Byte) As Boolean
-    Result = (active And (3 << (m * 2 - 2))) <> 0
+    Dim i As Byte
+    i = m * 2 - 2
+    Result = (pins(i) Or pins(i + 1)) <> 0
 End Function
 
 ' Stops a channel: the pin becomes an input again and returns to its LATxy bit. The module is disabled with its
 ' last channel.
 Public Sub PwmStop(ByVal ch As Byte)
-    Dim msk As Byte
     Dim m As Byte
     If ch >= 1 And ch <= Channels Then
-        msk = 1 << (ch - 1)
-        If (active And msk) <> 0 Then
+        If pins(ch - 1) <> 0 Then
             m = Inst(ch)
-            PinInput(pins(ch - 1), True)
-            SetPps(pins(ch - 1), 0)
-            active = active And (msk Xor 255)
+            Pinio.PinInput(pins(ch - 1) - 1)
+            SetPps(pins(ch - 1) - 1, 0)
+            pins(ch - 1) = 0
+            Dec(nact)
             If ModuleActive(m) Then
                 LoadDuty(ch, 0)
             Else
@@ -396,28 +361,24 @@ End Sub
 ' without a successful PwmInit, for a channel or pin that cannot be used, or for a pin already used by another
 ' running channel; a running channel is restarted.
 Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word) As Byte
-    Dim msk As Byte
     Dim m As Byte
     Dim c As Byte
     Result = 0
     If Not ready Or ch < 1 Or ch > Channels Or Not PinOk(pin) Then
         Exit
     End If
-    msk = 1 << (ch - 1)
-    c = 1
-    While c <= Channels
-        If c <> ch And (active And (1 << (c - 1))) <> 0 And pins(c - 1) = pin Then
+    c = Channels
+    While c > 0
+        If c <> ch And pins(c - 1) = pin + 1 Then
             Exit
         End If
-        Inc(c)
+        Dec(c)
     Wend
-    If (active And msk) <> 0 Then
+    If pins(ch - 1) <> 0 Then
         PwmStop(ch)
     End If
     m = Inst(ch)
-    pins(ch - 1) = pin
-    PinInput(pin, True)
-    PinDigital(pin)
+    Pinio.PinInput(pin)
     If ModuleActive(m) Then
         LoadDuty(ch, duty)
     Else
@@ -432,15 +393,16 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
         SetCon(m, 128)
     End If
     SetPps(pin, ch + PpsBase)
-    PinInput(pin, False)
-    active = active Or msk
+    Pinio.PinOutput(pin)
+    pins(ch - 1) = pin + 1
+    Inc(nact)
     Result = 1
 End Function
 
 ' Duty cycle in steps (0..PwmSteps); no effect on a stopped channel. It takes effect at the next period.
 Public Sub PwmDuty(ByVal ch As Byte, ByVal duty As Word)
     If ch >= 1 And ch <= Channels Then
-        If (active And (1 << (ch - 1))) <> 0 Then
+        If pins(ch - 1) <> 0 Then
             LoadDuty(ch, duty)
         End If
     End If
@@ -493,7 +455,8 @@ Dim Tmr2If As PIR4.1
 Dim steps As Word
 Dim period As Byte
 Dim ckps As Byte
-Dim active As Byte
+' A running channel has its pin number plus one in pins, an idle one 0; nact counts the running channels.
+Dim nact As Byte
 Dim freq As LongWord
 Dim pins(4) As Byte
 Dim polv(4) As Byte
@@ -501,49 +464,45 @@ Dim ready As Boolean
 
 ' Chooses the Timer2 prescale and T2PR for `hz` (1..1000000) and returns 1, or 0 when no prescale
 ' of 1..128 (1, 4, 16, 64 on the PIC16F183xx) reaches it or a channel is running (the period is shared). Timer2 is started by PwmStart.
+' The period count n = round(FOSC / (4 * hz * prescale)) is floor((t + 1) / 2) with t = floor(FOSC / (2 * hz * prescale)), and t for the
+' next prescale is t shifted right (floor of a floor): one divide for all of them.
 Public Function PwmInit(ByVal hz As LongWord) As Byte
-    Dim fosc As LongWord
-    Dim n As LongWord
-    Dim d As LongWord
+    Dim t As LongWord
+    Dim n As Word
     Dim e As Byte
-    Dim found As Boolean
     Result = 0
-    If active <> 0 Or hz = 0 Or hz > 1000000 Then
+    If nact <> 0 Or hz = 0 Or hz > 1000000 Then
         Exit
     End If
-    fosc = LongWord(_Clock * 1000000)
-    found = False
+    t = LongWord(_Clock * 1000000) / (hz << 1)
     e = 0
+    ' n = (t + 1) >> 1 is at most 256 for t <= 512; a larger t takes the next prescale
 #if _has(PWM6DCL)
     ' Prescalers 1, 4, 16, 64: the prescale is 4 ^ e, the T2CKPS code.
-    While e < 4 And Not found
-        d = (LongWord(4) * hz) << (e * 2)
+    While t > 512 And e < 3
+        t = t >> 2
 #else
-    While e < 8 And Not found
-        d = (LongWord(4) * hz) << e
+    While t > 512 And e < 7
+        t = t >> 1
 #endif
-        n = (fosc + d / 2) / d
-        If n >= 1 And n <= 256 Then
-            found = True
-        Else
-            Inc(e)
-        End If
+        Inc(e)
     Wend
-    If found Then
+    If t >= 1 And t <= 512 Then
         ckps = e
+        n = (Word(t) + 1) >> 1
         period = Byte(n - 1)
-        steps = Word(n * 4)
+        steps = n << 2
 #if _has(PWM6DCL)
-        freq = fosc / ((LongWord(4) << (e * 2)) * n)
+        freq = LongWord(_Clock * 1000000) / (LongWord(n) << (e * 2 + 2))
 #else
-        freq = fosc / ((LongWord(4) << e) * n)
+        freq = LongWord(_Clock * 1000000) / (LongWord(n) << (e + 2))
 #endif
         ready = True
         Result = 1
     End If
 End Function
 
-' The achieved frequency in Hz (0 before a successful PwmInit).
+' The achieved frequency in Hz (0 before a successful PwmInit): FOSC / (prescale * steps).
 Public Function PwmFrequency() As LongWord
     Result = 0
     If ready Then
@@ -612,131 +571,24 @@ Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
 #endif
 End Function
 
-' Makes the pin an input (the output driver off) or an output.
-Sub PinInput(ByVal pin As Byte, ByVal asInput As Boolean)
-    Dim m As Byte
-    m = 1 << (pin And 7)
-    If pin < 8 Then
-        If asInput Then
-            TRISA = TRISA Or m
-        Else
-            TRISA = TRISA And (m Xor 255)
-        End If
-#if _has(TRISB)
-    ElseIf pin < 16 Then
-        If asInput Then
-            TRISB = TRISB Or m
-        Else
-            TRISB = TRISB And (m Xor 255)
-        End If
-#endif
-#if _has(TRISC)
-    Else
-        If asInput Then
-            TRISC = TRISC Or m
-        Else
-            TRISC = TRISC And (m Xor 255)
-        End If
-#endif
-    End If
-End Sub
-
-Sub PinDigital(ByVal pin As Byte)
-    Dim m As Byte
-    m = (1 << (pin And 7)) Xor 255
-    If pin < 8 Then
-        ANSELA = ANSELA And m
-#if _has(ANSELB)
-    ElseIf pin < 16 Then
-        ANSELB = ANSELB And m
-#endif
-#if _has(ANSELC)
-    Else
-        ANSELC = ANSELC And m
-#endif
-    End If
-End Sub
-
 ' RxyPPS = code for pin 0..23 (code 0 gives the pin back to its LATxy bit).
-#if _has(PWM5CON) And Not _has(PWM6CON)
+#if _has(PWM5CON) And Not _has(PWM6CON) Or _has(PWM1DCL) Or _has(PWM6DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
+' The RxyPPS registers are contiguous in the order of the pin numbers on every supported part (RA0PPS + pin: RB4PPS = RA0PPS + 12, RC0PPS = RA0PPS + 16,
+' RC7PPS = RA0PPS + 23, read from the device files; the low byte of RA0PPS is 16, 140, 144 or 226 on every part, so the sum stays in the low byte), so the
+' register is reached through FSR0 (compiler-owned, nothing live in it across a statement; the block clobbers W, STATUS and BSR, and the two parameters may be in
+' different banks, so each is selected). Callers pass a pin PinOk accepted.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    If pin = 8 Then
-        RB0PPS = code
-    ElseIf pin = 9 Then
-        RB1PPS = code
-    ElseIf pin = 10 Then
-        RB2PPS = code
-    ElseIf pin = 11 Then
-        RB3PPS = code
-    ElseIf pin = 12 Then
-        RB4PPS = code
-    ElseIf pin = 13 Then
-        RB5PPS = code
-    ElseIf pin = 14 Then
-        RB6PPS = code
-    ElseIf pin = 15 Then
-        RB7PPS = code
-    ElseIf pin = 16 Then
-        RC0PPS = code
-    ElseIf pin = 17 Then
-        RC1PPS = code
-    ElseIf pin = 18 Then
-        RC2PPS = code
-    ElseIf pin = 19 Then
-        RC3PPS = code
-    ElseIf pin = 20 Then
-        RC4PPS = code
-    ElseIf pin = 21 Then
-        RC5PPS = code
-    ElseIf pin = 22 Then
-        RC6PPS = code
-    ElseIf pin = 23 Then
-        RC7PPS = code
-    End If
-End Sub
-#elseif _has(PWM1DCL) Or _has(PWM6DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
-Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-    If pin = 0 Then
-        RA0PPS = code
-    ElseIf pin = 1 Then
-        RA1PPS = code
-    ElseIf pin = 2 Then
-        RA2PPS = code
-    ElseIf pin = 4 Then
-        RA4PPS = code
-    ElseIf pin = 5 Then
-        RA5PPS = code
-#if _has(RB4PPS)
-    ElseIf pin = 12 Then
-        RB4PPS = code
-    ElseIf pin = 13 Then
-        RB5PPS = code
-    ElseIf pin = 14 Then
-        RB6PPS = code
-    ElseIf pin = 15 Then
-        RB7PPS = code
-#endif
-#if _has(RC0PPS)
-    ElseIf pin = 16 Then
-        RC0PPS = code
-    ElseIf pin = 17 Then
-        RC1PPS = code
-    ElseIf pin = 18 Then
-        RC2PPS = code
-    ElseIf pin = 19 Then
-        RC3PPS = code
-    ElseIf pin = 20 Then
-        RC4PPS = code
-    ElseIf pin = 21 Then
-        RC5PPS = code
-#endif
-#if _has(RC6PPS)
-    ElseIf pin = 22 Then
-        RC6PPS = code
-    ElseIf pin = 23 Then
-        RC7PPS = code
-#endif
-    End If
+    Asm
+        banksel PWM_SETPPS__PIN
+        movf PWM_SETPPS__PIN, w
+        addlw low(RA0PPS)
+        movwf FSR0L
+        movlw high(RA0PPS)
+        movwf FSR0H
+        banksel PWM_SETPPS__CODE
+        movf PWM_SETPPS__CODE, w
+        movwf INDF0
+    End Asm
 End Sub
 #else
 ' The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers (RA0..RC7 = 0..23) on the PIC18-Q41
@@ -796,8 +648,8 @@ Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
     If d > 1023 Then
         d = 1023
     End If
-    hi = Byte(d >> 2)
-    lo = Byte((d And 3) << 6)
+    hi = (d.Byte1 << 6) Or (d.Byte0 >> 2)
+    lo = d.Byte0 << 6
     If ch = 1 Then
         CCPR1L = lo
         CCPR1H = hi
@@ -832,15 +684,14 @@ End Sub
 ' Stops a channel: the pin becomes an input again and returns to its LATxy bit, the module is
 ' disabled. Timer2 is stopped when the last channel stops.
 Public Sub PwmStop(ByVal ch As Byte)
-    Dim msk As Byte
     If ch >= 1 And ch <= 4 Then
-        msk = 1 << (ch - 1)
-        If (active And msk) <> 0 Then
-            PinInput(pins(ch - 1), True)
+        If pins(ch - 1) <> 0 Then
+            Pinio.PinInput(pins(ch - 1) - 1)
             SetCon(ch, 0)
-            SetPps(pins(ch - 1), 0)
-            active = active And (msk Xor 255)
-            If active = 0 Then
+            SetPps(pins(ch - 1) - 1, 0)
+            pins(ch - 1) = 0
+            Dec(nact)
+            If nact = 0 Then
                 T2CON = 0
             End If
         End If
@@ -853,31 +704,28 @@ End Sub
 ' Returns 0 (and does nothing) without a successful PwmInit, for a channel or pin that cannot be
 ' used, or for a pin already used by another running channel; a running channel is restarted.
 Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word) As Byte
-    Dim sh As Byte
-    Dim msk As Byte
+    Dim old As Byte
     Dim c As Byte
     Result = 0
     If Not ready Or Not PinOk(ch, pin) Then
         Exit
     End If
-    msk = 1 << (ch - 1)
     ' Another running channel may not use the pin.
-    c = 1
-    While c <= 4
-        If c <> ch And (active And (1 << (c - 1))) <> 0 And pins(c - 1) = pin Then
+    c = 4
+    While c > 0
+        If c <> ch And pins(c - 1) = pin + 1 Then
             Exit
         End If
-        Inc(c)
+        Dec(c)
     Wend
     ' A running channel is restarted: only a pin it leaves goes back to its LATxy bit, the rest is written again below
     ' (the module and Timer2 keep running, so the period is not cut short).
-    If (active And msk) <> 0 And pins(ch - 1) <> pin Then
-        PinInput(pins(ch - 1), True)
-        SetPps(pins(ch - 1), 0)
+    old = pins(ch - 1)
+    If old <> 0 And old <> pin + 1 Then
+        Pinio.PinInput(old - 1)
+        SetPps(old - 1, 0)
     End If
-    pins(ch - 1) = pin
-    PinInput(pin, True)
-    PinDigital(pin)
+    Pinio.PinInput(pin)
 #if _has(PWM6DCL)
     ' RxyPPS: CCP1 0Ch, CCP2 0Dh, PWM5 02h, PWM6 03h [Register 13-2]. CxTSEL and PxTSEL = 01 select Timer2 (their reset value) where the part has them.
     If ch <= 2 Then
@@ -916,7 +764,7 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
         SetCon(ch, polv(ch - 1))
     End If
     SetDuty(ch, duty)
-    If active = 0 Then
+    If nact = 0 Then
         T2CON = 0
 #if _has(PWM6DCL)
         PR2 = period
@@ -938,8 +786,11 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     While Tmr2If = 0
     Wend
     Tmr2If = 0
-    active = active Or msk
-    PinInput(pin, False)
+    pins(ch - 1) = pin + 1
+    If old = 0 Then
+        Inc(nact)
+    End If
+    Pinio.PinOutput(pin)
     If ch > 2 Then
         SetCon(ch, 128 + polv(ch - 1))
     End If
@@ -949,7 +800,7 @@ End Function
 ' Duty cycle in steps (0..PwmSteps, at most 1023 are representable); no effect on a stopped channel.
 Public Sub PwmDuty(ByVal ch As Byte, ByVal duty As Word)
     If ch >= 1 And ch <= 4 Then
-        If (active And (1 << (ch - 1))) <> 0 Then
+        If pins(ch - 1) <> 0 Then
             SetDuty(ch, duty)
         End If
     End If
@@ -978,7 +829,7 @@ Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
         Else
             polv(ch - 1) = 0
         End If
-        If (active And (1 << (ch - 1))) <> 0 Then
+        If pins(ch - 1) <> 0 Then
             SetCon(ch, 128 + polv(ch - 1))
         End If
         Result = 1
