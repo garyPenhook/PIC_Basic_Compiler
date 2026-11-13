@@ -2763,6 +2763,17 @@ System.Sleep(seconds)
 ```
 **Overview** Sleeps for about `seconds` seconds (a Word; 0 returns at once), one watchdog second (period code 10) at a time. Same requirements and accuracy as `Snooze`; an interrupt that wakes the part ends only the second it arrived in.
 
+**Example**
+```basic
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = SWDTEN, LVP = ON
+Include "system"
+Do
+    Toggle(PORTB.0)
+    System.Sleep(10)        ' about ten seconds asleep
+Loop
+```
+**See also** `Snooze`
+
 ---
 
 ## Category: Timers and PWM
@@ -3599,11 +3610,41 @@ s = I2cProbe(addr)
 ```
 **Overview** Start, address + W, Stop: the status of the address byte.
 
+**Parameters** `addr` the 7-bit address.
+
 **Returns** `Byte`: 0 acknowledged, 3 not acknowledged, 1 timeout, 2 bus collision, 4 not initialised.
+
+**Example**
+```basic
+Dim ok As Byte
+Dim s As Byte
+ok = I2cInit(100000, 19, 20)
+s = I2cProbe($68)
+If s = 0 Then
+    High(PORTB.0)           ' a device answers at $68
+End If
+```
 
 ### I2cBuf
 
-An exported `Byte` array of 8 that holds the data of `I2cReadRegs` and `I2cWriteRegs`: `I2cBuf(i)`.
+**Syntax**
+```basic
+I2cBuf(i)
+```
+**Overview** An exported `Byte` array of 8 that holds the data of `I2cReadRegs` and `I2cWriteRegs`: `I2cReadRegs` leaves the bytes it read in `I2cBuf(0)` .. `I2cBuf(n - 1)` and `I2cWriteRegs` sends `I2cBuf(0)` .. `I2cBuf(n - 1)`.
+
+**Parameters** `i` the index, 0..7.
+
+**Example**
+```basic
+Dim s As Byte
+Dim sec As Byte
+s = I2cReadRegs($6F, 0, 3)           ' seconds, minutes, hours of an MCP7940N
+sec = I2cBuf(0)
+I2cBuf(0) = sec
+s = I2cWriteRegs($6F, 0, 1)          ' write the seconds back
+```
+**Notes** Not reentrant: the next `I2cReadRegs` or `I2cWriteRegs` overwrites or reuses the array.
 
 ## onewire  (`Include "onewire"`, 1-Wire master on any one pin)
 
@@ -3981,7 +4022,9 @@ SpiOff(19, 20)
 ```basic
 s = SpiStatus()
 ```
-**Returns** `Byte`, the codes above.
+**Overview** The status of the last SPI transfer.
+
+**Returns** `Byte`, the codes above: 0 after the last transfer completed, 1 after a timeout, 4 when not initialised.
 
 **Example**
 ```basic
@@ -4291,6 +4334,13 @@ ok = DmaAbortOn(channel, trigger)
 
 **Returns** `Byte`: 1 when set; 0 for a channel outside 1..4, a trigger outside 1..93, or a channel that is not enabled.
 
+**Example**
+```basic
+Dim msg(8) As Byte
+Dim ok As Byte
+ok = DmaOnTrigger(1, DmaTrigU1Tx, @msg, @U1TXB, 8, DmaFixedDst + DmaOnce)
+ok = DmaAbortOn(1, DmaTrigTmr2)       ' a Timer2 request cuts the feed short
+```
 **Notes** The abort fires once; call `DmaAbortOn` again to re-arm it. After an abort `DmaDone` returns 1; use `DmaAborted` to tell an abort from a normal end. The channel keeps its set-up, but the module re-arms it with `DmaStop` and `DmaOnTrigger`.
 
 ### DmaAborted
@@ -4302,6 +4352,15 @@ a = DmaAborted(channel)
 **Overview** Returns 1 if `channel` has been aborted since the last call (its `DMAxAIF` flag was set) and clears the flag.
 
 **Returns** `Byte`: 1 or 0; 0 for a channel outside 1..4.
+
+**Example**
+```basic
+Dim a As Byte
+a = DmaAborted(1)
+If a = 1 Then
+    High(PORTB.0)           ' channel 1 was cut short by its abort trigger
+End If
+```
 
 ### DmaCopyFlash
 
@@ -4350,6 +4409,16 @@ d = DmaDone(channel)
 
 **Returns** `Byte`: 1 when idle or the channel is outside 1..4, 0 while a copy is in progress or the channel is armed for triggers.
 
+**Example**
+```basic
+Dim a(8) As Byte
+Dim b(8) As Byte
+Dim ok As Byte
+ok = DmaCopy(1, @a, @b, 8)
+While DmaDone(1) = 0
+Wend
+```
+
 ### DmaStop
 
 **Syntax**
@@ -4357,6 +4426,16 @@ d = DmaDone(channel)
 DmaStop(channel)
 ```
 **Overview** Clears `EN`: stops the channel and returns its registers to their reset values. A copy in progress is cut short.
+
+**Parameters** `channel` 1..4; another number does nothing.
+
+**Example**
+```basic
+Dim msg(8) As Byte
+Dim ok As Byte
+ok = DmaOnTrigger(1, DmaTrigU1Tx, @msg, @U1TXB, 8, DmaFixedDst)
+DmaStop(1)                  ' disarm it again
+```
 
 ## eeprom  (`Include "eeprom"`, data EEPROM, 1024 bytes)
 
@@ -4459,15 +4538,31 @@ w = FlashReadWord(addr)
 
 **Returns** `Word`; 65535 when the word is erased.
 
+**Example**
+```basic
+Include "flashwrite"
+Dim w As Word
+w = FlashReadWord(FlashSectorAddr(FlashLastSector))
+```
+
 ### FlashEraseSector
 
 **Syntax**
 ```basic
 ok = FlashEraseSector(sector)
 ```
+**Overview** Erases one sector of program flash (every word reads 65535 afterwards). Take care that `sector` is not one that holds the program.
+
 **Parameters** `sector` a `Word`, 0..511.
 
 **Returns** `Byte`: 1; 0 for a sector above 511 (nothing is erased) or when `NVMERR` was set (write-protected sector).
+
+**Example**
+```basic
+Include "flashwrite"
+Dim ok As Byte
+ok = FlashEraseSector(FlashLastSector)
+```
 
 ### FlashWriteWord
 
@@ -4478,7 +4573,19 @@ ok = FlashWriteWord(addr, value)
 **Overview** Programs one word that is still erased, about 50 us. A word that was not erased fails the
 read-back.
 
+**Parameters** `addr` a `Word` word address; `value` a `Word`.
+
 **Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
+
+**Example**
+```basic
+Include "flashwrite"
+Dim ok As Byte
+Dim a As Word
+a = FlashSectorAddr(FlashLastSector)
+ok = FlashEraseSector(FlashLastSector)
+ok = FlashWriteWord(a, 1234)
+```
 
 ### FlashUpdateWord
 
@@ -4491,12 +4598,31 @@ already holds `value`; uses the quick word write if it is erased; otherwise read
 holding registers, erases it, writes the two bytes with `TBLWT` and writes the sector back. If it fails
 part way the sector may be left erased.
 
+**Parameters** `addr` a `Word` word address; `value` a `Word`.
+
 **Returns** `Byte`: 1 when the word reads back as `value`, 0 otherwise.
+
+**Example**
+```basic
+Include "flashwrite"
+Dim ok As Byte
+ok = FlashUpdateWord(FlashSectorAddr(FlashLastSector) + 1, 99)
+```
 
 ### FlashSectorAddr / FlashSectorWords / FlashLastSector
 
-`FlashSectorAddr(sector)` is the word address of the sector's first word; `FlashSectorWords` is 128 and
-`FlashLastSector` is 511.
+**Syntax**
+```basic
+a = FlashSectorAddr(sector)
+FlashSectorWords
+FlashLastSector
+```
+**Overview** `FlashSectorAddr(sector)` is the word address of the sector's first word; `FlashSectorWords` is 128 and
+`FlashLastSector` is 511 (constants).
+
+**Parameters** `sector` a `Word`.
+
+**Returns** `Word`.
 
 **Example**
 ```basic
@@ -5067,6 +5193,14 @@ b = OledPoint(x, y)
 ```
 **Overview** Sets (`on` = True) or clears one pixel / reads it back (1 or 0; 0 outside the screen).
 
+**Example**
+```basic
+Dim b As Byte
+OledPixel(10, 20, True)
+b = OledPoint(10, 20)        ' 1
+OledUpdate()
+```
+
 ---
 
 ### OledBufFill / OledBufClear / OledUpdate
@@ -5079,6 +5213,14 @@ OledUpdate()
 ```
 **Overview** Fills the buffer with a byte (0 = all pixels off, 255 = all on) / clears it / sends the whole buffer to the display in one transfer.
 
+**Example**
+```basic
+OledBufClear()
+OledPixel(0, 0, True)
+OledUpdate()                 ' the picture appears on the display
+OledBufFill(255)             ' every pixel on in the buffer; send it with another OledUpdate
+```
+
 ---
 
 ### OledLine
@@ -5088,6 +5230,13 @@ OledUpdate()
 OledLine(x0, y0, x1, y1, on)
 ```
 **Overview** Line between two points, both ends included (Bresenham). The coordinates are `Integer`, so a line may start or end off screen; the visible part is drawn.
+
+**Example**
+```basic
+OledBufClear()
+OledLine(0, 0, 127, 63, True)
+OledUpdate()
+```
 
 ---
 
@@ -5099,6 +5248,14 @@ OledRect(x, y, w, h, on)
 OledFillRect(x, y, w, h, on)
 ```
 **Overview** Rectangle outline / filled rectangle with its top left corner at (`x`, `y`), `w` wide and `h` high. Keep `x + w` and `y + h` within 255 (the sums wrap).
+
+**Example**
+```basic
+OledBufClear()
+OledRect(4, 4, 40, 20, True)
+OledFillRect(60, 10, 30, 30, True)
+OledUpdate()
+```
 
 ---
 
@@ -5727,6 +5884,13 @@ k = Ncd(v)
 **Parameters** `v` is a `LongWord` (any unsigned type converts).
 
 **Returns** A `Byte`, 0 when `v` is 0: `Ncd(1)` = 1, `Ncd(%1000)` = 4, `Ncd($FFFF)` = 16.
+
+**Example**
+```basic
+Include "bits"
+Dim k As Byte
+k = Ncd(1000)                ' 10: 1000 needs ten bits
+```
 
 **See also** `Dcd`.
 
