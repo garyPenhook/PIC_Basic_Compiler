@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.237**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
+Revision for **basil 0.1.238**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry

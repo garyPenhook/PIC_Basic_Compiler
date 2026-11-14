@@ -205,7 +205,7 @@ target/release/basil prog.bas
 Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-check only), `-O0`
 (no optimisation), `-g` (debug build: BASIC line, variable and routine information in `prog.elf`).
 
-Documentation: the user manual `docs/MANUAL.md` (also `docs/MANUAL.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
+Documentation: the user manual `docs/MANUAL.md` (also `docs/Basil_Manual.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
 diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`, efficiency worklist `docs/EFFICIENCY.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and
 `BASIL_MDB=1 cargo test --test backend` for the simulator suite. MDB has no DMA, so DMA tests run with the model in `scripts/dma_sim.py` (see the manual, "Testing DMA code in the simulator").

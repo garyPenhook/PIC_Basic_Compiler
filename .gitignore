@@ -6,7 +6,7 @@
 *.elf
 # vendor manuals are for personal reference only: never commit them
 *.pdf
-!docs/MANUAL.pdf
+!docs/Basil_Manual.pdf
 # compiler outputs next to the sources in my_src/
 my_src/**/*.S
 my_src/**/*.cmf
