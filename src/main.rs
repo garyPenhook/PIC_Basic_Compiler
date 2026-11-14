@@ -43,7 +43,7 @@ options:
   --xc8-cc PATH   the xc8-cc C compiler (default: $BASIL_XC8CC, then the XC8 install of pic-as)
   --packs DIR     an extra folder holding device packs as <pack>/<version>/xc8 (repeatable;
                   also $BASIL_PACKS)
-  --doctor        show which tools and packs basil found, and exit non-zero if one is missing
+  --doctor        show the tools and packs found, check the packs the parts need, run a test build; exit non-zero if not ready
   -V, --version   print the version and exit
   -h, --help      print this help and exit
 
@@ -62,17 +62,19 @@ fn nearest_with(start: &Path, name: &str) -> Option<PathBuf> {
     start.ancestors().map(|d| d.join(name)).find(|c| c.is_dir())
 }
 
-/// `--doctor`: what basil found on this machine. Fails when pic-as or every pack folder is missing.
+/// `--doctor`: what basil found on this machine, which of the packs the supported parts need are installed, and a test
+/// build. Fails when pic-as is missing, no pack is usable or the test build fails.
 fn doctor() -> ExitCode {
-    let mut ok = true;
     println!("basil {}", env!("CARGO_PKG_VERSION"));
     match toolchain::config_path() {
         Some(p) if p.is_file() => println!("settings: {}", p.display()),
         Some(p) => println!("settings: none (optional file: {})", p.display()),
         None => {}
     }
+    let mut pic_as_found = false;
     match toolchain::resolve_pic_as(None) {
         Ok(p) => {
+            pic_as_found = true;
             let v = std::process::Command::new(&p).arg("--version").output().ok().map(|o| String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).lines().next().unwrap_or("").trim().to_string()).unwrap_or_default();
             println!("pic-as:  {}{}", p.display(), if v.is_empty() { String::new() } else { format!("  ({v})") });
             match toolchain::resolve_xc8_cc(&p, None) {
@@ -81,26 +83,105 @@ fn doctor() -> ExitCode {
             }
         }
         Err(e) => {
-            ok = false;
             println!("pic-as:  MISSING\n{e}");
         }
     }
     let roots = toolchain::pack_roots(&[]);
-    let mut any = false;
     for r in &roots {
         let n = std::fs::read_dir(r).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count()).unwrap_or(0);
         println!("packs:   {} ({n} found)", r.display());
-        any |= n > 0;
     }
-    if !any {
-        ok = false;
-        println!("packs:   MISSING: no device packs in {}\n         install them with MPLAB X (Tools > Packs) or set BASIL_DFP / pass --dfp", roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", "));
-    }
-    match basil::embedded::dirs() {
+    let built_in = basil::embedded::dirs();
+    match &built_in {
         Some((lib, dev)) => println!("built-in: lib {}, devices {}", lib.display(), dev.display()),
         None => println!("built-in: lib and devices cache not writable; only folders next to the program are used"),
     }
-    if ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
+    // The packs the device descriptions name: a folder of packs is no use if it lacks these.
+    let needs = built_in.as_ref().map(|(_, dev)| toolchain::packs_needed(dev)).unwrap_or_default();
+    let mut usable: Vec<(&toolchain::PackNeed, bool)> = Vec::new();
+    let mut missing = Vec::new();
+    if !needs.is_empty() {
+        println!("device packs the supported parts need:");
+    }
+    for n in &needs {
+        let parts = format!("{} part{}, e.g. {}", n.devices.len(), if n.devices.len() == 1 { "" } else { "s" }, n.devices[0]);
+        match toolchain::resolve_dfp(None, &[], &n.pack, &n.version) {
+            Ok(d) if d.exact => {
+                println!("  ok       {} {} ({parts})", n.pack, n.version);
+                usable.push((n, true));
+            }
+            Ok(d) => {
+                println!("  older    {} {} not installed, {} is ({parts}); builds work but the configuration bits can differ", n.pack, n.version, d.version);
+                usable.push((n, false));
+            }
+            Err(_) => {
+                println!("  MISSING  {} {} ({parts})", n.pack, n.version);
+                missing.push(n);
+            }
+        }
+    }
+    if !missing.is_empty() {
+        println!("  To install a missing pack: MPLAB X (Tools > Packs), or unpack it to {}/<pack>/<version>,", home_pack_dir());
+        println!("  or set BASIL_DFP / pass --dfp DIR (the pack's xc8 folder) or --packs DIR.");
+    }
+    if built_in.is_some() && needs.is_empty() {
+        println!("  (no device descriptions found to check against)");
+    }
+    // The end-to-end check: build a one-line program for one part of each usable pack.
+    let mut selftest_ok = true;
+    let mut selftested = 0;
+    if pic_as_found {
+        for (n, _) in &usable {
+            selftested += 1;
+            match selftest(&n.devices[0]) {
+                Ok(words) => println!("selftest: {} builds ({words} words)", n.devices[0]),
+                Err(e) => {
+                    selftest_ok = false;
+                    println!("selftest: {} FAILED\n{}", n.devices[0], e.lines().map(|l| format!("         {l}")).collect::<Vec<_>>().join("\n"));
+                }
+            }
+        }
+    }
+    let ready = pic_as_found && selftest_ok && selftested > 0;
+    if ready && missing.is_empty() {
+        println!("ready: yes, every supported part can be built");
+    } else if ready {
+        let lost: usize = missing.iter().map(|n| n.devices.len()).sum();
+        println!("ready: partly, {lost} supported part(s) need a pack that is not installed (see MISSING above)");
+    } else if !pic_as_found {
+        println!("ready: no, install MPLAB XC8 first");
+    } else if selftested == 0 {
+        println!("ready: no, no device pack is installed");
+    } else {
+        println!("ready: no, the test build failed");
+    }
+    if ready { ExitCode::SUCCESS } else { ExitCode::from(1) }
+}
+
+fn home_pack_dir() -> String {
+    toolchain::home_dir().map(|h| h.join(".mchp_packs").join("Microchip").display().to_string()).unwrap_or_else(|| "<home>/.mchp_packs/Microchip".into())
+}
+
+/// Build a one-line program for `device` with this same compiler in a scratch folder; the number of words on success,
+/// the compiler's messages on failure.
+fn selftest(device: &str) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find myself: {e}"))?;
+    let dir = std::env::temp_dir().join(format!("basil-doctor-{}-{device}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    let src = dir.join("doctor.bas");
+    let r = std::fs::write(&src, format!("Program Doctor\nDevice = {device}\nClock = 4\nEnd\n")).map_err(|e| format!("cannot write {}: {e}", src.display())).and_then(|_| {
+        // current_dir is the scratch folder so a stray lib/ or devices/ folder in the user's directory cannot interfere
+        let o = std::process::Command::new(&exe).arg(&src).current_dir(&dir).output().map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
+        let text = String::from_utf8_lossy(&o.stderr).to_string();
+        if o.status.success() {
+            let words = text.lines().find_map(|l| l.split('(').nth(1)?.split(" words").next().map(str::to_string)).unwrap_or_default();
+            Ok(words)
+        } else {
+            Err(text.trim().to_string())
+        }
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    r
 }
 
 fn main() -> ExitCode {

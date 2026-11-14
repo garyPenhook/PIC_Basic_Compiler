@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.230**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.231**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -115,7 +115,7 @@ basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 | `--dfp DIR` | The device pack's `xc8` folder (otherwise `$BASIL_DFP`, then `~/.mchp_packs/Microchip` and MPLAB X's packs; the newest installed version of the pack is used, with a warning, when the named one is missing). |
 | `--xc8-cc PATH` | The `xc8-cc` C compiler (otherwise `$BASIL_XC8CC`, then the XC8 install of `pic-as`). |
 | `--packs DIR` | An extra folder holding packs as `<pack>/<version>/xc8` (repeatable; also `$BASIL_PACKS`). |
-| `--doctor` | Show the pic-as, xc8-cc and pack folders found; exit 1 if `pic-as` or the packs are missing. |
+| `--doctor` | Show the pic-as, xc8-cc and pack folders found, which of the device packs the supported parts need are installed (`ok`, `older`, `MISSING`), and a one-line test build for a part of each installed pack; ends with `ready: yes`, `partly` or `no`. Exit 1 unless ready (a missing pack for some parts is `partly`, exit 0). |
 | `--version`, `-V` | Print the version. |
 | `--help`, `-h` | Print the option summary and exit. |
 

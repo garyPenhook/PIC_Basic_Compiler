@@ -16,7 +16,7 @@ From nothing to a `.hex` file for a PIC18F27Q10 (the same steps work for the PIC
 * To enter paths by hand: `--pic-as`, `--xc8-cc`, `--dfp`, `--packs` (extra pack folder), their `BASIL_*` variables,
   or lines such as `pic-as = /path/to/pic-as` in `~/.config/basil/config` (`%APPDATA%\basil\config` on Windows).
   Flags win over variables, which win over the file, which wins over the automatic search.
-* Run `basil --doctor` to see what was found; it exits non-zero when `pic-as` or the packs are missing. (The
+* Run `basil --doctor` to see what was found, which device packs the supported parts need and whether they are installed, and a test build for each installed pack; it ends with `ready: yes` and exits non-zero when it is not ready (no `pic-as`, no usable pack or a failed test build). (The
   macOS and Windows install folders are the Microchip defaults and have not been checked on those systems; use
   `BASIL_PICAS` / `--dfp` if yours differ.)
 

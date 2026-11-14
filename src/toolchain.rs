@@ -201,6 +201,37 @@ pub fn search_dfp(s: &DfpSearch) -> Result<Dfp, Searched> {
     Err(searched)
 }
 
+/// One device pack that the device descriptions name, and the parts that need it.
+#[derive(Debug, PartialEq)]
+pub struct PackNeed {
+    pub pack: String,
+    pub version: String,
+    /// device file names without `.toml`, sorted
+    pub devices: Vec<String>,
+}
+
+/// The packs the device descriptions in `dir` name, one entry per pack and version, sorted by name.
+/// Files that are not device descriptions (`*.expect.toml`) and files that do not parse are skipped.
+pub fn packs_needed(dir: &Path) -> Vec<PackNeed> {
+    let mut found: Vec<PackNeed> = Vec::new();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect()).unwrap_or_default();
+    files.sort();
+    for f in files {
+        let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let Some(stem) = name.strip_suffix(".toml") else { continue };
+        if stem.ends_with(".expect") {
+            continue;
+        }
+        let Ok(d) = devdesc::Device::load(&f) else { continue };
+        match found.iter_mut().find(|n| n.pack == d.device.pack && n.version == d.device.pack_version) {
+            Some(n) => n.devices.push(stem.to_string()),
+            None => found.push(PackNeed { pack: d.device.pack.clone(), version: d.device.pack_version.clone(), devices: vec![stem.to_string()] }),
+        }
+    }
+    found.sort_by(|a, b| (&a.pack, &a.version).cmp(&(&b.pack, &b.version)));
+    found
+}
+
 /// The folders searched for packs: the Microchip pack folder in the home folder, then each MPLAB X install's, newest first.
 pub fn pack_roots(extra: &[PathBuf]) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = extra.to_vec();
@@ -273,6 +304,22 @@ mod tests {
     fn touch(p: &Path) {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, "").unwrap();
+    }
+
+    #[test]
+    fn packs_needed_groups_by_pack_and_version() {
+        let d = tmp("needed");
+        let body = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/devices/16F13113.toml")).unwrap();
+        std::fs::write(d.join("A.toml"), &body).unwrap();
+        std::fs::write(d.join("B.toml"), &body).unwrap();
+        std::fs::write(d.join("A.expect.toml"), "not a device").unwrap();
+        std::fs::write(d.join("junk.toml"), "not a device").unwrap();
+        std::fs::write(d.join("note.txt"), "x").unwrap();
+        let n = packs_needed(&d);
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].pack, "PIC16F1xxxx_DFP");
+        assert_eq!(n[0].devices, vec!["A".to_string(), "B".to_string()]);
+        assert!(packs_needed(&d.join("missing")).is_empty());
     }
 
     #[test]
