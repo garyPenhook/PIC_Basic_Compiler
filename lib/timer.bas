@@ -603,6 +603,12 @@ Public Function FreqCount(ByVal pin As Byte, ByVal ms As Word) As LongWord
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And _has(RB0PPS)
+    ' PIC16F153xx, 28 pins and up: T1CKI reaches ports A and C only [DS40001866E Tables 15-1 to 15-3 p.236-238, DS40001853E Table 15-1 p.197].
+    If (pin >> 3) <> 0 And (pin >> 3) <> 2 Then
+        Exit
+    End If
+#endif
     Pinio.PinInput(pin)
     T1CKIPPS = pin
     Timer1StartCounter(0)

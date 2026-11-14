@@ -1328,10 +1328,19 @@ fn p153_programs_in_simulator() {
         return;
     }
     let files = p153_programs();
-    for flags in ["", "-O0"] {
-        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F15356").args(&files).output().unwrap();
-        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
-        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    // The larger and smaller parts route PPS differently (every pin on the 8- to 20-pin parts, two ports per signal from 28 pins up), so each has its own programs on its own part.
+    let groups: [(&str, Vec<PathBuf>); 4] = [
+        ("16F15356", files),
+        ("16F15386", bas_files(&root().join("tests/exec_p153_big"))),
+        ("16F15376", bas_files(&root().join("tests/exec_p153_40"))),
+        ("16F15344", bas_files(&root().join("tests/exec_p153_small"))),
+    ];
+    for (dev, files) in groups {
+        for flags in ["", "-O0"] {
+            let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg(dev).args(&files).output().unwrap();
+            let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+            assert!(r.status.success(), "{dev}, flags `{flags}`:\n{text}");
+        }
     }
 }
 

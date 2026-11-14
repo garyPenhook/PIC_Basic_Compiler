@@ -1,6 +1,6 @@
 Module Pinio
 ' Run-time pin access by number, for the bit-banged modules (`shift`, and the ones built on it). Pins are
-' numbered as in the `Lcd` module: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23. A part without
+' numbered as in the `Lcd` module: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23, RD0..RD7 = 24..31, RE0..RE7 = 32..39 and RF0..RF7 = 40..47 (the numbers of the ADC channels and of the PPS input registers). A part without
 ' port B (14-pin PIC18-Q41, PIC16F13123/13124/13125, 8-pin PIC16F13113) or without port C refuses those pins:
 ' PinOk is False for them, and every routine ignores a pin that is not OK.
 '
@@ -10,10 +10,29 @@ Module Pinio
 ' The routines are not reentrant and change LATx/TRISx by read-modify-write: do not use them from an
 ' interrupt handler and the main program on the same port.
 
-' True for a pin 0..23 that the part has (one comparison: the part's ports are A, A + B, A + C or A + B + C).
+' One more than the highest pin number a part can have: 24 (ports A to C), 32 (with port D), 40 (with port E) or 48 (with port F).
+#if _has(PRODL)
+Public Const PinCount = 24
+#elseif _has(LATF)
+Public Const PinCount = 48
+#elseif _has(ANSELE)
+Public Const PinCount = 40
+#elseif _has(LATD)
+Public Const PinCount = 32
+#else
+Public Const PinCount = 24
+#endif
+
+' True for a pin that the part has (one comparison: the part's ports are A, A + B, A + C, A + B + C, and on the larger parts D, E and F; pins 0..47).
 Public Function PinOk(ByVal pin As Byte) As Boolean
 #if _has(LATB)
-#if _has(LATC)
+#if _has(LATF)
+    Result = pin < 48
+#elseif _has(ANSELE)
+    Result = pin < 40
+#elseif _has(LATD)
+    Result = pin < 32
+#elseif _has(LATC)
     Result = pin < 24
 #else
     Result = pin < 16
@@ -69,10 +88,63 @@ PINIO_PINSET_END:
     End Asm
 End Sub
 #else
+#if _has(LATF)
+Const PinTop As Byte = 48
+#elseif _has(ANSELE)
+Const PinTop As Byte = 40
+#elseif _has(LATD)
+Const PinTop As Byte = 32
+#endif
 ' Enhanced mid-range: LATA, LATB, LATC are consecutive on every supported part [PIC16F131xx..F180xx: 0x18..0x1A, F183xx: 0x10C..0x10E,
 ' from the device files] and a part without port B keeps LATC at LATA + 2, so the port is LATA + (pin >> 3), reached through FSR0. The
 ' mask is 1 << (pin And 7) built from the three low bits of the pin by conditional shifts (no loop, the pin is not changed): bit 0
 ' and bit 1 shift by 1 and 2 (a bit-1 shift is two steps), bit 2 is the nibble swap of a mask that is still in the low nibble.
+#if _has(LATD)
+Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
+#if Not _has(LATB)
+    If pin >= 8 And pin < 16 Then
+        Exit
+    End If
+#endif
+#if Not _has(LATC)
+    If pin >= 16 Then
+        Exit
+    End If
+#endif
+    If pin >= PinTop Then
+        Exit
+    End If
+    Asm
+        banksel PINIO_PINSET__PIN
+        lsrf PINIO_PINSET__PIN, w
+        lsrf WREG, w
+        lsrf WREG, w
+        addlw low(LATA)
+        movwf FSR0L
+        movlw high(LATA)
+        movwf FSR0H
+        movlw 1
+        btfsc PINIO_PINSET__PIN, 0
+        lslf WREG, w
+        btfsc PINIO_PINSET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINSET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINSET__PIN, 2
+        swapf WREG, w
+        banksel PINIO_PINSET__LEVEL
+        movf PINIO_PINSET__LEVEL, f
+        btfsc STATUS, 2
+        goto PINIO_PINSET_LO
+        iorwf INDF0, f
+        goto PINIO_PINSET_END
+PINIO_PINSET_LO:
+        xorlw 255
+        andwf INDF0, f
+PINIO_PINSET_END:
+    End Asm
+End Sub
+#else
 Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
 #if Not _has(LATB)
     If pin >= 8 And pin < 16 Then
@@ -119,6 +191,7 @@ PINIO_PINSET_END:
     End Asm
 End Sub
 #endif
+#endif
 
 ' Level read from pin (True = high).
 #if _has(PRODL)
@@ -158,6 +231,53 @@ PINIO_PINGET_END:
 End Function
 #else
 ' Enhanced mid-range: PORTA, PORTB, PORTC are consecutive too; the scheme of PinSet. False for a pin that is not OK.
+#if _has(LATD)
+Public Function PinGet(ByVal pin As Byte) As Boolean
+#if Not _has(LATB)
+    If pin >= 8 And pin < 16 Then
+        Result = False
+        Exit
+    End If
+#endif
+#if Not _has(LATC)
+    If pin >= 16 Then
+        Result = False
+        Exit
+    End If
+#endif
+    If pin >= PinTop Then
+        Result = False
+        Exit
+    End If
+    Asm
+        banksel PINIO_PINGET__RESULT
+        clrf PINIO_PINGET__RESULT
+        banksel PINIO_PINGET__PIN
+        lsrf PINIO_PINGET__PIN, w
+        lsrf WREG, w
+        lsrf WREG, w
+        addlw low(PORTA)
+        movwf FSR0L
+        movlw high(PORTA)
+        movwf FSR0H
+        movlw 1
+        btfsc PINIO_PINGET__PIN, 0
+        lslf WREG, w
+        btfsc PINIO_PINGET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINGET__PIN, 1
+        lslf WREG, w
+        btfsc PINIO_PINGET__PIN, 2
+        swapf WREG, w
+        andwf INDF0, w
+        btfsc STATUS, 2
+        goto PINIO_PINGET_END
+        banksel PINIO_PINGET__RESULT
+        incf PINIO_PINGET__RESULT, f
+PINIO_PINGET_END:
+    End Asm
+End Function
+#else
 Public Function PinGet(ByVal pin As Byte) As Boolean
 #if Not _has(LATB)
     If pin >= 8 And pin < 16 Then
@@ -204,6 +324,7 @@ PINIO_PINGET_END:
     End Asm
 End Function
 #endif
+#endif
 
 ' Pin as a digital output. (Plain Basic on purpose: a call with a constant pin is folded into a private copy of a few words, which an Asm
 ' routine cannot be. A pin on a port the part lacks is ignored.)
@@ -229,6 +350,21 @@ Public Sub PinOutput(ByVal pin As Byte)
         ANSELC = ANSELC And n
         TRISC = TRISC And n
 #endif
+#if _has(LATD)
+    ElseIf pin >= 24 And pin < 32 Then
+        ANSELD = ANSELD And n
+        TRISD = TRISD And n
+#endif
+#if _has(ANSELE)
+    ElseIf pin >= 32 And pin < 40 Then
+        ANSELE = ANSELE And n
+        TRISE = TRISE And n
+#endif
+#if _has(LATF)
+    ElseIf pin >= 40 And pin < 48 Then
+        ANSELF = ANSELF And n
+        TRISF = TRISF And n
+#endif
     End If
 End Sub
 
@@ -252,6 +388,21 @@ Public Sub PinInput(ByVal pin As Byte)
 #endif
         ANSELC = ANSELC And (m Xor 255)
         TRISC = TRISC Or m
+#endif
+#if _has(LATD)
+    ElseIf pin >= 24 And pin < 32 Then
+        ANSELD = ANSELD And (m Xor 255)
+        TRISD = TRISD Or m
+#endif
+#if _has(ANSELE)
+    ElseIf pin >= 32 And pin < 40 Then
+        ANSELE = ANSELE And (m Xor 255)
+        TRISE = TRISE Or m
+#endif
+#if _has(LATF)
+    ElseIf pin >= 40 And pin < 48 Then
+        ANSELF = ANSELF And (m Xor 255)
+        TRISF = TRISF Or m
 #endif
     End If
 End Sub
@@ -503,6 +654,18 @@ Public Sub PortDigital(ByVal base As Byte)
     ElseIf base = 16 Then
         ANSELC = 0
 #endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        ANSELD = 0
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        ANSELE = 0
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        ANSELF = 0
+#endif
     End If
 End Sub
 
@@ -517,6 +680,18 @@ Public Sub PortWrite(ByVal base As Byte, ByVal v As Byte)
 #if _has(LATC)
     ElseIf base = 16 Then
         LATC = v
+#endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        LATD = v
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        LATE = v
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        LATF = v
 #endif
     End If
 End Sub
@@ -533,6 +708,18 @@ Public Function PortRead(ByVal base As Byte) As Byte
 #if _has(LATC)
     ElseIf base = 16 Then
         Result = PORTC
+#endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        Result = PORTD
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        Result = PORTE
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        Result = PORTF
 #endif
     End If
 End Function
@@ -554,6 +741,18 @@ Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
     ElseIf base = 16 Then
         TRISC = t
 #endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        TRISD = t
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        TRISE = t
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        TRISF = t
+#endif
     End If
 End Sub
 
@@ -569,6 +768,18 @@ Public Sub PortWriteHigh(ByVal base As Byte, ByVal v As Byte)
 #if _has(LATC)
     ElseIf base = 16 Then
         LATC = (LATC And 15) Or v
+#endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        LATD = (LATD And 15) Or v
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        LATE = (LATE And 15) Or v
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        LATF = (LATF And 15) Or v
 #endif
     End If
 End Sub
@@ -595,6 +806,18 @@ Public Sub PortDirectionHigh(ByVal base As Byte, ByVal isInput As Boolean)
     ElseIf base = 16 Then
         TRISC = (TRISC And 15) Or t
 #endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        TRISD = (TRISD And 15) Or t
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        TRISE = (TRISE And 15) Or t
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        TRISF = (TRISF And 15) Or t
+#endif
     End If
 End Sub
 
@@ -609,6 +832,18 @@ Public Sub PortDigitalHigh(ByVal base As Byte)
 #if _has(LATC)
     ElseIf base = 16 Then
         ANSELC = ANSELC And 15
+#endif
+#if _has(LATD)
+    ElseIf base = 24 Then
+        ANSELD = ANSELD And 15
+#endif
+#if _has(ANSELE)
+    ElseIf base = 32 Then
+        ANSELE = ANSELE And 15
+#endif
+#if _has(LATF)
+    ElseIf base = 40 Then
+        ANSELF = ANSELF And 15
 #endif
     End If
 End Sub

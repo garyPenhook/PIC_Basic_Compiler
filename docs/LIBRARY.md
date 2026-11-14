@@ -130,7 +130,8 @@ The simulator tests (`tests/exec_p152`, the portable programs and `tests/exec_p1
 Parts with the PIC16F183xx oscillator (`OSCCON1`/`OSCCON2`/`OSCCON3`, `OSCFRQ.HFFRQ` 0..6 = 1 .. 32 MHz), PPS with its own register names (`RX1DTPPS`, `TX1CKPPS`) and codes, a 10-bit ADC without ADCC, no data EEPROM, and the PIC18F27Q10 flag layout in
 `PIR3` and `PIR4`. The modules tell the family apart with `#if _has(RX1DTPPS)` (the PIC16F152xx has the register too, and is picked out first by `_has(ADCON1.PREF)`; in `pwm` by `_has(RX1DTPPS) And _has(PWM6CON)`). A module that is not ported stops
 with `#error`. The simulator tests (`tests/exec_p153`, the portable programs and `tests/exec_p16` that apply) run on the PIC16F15356; the simulator leaves the oscillator registers at 0 and no ADC conversion is tested, so only their set-up is checked. Nothing was run on a real part.
-Ports D, E and F exist on the larger parts, but `pinio`, `pwm`, `spi` and `i2c` number the pins of ports A to C only (pins 0..23); `gpio` clears `ANSELA` to `ANSELF` where they exist.
+Pins are numbered RA0..RA7 = 0..7, RB = 8..15, RC = 16..23, RD = 24..31, RE = 32..39 and RF = 40..47 (the ADC channel numbers and the PPS input register values), so `pinio` and the bit-banged modules built on it reach every port of the 40- and 48-pin parts, and `gpio` clears
+`ANSELA` to `ANSELF` where they exist. On the 28-pin and larger parts PPS routes each signal to two ports only (`FACTS-16F153xx.md` has the table): `pwm`, `spi`, `i2c` and `serial2` accept only the pins the signal reaches, and `serial2` sits on RB6 and RB7 there.
 
 | Module | PIC16F153xx |
 |---|---|
@@ -140,14 +141,14 @@ Ports D, E and F exist on the larger parts, but `pinio`, `pwm`, `spi` and `i2c` 
 | `system` | done (all reset causes; clock decode for COSC 110, 000 and 001) |
 | `timer` | done (Timer0 with `T0ASYNC` set for FOSC/4, Timer1, Timer2; flags in `PIR4`; the part's own `T1Clk*`, `T1Gate*` and `T2Rst*` codes) |
 | `serial` | done (EUSART1, `RX1DTPPS`, TX/CK = `0Fh`; TRMT wait on the PIC16(L)F15356/75/76/85/86) |
-| `serial2` | done (EUSART2: TX on RC2, RX on RC1; `#error` on the PIC16(L)F15313/23) |
+| `serial2` | done (EUSART2: TX on RC2 and RX on RC1, on RB6 and RB7 from 28 pins up; `#error` on the PIC16(L)F15313/23) |
 | `adc` | done (10 bits; channels AVSS 59, temperature 60, DAC 61, FVR 62; TAD >= 1 us; `AdcRefFvr` uses the slowest clock) |
 | `eeprom` | `#error` (no data EEPROM; use `flashwrite`) |
 | `flashwrite` | done (32-word row, 14-bit words; `FlashLastSector` from the size, 63 to 511) |
-| `spi` | done (MSSP1, `RxyPPS` 15h = SCK1 and 16h = SDO1) |
-| `i2c` | done (MSSP1 hardware host, `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF`/`BCL1IF` are `PIR3` bits 0 and 1) |
+| `spi` | done (MSSP1, `RxyPPS` 15h = SCK1 and 16h = SDO1; ports B and C only on the 28-pin and larger parts) |
+| `i2c` | done (MSSP1 hardware host, `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF`/`BCL1IF` are `PIR3` bits 0 and 1; ports B and C only on the 28-pin and larger parts) |
 | `lcd` | done (pins of the part only) |
-| `pwm` | done (CCP1, CCP2, PWM3, PWM4 = channels 1..4 on Timer2; `RxyPPS` 09h .. 0Ch; any pin of ports A to C) |
+| `pwm` | done (CCP1, CCP2, PWM3, PWM4 = channels 1..4 on Timer2; `RxyPPS` 09h .. 0Ch; any pin of the 8- to 20-pin parts, the ports each signal reaches on the larger ones: CCP1/CCP2 B and C (C and F on the 15385/86), PWM3/PWM4 B and C (B and D from 40 pins)) |
 | `oled`, `aht30` | done over `i2c`/`spi` (the 1 KB frame buffer needs a part with 2K of RAM: the PIC16(L)F15356/76/86) |
 | `dma` | `#error` (no DMA) |
 | `floatlib` | done (about 1.2K words for `+`, so the 2K-word PIC16(L)F15313/23 have little room left) |
@@ -223,7 +224,7 @@ make), never fall through to the Q10 registers.
 | `Timer1Start(prescale)` | 16-bit free-running Timer1 (`prescale` 0..3 = 1:1..1:8); overflows every `65536 * 2^prescale` cycles |
 | `Timer1StartSource(clk, prescale)` | as `Timer1Start` with any clock `T1Clk*` (`T1ClkPin` = T1CKI pin, rising edges, default RC0; also `T1ClkFosc4/Fosc/HfIntOsc/LfIntOsc/MfIntOsc/Sosc/Tmr0`). External clocks are synchronised (SYNC = 0). The pin must be digital (`GpioAllDigital`, `TRISx`); the first pulse after a start may be missed (data sheet 20.2.2) |
 | `Timer1StartCounter(prescale)` | `Timer1StartSource(T1ClkPin, prescale)` |
-| `FreqCount(pin, ms)` | rising edges on any pin (0..23) in `ms` milliseconds, counted by Timer1 through `T1CKIPPS` (a `LongWord`) |
+| `FreqCount(pin, ms)` | rising edges on any pin (0..23; the pins of the part, and on the PIC16F153xx with 28 pins or more only ports A and C, which T1CKI reaches) in `ms` milliseconds, counted by Timer1 through `T1CKIPPS` (a `LongWord`) |
 | `Timer1StartGated(clk, prescale, source, activeHigh)` | counts only while the gate source `T1Gate*` (`T1GatePin` = T1G pin, default RB5; `Tmr0`, `Tmr2`, `Ccp1/2`, `Cmp1/2`) is high (`activeHigh`) or low; the gate is set before the timer is switched on |
 | `Timer1StartPulse(clk, prescale, source, activeHigh, fullCycle)` | single-pulse gate: counts the first gate pulse after the call, then holds. `fullCycle` toggles the gate on each rising edge, so the time is a whole period of the source. Poll `Timer1PulseDone()`, then `Timer1Read()` |
 | `Timer1GateState()` | the live gate (`T1GCON.GVAL`) |
@@ -278,13 +279,13 @@ I2C1 data pin.
 
 The PIC16F183xx parts have one EUSART: `serial2` stops with `#error`.
 The PIC16F152xx parts have one EUSART as well: `serial2` stops with `#error`.
-The PIC16F153xx parts (except the PIC16(L)F15313/23, which stop with `#error`) have a second EUSART: TX on RC2 (`RC2PPS = 11h`, TX2/CK2), RX on RC1 (`RX2DTPPS = 17`); `TX2IF` and `RC2IF` are `PIR3` bits 6 and 7; the same TRMT wait on the PIC16(L)F15356/75/76/85/86.
+The PIC16F153xx parts (except the PIC16(L)F15313/23, which stop with `#error`) have a second EUSART: TX on RC2 (`RC2PPS = 11h`, TX2/CK2), RX on RC1 (`RX2DTPPS = 17`) on the 14- and 20-pin parts, TX on RB6 (`RB6PPS = 11h`) and RX on RB7 (`RX2DTPPS = 15`) on the 28-pin and larger parts, where PPS reaches ports B and C (28 pin) or B and D (40 to 48 pin) only; `TX2IF` and `RC2IF` are `PIR3` bits 6 and 7; the same TRMT wait on the PIC16(L)F15356/75/76/85/86.
 
 ## adc (ADCC, basic mode, right-justified results: 10 bits on the Q10, 12 bits on the PIC16F17126/46 and PIC18-Q41)
 | Routine | Effect |
 |---|---|
 | `AdcInit()` | ADC on, VDD/VSS reference, FOSC clock with the smallest TAD >= 1 us (ADCLK), hardware acquisition (`ADACQ`) of 5 us (counted in ADC clocks on the Q10, in FOSC clocks, 13 bits, on the Q41 and PIC16F171xx); runs a 32-bit calculation once from `Clock` |
-| `AdcPin(ch)` | `TRISx`/`ANSELx` bit of channel 0..23 (RA0-7 = 0..7, RB = 8..15, RC = 16..23) |
+| `AdcPin(ch)` | `TRISx`/`ANSELx` bit of channel 0..23 (RA0-7 = 0..7, RB = 8..15, RC = 16..23; 24..31 for port D, 32..34 for RE0..RE2 and 40..47 for port F where the part has them) |
 | `AdcRead(ch)` | one conversion, 0..1023 (`AdcMax`: 4095 on the 12-bit parts). Channels `AdcChVss` 60, `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63 are internal (PIC16F17126/46: 58, 59, 60, 62; `AdcChDac2` 61; its pins are RA0..RA5, RB4..RB7, RC0..RC7 and there is no first-conversion workaround; PIC18-Q41: `AdcChDac2` 58, `AdcChVss` 59, `AdcChTemp` 60, `AdcChDac` 61, `AdcChFvr` 62, `AdcChFvr2` 63, the same pins and no workaround, the charge pump `ADCP.CPON` is switched on by `AdcInit`, and the acquisition is 8 us) |
 | `ADin(ch)` | one-call read: first call runs `AdcInit`, a channel change runs `AdcPin`, then `AdcRead` |
 | `AdcReadAvg(ch, n)` | mean of n (1..64) conversions |
@@ -397,7 +398,7 @@ update, one period can use a mixed value. Not reentrant: do not call it from a h
 PIC16F183xx: CCP1, CCP2, PWM5 and PWM6 are channels 1..4 on Timer2 (prescalers 1, 4, 16, 64); `RxyPPS` 0Ch, 0Dh, 02h, 03h.
 
 PIC16F152xx: CCP1, CCP2, PWM3 and PWM4 are channels 1..4 on Timer2 (prescalers 1..128, `T2CLKCON`); `RxyPPS` 01h, 02h, 03h, 04h; any pin of the part; there is no `CCPTMRS`.
-PIC16F153xx: CCP1, CCP2, PWM3 and PWM4 are channels 1..4 on Timer2 (prescalers 1..128, `T2CLKCON`; PWM5 and PWM6 are not offered); `RxyPPS` 09h, 0Ah, 0Bh, 0Ch; the pins RA0..RA2, RA4, RA5, RB4..RB7 and RC0..RC7 as the part has them; there is no `CCPTMRS`; the Timer2 flag is `PIR4` bit 1.
+PIC16F153xx: CCP1, CCP2, PWM3 and PWM4 are channels 1..4 on Timer2 (prescalers 1..128, `T2CLKCON`; PWM5 and PWM6 are not offered); `RxyPPS` 09h, 0Ah, 0Bh, 0Ch; every pin of the part (RA3 and RE3 excepted) on the 8- to 20-pin parts, and on the larger ones only the ports the signal reaches: CCP1/CCP2 on ports B and C (C and F on the PIC16(L)F15385/86), PWM3/PWM4 on B and C (28 pin) or B and D (40 to 48 pin), pins 0..47; there is no `CCPTMRS`; the Timer2 flag is `PIR4` bit 1.
 
 ## i2c (MSSP1 host; PIC18-Q41: software host)
 PIC16F17126/46: the MSSP1 host as on the Q10 (DS40002343F chapter 31) with the pins of the Q41 numbering: 0..23, RA0..RA5 except RA3, RB4..RB7 and
@@ -458,7 +459,7 @@ its blocks with these routines (`ReadBlock`/`WriteBlock` are thin wrappers); wit
 PIC16F183xx: the same hardware host; `RxyPPS` 24 = SCL1 and 25 = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 3 and 2.
 
 PIC16F152xx: the same hardware host; `RxyPPS` 07h = SCL1 and 08h = SDA1; `SSP1IF`/`BCL1IF` are `PIR1` bits 1 and 2.
-PIC16F153xx: the same hardware host; `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF`/`BCL1IF` are `PIR3` bits 0 and 1; the pins RA0..RA5 (not RA3), RB0..RB7 and RC0..RC7 as the part has them (only RB1, RB2, RC3 and RC4 have the I2C input buffers).
+PIC16F153xx: the same hardware host; `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF`/`BCL1IF` are `PIR3` bits 0 and 1; the pins RA0..RA5 (not RA3), RB4..RB7 and RC0..RC7 as the part has them on the 8- to 20-pin parts, RB0..RB7 and RC0..RC7 only (pins 8..23) on the 28-pin and larger parts, where PPS reaches ports B and C only (only RB1, RB2, RC3 and RC4 have the I2C input buffers).
 
 ## softserial (asynchronous serial on any two pins)
 | Routine | Effect |
@@ -488,7 +489,7 @@ does not use its interrupt, and is not reentrant.
 PIC16F183xx: `RxyPPS` 24 = SCK1 and 25 = SDO1.
 
 PIC16F152xx: `RxyPPS` 07h = SCK1 and 08h = SDO1.
-PIC16F153xx: `RxyPPS` 15h = SCK1 and 16h = SDO1; the pins RA0..RA5, RB4..RB7 and RC0..RC7 as the part has them.
+PIC16F153xx: `RxyPPS` 15h = SCK1 and 16h = SDO1; the pins RA0..RA5, RB4..RB7 and RC0..RC7 as the part has them on the 8- to 20-pin parts, RB0..RB7 and RC0..RC7 only (pins 8..23) on the 28-pin and larger parts.
 
 ## intosc (internal oscillator set-up)
 `Include "intosc"` makes the hardware run at `Clock`: its start-up code, run before the main program, writes `OSCFRQ` and
@@ -610,7 +611,7 @@ Pixel drawing uses a 1024-byte frame buffer in RAM (the display cannot be read b
 
 ## pinio (pin access by number)
 
-Support module for the bit-banged modules. Pins are numbered 0..23 as in `lcd` (RA0 = 0, RB0 = 8, RC0 = 16).
+Support module for the bit-banged modules. Pins are numbered as in `lcd` (RA0 = 0, RB0 = 8, RC0 = 16) and go on past port C on the parts that have more ports: RD0 = 24, RE0 = 32, RF0 = 40 (the PIC16F153xx with 40 to 48 pins; the 40-pin PIC16F18076 has ports D and E too). `PinCount` is one more than the highest pin the part can have (24, 32, 40 or 48); `PinOk` is False above it.
 `PinOk(pin)`, `PinSet(pin, level)`, `PinGet(pin)`, `PinOutput(pin)`, `PinInput(pin)` (both clear ANSELx),
 `PinDriveLow(pin)` / `PinRelease(pin)` for an open-drain line without ODCONx. Pins the part lacks (port B on
 the 14-pin PIC18-Q41 and PIC16F13123..13125, port B and C on the PIC16F13113) are refused by `PinOk` and ignored.

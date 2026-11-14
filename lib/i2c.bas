@@ -736,7 +736,7 @@ End Function
 #endif
 
 ' PIC16F153xx (DS40001889E, DS40001865F, DS40001853E and DS40001866E chapters 15 and 33, DS40001897C for the 8- and 14-pin PIC16F15313/23; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`): the same MSSP1 host [SSPM = 1000, SSP1ADD 0..2 not valid],
-' the pins numbered as on the PIC16F183xx (RA0..RA5 except RA3, RB0..RB7 where the part has them, RC0..RC7), `RxyPPS` 15h (21) = SCL1/SCK1 and 16h (22) = SDA1/SDO1 [Table 15-4 p.199], SSP1CLKPPS and SSP1DATPPS = PORT[5:3] | PIN[2:0]
+' the pins numbered as on the PIC16F183xx: RA0..RA5 except RA3, RB4..RB7 and RC0..RC7 as the part has them on the 8- to 20-pin parts (every output and input reaches every pin there [Tables 15-4 and 15-5 p.199 of DS40001889E, p.200 of DS40001865F, p.190 of DS40001897C]) and RB0..RB7 and RC0..RC7 on the 28-pin and larger parts, where SCL1, SDA1, SSP1CLKPPS and SSP1DATPPS reach ports B and C only [DS40001866E Tables 15-1 to 15-3 and 15-5 to 15-7 p.236-243, DS40001853E Tables 15-1 and 15-3 p.197, 200], `RxyPPS` 15h (21) = SCL1/SCK1 and 16h (22) = SDA1/SDO1 [Table 15-4 p.199], SSP1CLKPPS and SSP1DATPPS = PORT[5:3] | PIN[2:0]
 ' [Table 15-3 p.197], SSP1IF and BCL1IF in PIR3 bits 0 and 1. Only RB1, RB2, RC3 and RC4 have the I2C and SMBus input buffers; on any other pin the TTL or Schmitt trigger buffer of INLVL is used, so those four are the pins to
 ' choose when the bus levels matter [15.3 note p.198]. The errata documents (DS80000717K, DS80000721D, DS80000725F, DS80000728D) list for the MSSP only SPI client mode (SSPBUF corruption), which this host module does not use.
 ' PIC16F18056/76 (DS40002325C chapters 18 and 29; chosen with `Not _has(OSCCON1)`): the same MSSP1 host, `RxyPPS` 15h (21) = SCL1 and 16h (22) = SDA1 [Table 18-2 p.170], SSP1IF and BCL1IF in PIR3 bits 6 and 7 [12.10.10 p.111].
@@ -801,8 +801,8 @@ End Sub
 
 ' True for a pin the part has (RA3 is input only and refused).
 Function PinOk(ByVal pin As Byte) As Boolean
-#if Not _has(OSCCON1) And Not _has(ADCON1.PREF)
-    ' PIC16F18056/76: port B and C only (see the top).
+#if (Not _has(OSCCON1) And Not _has(ADCON1.PREF)) Or (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And _has(RB0PPS))
+    ' PIC16F18056/76 and the 28-pin and larger PIC16F153xx: port B and C only (see the top).
     Result = pin >= 8 And pin <= 23
 #else
 #if _has(RC0PPS)
@@ -817,12 +817,6 @@ Function PinOk(ByVal pin As Byte) As Boolean
 #endif
 #if _has(RB4PPS)
     If pin >= 12 And pin <= 15 Then
-        Result = True
-    End If
-#endif
-#if _has(RB0PPS) And _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
-    ' PIC16F153xx 28-, 40- and 48-pin parts: RB0..RB3 as well (RB1 and RB2 have the I2C input buffers).
-    If pin >= 8 And pin <= 11 Then
         Result = True
     End If
 #endif

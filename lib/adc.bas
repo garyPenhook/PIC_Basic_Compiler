@@ -281,7 +281,7 @@ End Sub
 End Sub
 #endif
 
-' Makes the pin of channel 0..23 (0..34 on a part with port D and E, the PIC16F18076) an analog input (TRISx = 1, ANSELx = 1) [33.1.1]. Other
+' Makes the pin of channel 0..23 (0..34 on a part with port D and E, the PIC16F18076 and the larger PIC16F153xx; 40..47 for port F, the PIC16(L)F15385/86) an analog input (TRISx = 1, ANSELx = 1) [33.1.1]. Other
 ' channel numbers are internal and need no pin.
 Public Sub AdcPin(ByVal ch As Byte)
     Dim m As Byte
@@ -311,6 +311,11 @@ Public Sub AdcPin(ByVal ch As Byte)
     ElseIf ch >= 32 And ch < 35 Then
         TRISE = TRISE Or m
         ANSELE = ANSELE Or m
+#endif
+#if _has(TRISF)
+    ElseIf ch >= 40 And ch < 48 Then
+        TRISF = TRISF Or m
+        ANSELF = ANSELF Or m
 #endif
     End If
 End Sub

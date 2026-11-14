@@ -50,7 +50,22 @@ and a PIC16LF (1.8 to 3.6 V) variant with the same registers; the device files c
   C2OUT 14h, **SCK1/SCL1 15h, SDO1/SDA1 16h**, TMR0 19h, NCO1OUT 1Ah, CLKR 1Bh (Table 15-4 p.199 of DS40001889E, the PIC16(L)F15324 and 15344; the codes of the MSSP2 outputs on the 28-pin and larger parts were not needed and are not listed here). Input registers (xxxPPS, Register 15-1 p.200) take PORT<5:3> | PIN<2:0>:
   RA0..RA5 = 0..5, RB4..RB7 = 12..15 (RB0..RB7 = 8..15 on the 28-pin and larger parts), RC0..RC7 = 16..23 (Table 15-3 p.197): INTPPS, T0CKIPPS, T1CKIPPS, T1GPPS, T2INPPS, CCP1PPS, CCP2PPS, CWG1PPS, CLCIN0..3PPS, ADACTPPS, SSP1CLKPPS, SSP1DATPPS,
   SSP1SSPPS, **RX1DTPPS and TX1CKPPS**, RX2DTPPS and TX2CKPPS. The register names differ from both the PIC16F183xx (`RXPPS`) and the PIC16F152xx (`RX1PPS`) parts. Only RB1, RB2, RC3 and RC4 have the I2C and SMBus input buffers (15.3 note p.198).
-  The RxyPPS registers are contiguous from RA0PPS (1F10h) in pin order for ports A to E, which module `pinio`, `i2c`, `spi` and `pwm` rely on (checked in the device files).
+  The RxyPPS registers are contiguous from RA0PPS (1F10h) in pin order for ports A to E, which module `pinio`, `i2c`, `spi` and `pwm` rely on (checked in the device files); **port F is not**: RF0PPS is at 1E38h (7736), not 1F38h, so `pwm` writes
+  RF0PPS .. RF7PPS by name. The PPS input register values are PORT<5:3> | PIN<2:0> with RD = 0x18..0x1F, RE0..RE2 = 0x20..0x22 and RF = 0x28..0x2F (Table 15-4 p.239 of DS40001866E), i.e. the pin numbers 0..47 of module `pinio`.
+- **Which ports each signal reaches** (the bullets in Tables 15-1 to 15-7, which the text extraction of the PDF drops; read from the page images): on the **8- to 20-pin parts (PIC16(L)F15313, 15323, 15324, 15325, 15344, 15345) every output and every input reaches every
+  pin of the part** (DS40001897C p.186-187, 190; DS40001889E p.195-196, 199; DS40001865F p.200). On the **28-pin and larger parts each signal reaches two ports only**:
+
+  | Signal | PIC16(L)F15354/55/56 (28 pin) | PIC16(L)F15375/76 | PIC16(L)F15385/86 |
+  |---|---|---|---|
+  | CCP1, CCP2 (outputs 09h, 0Ah) | B, C | B, C | **C, F** |
+  | PWM3, PWM4 (outputs 0Bh, 0Ch) | B, C | B, D | B, D |
+  | SCK1/SCL1, SDO1/SDA1 (15h, 16h) and SSP1CLKPPS, SSP1DATPPS | B, C | B, C | B, C |
+  | TX1/CK1 (0Fh) | B, C | B, C | C, F |
+  | RX1DTPPS | B, C | B, C | B, C, F |
+  | TX2/CK2 (11h), RX2DTPPS | B, C | B, D | B, D |
+
+  (DS40001853E Tables 15-1 p.197 and 15-3 p.200, DS40001866E Tables 15-1 to 15-3 p.236-238 and 15-5 to 15-7 p.241-243.) The library follows them: `pwm` takes the masks of CCP1/CCP2 and PWM3/PWM4 from the part, `spi` and `i2c` accept pins 8..23 only on the 28-pin and larger
+  parts, `serial2` uses RB6 and RB7 (the reset selections of TX2CKPPS and RX2DTPPS, valid on every one of those parts), and `serial` keeps RC4 and RC5, which every part allows.
 - **Flags**: TMR0IF PIR0 bit 5; ADIF PIR1 bit 0; SSP1IF PIR3 bit 0, BCL1IF bit 1, **TX1IF bit 4, RC1IF bit 5**, TX2IF bit 6, RC2IF bit 7; **TMR1IF PIR4 bit 0, TMR2IF bit 1**; TMR1GIF PIR5 bit 0. The enables are the same bits of PIE0, PIE1, PIE3, PIE4. The
   layout of PIR3 and PIR4 is that of the PIC18F27Q10 for the EUSART and the timers, so `_has(PIR3.TX1IF)` is true on both; the library tells this family apart with `_has(RX1DTPPS)` (true on the PIC16F152xx too, which is tested first through `_has(ADCON1.PREF)`).
 - Timer0: as the PIC16F17126/46 (T0CON0, T0CON1; period in TMR0H in 8-bit mode). Timer1 (Registers 26-3, 26-4 p.287-288, T1CON = CKPS<5:4> | nSYNC | RD16 | ON): T1CLK CS<3:0>: 0 T1CKIPPS, 1 FOSC/4, 2 FOSC, 3 HFINTOSC, 4 LFINTOSC, 5 MFINTOSC 500 kHz,

@@ -523,7 +523,64 @@ End Function
 ' Valid outputs: channels 1, 2 on ports B and C (pins 8..23); channels 3, 4 on ports A and C.
 ' PIC16F13145 family: any pin of the part (PPS has no port restriction [Table 18-2]): RA0..RA2, RA4, RA5, RB4..RB7 (20-pin parts), RC0..RC7
 ' (RC6, RC7 on the 20-pin parts; port C is missing on the 8-pin part).
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+' PIC16F153xx (DS40001866E Tables 15-5 to 15-7 p.241-243, DS40001853E Table 15-3 p.200, DS40001889E p.199, DS40001865F p.200, DS40001897C p.190): on the 8- to 20-pin parts every output reaches every pin of the part; on the 28-pin and larger
+' parts each reaches two ports only. Bit 0 of the masks is port A .. bit 5 port F. CCP1 and CCP2: ports B and C (28- and 40-pin parts), C and F (the PIC16(L)F15385/86); PWM3 and PWM4: B and C (28-pin), B and D (40- to 48-pin).
+#if _has(RF0PPS)
+Const PortsCcp As Byte = 36
+Const PortsPwm As Byte = 10
+#elseif _has(RD0PPS)
+Const PortsCcp As Byte = 6
+Const PortsPwm As Byte = 10
+#elseif _has(RB0PPS)
+Const PortsCcp As Byte = 6
+Const PortsPwm As Byte = 6
+#else
+Const PortsCcp As Byte = 63
+Const PortsPwm As Byte = 63
+#endif
+' The pins each port has as outputs (RA3 and RE3 are input only).
+#if _has(RA6PPS)
+Const ExA As Byte = 247
+#else
+Const ExA As Byte = 55
+#endif
+#if _has(RB0PPS)
+Const ExB As Byte = 255
+#elseif _has(RB4PPS)
+Const ExB As Byte = 240
+#else
+Const ExB As Byte = 0
+#endif
+#if _has(RC6PPS)
+Const ExC As Byte = 255
+#elseif _has(RC0PPS)
+Const ExC As Byte = 63
+#else
+Const ExC As Byte = 0
+#endif
+#if _has(RD0PPS)
+Const ExD As Byte = 255
+#else
+Const ExD As Byte = 0
+#endif
+#if _has(RE0PPS)
+Const ExE As Byte = 7
+#else
+Const ExE As Byte = 0
+#endif
+#if _has(RF0PPS)
+Const ExF As Byte = 255
+#else
+Const ExF As Byte = 0
+#endif
+#endif
 Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+    Dim port As Byte
+    Dim ex As Byte
+    Dim ok As Byte
+#endif
     Result = False
 #if _has(PWM5CON) And Not _has(PWM6CON)
     ' PIC16F18056/76: port B or C for the CCP channels, port B (and C without port D) for the PWM channels (see the top).
@@ -541,7 +598,33 @@ Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
         End If
 #endif
     End If
-#elseif _has(PWM1DCL) Or (_has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))) Or (_has(PWM3CON) And _has(PIR1.TMR2IF)) Or (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+    ' PIC16F153xx: the ports the signal reaches (PortsCcp, PortsPwm) and the pins the part has (ExA .. ExF), see the top.
+    If ch >= 1 And ch <= 4 And pin < 48 Then
+        port = pin >> 3
+        ex = 0
+        If port = 0 Then
+            ex = ExA
+        ElseIf port = 1 Then
+            ex = ExB
+        ElseIf port = 2 Then
+            ex = ExC
+        ElseIf port = 3 Then
+            ex = ExD
+        ElseIf port = 4 Then
+            ex = ExE
+        Else
+            ex = ExF
+        End If
+        ok = PortsPwm
+        If ch <= 2 Then
+            ok = PortsCcp
+        End If
+        If ((ok >> port) And 1) = 1 And ((ex >> (pin And 7)) And 1) = 1 Then
+            Result = True
+        End If
+    End If
+#elseif _has(PWM1DCL) Or (_has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
     If ch >= 1 And ch <= 4 Then
         Result = pin <= 5 And pin <> 3
 #if _has(RB4PPS)
@@ -580,6 +663,29 @@ End Function
 ' register is reached through FSR0 (compiler-owned, nothing live in it across a statement; the block clobbers W, STATUS and BSR, and the two parameters may be in
 ' different banks, so each is selected). Callers pass a pin PinOk accepted.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
+#if _has(RF0PPS)
+    ' Port F (PIC16(L)F15385/86): RF0PPS is not next to RE7PPS, so these eight are written by name.
+    If pin >= 40 Then
+        If pin = 40 Then
+            RF0PPS = code
+        ElseIf pin = 41 Then
+            RF1PPS = code
+        ElseIf pin = 42 Then
+            RF2PPS = code
+        ElseIf pin = 43 Then
+            RF3PPS = code
+        ElseIf pin = 44 Then
+            RF4PPS = code
+        ElseIf pin = 45 Then
+            RF5PPS = code
+        ElseIf pin = 46 Then
+            RF6PPS = code
+        Else
+            RF7PPS = code
+        End If
+        Exit
+    End If
+#endif
     Asm
         banksel PWM_SETPPS__PIN
         movf PWM_SETPPS__PIN, w

@@ -22,8 +22,9 @@ Module Serial2
 ' PPS tables allow port B on the 28- and the 40-pin part (the second port is C on the 28-pin and D on the 40-pin part). RB6PPS = 11h selects TX2/CK2 [Table 18-2 p.170]; RX2PPS = PORT[5:3] | PIN[2:0],
 ' RB7 = 001 111 = 15 [18.8.1 p.173]. TX2IF and RC2IF are PIR3 bits 4 and 5 [PIR3, p.111]. RB6 and RB7 are also the ICSP clock and data pins. The registers and the baud-rate formula are those of EUSART1.
 '
-' PIC16F153xx (DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapter 31; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`; the PIC16F15313/23 have one EUSART only): EUSART2 with TX on RC2 and RX on RC1. RC2PPS = 11h selects TX2/CK2
-' [Table 15-4 p.199]; RX2DTPPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 [Table 15-1 p.195 gives it as the reset selection]. TX2IF and RC2IF are PIR3 bits 6 and 7. Erratum 5.1 of DS80000725F (the
+' PIC16F153xx (DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapter 31; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`; the PIC16F15313/23 have one EUSART only): EUSART2 with TX on RC2 and RX on RC1 on the 14- and 20-pin parts (every output and input reaches every pin there), and on RB6 and RB7 on the 28-pin and larger parts, because TX2/CK2 and RX2/DT2 reach ports B and C on the 28-pin
+' parts but ports B and D only on the PIC16(L)F15375/76/85/86 [DS40001866E Tables 15-1 to 15-3 and 15-5 to 15-7 p.236-243, DS40001853E Tables 15-1 and 15-3 p.197, 200]; RB6 and RB7 are the reset selections of TX2CKPPS and RX2DTPPS there and are also the ICSP clock and data pins.
+' RC2PPS (or RB6PPS) = 11h selects TX2/CK2 [Table 15-4 p.199]; RX2DTPPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 (RB7 = 15) [Table 15-1 p.195 gives RC1 as the reset selection on the 14- and 20-pin parts]. TX2IF and RC2IF are PIR3 bits 6 and 7. Erratum 5.1 of DS80000725F (the
 ' PIC16(L)F15356/75/76/85/86): SerialWriteByte's twin waits for TRMT there. The registers and the baud-rate formula are those of EUSART1.
 '
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
@@ -63,9 +64,15 @@ Dim TxIf As PIR3.6
 Dim RxIf As PIR3.7
 Dim OverrunErr As RC2STA.1
 Dim RxEnable As RC2STA.4
+#if _has(RB0PPS)
+Dim TxPin As TRISB.6
+Dim RxPin As TRISB.7
+Dim RxAnalog As ANSELB.7
+#else
 Dim TxPin As TRISC.2
 Dim RxPin As TRISC.1
 Dim RxAnalog As ANSELC.1
+#endif
 #else
 Dim TxIf As PIR5.0
 Dim RxIf As PIR5.1
@@ -118,8 +125,13 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     RC2STA = 144
 #elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
     ' RxyPPS 11h is TX2/CK2 [DS40001889E Table 15-4 p.199]; RX2DTPPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 (its reset selection, Table 15-1 p.195).
+#if _has(RB0PPS)
+    RB6PPS = 17
+    RX2DTPPS = 15
+#else
     RC2PPS = 17
     RX2DTPPS = 17
+#endif
     SP2BRGL = Byte(n)
     SP2BRGH = Byte(n >> 8)
     BAUD2CON = 8

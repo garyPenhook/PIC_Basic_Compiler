@@ -237,7 +237,7 @@ End Sub
 #if Not _i2chw
 Public Function OledInitI2c(ByVal addr As Byte, ByVal res As Byte) As Byte
     Result = 0
-    If addr > 127 Or (res <> 255 And res > 23) Then
+    If addr > 127 Or (res <> 255 And res >= Pinio.PinCount) Then
         Exit
     End If
     err = 0
@@ -253,10 +253,10 @@ End Function
 
 ' Starts the display on 4-wire SPI with D/C# on `dc`, CS# on `cs` and RES# on `res` (255 for `cs` or
 ' `res` = not controlled). `SpiInit` must have been called (mode 0, at most 10 MHz). Returns 1, or 0
-' for a pin above 23 or a pin used twice.
+' for a pin the part does not have (above 23 on ports A to C, up to 47 with ports D to F) or a pin used twice.
 Public Function OledInitSpi(ByVal dc As Byte, ByVal cs As Byte, ByVal res As Byte) As Byte
     Result = 0
-    If dc > 23 Or (cs <> 255 And cs > 23) Or (res <> 255 And res > 23) Then
+    If dc >= Pinio.PinCount Or (cs <> 255 And cs >= Pinio.PinCount) Or (res <> 255 And res >= Pinio.PinCount) Then
         Exit
     End If
     If dc = cs Or dc = res Then

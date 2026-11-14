@@ -1,5 +1,5 @@
 ' expect: LP_INIT=1 LP_HZ=5000 LP_STEPS=800 LP_PR=199 LP_T2C=176 LP_OK1=1 LP_CON1=156 LP_H1=100 LP_L1=64 LP_PPS1=9 LP_TRIS1=0 LP_OK3=1 LP_CON3=128 LP_H3=50 LP_L3=0 LP_PPS3=11 LP_POL3=144 LP_OKP=0 LP_OKA=0 LP_OKB=0 LP_REINIT=0 LP_OK2=1 LP_CON2=156 LP_PPS2=10 LP_H2=100 LP_CON1B=0 LP_PPS1B=0 LP_TRIS1B=4 LP_T2B=176 LP_T2C0=0 LP_CON2B=0 LP_INV2=0 LP_INIT2=1 LP_STEPS2=1024 LP_BADHZ=0 LP_BADHZ2=0
-' The PIC16F153xx (PIC16F15356; DS40001866E chapters 15, 26 and 27 and the CCP and PWM chapters): CCP1, CCP2, PWM3 and PWM4 on Timer2 (channels 1..4); RxyPPS = 09h, 0Ah, 0Bh, 0Ch [Table 15-4 p.199 of DS40001889E]. PWM5 and PWM6 are not offered.
+' The PIC16F153xx (PIC16F15356; DS40001866E chapters 15, 26 and 27 and the CCP and PWM chapters): CCP1, CCP2, PWM3 and PWM4 on Timer2 (channels 1..4); RxyPPS = 09h, 0Ah, 0Bh, 0Ch [Table 15-4 p.199 of DS40001889E]. PWM5 and PWM6 are not offered. On this 28-pin part the signals reach ports B and C only for CCP1, CCP2, PWM3 and PWM4 (DS40001866E Table 15-5 p.241), so PWM3 goes on RB1 (pin 9) and CCP2 on RB5 (pin 13), not on port A.
 ' The read-only OUT bit (bit 5 of CCPxCON and PWMxCON) follows the pin level and is masked out of the readings. Timer2 has prescalers 1 to 128: 5 kHz at 32 MHz needs prescale 8 (CKPS = 3, T2CON = ON | 3 << 4 = 176),
 ' T2PR + 1 = 200, 800 steps; there is no CCPTMRS. The 10-bit CCP and PWM3/4 always use Timer2.
 Program Lp
@@ -56,12 +56,12 @@ h1 = CCPR1H
 l1 = CCPR1L
 pps1 = RC2PPS
 tris1 = TRISC And 4
-' PWM3 (channel 3) on RA0 (pin 0) at 200 steps, then inverted.
-ok3 = Pwm.PwmStart(3, 0, 200)
+' PWM3 (channel 3) on RB1 (pin 9) at 200 steps, then inverted.
+ok3 = Pwm.PwmStart(3, 9, 200)
 con3 = PWM3CON And 223
 h3 = PWM3DCH
 l3 = PWM3DCL
-pps3 = RA0PPS
+pps3 = RB1PPS
 ok3 = Pwm.PwmInvert(3, True)
 pol3 = PWM3CON And 223
 ' Refused: RA3 is not a CCP1 pin, RC2 is in use, a channel 5 does not exist; Init refuses while running.

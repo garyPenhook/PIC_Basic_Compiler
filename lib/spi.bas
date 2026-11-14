@@ -40,8 +40,8 @@ Include "pinio"
 ' exist: port A on every part, port C (RC0..RC5) on the 14-pin parts, RB4..RB7 and RC6, RC7 on the 20-pin parts. The silicon errata for the MSSP concern only SPI slave mode
 ' (DS80000666H 3.4, DS80000667E 1.4.2, DS80000668L 6.1), which this module does not offer.
 ' PIC16F153xx (DS40001889E, DS40001865F, DS40001853E and DS40001866E chapters 15 and 33, DS40001897C for the PIC16F15313/23; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 15h and SDO1/SDA1 = 16h
-' [Table 15-4 p.199], SSP1CLKPPS and SSP1DATPPS take the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [Table 15-3 p.197]); the pins accepted are RA0..RA5, RB4..RB7 and RC0..RC7 as the part has them (RB0..RB3 of the larger
-' parts are left out). The errata documents list for the MSSP only SPI client mode (SSPBUF transmit shift register corruption, DS80000721D 6.1, DS80000728D 2.1), which this module does not offer (host only).
+' [Table 15-4 p.199], SSP1CLKPPS and SSP1DATPPS take the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [Table 15-3 p.197]); the pins accepted are RA0..RA5, RB4..RB7 and RC0..RC7 as the part has them on the 8- to 20-pin parts, where every output reaches every pin [Table 15-4 and 15-5 of DS40001889E p.199, DS40001865F p.200, DS40001897C p.190], and RB0..RB7 and
+' RC0..RC7 on the 28-pin and larger parts, where SCK1, SDO1 and the inputs SSP1CLKPPS and SSP1DATPPS reach ports B and C only [Tables 15-1 to 15-3 and 15-5 to 15-7 p.236-243 of DS40001866E, Tables 15-1 and 15-3 p.197, 200 of DS40001853E]. The errata documents list for the MSSP only SPI client mode (SSPBUF transmit shift register corruption, DS80000721D 6.1, DS80000728D 2.1), which this module does not offer (host only).
 ' PIC16F152xx (DS40002195E chapters 18 and 25; chosen with `_has(ADCON1.PREF)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 07h and SDO1/SDA1 = 08h [Table 18-2 p.148], SSP1CLKPPS and SSP1DATPPS take
 ' the pin number (RA0..RA5 = 0..5, RB4..RB7 = 12..15, RC0..RC7 = 16..23 [18.8.1]); the pins that exist are those of the PIC16F183xx (port A on every part, RC0..RC5 on the 14-pin parts, RB4..RB7 and
 ' RC6, RC7 on the 20-pin parts; RA3 is input only). The silicon errata (DS80000918K) concern only the MSSP I2C start and stop flags, which SPI does not use.
@@ -81,8 +81,8 @@ Const SdoCode = 28
 ' RxyPPS = code for a pin PinOk accepted (code 0 gives the pin back to its LATxy bit). A comparison chain on purpose: the pins are
 ' constants in nearly every program, and a call with a constant pin then folds into one register write.
 Sub SetPps(ByVal pin As Byte, ByVal code As Byte)
-#if (_has(PRODL) And Not _has(SPI1CON0)) Or (Not _has(OSCCON1) And Not _has(ADCON1.PREF))
-    ' PIC18F27Q10 and PIC16F18056/76: port B and C only.
+#if (_has(PRODL) And Not _has(SPI1CON0)) Or (Not _has(OSCCON1) And Not _has(ADCON1.PREF)) Or (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And _has(RB0PPS))
+    ' PIC18F27Q10, PIC16F18056/76 and the 28-pin and larger PIC16F153xx: port B and C only.
     If pin = 8 Then
         RB0PPS = code
     ElseIf pin = 9 Then
@@ -141,8 +141,8 @@ Function PinOk(ByVal pin As Byte) As Boolean
 #if _has(PRODL) And Not _has(SPI1CON0)
     ' PIC18F27Q10: port B and C only.
     Result = pin >= 8 And pin <= 23
-#elseif Not _has(OSCCON1) And Not _has(ADCON1.PREF)
-    ' PIC16F18056/76: port B and C only (see the top).
+#elseif (Not _has(OSCCON1) And Not _has(ADCON1.PREF)) Or (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And _has(RB0PPS))
+    ' PIC16F18056/76 and the 28-pin and larger PIC16F153xx: port B and C only (see the top).
     Result = pin >= 8 And pin <= 23
 #else
 #if _has(RC0PPS)
