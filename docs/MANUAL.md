@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.229**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.230**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -1399,7 +1399,7 @@ also be called from Basic as usual.
 `Const` line: it exists for `#if`. More predefined names, derived from the device description: `_core` (`"pic18"`, `"pic16e"`),
 `_maxram` (all data RAM), `_maxrom` (program memory in bytes), `_ports` (number of `LATx`), `_adc` (1 with an `ADCON0`),
 `_usart` (`RCnSTA` or `UnCON0` registers), `_mssp` (`SSPnCON1`), `_ccp` (`CCPnCON`), `_comparator` (`CMnCON0`),
-`_flash_write` (true with `NVMCON1`), `_usb` (1 with a `UCON`), `_eccp` (`ECCPnCON`), `_adres` (ADC result bits: 10 on the Q10, 12 on the Q41; undefined for other devices). `Declare Name = value` (any name but `Xtal`; a
+`_flash_write` (true with `NVMCON1`), `_usb` (1 with a `UCON`), `_eccp` (`ECCPnCON`), `_adres` (ADC result bits: 10 on the Q10, 12 on the Q41; undefined for other devices), `_opt` (0 for an `-O0` build, 1 otherwise; the `softserial` module uses it because its bit times count instruction cycles). `Declare Name = value` (any name but `Xtal`; a
 number, text or True/False expression) is a `Const`, as `#constant`; any other value is `E-UNSUPPORTED`.
 Directives inside `(* *)` or `{ }` comments are ignored.
 
@@ -3962,6 +3962,11 @@ and rate in the table below, with a window of about -5 % to +6 %.
 | PIC18F27Q10, PIC18F16Q41, 64 MHz | 1200, 9600, 38400, 115200 (Q41: 9600, 115200) |
 | PIC16F17146, 32 MHz | 1200, 9600, 19200 |
 | PIC16F15244, PIC16F18056, 32 MHz | 9600 |
+
+The same cases are run for the unoptimised `-O0` build (the module reads `_opt` and uses the cycle counts of that
+build: a wait pass is 11 cycles on the PIC18 and 10 on the PIC16, and the PIC16 receiver's pass is 12), except
+115200 baud, where one 11-cycle pass is 8 % of a bit: that rate needs the optimised build. The exec test
+`lib_softserial_rx` runs on the PIC18F27Q10 only, because its stimulus is written for 64 MHz and 9600 baud.
 
 Sizes on the PIC18F27Q10 with the start-up and a `SoftInit` call counted in (76 words): `SoftWriteByte` +83, `SoftWrite`
 +99 (it contains `SoftWriteByte`), `SoftReadByte` +157, `SoftAvailable` +46, `SoftHoldIrq` +3. The interrupt hold is

@@ -20,7 +20,9 @@ cases = [
 ]
 fails = 0
 for dev, clk, latch, bit, pin, bauds in cases:
-    for baud in bauds:
+  for flags in ("", "-O0"):   # the cycle counts differ between the optimised and the -O0 build
+    # one pass of the -O0 wait is 11 cycles, 8 % of a bit at 115200 baud: that rate is for the optimised build
+    for baud in [b for b in bauds if not (flags and b >= 115200)]:
         gie = "INTCON0" if dev.endswith("Q41") else "INTCON"   # the global interrupt enable is bit 7 of it
         work = tempfile.mkdtemp(prefix="sstest-")
         bas = os.path.join(work, "tx.bas")
@@ -35,21 +37,21 @@ ok = SoftInit({pin}, 255, {baud}, False)
 gie = 1
 SoftWriteByte($A5)
 """)
-        r = subprocess.run([basil, "--keep-vars", bas], capture_output=True, text=True)
+        r = subprocess.run([basil, "--keep-vars", *flags.split(), bas], capture_output=True, text=True)
         if r.returncode:
-            print(f"FAIL {dev} {baud}: compile\n{r.stderr}")
+            print(f"FAIL {dev} {flags or '-O1'} {baud}: compile\n{r.stderr}")
             fails += 1
             continue
         t = subprocess.run([sys.executable, os.path.join(here, "softserial_timing.py"), os.path.join(work, "tx.hex"),
                             os.path.join(work, "tx.S"), "--device", dev, "--latch", latch, "--bit", str(bit), "--baud", str(baud),
                             "--fosc", str(clk), "--expect", "0xA5", "--tol", "3", "--gie", gie], capture_output=True, text=True)
         x = subprocess.run([sys.executable, os.path.join(here, "softserial_rx_sweep.py"), "--device", dev, "--clock", str(clk),
-                            "--baud", str(baud), "--port", "B", "--bit", str(bit)], capture_output=True, text=True)
+                            "--baud", str(baud), "--port", "B", "--bit", str(bit), f"--flags={flags}"], capture_output=True, text=True)
         m = re.search(r"([+-][\d.]+) % \.\. ([+-][\d.]+) %", x.stdout)
         rx_ok = bool(m) and float(m.group(1)) <= -3 and float(m.group(2)) >= 3
         tx_line = t.stdout.strip().splitlines()[-1] if t.stdout.strip() else t.stderr.strip()
         status = "ok  " if t.returncode == 0 and rx_ok else "FAIL"
         if status == "FAIL":
             fails += 1
-        print(f"{status} {dev} {clk} MHz {baud:6d} baud: TX {tx_line}; RX {m.group(0) if m else x.stdout.strip() or x.stderr.strip()}")
+        print(f"{status} {dev} {clk} MHz {flags or '-O1':>3} {baud:6d} baud: TX {tx_line}; RX {m.group(0) if m else x.stdout.strip() or x.stderr.strip()}")
 sys.exit(1 if fails else 0)

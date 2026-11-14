@@ -32,6 +32,8 @@ pub struct LoadConfig {
     pub defines: Vec<String>,
     /// Folders searched for `<part>.toml`, so `#if _has(REG)` can see the device's registers.
     pub devices_dirs: Vec<PathBuf>,
+    /// False for `-O0`: `_opt` is 0, so a library whose timing counts instruction cycles can use the cost of unoptimised code.
+    pub optimise: bool,
 }
 
 pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
@@ -46,6 +48,7 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
     if let Some((registers, ram, eeprom, extra)) = ld.predef.device.as_deref().and_then(|d| device_registers(d, &cfg.devices_dirs)) {
         ld.predef.registers = Some(registers);
         ld.predef.extra = extra;
+        ld.predef.extra.insert("_opt", Pre::Num(f64::from(u8::from(cfg.optimise))));
         ld.predef.ram = Some(ram);
         ld.predef.eeprom = Some(eeprom);
     }

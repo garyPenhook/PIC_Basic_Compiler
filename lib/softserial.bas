@@ -13,30 +13,65 @@ Include "pinio"
 ' the instruction rate at the very best.
 
 ' Cycles of one bit that are not the wait (the pin write, the loop, the call) and cycles of one pass of the wait,
-' measured with `scripts/softserial_timing.py` at 4800 to 38400 baud (PIC18: 39 and 7, PIC16: 69 and 9).
+' measured with `scripts/softserial_timing.py` at 4800 to 38400 baud (PIC18: 39 and 7, PIC16: 69 and 9; the
+' unoptimised `-O0` build: PIC18 37 and 11, PIC16 79 and 10).
 #if _core = "pic18"
+#if _opt = 1
 Private Const OverheadCyc = 39
 Private Const PassCyc = 7
 #else
+Private Const OverheadCyc = 37
+Private Const PassCyc = 11
+#endif
+#else
+#if _opt = 1
 Private Const OverheadCyc = 69
 Private Const PassCyc = 9
+#else
+Private Const OverheadCyc = 79
+Private Const PassCyc = 10
+#endif
 #endif
 
 ' Cycles of one poll of the start-bit loop, from the start edge to the first wait, and of the receive code per bit. Measured by the sweep `scripts/softserial_rx_sweep.py`. A millisecond is PollsMs polls;
 ' the first wait runs 1.5 bits less RxStartCyc, which is 1.5 * bitN plus FirstAdj passes.
 #if _core = "pic18"
+#if _opt = 1
 Private Const PollCyc = 30
 Private Const RxStartCyc = 48
 Private Const RxBitCyc = 39
 #else
 Private Const PollCyc = 60
+Private Const RxStartCyc = 50
+Private Const RxBitCyc = 70
+#endif
+#else
+#if _opt = 1
+Private Const PollCyc = 60
 Private Const RxStartCyc = 70
 Private Const RxBitCyc = 79
+#else
+Private Const PollCyc = 67
+Private Const RxStartCyc = 100
+Private Const RxBitCyc = 75
+#endif
+#endif
+
+' The receive wait of the unoptimised PIC16 build costs 12 cycles a pass, not the 10 of the transmit wait (the same
+' `Hold`, called from a different routine), so that build computes the receive count from the cycles directly.
+#if _core <> "pic18" and _opt = 0
+Private Const RxPassCyc = 12
+#else
+Private Const RxPassCyc = PassCyc
 #endif
 
 Private Const PollsMs = Word(_Clock * 250 / PollCyc)
 Private Const RxLess = (RxBitCyc - OverheadCyc + PassCyc / 2) / PassCyc
+#if _core <> "pic18" and _opt = 0
+Private Const FirstAdj = (RxBitCyc * 3 / 2 - RxStartCyc) / RxPassCyc
+#else
 Private Const FirstAdj = (OverheadCyc * 3 / 2 - RxStartCyc) / PassCyc
+#endif
 
 ' The global interrupt enable: bit 7 of INTCON (GIE, or GIE/GIEH with priorities), of INTCON0 on the PIC18-Q41
 ' [DS40002043F 15.13.1, DS40002343F 12.10.1, DS40002214G 11.13.1]. Clearing it holds every interrupt off, with
@@ -79,7 +114,9 @@ Public Function SoftInit(ByVal tx As Byte, ByVal rx As Byte, ByVal baud As LongW
         Exit
     End If
     bitN = (n - OverheadCyc + PassCyc / 2) / PassCyc
-#if _core <> "pic18"
+#if _core <> "pic18" and _opt = 0
+    rxN = (n - RxBitCyc + RxPassCyc / 2) / RxPassCyc
+#elseif _core <> "pic18"
     rxN = bitN - RxLess
 #endif
     idle = Not inverted

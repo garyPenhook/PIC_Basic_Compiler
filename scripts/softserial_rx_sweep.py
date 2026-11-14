@@ -22,6 +22,8 @@ ap.add_argument("--invert", action="store_true")
 ap.add_argument("--config", default=None)
 ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../target/release/basil"))
 ap.add_argument("--sim", default=os.path.join(os.path.dirname(__file__), "../../picsim/target/release/basil-sim"))
+ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0")
+ap.add_argument("--span", type=int, default=80, help="sweep sender bit times from -span to +span tenths of a percent (step 5)")
 ap.add_argument("--print-stim", action="store_true")
 ap.add_argument("--bad-stop", action="store_true", help="with --print-stim: a third character, 0x0F, whose stop bit is low (a framing error)")
 a = ap.parse_args()
@@ -70,11 +72,11 @@ b = SoftReadByte(50)
 work = tempfile.mkdtemp(prefix="ssrx-")
 bas = os.path.join(work, "rx.bas")
 open(bas, "w").write(src)
-r = subprocess.run([a.basil, "--keep-vars", bas], capture_output=True, text=True)
+r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), bas], capture_output=True, text=True)
 if r.returncode:
     print(r.stdout, r.stderr); sys.exit(2)
 good = []
-for pct in range(-80, 81, 5):
+for pct in range(-a.span, a.span + 1, 5):
     sc = 1 + pct / 1000
     sf = os.path.join(work, "s.toml")
     open(sf, "w").write(stim(sc))

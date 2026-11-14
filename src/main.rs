@@ -195,7 +195,7 @@ fn main() -> ExitCode {
     }
 
     let mut diags = Diagnostics::default();
-    let project = load(&file, &LoadConfig { lib_dirs, defines, devices_dirs: dev_dirs.clone() }, &mut diags);
+    let project = load(&file, &LoadConfig { lib_dirs, defines, devices_dirs: dev_dirs.clone(), optimise }, &mut diags);
     // Run semantic analysis even after syntax errors in other units so that one run reports as
     // much as possible, but not when the main file did not parse at all.
     if project.units.is_empty() {
