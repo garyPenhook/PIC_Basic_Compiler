@@ -5,10 +5,10 @@ Include "pinio"
 '   GlcdInitT6963(data, wr, rd, ce, cd, rst, xres, yres, fontWidth)   Toshiba T6963C, any size, 6 or 8 pixel font
 '   GlcdInitSt7920(data, rs, rw, en, rst, folded)             Sitronix ST7920, 8-bit parallel (PSB high)
 '   GlcdInitSt7920x4(data, ...), GlcdInitSt7920Serial(cs, sid, sclk, rst), GlcdInitT6963Dual(...)  see the calls
-' Each returns 1, or 0 for a bad argument (a pin above 23, a pin used twice, a data port the part lacks).
+' Each returns 1, or 0 for a bad argument (a pin the part lacks, a pin used twice, a data port the part lacks).
 ' `data` is the first pin of the port that carries DB0..DB7: 8 = port B, 16 = port C (port A is refused: RA3 is input only on
 ' most parts); all eight bits of the
-' port are used (`Pinio.PortWrite`, `PortRead`, `PortDirection`). The other lines are pins numbered 0..23 as in `Lcd`; 255 for
+' port are used (`Pinio.PortWrite`, `PortRead`, `PortDirection`). The other lines are pins numbered 0..47 as in `Pinio`; 255 for
 ' `rst` means "not controlled by the module". The module is not reentrant: do not use it from a handler and the main program.
 '
 ' Sources (the data sheets are in docs/): KS0108 family: Samsung S6B0108 Ver. 0.0 (the KS0108's pin-compatible driver; section
@@ -78,7 +78,7 @@ Const Font(475) As Byte = ( _
     0, 66, 60, 8, 0, 4, 2, 4, 2, 0)
 
 Dim kind As Byte
-Dim used As LongWord
+Dim used(6) As Byte
 Dim pData As Byte
 Dim pA As Byte
 Dim pB As Byte
@@ -108,19 +108,18 @@ Dim penY As Integer
 Dim tCol As Byte
 Dim tRow As Byte
 
-' True when `pin` is 0..23, the part has it, and no other line has claimed it yet.
+' True when `pin` is a pin the part has (0..47) and no other line has claimed it yet.
 Function Claim(ByVal pin As Byte) As Boolean
-    Dim mask As LongWord
+    Dim mask As Byte
+    Dim ix As Byte
     Result = False
-    If pin > 23 Then
-        Exit
-    End If
     If Not Pinio.PinOk(pin) Then
         Exit
     End If
-    mask = LongWord(1) << pin
-    If (used And mask) = 0 Then
-        used = used Or mask
+    ix = pin >> 3
+    mask = Byte(1) << (pin And 7)
+    If (used(ix) And mask) = 0 Then
+        used(ix) = used(ix) Or mask
         Result = True
     End If
 End Function
@@ -622,7 +621,10 @@ End Sub
 ' ---- Init ----
 
 Function ClaimAll(ByVal bus As Byte, ByVal busPins As Byte, ByVal a As Byte, ByVal b As Byte, ByVal c As Byte, ByVal d As Byte, ByVal e As Byte, ByVal rst As Byte) As Boolean
-    used = 0
+    Dim k As Byte
+    For k = 0 To 5
+        used(k) = 0
+    Next k
     Result = False
     If Not ClaimBus(bus, busPins) Then
         Exit
