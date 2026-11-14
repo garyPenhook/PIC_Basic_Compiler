@@ -1,7 +1,7 @@
 Module Pulse
 Include "pinio"
 ' Bit-banged pulse measurement and generation on any pin: PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound,
-' Sound2. Pins are numbered 0..23 as in `Pinio` (RA0 = 0, RB0 = 8, RC0 = 16). A pin the part lacks, or a
+' Sound2. Pins are numbered as in `Pinio` (RA0 = 0, RB0 = 8, RC0 = 16; up to 47 on the parts with ports D to F). A pin the part lacks, or a
 ' zero count, stops a routine at once (a measurement returns 0).
 '
 ' Time is kept by polling and cycle-counted delays, so it follows `Clock`. One "unit" of PulseIn, PulseOut and

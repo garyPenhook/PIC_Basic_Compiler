@@ -1,7 +1,7 @@
 Module Shift
 Include "pinio"
 ' Bit-banged synchronous shift, for shift registers (74HC595, 74HC165), DACs, ADCs and any device with a
-' data line and a clock. Pins are numbered 0..23 as in `Pinio` (RA0 = 0, RB0 = 8, RC0 = 16). The clock idles
+' data line and a clock. Pins are numbered as in `Pinio` (RA0 = 0, RB0 = 8, RC0 = 16; up to 47 on the parts with ports D to F). The clock idles
 ' low. Data is changed while the clock is low and is valid at its rising edge (SPI mode 0, so 74HC595 and
 ' most chips work); the input is sampled just before the clock goes low again. Each clock phase lasts about
 ' 1 us plus the instruction time, so the rate is below 250 kHz at 64 MHz and the routines work with any slower part.

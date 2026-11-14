@@ -10,7 +10,7 @@ Include "spi"
 '
 ' The bus is set up by the caller first with the `Spi` module: mode 0 or 3 (the data is taken on the rising edge of SCL, D7 first, D/C#
 ' held for the whole byte [6.1.2]), at most 20 MHz [12.1] (the write cycle is 50 ns). The module owns D/C#, CS#, RES# and BUSY, port pins
-' numbered 0..23 as in `Pinio` (CS# may be 255 when the module ties it low; RES# may be 255; BUSY is needed). The 8 pin module is
+' numbered as in `Pinio` (0..23, up to 47 with ports D to F; CS# may be 255 when the module ties it low; RES# may be 255; BUSY is needed). The 8 pin module is
 ' VCC, GND, SDA (MOSI), SCL, CS, D/C, RES, BUSY [WeAct schematic]; supply 3.3 V.
 '
 ' There is NO frame buffer: the SSD1680 has 4736 bytes of RAM per colour plane [2.9" BWR panel spec, 10.2: "4736 bytes, 128/8*296"], a PIC has less, and over
@@ -184,7 +184,7 @@ End Sub
 
 ' Starts the module: 2.13" (`size` 0, 122 x 250) or 2.9" (`size` 1, 128 x 296), `threeColour` True for the black / white / red
 ' panels. D/C# on `dc`, CS# on `cs` (255 = tied low), RES# on `res` (255 = none), BUSY on `busy`. `SpiInit` must have been called.
-' Returns 1, or 0 for a bad size, a pin above 23, a pin the part lacks, or a pin used twice; 2 when the module did not become idle
+' Returns 1, or 0 for a bad size, a pin the part lacks, or a pin used twice; 2 when the module did not become idle
 ' (nothing on BUSY, or no module).
 Public Function EpdInit(ByVal size As Byte, ByVal threeColour As Boolean, ByVal dc As Byte, ByVal cs As Byte, ByVal res As Byte, ByVal busy As Byte) As Byte
     Result = 0

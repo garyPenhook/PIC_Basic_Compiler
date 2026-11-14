@@ -2,7 +2,7 @@ Module Irremote
 Include "pinio"
 Include "pulse"
 ' Decoders for two infrared remote-control codes, from the output of a 38 kHz / 36 kHz receiver module (TSOP17xx
-' type), which idles high and goes low while a burst is received. Pins are numbered 0..23 as in `Pinio`.
+' type), which idles high and goes low while a burst is received. Pins are numbered as in `Pinio` (RA0 = 0, RB0 = 8, RC0 = 16; up to 47 on the parts with ports D to F).
 '
 ' Both functions return a Word: the command in the low byte and the system (address) in the high byte, or 65535
 ' ($FFFF, command and system 255) when no frame, or no valid frame, came in. They wait up to about 0.65 s for the

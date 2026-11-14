@@ -174,7 +174,7 @@ Parts with a fixed clock (no clock switching), the 10-bit ADCC of the PIC16F171x
 | `flashwrite` | done (32-word row, 14-bit words; `FlashLastSector` = 511) |
 | `spi` | done (MSSP1, `RxyPPS` 15h = SCK1 and 16h = SDO1; pins 8..23) |
 | `i2c` | done (MSSP1 hardware host, `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF`/`BCL1IF` are `PIR3` bits 6 and 7; pins 8..23) |
-| `lcd`, `shift`, `oled`, `aht30`, `rtcc`, `rtccspi` | done (portable programs run in the simulator; pins 0..23, ports A, B and C; `pinio` and `pulse` have no register differences but were not run there) |
+| `lcd`, `shift`, `oled`, `aht30`, `rtcc`, `rtccspi` | done (portable programs run in the simulator; pins as in `pinio`, 0..39 on the PIC16F18076 with ports D and E; `pinio` and `pulse` have no register differences but were not run there) |
 | `pwm` | done (CCP1, CCP2, PWM3, PWM4 = channels 1..4 on Timer2 with prescalers 1..128; `RxyPPS` 09h, 0Ah, 0Bh, 0Ch; channels 1 and 2 on pins 8..23, channels 3 and 4 on pins 8..15 and, on the 28-pin part, 16..23) |
 | `dma` | `#error` (no DMA) |
 | `floatlib` | done (as the PIC16F171xx) |
@@ -464,7 +464,7 @@ PIC16F153xx: the same hardware host; `RxyPPS` 15h = SCL1 and 16h = SDA1; `SSP1IF
 ## softserial (asynchronous serial on any two pins)
 | Routine | Effect |
 |---|---|
-| `SoftInit(tx, rx, baud, inverted)` | pins 0..23 (as `pinio`), speed from `Clock`; False when the rate cannot be made |
+| `SoftInit(tx, rx, baud, inverted)` | pins as in `pinio` (0..23, up to 47 with ports D to F), speed from `Clock`; False when the rate cannot be made |
 | `SoftWriteByte(b)`, `SoftWrite(text)`, `SoftNewLine()` | send |
 | `SoftReadByte(ms)`, `SoftAvailable()` | receive a byte (-1 after `ms` ms, -2 for a framing error) / the start bit is there |
 | `SoftHoldIrq(on)` | hold the global interrupt enable off during a byte (default True) |
@@ -535,11 +535,11 @@ PIC16F152xx: no window-violation cause; `SysClockFrom(cosc, 0, frq)` takes COSC 
 PIC16F153xx: `SysClockFrom(cosc, cdiv, frq)` takes COSC 110 and 000 (the HFINTOSC at `OSCFRQ.HFFRQ` 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz) and 001 (the HFINTOSC with the 2x PLL, 32 MHz from HFFRQ 5) with `cdiv` 0..9; all causes of `SysResetCause` are reported (`PCON0` has `nWDTWV`).
 
 ## lcd (HD44780U character LCD, 4-bit)
-Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "Initializing by Instruction" (Figure 24), DDRAM map, bus timing. Pins `0..23` (RA0 = 0, RB0 = 8, RC0 = 16 ...); R/W tied to ground unless `LcdRwInit` is called; writes never read the busy flag (fixed waits: 50 us, 2 ms after Clear/Home). Test: `tests/exec/lib_lcd_read` (basil-sim with a stimulus holding the bus; not run on a real display).
+Source: the HD44780U data sheet (`HD44780.pdf`): instruction table (Table 6), "Initializing by Instruction" (Figure 24), DDRAM map, bus timing. Pins as in `pinio` (RA0 = 0, RB0 = 8, RC0 = 16 ..., up to 47 with ports D to F); R/W tied to ground unless `LcdRwInit` is called; writes never read the busy flag (fixed waits: 50 us, 2 ms after Clear/Home). Test: `tests/exec/lib_lcd_read` (basil-sim with a stimulus holding the bus; not run on a real display).
 
 | Routine | Effect |
 |---|---|
-| `LcdInit(rs, en, d4, d5, d6, d7, lines)` | six pins to digital outputs, the 4-bit initialisation by instruction (about 55 ms), display on, no cursor, increment, no shift. `lines` 1 or 2 (5 x 8 font). Returns 1, or 0 for a bad `lines`, a pin above 23 or a pin used twice |
+| `LcdInit(rs, en, d4, d5, d6, d7, lines)` | six pins to digital outputs, the 4-bit initialisation by instruction (about 55 ms), display on, no cursor, increment, no shift. `lines` 1 or 2 (5 x 8 font). Returns 1, or 0 for a bad `lines`, a pin the part lacks or a pin used twice |
 | `LcdCommand(c)` | any instruction byte |
 | `LcdClear()` / `LcdHome()` | clear display / return home |
 | `LcdDisplay(on, cursor, blink)` | display on/off control |
@@ -586,8 +586,8 @@ Source: the SSD1309 data sheet Rev 1.1 (`Solomon_SSD1309_v1.1.pdf`): command tab
 
 | Routine | Effect |
 |---|---|
-| `OledInitI2c(addr, res)` | I2C address `60` or `61` (0x3C/0x3D); `res` = RES# pin 0..23 or 255. Unlock, horizontal addressing, clear RAM, display on. Returns 1 when everything was acknowledged |
-| `OledInitSpi(dc, cs, res)` | D/C#, CS# (255 = tied low) and RES# (255 = none) on pins 0..23. Returns 0 for a bad pin or a pin used twice |
+| `OledInitI2c(addr, res)` | I2C address `60` or `61` (0x3C/0x3D); `res` = RES# pin (as in `pinio`) or 255. Unlock, horizontal addressing, clear RAM, display on. Returns 1 when everything was acknowledged |
+| `OledInitSpi(dc, cs, res)` | D/C#, CS# (255 = tied low) and RES# (255 = none) on pins as in `pinio`. Returns 0 for a bad pin or a pin used twice |
 | `OledStatus()` / `OledClearStatus()` | first `I2c` error code since init (0 = fine; always 0 for SPI) |
 | `OledOn(on)`, `OledContrast(v)`, `OledInvert(b)`, `OledAllOn(b)`, `OledFlip(rotated)` | AFh/AEh, 81h, A7h/A6h, A5h/A4h, A1h+C8h / A0h+C0h |
 | `OledGoto(col, page)` | column 0..127, page 0..7 |
@@ -626,11 +626,11 @@ Test `tests/exec/lib_shift.bas` (set-up only; the simulator has no pin model); b
 
 ## buttons (Counter, Button)
 
-Polled, on any pin 0..23 as in `pinio`. `Counter(pin, ms)` counts rising edges in about `ms` ms (10 to 40 per cent long; edges faster than about 40 kHz missed). `Button(pin, down, delay, rate, ByRef state)` is a debounced push button with auto-repeat: True for a press to act on, `state` a caller's Byte (0 at start). Test `tests/exec/lib_buttons.bas`. Include as `Include "buttons"`; calls are `Buttons.Button(...)`.
+Polled, on any pin as in `pinio` (0..23, up to 47 with ports D to F). `Counter(pin, ms)` counts rising edges in about `ms` ms (10 to 40 per cent long; edges faster than about 40 kHz missed). `Button(pin, down, delay, rate, ByRef state)` is a debounced push button with auto-repeat: True for a press to act on, `state` a caller's Byte (0 at start). Test `tests/exec/lib_buttons.bas`. Include as `Include "buttons"`; calls are `Buttons.Button(...)`.
 
 ## pulse (PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound, Sound2, Freqout, DtmfOut)
 
-Bit-banged pulse measurement and generation on any pin (pins 0..23 as in `pinio`; a missing pin or a zero count stops a routine, a
+Bit-banged pulse measurement and generation on any pin (pins as in `pinio`, 0..23 and up to 47 with ports D to F; a missing pin or a zero count stops a routine, a
 measurement then returns 0). Time is kept by polling and cycle-counted delays; one "unit" is a 10 us poll plus the loop time, so units are
 10 to 14 us at 16 MHz and above and the results are not exact: calibrate with a known pulse, or use a hardware timer. Interrupts lengthen every time.
 

@@ -11,8 +11,8 @@ Include "spi"
 ' The bus itself is set up by the caller first, with the `I2c` module (at most 400 kHz: SCL cycle
 ' time 2.5 us [Table 13-6]) or the `Spi` module (mode 0, at most 10 MHz: 100 ns cycle [Table 13-4]; the
 ' data is taken on the rising edge of SCLK, and D/C# on every eighth clock [8.1.3]). The module owns
-' no pins but D/C#, CS# and RES#, which are port pins numbered 0..23 (RA0..RA7 = 0..7, RB0..RB7 =
-' 8..15, RC0..RC7 = 16..23); 255 for CS# or RES# means "not controlled by the module" (tied, or
+' no pins but D/C#, CS# and RES#, which are port pins numbered as in `Pinio` (RA0..RA7 = 0..7, RB0..RB7 =
+' 8..15, RC0..RC7 = 16..23, up to 47 with ports D to F); 255 for CS# or RES# means "not controlled by the module" (tied, or
 ' absent). The panel supply VCC (about 12 V on the SSD1309) is external: switch it on after RES#, as
 ' in [8.8], and the picture appears 100 ms after the display-on command.
 '

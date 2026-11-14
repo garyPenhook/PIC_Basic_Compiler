@@ -624,7 +624,7 @@ Function ClaimAll(ByVal bus As Byte, ByVal busPins As Byte, ByVal a As Byte, ByV
     Dim k As Byte
     For k = 0 To 5
         used(k) = 0
-    Next k
+    Next
     Result = False
     If Not ClaimBus(bus, busPins) Then
         Exit

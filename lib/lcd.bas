@@ -6,8 +6,8 @@ Include "pinio"
 ' tie it to ground. Writes do not read the busy flag; every instruction is followed by a wait longer than its worst case time
 ' [Table 6]: 50 us for 37 us instructions, 2 ms for Clear display (1.52 ms) and Return home.
 '
-' Pins are numbered 0..23: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23 (the Adc/I2c/Spi
-' numbering with port A added). A part without port B (the 14-pin PIC18-Q41, the PIC16F13123/13124/13125 and the 8-pin PIC16F13113) refuses pins 8..15, and one without port C (the PIC16F13113) pins 16..23. LcdInit makes the six pins digital outputs. The pins can be shared with
+' Pins are numbered as in `Pinio`: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23, and RD0 = 24, RE0 = 32, RF0 = 40
+' on the parts with those ports (up to 47). A part without port B (the 14-pin PIC18-Q41, the PIC16F13123/13124/13125 and the 8-pin PIC16F13113) refuses pins 8..15, and one without port C (the PIC16F13113) pins 16..23. LcdInit makes the six pins digital outputs. The pins can be shared with
 ' other outputs of the same ports only if nothing else changes a LATx register while a Lcd routine
 ' runs (the pins are set with read-modify-write on LATA/LATB/LATC): do not use the module from an
 ' interrupt handler and from the main program.
@@ -59,8 +59,8 @@ End Sub
 ' Sets up the pins and runs the initialisation by instruction for a 4-bit interface [Figure 24], then
 ' turns the display on with no cursor, clears it and selects "increment, no shift" [Entry mode set].
 ' `lines` is 1 or 2 (5 x 8 dot font; the data sheet does not allow two lines with the 5 x 10 font, and
-' this module does not offer it). Returns 1, or 0 when `lines` is not 1 or 2, a pin is above 23 or a
-' pin is used twice (a pin the part lacks counts as above 23). A refused call leaves the
+' this module does not offer it). Returns 1, or 0 when `lines` is not 1 or 2, a pin the part lacks
+' or a pin is used twice. A refused call leaves the
 ' module disabled: every other Lcd routine does nothing until a call succeeds. Takes about 55 ms.
 Public Function LcdInit(ByVal rs As Byte, ByVal en As Byte, ByVal d4 As Byte, ByVal d5 As Byte, ByVal d6 As Byte, ByVal d7 As Byte, ByVal lines As Byte) As Byte
     Dim i As Byte
@@ -276,9 +276,9 @@ End Sub
 ' Reading [Table 1, "Read busy flag and address", "Read data from CG or DDRAM"] needs the R/W pin,
 ' which LcdInit leaves unused (tie it to ground if LcdRwInit is not called).
 
-' Claims the R/W pin `rw` (0..23, none of the six pins of LcdInit) as a digital output, low (write).
+' Claims the R/W pin `rw` (a pin number, none of the six pins of LcdInit) as a digital output, low (write).
 ' Call it after a successful LcdInit; a second call moves the pin. Returns 1, or 0 when LcdInit has not
-' succeeded, the pin is above 23 or one of the six pins.
+' succeeded, the pin is one the part lacks or one of the six pins.
 Public Function LcdRwInit(ByVal rw As Byte) As Byte
     Dim i As Byte
     Result = 0

@@ -1,7 +1,7 @@
 Module X10
 Include "pinio"
 ' X-10 power-line control through a PL513 (send only) or TW523 (two-way) interface, as the Xout / Xin commands of
-' PICBASIC-style compilers. Pins are numbered 0..23 as in `Pinio`. Never connect a pin to the AC line: use the
+' PICBASIC-style compilers. Pins are numbered as in `Pinio` (RA0 = 0, RB0 = 8, RC0 = 16; up to 47 on the parts with ports D to F). Never connect a pin to the AC line: use the
 ' interface module, which isolates it. The interface outputs are open collector: use pull-up resistors (4.7 k) on
 ' the zero-cross and receive pins.
 '

@@ -1,6 +1,6 @@
 Module Onewire
 Include "pinio"
-' 1-Wire master (standard speed) on any one pin (0..23 as in `Pinio`: RA0 = 0, RB0 = 8, RC0 = 16): a reset with presence
+' 1-Wire master (standard speed) on any one pin (numbered as in `Pinio`: RA0 = 0, RB0 = 8, RC0 = 16, up to 47 with ports D to F): a reset with presence
 ' detect, bit and byte transfer, the ROM search and the CRC8 of the family (DS18B20, DS2401, DS2413 ...). The line is open
 ' drain: the pin is pulled low as an output and let go as an input, never driven high, so it needs an external pull-up
 ' (4.7 k to 5 k) and several devices share it.
@@ -50,7 +50,7 @@ Public Dim OwRom(8) As Byte
 Private Dim lastFork As Byte
 Private Dim lastDone As Boolean
 
-' Sets the pin (the line idles high through the pull-up); call it first. A pin above 23 or one the part lacks is
+' Sets the pin (the line idles high through the pull-up); call it first. A pin the part lacks is
 ' refused: False.
 Public Function OwInit(ByVal pin As Byte) As Boolean
     owPin = 255

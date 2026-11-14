@@ -1,7 +1,7 @@
 Module Softserial
 Include "pinio"
-' Asynchronous serial, 8 data bits, no parity, 1 stop bit, on any two pins (0..23 as in `Pinio`: RA0 = 0, RB0 = 8,
-' RC0 = 16): for the parts with one EUSART or none to spare, for an inverted line (RS-232 without a driver) and for a
+' Asynchronous serial, 8 data bits, no parity, 1 stop bit, on any two pins (numbered as in `Pinio`: RA0 = 0, RB0 = 8,
+' RC0 = 16, up to 47 on the parts with ports D to F): for the parts with one EUSART or none to spare, for an inverted line (RS-232 without a driver) and for a
 ' pin the EUSART cannot reach. Bit times are counted in instruction cycles from `Clock`, so the baud rate follows it.
 ' Nothing here uses a timer or an interrupt; an interrupt during a byte stretches a bit, so hold interrupts off
 ' (`Disable` ... `Enable`) around a byte at a high baud rate. A byte received while the program is elsewhere is lost:
@@ -98,7 +98,7 @@ Private Sub Hold(ByVal n As Word)
     Wend
 End Sub
 
-' Sets the pins and the speed; call it first. `tx` or `rx` above 23 (or a pin the part lacks) means "not used".
+' Sets the pins and the speed; call it first. `tx` or `rx` a pin the part lacks (255, say) means "not used".
 ' `inverted` = True for a line that idles low (true RS-232 levels through a driver chip, or a transistor inverter).
 ' Returns False, with both pins unused, when the baud rate is too high for this Clock or so low that a bit is
 ' more than 65535 instruction cycles (below about 980 baud at 64 MHz).
