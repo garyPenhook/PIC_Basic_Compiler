@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.231**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.232**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -131,6 +131,27 @@ packs  = /extra/folder/of/packs
 
 Order of precedence: flag, environment variable, settings file, automatic search. `basil --doctor` shows the
 settings file it reads.
+
+`basil --doctor` is the first thing to run on a new machine. It prints the `pic-as`, `xc8-cc` and pack folders it found,
+then checks the device packs the supported parts need (the pack and version named by each device description):
+
+```
+device packs the supported parts need:
+  ok       PIC16F1xxxx_DFP 1.32.471 (41 parts, e.g. 16F13113)
+  ok       PIC18F-Q_DFP 1.31.492 (7 parts, e.g. 18F04Q41)
+selftest: 16F13113 builds (1 words)
+selftest: 18F04Q41 builds (1 words)
+ready: yes, every supported part can be built
+```
+
+* `ok`: the named version is installed. `older`: it is not, the newest installed version of that pack is used (builds
+  work, but the configuration-word bits can differ). `MISSING`: no version is installed; the parts listed cannot be
+  built until you install the pack (MPLAB X, Tools > Packs, or unpack it to `~/.mchp_packs/Microchip/<pack>/<version>`).
+* The self-test builds a four-line program for one part of each installed pack, in a temporary folder that is removed
+  afterwards. It catches a broken `pic-as`, pack or licence, which a folder check cannot.
+* The last line is `ready: yes` (exit 0), `ready: partly` (exit 0: some pack is missing but another family builds) or
+  `ready: no` (exit 1: no `pic-as`, no usable pack or a failed self-test).
+* `BASIL_DFP` and `--dfp` name one pack folder, so with either set doctor treats every pack as found there.
 
 `lib/` and `devices/` are found by looking in the source file's folder and then each parent folder
 (only the nearest of each is used), so keep programs inside the repository (for example

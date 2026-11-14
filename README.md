@@ -193,6 +193,10 @@ to Microchip parts (`docs/license.txt` in the XC8 install). basil only finds the
 `basil --doctor` shows what it found). Do not
 ship a release archive that bundles them.
 
+`basil --doctor` is the first thing to run on a new machine. It lists the tools and pack folders it found, checks that the
+device packs the supported parts need are installed (`ok`, `older` or `MISSING`, with where to put a missing one), builds a
+one-line program for a part of each installed pack, and ends with `ready: yes`, `partly` or `no`.
+
 ```
 cargo build --release
 target/release/basil prog.bas
