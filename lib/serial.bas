@@ -18,6 +18,10 @@ Module Serial
 ' PIC16F18056/76 (DS40002325C, chapters 18 and 30; chosen with `Not _has(OSCCON1) And _has(PIR3.TX1IF)`): the same EUSART1 registers; TX1IF and RC1IF are PIR3 bits 2 and 3 [Register 12.10.10 p.111,
 ' PIR3]. TX goes out on RC6 through RC6PPS = 0Eh (TX1/CK1) [Table 18-2 p.170] and RX1PPS = PORT[5:3] | PIN[2:0] selects RC7, 010 111 = 23 [18.8.1 p.173; the Reset value of RX1PPS, Table 18-1 p.169];
 ' RC6 and RC7 exist on the 28- and the 40-pin part, and both PPS tables allow port C for TX1 and RX1. The silicon errata (DS80001014D) list nothing for the EUSART.
+' PIC16F153xx (DS40001897C, DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapter 31; chosen with `#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`, after the PIC16F152xx test): the same EUSART1 registers; TX1IF and RC1IF are PIR3 bits 4 and 5
+' [DS40001889E Table 26-3 and the PIR3 register]. TX goes out through RxyPPS = 0Fh (TX1/CK1) [Table 15-4 p.199] and RX1DTPPS = PORT[5:3] | PIN[2:0] selects RX [Table 15-3 p.197]; RC4 and RC5 on the 14- to 48-pin
+' parts, RA4 and RA5 on the 8-pin PIC16F15313. Erratum 5.1 (DS80000725F, PIC16(L)F15356/75/76/85/86, silicon A1 and A2): a byte written to TX1REG just as the shift register empties can be sent twice;
+' on those parts SerialWriteByte waits for TRMT instead of TXIF (workaround 2). The other four data sheets' errata (DS80000717K, DS80000721D, DS80000728D) list no EUSART issue.
 ' PIC18F0x/1xQ41 (DS40002214G, chapters 21 and 34): UART1 (U1CON0/1/2, U1BRG, U1TXB, U1RXB, U1FIFO), TX on RC4
 ' and RX on RC5, which exist on the 14-pin parts too. RC4PPS = 0x10 selects UART1 TX [Table 21-2]; U1RXPPS =
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
@@ -53,6 +57,23 @@ Dim RxAnalog As ANSELA.5
 Const SerRxCode = 5
 #endif
 Const SerTxCode = 5
+Dim OverrunErr As RC1STA.1
+Dim RxEnable As RC1STA.4
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+Dim TxIf As PIR3.4
+Dim RxIf As PIR3.5
+#if _has(TRISC)
+Dim TxPin As TRISC.4
+Dim RxPin As TRISC.5
+Dim RxAnalog As ANSELC.5
+Const SerRxCode = 21
+#else
+Dim TxPin As TRISA.4
+Dim RxPin As TRISA.5
+Dim RxAnalog As ANSELA.5
+Const SerRxCode = 5
+#endif
+Const SerTxCode = 15
 Dim OverrunErr As RC1STA.1
 Dim RxEnable As RC1STA.4
 #elseif _has(ADCON0.CHS)
@@ -142,6 +163,18 @@ Public Sub SerialInit(ByVal baud As LongWord)
     BAUD1CON = 8
     TX1STA = 36
     RC1STA = 144
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+#if _has(TRISC)
+    RC4PPS = SerTxCode
+#else
+    RA4PPS = SerTxCode
+#endif
+    RX1DTPPS = SerRxCode
+    SP1BRGL = Byte(n)
+    SP1BRGH = Byte(n >> 8)
+    BAUD1CON = 8
+    TX1STA = 36
+    RC1STA = 144
 #elseif _has(ADCON0.CHS)
 #if _has(TRISC)
     RC4PPS = SerTxCode
@@ -186,6 +219,11 @@ Public Sub SerialWriteByte(ByVal b As Byte)
     U1TXB = b
 #elseif _has(ADCON1.PREF)
     ' Erratum 1.3.1: write only when the shift register is empty (TRMT, TX1STA bit 1).
+    While TX1STA.1 = 0
+    Wend
+    TX1REG = b
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And (_device = 16F15356 Or _device = 16F15375 Or _device = 16F15376 Or _device = 16F15385 Or _device = 16F15386 Or _device = 16LF15356 Or _device = 16LF15375 Or _device = 16LF15376 Or _device = 16LF15385 Or _device = 16LF15386)
+    ' Erratum 5.1 (DS80000725F, silicon A1 and A2): write only when the shift register is empty (TRMT, TX1STA bit 1).
     While TX1STA.1 = 0
     Wend
     TX1REG = b

@@ -93,7 +93,7 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
         "16Exxx" => Ok(FamilyFacts {
             family: "pic16e",
             vectors: (0x00, 0x04, 0x04),
-            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37; PIC16F13145 family data sheet DS40002519D p.34; PIC16F13214/15/24/25/44/45 data sheet DS40002686B p.41-42 (Reset vector 0000h, interrupt vector 0004h, stack levels 0-15); PIC16F18313/18323 data sheet DS40001799F Fig. 4-1 p.22, PIC16F18324/44 DS40001800E p.26, PIC16F18325/45 DS40001795K p.28, PIC16F18326/46 DS40001839E p.28; PIC16F15213/14/23/24/43/44 data sheet DS40002195E Fig. 9-1 p.33; PIC16F18056/76 data sheet DS40002325C Sec. 9.1 p.35 (Reset vector 0000h, interrupt vector 0004h)",
+            vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37; PIC16F13145 family data sheet DS40002519D p.34; PIC16F13214/15/24/25/44/45 data sheet DS40002686B p.41-42 (Reset vector 0000h, interrupt vector 0004h, stack levels 0-15); PIC16F18313/18323 data sheet DS40001799F Fig. 4-1 p.22, PIC16F18324/44 DS40001800E p.26, PIC16F18325/45 DS40001795K p.28, PIC16F18326/46 DS40001839E p.28; PIC16F15213/14/23/24/43/44 data sheet DS40002195E Fig. 9-1 p.33; PIC16F18056/76 data sheet DS40002325C Sec. 9.1 p.35; PIC16F15313/23 data sheet DS40001897C Fig. 4-1 p.28, PIC16F15324/44 DS40001889E p.32, PIC16F15325/45 DS40001865F p.32, PIC16F15354/55 DS40001853E Fig. 4-1 and 4-2 p.25, PIC16F15356/75/76/85/86 DS40001866E Fig. 4-1 and 4-2 p.49 (Reset vector 0000h, interrupt vector 0004h)",
         }),
         other => Err(format!("architecture '{other}' has no family table in devgen yet; add and verify one before generating")),
     }

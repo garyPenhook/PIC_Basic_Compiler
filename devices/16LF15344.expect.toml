@@ -1,0 +1,33 @@
+# Numbers read BY HAND from the PIC16(L)F15324/44 data sheet DS40001889E (PIC16LF15344), used by `devgen check` to
+# cross-check the description generated from the Microchip pack. Do not generate this file.
+# Program memory, user IDs and configuration are counted in 14-bit WORDS for this family (one address per
+# word), not bytes as on PIC18. The family has no data EEPROM (the 224 bytes of storage area flash are program flash, Table 1).
+# Device ID read from the data sheet (Register 5-6 p.88): 30C4h for the F part, 30C5h for the LF part; the description must carry 12485 (30C5h).
+
+[source]
+datasheet = "DS40001889E"
+reference = "Table 1 (p.3), Table 13-3 p.169, DEVID Register 5-6 p.88, Fig. 4-1 p.32, stack 16 levels (p.1)"
+
+[memory]
+program_bytes = 4096     # 4096 words (Table 1 p.3)
+sram_bytes    = 512      # data SRAM (Table 1 p.3)
+eeprom_bytes  = 0         # no data EEPROM (Table 1 lists none)
+hw_stack_levels = 16      # 16-level hardware stack (p.1)
+config_bytes  = 5         # 5 configuration words, 8007h-800Bh (Table 13-3 p.169)
+user_id_bytes = 4         # 4 user ID words, 8000h-8003h (Table 13-3 p.169)
+
+[vectors]
+reset          = 0        # 0000h  (Fig. 4-1 p.32)
+interrupt_high = 4        # 0004h  (single interrupt vector)
+interrupt_low  = 4        # same vector
+
+# Peripheral counts from Table 1 (p.3), checked by counting SFRs whose name matches the pattern.
+[counts]
+"TX#STA"    = 2   # EUSART (Table 1: EUSART/I2C-SPI column)
+"SSP#CON1"  = 1   # MSSP (Table 1: EUSART/I2C-SPI column)
+"CCP#CON"   = 2   # CCP (Table 1: CCP/10-bit PWM 2/4)
+"PWM#CON"   = 4   # 10-bit PWM (Table 1: CCP/10-bit PWM 2/4)
+"CM#CON0"   = 2   # comparators (Table 1)
+"CWG#CON0"  = 1   # complementary waveform generator (Table 1)
+"NCO#CON"   = 1   # numerically controlled oscillator (Table 1)
+"CLC#CON"   = 4   # configurable logic cells (Table 1)

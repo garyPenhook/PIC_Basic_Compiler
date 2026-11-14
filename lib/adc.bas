@@ -44,6 +44,12 @@ Module Adc
 ' RC6, RC7), VSS 27 and FVR buffer 1 30; there is no temperature indicator and no DAC channel. The positive reference is VDD (PREF = 00) or the FVR (11) [27.4.2]. TAD must be 0.5..9 us (AD20, Table 32-12 p.378), so SetClock (constants worked out by the compiler from `Clock`) uses
 ' the smallest FOSC/n with n / FOSC >= 0.5 us. CPON resets to 00 (charge pump off) [CPCON p.335], so AdcInit writes 01: the pump runs when the ADC is on and VDD < 4.6 V. The silicon errata (DS80000918K) list nothing for the ADC.
 '
+' PIC16F153xx (DS40001897C, DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapter 20, 10 bits; chosen with `#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)` inside the branches above, after the PIC16F152xx test): the registers of the
+' PIC16F183xx with ADCON1 = ADFM | ADCS<2:0> | ADPREF<1:0> and no ADNREF [Registers 20-1, 20-2 p.280-282 of DS40001866E], no ADACQ and no charge pump; the channel numbers are the part's own (see AdcChVss). The positive
+' reference is VDD (ADPREF = 00), the VREF+ pin (10) or the FVR (11). TAD must be 1..9 us (AD20, Table 37-13 p.492 of DS40001889E). Silicon erratum 1.1 (DS80000721D, DS80000717K, DS80000725F, current revisions; the
+' PIC16(L)F15313/23 and 15324/44 errata documents list no ADC issue, but the ADC is the same): the FVR as positive reference increases the missing codes, workaround 1 raises TAD to 8 us. AdcRefFvr therefore selects the slowest
+' FOSC/n (n up to 64) while the FVR is the reference, which meets 8 us only at FOSC <= 8 MHz; at a higher FOSC use AdcRefVdd (workaround 2) when the missing codes matter. The other errata items are specifications only.
+'
 ' PIC16F18056/76 (DS40002325C, chapter 31, 10 bits [AD01 p.529]; chosen with `Not _has(OSCCON1)` inside the ADCC branch): the same registers as the PIC16F17126 with a 10-bit result. Channels [Table 31-6 p.428]: RA0..RA7 = 0..7, RB0..RB7 = 8..15,
 ' RC0..RC7 = 16..23, RD0..RD7 = 24..31 and RE0..RE2 = 32..34 (the 40-pin PIC16F18076 only; the 28-pin PIC16F18056 has port A, B and C and RE3 as an input), ADCG1 35, VSS 58, temperature indicator 59, FVR buffer 1 62 and
 ' buffer 2 63; there is no DAC channel (60 and 61 are reserved). TAD is 1..8 us (AD20 p.529). Erratum 1.1.1 (DS80001014D, all silicon): CPON resets to 00 (off), so AdcInit writes 01 as on the PIC16F171xx.
@@ -63,6 +69,14 @@ Module Adc
 #if _has(ADCON1.PREF)
 Public Const AdcChVss = 27
 Public Const AdcChFvr = 30
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+' PIC16F153xx, ADCON0.CHS [DS40001866E Register 20-1 p.280, the other data sheets alike]: RA0..RA7 = 0..7, RB0..RB7 = 8..15, RC0..RC7 = 16..23, RD0..RD7 = 24..31, RE0..RE2 = 32..34, RF0..RF7 = 40..47
+' (the pins the part has), AVSS 59, temperature indicator 60, DAC1 61, FVR buffer 1 62 and buffer 2 63. AdcChFvr is buffer 1, the one the ADC reference uses (ADFVR).
+Public Const AdcChVss = 59
+Public Const AdcChTemp = 60
+Public Const AdcChDac = 61
+Public Const AdcChFvr = 62
+Public Const AdcChFvr2 = 63
 #elseif _has(ADCON0.CHS)
 Public Const AdcChVss = 60
 Public Const AdcChTemp = 61
@@ -169,6 +183,32 @@ Sub SetClock()
     End If
     ADCON1 = (ADCON1 And 143) Or (code << 4)
 End Sub
+
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+' The same for TAD >= 8 us (silicon erratum 1.1 of DS80000721D, DS80000717K and DS80000725F, AdcRefFvr): the slowest FOSC/n (n = 64) when 8 us cannot be reached.
+Const AdcNSlow As LongWord = (FoscHz / 1000 * 8000 + 999999) / 1000000
+
+Sub SetClockSlow()
+    Dim code As Byte
+    code = 6
+    If AdcNSlow <= 32 Then
+        code = 2
+    End If
+    If AdcNSlow <= 16 Then
+        code = 5
+    End If
+    If AdcNSlow <= 8 Then
+        code = 1
+    End If
+    If AdcNSlow <= 4 Then
+        code = 4
+    End If
+    If AdcNSlow <= 2 Then
+        code = 0
+    End If
+    ADCON1 = (ADCON1 And 143) Or (code << 4)
+End Sub
+#endif
 #else
 ' ADCS = m - 1 with m = ceil(FOSC * TAD / 2e9), 1..64, and ADACQ = ceil(AcqUs / TAD) with TAD = 2 * m / FOSC, at most 255
 ' on the Q10, where ADACQ counts ADC clocks [DS40002043F 33.7.10]. The ADCC of the Q41 and the PIC16F171xx has a 13-bit ADACQ
@@ -306,7 +346,7 @@ Public Sub AdcRefFvr(ByVal gain As Byte)
 #else
     ADREF = 3
 #endif
-#if _has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)
+#if (_has(PRODL) and _has(ADREF.ADPREF) and not _has(ADCPCON)) Or (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
     SetClockSlow()
 #else
     SetClock()

@@ -28,6 +28,10 @@ Include "pinio"
 ' T1CLK, T1GATE, T1GCON, RD16) and Timer2 (T2CON, T2HLT, T2CLKCON, T2RST, T2PR) have the layout of the PIC16F171xx, with the flags in PIR0 (TMR0IF bit 5), PIR1 (TMR1IF bit 3, TMR1GIF bit 4, TMR2IF bit 7) and their
 ' enables in PIE0 and PIE1 [12.10.5 to 12.10.7]. The clock, gate and reset source codes are the part's own [Tables 20-4, 20-5 p.197-198, 21-4 p.220]. Erratum 1.2.1 (DS80001014D, all silicon): writing the Timer1 gate source
 ' can set TMR1GIF; the gate procedures clear it after the writes, as for the PIC16F171xx.
+' PIC16F153xx (DS40001897C, DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapters 25 to 27; chosen with `#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`, after the PIC16F152xx test): Timer0 is the same, Timer1 (T1CON, T1CLK,
+' T1GATE, T1GCON, RD16) and Timer2 (T2CON, T2HLT, T2CLKCON, T2RST, T2PR) have the layout of the PIC16F171xx, with the flags as on the PIC18F27Q10: PIR0 (TMR0IF bit 5), PIR4 (TMR1IF bit 0, TMR2IF bit 1) and their
+' enables in PIE0 and PIE4 [DS40001889E Table 26-3 p.289, Table 27-2 p.314]; TMR1GIF is PIR5 bit 0 and is not used. The clock, gate and reset source codes are the part's own [DS40001889E Registers 26-3, 26-4, 27-4]. Errata (DS80000728D 5.1, DS80000717K 5.1): with FOSC/4
+' as the Timer0 clock, T0ASYNC must be 1 (in 16-bit mode TMR0H may not count otherwise), so Timer0Start and Timer0Start16 set it on this family. No secondary oscillator source is offered.
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
 #if _has(T1CON.TMR1CS)
@@ -63,6 +67,33 @@ Public Const T1GateCcp1 = 3
 Public Const T1GateCcp2 = 4
 Public Const T1GatePwm3 = 5
 Public Const T1GatePwm4 = 6
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+' PIC16F153xx: Timer1 clock sources, the CS field of T1CLK [DS40001889E Register 26-3 p.287]. T1ClkPin counts rising edges on the pin selected by T1CKIPPS; T1ClkMfIntOsc is the 500 kHz MFINTOSC,
+' T1ClkMfIntOsc32 the 32 kHz one, T1ClkClkr the reference clock output.
+Public Const T1ClkPin = 0
+Public Const T1ClkFosc4 = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkHfIntOsc = 3
+Public Const T1ClkLfIntOsc = 4
+Public Const T1ClkMfIntOsc = 5
+Public Const T1ClkMfIntOsc32 = 6
+Public Const T1ClkClkr = 8
+Public Const T1ClkTmr0 = 9
+
+' Timer1 gate sources, the GSS field of T1GATE [Register 26-4 p.288]. T1GatePin is the pin selected by T1GPPS; T1GateTmr2 is the postscaled Timer2 output; T1GateCmp1 and T1GateCmp2 are the synchronised
+' comparator outputs.
+Public Const T1GatePin = 0
+Public Const T1GateTmr0 = 1
+Public Const T1GateTmr2 = 2
+Public Const T1GateCcp1 = 3
+Public Const T1GateCcp2 = 4
+Public Const T1GatePwm3 = 5
+Public Const T1GatePwm4 = 6
+Public Const T1GatePwm5 = 7
+Public Const T1GatePwm6 = 8
+Public Const T1GateNco1 = 9
+Public Const T1GateCmp1 = 10
+Public Const T1GateCmp2 = 11
 #elseif _has(PIR3.TMR1IF)
 ' Timer1 clock sources, the CS field of T1CLK [DS40002214G Table 25-4]. T1ClkPin counts rising edges on the
 ' pin selected by T1CKIPPS; T1ClkSosc needs OSCEN.SOSCEN set and time to stabilise. T1ClkMfIntOsc is the
@@ -220,6 +251,17 @@ Public Const T2RstCcp1 = 1
 Public Const T2RstCcp2 = 2
 Public Const T2RstPwm3 = 3
 Public Const T2RstPwm4 = 4
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+' PIC16F153xx: Timer2 external reset sources, the RSEL field of T2RST [DS40001889E Register 27-4 p.313]. T2RstPin is the pin selected by T2INPPS; T2RstCmp1 and T2RstCmp2 are the synchronised comparator outputs.
+Public Const T2RstPin = 0
+Public Const T2RstCcp1 = 1
+Public Const T2RstCcp2 = 2
+Public Const T2RstPwm3 = 3
+Public Const T2RstPwm4 = 4
+Public Const T2RstPwm5 = 5
+Public Const T2RstPwm6 = 6
+Public Const T2RstCmp1 = 7
+Public Const T2RstCmp2 = 8
 #elseif _has(PIR3.TMR1IF)
 ' Timer2 external reset sources, the RSEL field of T2RST [DS40002214G Table 26-4]. T2RstPin is the pin
 ' selected by T2INPPS; T2RstPwmNP1 / T2RstPwmNP2 are the outputs of PWM module N (PWMNS1P1 / PWMNS1P2).
@@ -337,7 +379,12 @@ Dim Tmr2On As T2CON.7
 ' 8-bit periodic timer. period = 0..255.
 Public Sub Timer0Start(ByVal prescale As Byte, ByVal period As Byte)
     T0CON0 = 0
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+    ' PIC16F153xx errata (DS80000728D 5.1, DS80000717K 5.1): with FOSC/4 as the clock, T0ASYNC must be set.
+    T0CON1 = (prescale And 15) Or 80
+#else
     T0CON1 = (prescale And 15) Or 64
+#endif
     TMR0H = period
     TMR0L = 0
     Tmr0If = 0
@@ -347,7 +394,11 @@ End Sub
 ' 16-bit free-running timer, read with Timer0Read.
 Public Sub Timer0Start16(ByVal prescale As Byte)
     T0CON0 = 0
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+    T0CON1 = (prescale And 15) Or 80
+#else
     T0CON1 = (prescale And 15) Or 64
+#endif
     TMR0L = 0
     TMR0H = 0
     Tmr0If = 0

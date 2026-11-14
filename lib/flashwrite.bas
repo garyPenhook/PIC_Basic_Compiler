@@ -55,6 +55,10 @@ Module Flashwrite
 ' and the unlock] and no NOPs after the WR bit [11.4.2 note]. NVMADRH bit 7 is unimplemented and reads 1 [Register 11-4], so NVMADRH reads back 80h above the row address bits.
 ' Errata (DS80000666H item 4.2, DS80000667E 1.2.2, DS80000668L 4.2): WRERR may be set again by a Reset after an interrupted write; FlashWriteWord clears NVMCON1 and reports
 ' success only by the read-back. The LF parts may fail to write below 2.2 V at -40 C (item 4.1) and may not use NVM below 2.0 V at 25 C or less (item 5.3).
+' PIC16F153xx (DS40001889E, DS40001865F, DS40001853E, DS40001866E and DS40001897C, chapter 13; the same branch, `Not _has(PRODL)`): a row of 32 words with 32 write latches (ERSIZ and WLSIZ in the Device Information
+' Area, DS40001889E p.92) and the same NVMCON1 bits and flow [Table 13-4 p.172, Figure 13-5 p.166]: a row erase is FREE, WREN and the unlock (55h, AAh, WR), a row write loads the latches with LWLO = 1 and then writes them with LWLO = 0.
+' The flash is 2K, 4K, 8K or 16K words (the 224 bytes of storage area flash in Table 1 are part of it, reached through the Memory Access Partition, which is off at reset). Errata (DS80000728D 3.1, DS80000721D 7.1): WRERR may
+' be set again by a Reset after an interrupted write, which FlashWriteWord handles as on the PIC16F183xx (it clears NVMCON1 and reports success only by the read-back). The data EEPROM does not exist, so use this module.
 ' PIC16F18056/76 (DS40002325C, section 15.1; the same branch, `Not _has(PRODL)`): 16384 words of 14 bits, a row of 32 words with 32 write latches [15.1 p.122], the same NVMCON1 bits, the unlock sequence
 ' 55h, AAh, WR [15.1.2.2 p.124] and the CPU stall during an operation. The silicon errata (DS80001014D) show nothing for the NVM, so the code is that of the PIC16F17126/46.
 #if _has(NVMLOCK)

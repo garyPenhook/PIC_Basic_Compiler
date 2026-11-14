@@ -441,10 +441,12 @@ Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
     End If
 End Function
 #else
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
 Dim Tmr2If As PIR1.1
 #elseif _has(PWM1DCL)
 Dim Tmr2If As PIR2.2
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+Dim Tmr2If As PIR4.1
 #elseif _has(PWM5CON)
 Dim Tmr2If As PIR1.7
 #elseif (_has(PWM3CON) And _has(PIR1.TMR2IF))
@@ -477,7 +479,7 @@ Public Function PwmInit(ByVal hz As LongWord) As Byte
     t = LongWord(_Clock * 1000000) / (hz << 1)
     e = 0
     ' n = (t + 1) >> 1 is at most 256 for t <= 512; a larger t takes the next prescale
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
     ' Prescalers 1, 4, 16, 64: the prescale is 4 ^ e, the T2CKPS code.
     While t > 512 And e < 3
         t = t >> 2
@@ -492,7 +494,7 @@ Public Function PwmInit(ByVal hz As LongWord) As Byte
         n = (Word(t) + 1) >> 1
         period = Byte(n - 1)
         steps = n << 2
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
         freq = LongWord(_Clock * 1000000) / (LongWord(n) << (e * 2 + 2))
 #else
         freq = LongWord(_Clock * 1000000) / (LongWord(n) << (e + 2))
@@ -539,7 +541,7 @@ Function PinOk(ByVal ch As Byte, ByVal pin As Byte) As Boolean
         End If
 #endif
     End If
-#elseif _has(PWM1DCL) Or _has(PWM6DCL) Or (_has(PWM3CON) And _has(PIR1.TMR2IF))
+#elseif _has(PWM1DCL) Or (_has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))) Or (_has(PWM3CON) And _has(PIR1.TMR2IF)) Or (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
     If ch >= 1 And ch <= 4 Then
         Result = pin <= 5 And pin <> 3
 #if _has(RB4PPS)
@@ -621,7 +623,7 @@ Sub SetCon(ByVal ch As Byte, ByVal v As Byte)
         CCP1CON = v
     ElseIf ch = 2 Then
         CCP2CON = v
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
     ElseIf ch = 3 Then
         PWM5CON = v
     Else
@@ -656,7 +658,7 @@ Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
     ElseIf ch = 2 Then
         CCPR2L = lo
         CCPR2H = hi
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
     ElseIf ch = 3 Then
         PWM5DCL = lo
         PWM5DCH = hi
@@ -726,7 +728,7 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
         SetPps(old - 1, 0)
     End If
     Pinio.PinInput(pin)
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
     ' RxyPPS: CCP1 0Ch, CCP2 0Dh, PWM5 02h, PWM6 03h [Register 13-2]. CxTSEL and PxTSEL = 01 select Timer2 (their reset value) where the part has them.
     If ch <= 2 Then
         SetPps(pin, ch + 11)
@@ -766,7 +768,7 @@ Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word
     SetDuty(ch, duty)
     If nact = 0 Then
         T2CON = 0
-#if _has(PWM6DCL)
+#if _has(PWM6DCL) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
         PR2 = period
         TMR2 = 0
         Tmr2If = 0

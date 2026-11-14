@@ -31,7 +31,7 @@ Module Eeprom
 ' PIC16F18056/76 (DS40002325C, section 15.2; chosen with `Not _has(PRODL)`): the same 256 bytes at 70h:address through NVMREGS = 1, the same read (RD), write (WREN | NVMREGS, 55h and AAh, WR; erase before write) and flag (NVMIF is PIR1 bit 0) as the PIC16F17126/46
 ' [15.2.2.1 to 15.2.2.5 p.135-139]. Writing the data flash through the FSRs is not supported there [15.2.1.2]. The silicon errata (DS80001014D) show nothing for the NVM.
 #if _eeprom = 0
-#error "eeprom needs a part with data EEPROM: the PIC16F13145 family and the PIC16F152xx parts have none (DS40002519D Table 1 p.1; DS40002195E Table 1 p.1); use module Flashwrite"
+#error "eeprom needs a part with data EEPROM: the PIC16F13145 family, the PIC16F152xx parts and the PIC16F153xx parts have none (DS40002519D Table 1 p.1; DS40002195E Table 1 p.1; DS40001897C Table 1 p.3); use module Flashwrite"
 #endif
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0

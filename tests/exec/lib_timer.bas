@@ -1,4 +1,5 @@
 ' expect: LT_N=3 LT_CFG0=128 LT_CFG1=65 LT_PERIOD=99 LT_OK=1
+' expect-16F15356: LT_CFG1=81
 ' Timer library: Timer0Start(1, 99) runs an 8-bit Timer0 from FOSC/4 with a 1:2 prescaler, so it
 ' overflows every 100 * 2 = 200 instruction cycles; Timer0Expired reports and clears each
 ' overflow. The 16-bit mode counts up and Timer0Read sees it move.

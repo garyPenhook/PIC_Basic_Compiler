@@ -22,6 +22,10 @@ Module System
 ' no clock switching and no divider (p.81): RSTOSC fixes the source, OSCCON2 holds the read-only COSC<2:0> (bits 6:4; 000 and 110 are the HFINTOSC, 101 LFINTOSC, 100 SOSC, 111 the external clock,
 ' Table 11-1 p.80) and the HFINTOSC runs at OSCFRQ.FRQ = 0..5 = 1, 2, 4, 8, 16, 32 MHz [OSCFRQ p.93]. SysClockFrom takes `cosc` 0 or 6 and `cdiv` 0 there; any divider code gives 0.
 '
+' PIC16F153xx (DS40001897C, DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapters 5, 9 and 10; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`): PCON0 has the window violation flag nWDTWV (bit 5), so all of the causes are
+' reported. The oscillator is that of the PIC16F183xx with other HFFRQ codes: COSC 110 and 000 (RSTOSC = HFINT32) are the HFINTOSC at HFFRQ 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz (7 reserved), COSC 001 is the
+' HFINTOSC with the 2x PLL from 16 MHz (RSTOSC = HFINTPLL), CDIV divides by 1 to 512 [Register 5-1 p.76, Tables 9-1 and 9-2 p.111, Registers 9-2 and 9-6].
+'
 ' Clock check: the library modules and DelayUs/DelayMs compute from the compile-time `Clock`; the
 ' module does not change the clock at run time (that would make every one of them wrong), it
 ' reads what the oscillator really does and compares it with `Clock`.
@@ -95,6 +99,8 @@ End Sub
 ' HFINTOSC megahertz for each OSCFRQ code. The PIC16F183xx table also holds, from index 8, the PLL clocks for codes 4..6.
 #if _has(ADCON1.PREF) Or (_has(OSCFRQ.FRQ) And Not _has(OSCCON1))
 Const MhzTab(6) As Byte = (1, 2, 4, 8, 16, 32)
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+Const MhzTab(7) As Byte = (1, 2, 4, 8, 12, 16, 32)
 #elseif _has(ADCON0.CHS)
 Const MhzTab(11) As Byte = (1, 2, 0, 4, 8, 12, 16, 32, 16, 24, 32)
 #elseif _has(OSCFRQ.HFFRQ)
@@ -124,6 +130,23 @@ Public Function SysClockFrom(ByVal cosc As Byte, ByVal cdiv As Byte, ByVal hffrq
     End If
     mhz = MhzTab(hffrq)
     Result = LongWord(mhz) * 1000000
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+    ' PIC16F153xx: COSC 110 and 000 (RSTOSC = HFINT32) are the HFINTOSC at OSCFRQ.HFFRQ 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz; COSC 001 is the HFINTOSC with the 2x PLL, which runs from 16 MHz
+    ' (HFFRQ 101) to 32 MHz [Register 5-1 p.76, Tables 9-1 and 9-2 p.111, Register 9-6 p.114 of DS40001897C]. HFFRQ 7 is reserved.
+    If (cosc <> 6 And cosc <> 0 And cosc <> 1) Or cdiv > 9 Or hffrq > 6 Then
+        Exit
+    End If
+    mhz = MhzTab(hffrq)
+    If cosc = 1 Then
+        If hffrq = 5 Then
+            mhz = 32
+        Else
+            mhz = 0
+        End If
+    End If
+    If mhz <> 0 Then
+        Result = (LongWord(mhz) * 1000000) >> cdiv
+    End If
 #elseif _has(ADCON0.CHS)
     If (cosc <> 6 And cosc <> 0) Or cdiv > 9 Then
         Exit

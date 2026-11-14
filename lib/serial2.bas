@@ -22,11 +22,15 @@ Module Serial2
 ' PPS tables allow port B on the 28- and the 40-pin part (the second port is C on the 28-pin and D on the 40-pin part). RB6PPS = 11h selects TX2/CK2 [Table 18-2 p.170]; RX2PPS = PORT[5:3] | PIN[2:0],
 ' RB7 = 001 111 = 15 [18.8.1 p.173]. TX2IF and RC2IF are PIR3 bits 4 and 5 [PIR3, p.111]. RB6 and RB7 are also the ICSP clock and data pins. The registers and the baud-rate formula are those of EUSART1.
 '
+' PIC16F153xx (DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapter 31; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`; the PIC16F15313/23 have one EUSART only): EUSART2 with TX on RC2 and RX on RC1. RC2PPS = 11h selects TX2/CK2
+' [Table 15-4 p.199]; RX2DTPPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 [Table 15-1 p.195 gives it as the reset selection]. TX2IF and RC2IF are PIR3 bits 6 and 7. Erratum 5.1 of DS80000725F (the
+' PIC16(L)F15356/75/76/85/86): SerialWriteByte's twin waits for TRMT there. The registers and the baud-rate formula are those of EUSART1.
+'
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
 #if Not _has(U2CON0) And Not _has(TX2STA)
-#error "serial2 needs a second EUSART: the PIC16F13145 family, the PIC16F183xx parts and the PIC16F152xx parts have one (DS40002519D Table 1 p.1; DS40001799F Family Types table p.3; DS40002195E Table 1 p.1); use module Serial"
+#error "serial2 needs a second EUSART: the PIC16F13145 family, the PIC16F183xx parts, the PIC16F152xx parts and the PIC16F153xx parts except the PIC16(L)F15313/23 have one (DS40002519D Table 1 p.1; DS40001799F Family Types table p.3; DS40002195E Table 1 p.1; DS40001897C Table 1 p.3); use module Serial"
 #endif
 #if _has(U2CON0)
 Dim TxFull As U2FIFO.4
@@ -54,6 +58,14 @@ Dim RxEnable As RC2STA.4
 Dim TxPin As TRISB.6
 Dim RxPin As TRISB.7
 Dim RxAnalog As ANSELB.7
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+Dim TxIf As PIR3.6
+Dim RxIf As PIR3.7
+Dim OverrunErr As RC2STA.1
+Dim RxEnable As RC2STA.4
+Dim TxPin As TRISC.2
+Dim RxPin As TRISC.1
+Dim RxAnalog As ANSELC.1
 #else
 Dim TxIf As PIR5.0
 Dim RxIf As PIR5.1
@@ -104,6 +116,15 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     BAUD2CON = 8
     TX2STA = 36
     RC2STA = 144
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)
+    ' RxyPPS 11h is TX2/CK2 [DS40001889E Table 15-4 p.199]; RX2DTPPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 (its reset selection, Table 15-1 p.195).
+    RC2PPS = 17
+    RX2DTPPS = 17
+    SP2BRGL = Byte(n)
+    SP2BRGH = Byte(n >> 8)
+    BAUD2CON = 8
+    TX2STA = 36
+    RC2STA = 144
 #else
 #if _has(TRISC)
     RC2PPS = 22
@@ -126,6 +147,11 @@ Public Sub Serial2WriteByte(ByVal b As Byte)
     While TxFull = 1
     Wend
     U2TXB = b
+#elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And (_device = 16F15356 Or _device = 16F15375 Or _device = 16F15376 Or _device = 16F15385 Or _device = 16F15386 Or _device = 16LF15356 Or _device = 16LF15375 Or _device = 16LF15376 Or _device = 16LF15385 Or _device = 16LF15386)
+    ' Erratum 5.1 (DS80000725F, silicon A1 and A2; the same EUSART as EUSART1): write only when the shift register is empty (TRMT, TX2STA bit 1).
+    While TX2STA.1 = 0
+    Wend
+    TX2REG = b
 #else
     While TxIf = 0
     Wend

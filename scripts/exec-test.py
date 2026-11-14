@@ -71,10 +71,10 @@ for src in a.files:
     if a.device != "18F27Q10":
         # Same program, other part: only the Device header changes (pins and peripherals are not touched).
         text = re.sub(r"^(\s*Device\s*=\s*)\S+", lambda m: m.group(1) + a.device, text, count=1, flags=re.M | re.I)
-        if a.device.startswith("16F"):
+        if a.device.startswith(("16F", "16LF")):
             # Enhanced mid-range part: its own configuration names, and 32 MHz is its fastest internal oscillator.
-            # The PIC16F183xx parts call the 32 MHz power-up setting HFINT32 (2x PLL), not HFINTOSC_32MHz.
-            rst = "HFINT32" if a.device.startswith("16F183") else "HFINTOSC_32MHz"
+            # The PIC16F183xx parts call the 32 MHz power-up setting HFINT32 (2x PLL), not HFINTOSC_32MHz; the PIC16F153xx parts call it HFINT32 too.
+            rst = "HFINT32" if a.device.startswith(("16F183", "16LF183", "16F153", "16LF153")) else "HFINTOSC_32MHz"
             text = re.sub(r"^[ \t]*Config[ \t].*$", f"Config FEXTOSC = OFF, RSTOSC = {rst}, WDTE = OFF, LVP = ON", text, flags=re.M | re.I)
             text = re.sub(r"^(\s*Clock\s*=\s*)64\b", lambda m: m.group(1) + "32", text, flags=re.M | re.I)
         for cf in re.findall(r'^\s*CFile\s+"([^"]+)"', text, re.M | re.I):

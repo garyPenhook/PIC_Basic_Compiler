@@ -42,15 +42,23 @@ Module IntOsc
 ' switching", p.81). RSTOSC picks the source (COSC in OSCCON2 bits 6:4, read-only: 000 and 110 are the HFINTOSC, Table 11-1 p.80) and only then does OSCFRQ.FRQ (1, 2, 4, 8, 16, 32 MHz = codes 0..5, p.93) set the
 ' speed. Only Clock = 32, 16, 8, 4, 2 and 1 are accepted; the module writes OSCFRQ and waits, bounded, for OSCSTAT.HFOR (bit 6, p.94).
 '
+' PIC16F153xx (DS40001897C, DS40001889E, DS40001865F, DS40001853E and DS40001866E, chapter 9; chosen with `_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF)`): the same OSCCON1 / OSCCON2 / OSCCON3 / OSCFRQ / OSCSTAT
+' as the Q10 [Registers 9-1 .. 9-6 p.110-114]: NOSC = 110 is the HFINTOSC at OSCFRQ.HFFRQ = 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz (code 7 is reserved) and NDIV divides it by 1 to 512 [Tables 9-1, 9-2 p.111].
+' So the Q10 sequence is used with 64 and 48 MHz refused; `CSWEN = ON` is needed for every speed but the one RSTOSC gives (OSCCON1 is read-only while CSWEN = 0, note 3 p.110).
+'
 ' HFINTOSC frequency codes: OSCFRQ.HFFRQ (Q10: 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz = codes 0..8) or
 ' OSCFRQ.FRQ (PIC16F171xx: 1, 2, 4, 8, 16, 32 MHz = codes 0..5, DS40002343F 11.5.6).
-#if _has(ADCON0.CHS) And Not _has(ADCON1.PREF)
+#if _has(ADCON0.CHS) And Not _has(ADCON1.PREF) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
 #error "intosc is not ported to the PIC16F183xx: its HFFRQ codes differ from the Q10 (1, 2, -, 4, 8, 12, 16 MHz = 0..6, 32 MHz through the 2x PLL with NOSC = 000, DS40001839E Register 7-6 p.93) and the clock switch to 32 MHz needs its own sequence; set the speed with Config RSTOSC (HFINT32 = 32 MHz, HFINT1 = 1 MHz) and Clock to match, and check it with System.SysClockOk()"
 #endif
 #if _has(OSCFRQ.HFFRQ)
 #elseif _has(OSCFRQ.FRQ)
 #else
 #error "intosc needs a part with an OSCFRQ register (HFFRQ or FRQ field)"
+#endif
+
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And _clock > 32
+#error "Clock is above the fastest HFINTOSC setting of the PIC16F153xx (32 MHz, OSCFRQ.HFFRQ = 110, DS40001897C Register 9-6 p.114): use 32, 16, 12, 8, 4, 2, 1 or a divided 1 MHz"
 #endif
 
 #if Not _has(OSCCON1) And _clock < 1
@@ -224,7 +232,11 @@ End Function
 #endif
 
 ' The speeds in MHz by OSCFRQ code (the code is the index).
-#if _has(OSCFRQ.HFFRQ)
+#if _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And _has(OSCFRQ.HFFRQ)
+' PIC16F153xx: HFFRQ 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz, 7 is reserved [Register 9-6 p.114 of DS40001897C].
+Const MhzTab(7) As Byte = (1, 2, 4, 8, 12, 16, 32)
+Const MhzN As Byte = 7
+#elseif _has(OSCFRQ.HFFRQ)
 Const MhzTab(9) As Byte = (1, 2, 4, 8, 12, 16, 32, 48, 64)
 Const MhzN As Byte = 9
 #else

@@ -858,8 +858,8 @@ fn for_p16(src: &Path, device: &str, into: &Path) -> PathBuf {
             out += &format!("Device = {device}\n");
             device_done = true;
         } else if t.starts_with("config ") {
-            // The PIC16F183xx parts call the 32 MHz power-up setting HFINT32 (2x PLL).
-            out += if device.starts_with("16F183") { "Config FEXTOSC = OFF, RSTOSC = HFINT32, WDTE = OFF, LVP = ON\n" } else { "Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\n" };
+            // The PIC16F183xx parts call the 32 MHz power-up setting HFINT32 (2x PLL), and so do the PIC16F153xx parts.
+            out += if device.starts_with("16F183") || device.starts_with("16F153") { "Config FEXTOSC = OFF, RSTOSC = HFINT32, WDTE = OFF, LVP = ON\n" } else { "Config FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\n" };
         } else if t.starts_with("clock") && t.contains("64") {
             out += "Clock = 32\n";
         } else {
@@ -1254,6 +1254,82 @@ fn p152_programs_in_simulator() {
     let files = p152_programs();
     for flags in ["", "-O0"] {
         let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F15244").args(&files).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+        assert!(r.status.success(), "flags `{flags}`:\n{text}");
+    }
+}
+
+const P153_PARTS: [&str; 26] = [
+    "16F15313", "16F15323", "16F15324", "16F15325", "16F15344", "16F15345", "16F15354", "16F15356", "16F15356", "16F15375", "16F15376", "16F15385", "16F15386", "16LF15313", "16LF15323", "16LF15324", "16LF15325", "16LF15344", "16LF15345", "16LF15354",
+    "16LF15355", "16LF15356", "16LF15375", "16LF15376", "16LF15385", "16LF15386",
+];
+
+/// Programs of the PIC16F171xx sets that do not apply to the PIC16F153xx: the library modules whose registers differ (`tests/exec_p153` has the PIC16F153xx versions) and the programs that need data EEPROM.
+const P153_SKIP: &[&str] = &["lib_intosc", "i2c_pps_edges", "eeprom_word_edge", "lib_adc", "lib_eeprom", "lib_flashwrite", "lib_i2c", "lib_pwm", "lib_pwm_pins", "lib_serial2", "serial2_word_digits", "lib_serial", "lib_spi"];
+
+/// The programs for the PIC16F153xx: the portable ones and `tests/exec_p16` that apply, then `tests/exec_p153`.
+fn p153_programs() -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = P16_PORTABLE.iter().filter(|p| !P153_SKIP.contains(p)).map(|p| root().join(format!("tests/exec/{p}.bas"))).collect();
+    files.extend(bas_files(&root().join("tests/exec_p16")).into_iter().filter(|f| !P153_SKIP.contains(&f.file_stem().unwrap().to_str().unwrap())));
+    files.extend(bas_files(&root().join("tests/exec_p153")));
+    files
+}
+
+/// Every member of the PIC16F153xx family builds the small program (port A only on the 8-pin parts, 256 bytes of RAM, 2K words of flash; the PIC16F15313/23 have one EUSART); the
+/// PIC16F15356 builds all of its programs.
+#[test]
+fn p153_parts_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("p153parts");
+    let mut failures = Vec::new();
+    let small = std::fs::read_to_string(root().join("tests/exec_p153_parts/small.bas")).unwrap();
+    let mut programs: Vec<(String, PathBuf)> = Vec::new();
+    for dev in P153_PARTS {
+        let f = out.join(format!("small_{dev}.bas"));
+        std::fs::write(&f, small.replace("16F15313", dev)).unwrap();
+        programs.push((dev.to_string(), f));
+    }
+    for src in p153_programs() {
+        let name = src.file_stem().unwrap().to_string_lossy().into_owned();
+        // `tests/exec_p153` programs already name a part and its clock; the others are changed as for the PIC16F171xx.
+        let f = if src.starts_with(root().join("tests/exec_p153")) { src.clone() } else { for_p16(&src, "16F15356", &out.join(format!("{name}_16F15356.bas"))) };
+        programs.push(("16F15356".into(), f));
+    }
+    for (dev, src) in programs {
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        if !r.status.success() || text.contains("pic-as:") {
+            failures.push(format!("{} for {dev}:\n{text}", src.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The PIC16F153xx modules that stop with `#error` instead of using registers or memory the part does not have: no data EEPROM and no DMA anywhere, and no second EUSART on the 8- and 14-pin PIC16F15313/23.
+#[test]
+fn p153_unported_modules_stop() {
+    let out = scratch("p153err");
+    for (m, dev) in [("eeprom", "16F15356"), ("dma", "16F15356"), ("serial2", "16F15313")] {
+        let f = out.join(format!("e_{m}.bas"));
+        std::fs::write(&f, format!("Program E\nDevice = {dev}\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINT32, WDTE = OFF, LVP = ON\nInclude \"{m}\"\nDim x As Byte\nx = 1\n")).unwrap();
+        let r = Command::new(basil()).arg(&f).arg("-o").arg(out.join("x.hex")).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(!r.status.success() && text.contains("E-PP-ERROR"), "{m} did not stop with #error:\n{text}");
+    }
+}
+
+/// With `BASIL_MDB=1` the PIC16F153xx programs run on the simulator's `PIC16F15356`.
+#[test]
+fn p153_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_MDB=1 to run the simulator tests");
+        return;
+    }
+    let files = p153_programs();
+    for flags in ["", "-O0"] {
+        let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg("16F15356").args(&files).output().unwrap();
         let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
         assert!(r.status.success(), "flags `{flags}`:\n{text}");
     }
