@@ -16,9 +16,9 @@ open(sys.argv[2], 'w').write('# About this manual\n' + rest)
 P
 cp "$here/manual.css" "$tmp/"
 cp -r "$docs/images" "$tmp/"
-(cd "$tmp" && pandoc m.md -f gfm -t html5 -s --toc --toc-depth=2 \
+(cd "$tmp" && pandoc m.md -f gfm -t html5 -s --toc --toc-depth=3 \
   --metadata title="Basil Manual" \
-  --metadata subtitle="PIC18F27Q10 + PIC18-Q41 · basil ${version}" \
+  --metadata subtitle="PIC18 and PIC16 · basil ${version}" \
   --metadata date="$(date +%F)" -c manual.css -o m.html)
 weasyprint "$tmp/m.html" "$docs/Basil_Manual.pdf"
 echo "wrote docs/Basil_Manual.pdf"

@@ -1,10 +1,10 @@
 # Basil Manual
 
-Revision for **basil 0.1.234**, target devices **PIC18F27Q10** and the **PIC18F04/05/06/14/15/16Q41** family.
+Revision for **basil 0.1.236**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
-per library routine. Anything not listed here is not supported; Appendix A lists the alternative
+per library routine, each under its own heading (listed in the contents of the PDF). Anything not listed here is not supported; Appendix A lists the alternative
 spellings that are accepted and the common BASIC features that are missing or different, and
 Appendix B is a checklist to work through when testing.
 
@@ -3697,16 +3697,6 @@ puts it back as it was, so an interrupt cannot stretch a low time past what a de
 run. The module shares the bound-pin state of `pinio`, so it is not reentrant and cannot be used from a handler. It needs a
 `Clock` of at least 16 MHz on a PIC18 and 32 MHz on a PIC16 (the build stops with a message below that).
 
-| Routine | Effect |
-|---|---|
-| `OwInit(pin)` | sets the pin (released, digital, latch low); **call it first**. False for a pin above 23 or one the part lacks |
-| `OwReset()` | reset pulse; True when a device answers with a presence pulse. False for a line that is low before the pulse (no pull-up, a short) |
-| `OwWriteBit(b)`, `OwReadBit()` | one bit slot |
-| `OwWriteByte(b)`, `OwReadByte()` | a byte, least significant bit first |
-| `OwCrc8(crc, b)` | adds one byte to a CRC8 (x^8 + x^5 + x^4 + 1, shifted right, start 0); the 8 bytes of a ROM code, or the 9 of a DS18B20 scratchpad, end at 0 when intact |
-| `OwSearchFirst()`, `OwSearchNext()` | ROM search: the code of the first, then of each next device in `OwRom(0..7)` (family code first, CRC last). False when there is no device, no further device (the search then starts again at the next call) or the code read is damaged. A device added or taken off the line during a search can make it miss or repeat one |
-| `OwSelect()`, `OwSkip()` | after `OwReset`: Match ROM with the code in `OwRom`, or Skip ROM |
-
 Measured in the cycle-exact simulator (`scripts/test_onewire.py`) on PIC18F27Q10 and PIC18F16Q41 at 64 MHz and
 PIC16F17146 and PIC16F15244 at 32 MHz: reset low 489 to 490 us, write 1 low 2.6 to 2.8 us, write 0 low 61.8 to 61.9 us,
 read pulse 2.6 to 2.8 us with the line sampled about 10 us after the falling edge, slots of 75 to 79 us, 15 to 17 us of
@@ -3733,6 +3723,220 @@ If OwInit(9) Then
     End If
 End If
 ```
+
+### OwInit
+
+**Syntax**
+```basic
+ok = OwInit(pin)
+```
+**Overview** Sets up the bus pin: released (an input, so the pull-up holds the line high), digital, with its latch low.
+**Call it first.**
+
+**Parameters** `pin` a `Byte`, 0..23 as in `pinio` (RA0 = 0, RB0 = 8, RC0 = 16).
+
+**Returns** `Boolean`: False for a pin above 23 or one the part lacks.
+
+**Example**
+```basic
+Include "onewire"
+If OwInit(9) Then                ' the bus on RB1
+    OwSkip()
+End If
+```
+**See also** `OwReset`
+
+### OwReset
+
+**Syntax**
+```basic
+present = OwReset()
+```
+**Overview** Sends the reset pulse and listens for a presence pulse. Every transaction starts with it.
+
+**Returns** `Boolean`: True when a device answers. False when nothing answers, or when the line is already low before
+the pulse (no pull-up, a short).
+
+**Example**
+```basic
+If OwReset() Then
+    OwSkip()
+    OwWriteByte($44)             ' DS18B20: convert T
+End If
+```
+**See also** `OwSkip`, `OwSelect`
+
+### OwWriteBit
+
+**Syntax**
+```basic
+OwWriteBit(b)
+```
+**Overview** Sends one bit in one time slot (about 70 us, with the global interrupt enable held off for the slot).
+
+**Parameters** `b` a `Boolean`: True sends a 1.
+
+**Example**
+```basic
+OwWriteBit(True)
+```
+**See also** `OwReadBit`, `OwWriteByte`
+
+### OwReadBit
+
+**Syntax**
+```basic
+b = OwReadBit()
+```
+**Overview** Reads one bit in one time slot: the master pulls the line low briefly, lets go and samples it about 10 us
+after the falling edge.
+
+**Returns** `Boolean`: True for a 1.
+
+**Example**
+```basic
+Dim b As Boolean
+b = OwReadBit()
+```
+**See also** `OwWriteBit`, `OwReadByte`
+
+### OwWriteByte
+
+**Syntax**
+```basic
+OwWriteByte(b)
+```
+**Overview** Sends a byte, least significant bit first (eight `OwWriteBit` slots).
+
+**Parameters** `b` a `Byte`: a device command or data byte (`OwSkip`, `OwSelect` and the search send the ROM
+commands themselves).
+
+**Example**
+```basic
+OwWriteByte($BE)                  ' DS18B20: read scratchpad
+```
+**See also** `OwReadByte`
+
+### OwReadByte
+
+**Syntax**
+```basic
+b = OwReadByte()
+```
+**Overview** Reads a byte, least significant bit first (eight `OwReadBit` slots).
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+lo = OwReadByte()
+hi = OwReadByte()                 ' DS18B20: temperature = hi:lo / 16 degrees C
+```
+**See also** `OwWriteByte`, `OwCrc8`
+
+### OwCrc8
+
+**Syntax**
+```basic
+crc = OwCrc8(crc, b)
+```
+**Overview** Adds one byte to the 1-Wire CRC8 (x^8 + x^5 + x^4 + 1, shifted right). Start at 0 and add every byte: the
+8 bytes of a ROM code, or the 9 of a DS18B20 scratchpad, end at 0 when they are intact.
+
+**Parameters** `crc` the CRC so far (a `Byte`, 0 at the start); `b` the next byte.
+
+**Returns** `Byte`: the new CRC.
+
+**Example**
+```basic
+crc = 0
+For i = 0 To 8
+    crc = OwCrc8(crc, OwReadByte())
+Next
+If crc = 0 Then
+    ' the scratchpad arrived intact
+End If
+```
+**Notes** This is not the CRC of the `aht30` module (a different polynomial and start).
+
+### OwSearchFirst
+
+**Syntax**
+```basic
+found = OwSearchFirst()
+```
+**Overview** Starts a ROM search and finds the first device on the bus. Its 8-byte code is put in `OwRom(0..7)`
+(family code first, CRC last). Follow it with `OwSearchNext` to find the others.
+
+**Returns** `Boolean`: False when there is no device or the code read is damaged.
+
+**Example**
+```basic
+n = 0
+If OwSearchFirst() Then
+    Do
+        Inc(n)                    ' OwRom(0..7) holds a device's code
+    Loop While OwSearchNext()
+End If
+```
+**Notes** A device added or taken off the line during a search can make it miss or repeat one.
+
+**See also** `OwSearchNext`, `OwSelect`
+
+### OwSearchNext
+
+**Syntax**
+```basic
+found = OwSearchNext()
+```
+**Overview** Finds the next device of the search that `OwSearchFirst` started, and puts its code in `OwRom(0..7)`.
+
+**Returns** `Boolean`: False when there is no further device (the next call then starts a new search) or the code
+read is damaged.
+
+**Example**
+```basic
+While OwSearchNext()
+    Inc(n)
+Wend
+```
+**See also** `OwSearchFirst`
+
+### OwSelect
+
+**Syntax**
+```basic
+OwSelect()
+```
+**Overview** After `OwReset`: Match ROM with the code in `OwRom(0..7)`, so only that device listens to what follows.
+Fill `OwRom` from a search, or with a code you know.
+
+**Example**
+```basic
+If OwReset() Then
+    OwSelect()
+    OwWriteByte($44)
+End If
+```
+**See also** `OwSkip`, `OwSearchFirst`
+
+### OwSkip
+
+**Syntax**
+```basic
+OwSkip()
+```
+**Overview** After `OwReset`: Skip ROM, so every device on the bus listens to what follows. Use it when there is one
+device, or for a command all of them should obey (a DS18B20 convert).
+
+**Example**
+```basic
+If OwReset() Then
+    OwSkip()
+    OwWriteByte($44)
+End If
+```
+**See also** `OwSelect`
 
 ## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
 
@@ -3859,43 +4063,108 @@ b = SerialRead()
 SerialWriteByte(b)                ' echo
 ```
 
-### SerialReadTimeout, SerialReadLine, SerialWaitFor, SerialReadDec
+### SerialReadTimeout
 
 **Syntax**
 ```basic
-c  = SerialReadTimeout(ms)          ' Integer: the byte (0..255), or -1 when none came in ms
-ok = SerialReadLine(ms)             ' text in SerialLine (String(63)); True when a CR or LF ended it
-ok = SerialWaitFor("OK", ms)        ' True when the text has arrived
-ok = SerialReadDec(ms)              ' number in SerialNumber (LongInt); True when a digit came
+c = SerialReadTimeout(ms)
 ```
-**Overview** Receive routines that give up. `ms` (a `Word`) is the longest wait for **one** byte, in milliseconds
-(a little more: the wait polls every 50 us, with interrupts allowed; a byte already waiting is returned at once and
-a `ms` of 0 looks once). An overrun is cleared as `SerialRead` does.
+**Overview** Waits up to `ms` milliseconds for a byte. The wait polls every 50 us with interrupts allowed, so it is a
+little longer than `ms`; a byte already waiting is returned at once, and an `ms` of 0 looks once. An overrun is
+cleared as `SerialRead` does.
 
-* `SerialReadLine` collects characters into `SerialLine` until CR or LF; empty lines are skipped, so CR LF is one
-  end of line, and characters past 63 are dropped. On a timeout it returns False and `SerialLine` keeps what had
-  arrived.
-* `SerialWaitFor(text, ms)` discards bytes until `text` (not empty, up to 80 characters) has come in. After a
-  mismatch it starts again at the first character, so a text that repeats its own start (`aab` in `aaab`) can be missed.
-* `SerialReadDec` skips characters until a digit (a `-` right before it makes the number negative), then reads
-  digits; the first other character ends the number and is dropped, and so does a timeout after at least one digit.
-  False (and `SerialNumber` 0) when no digit came; a value past 32 bits wraps.
+**Parameters** `ms` a `Word`.
 
-`SerialLine` and `SerialNumber` are shared results, overwritten by the next call. Each routine alone, with the polling
-loop they share counted in, costs on the PIC18F27Q10 about 50 words (`SerialReadTimeout`), 71 (`SerialReadLine`),
-86 (`SerialWaitFor`) and 113 (`SerialReadDec`); using several adds only the difference.
+**Returns** `Integer`: the byte (0..255), or -1 when none came.
+
+**Example**
+```basic
+Dim c As Integer
+c = SerialReadTimeout(100)
+If c >= 0 Then
+    SerialWriteByte(Byte(c))
+End If
+```
+**Notes** About 50 words on the PIC18F27Q10, with the polling loop that all four receive routines share.
+
+**See also** `SerialRead`, `SerialReadLine`
+
+### SerialReadLine
+
+**Syntax**
+```basic
+ok = SerialReadLine(ms)
+```
+**Overview** Collects characters into `SerialLine` (a `String(63)`) until a CR or LF. Empty lines are skipped, so CR LF
+is one end of line, and characters past 63 are dropped. `ms` is the longest wait for **one** character.
+
+**Parameters** `ms` a `Word`, in milliseconds.
+
+**Returns** `Boolean`: True when a CR or LF ended the line. On a timeout it returns False and `SerialLine` keeps what
+had arrived.
+
+**Example**
+```basic
+If SerialReadLine(1000) Then
+    SerialWrite(SerialLine)
+End If
+```
+**Notes** `SerialLine` is shared and overwritten by the next call. About 71 words on the PIC18F27Q10.
+
+**See also** `SerialReadTimeout`, `SerialWaitFor`
+
+### SerialWaitFor
+
+**Syntax**
+```basic
+ok = SerialWaitFor(text, ms)
+```
+**Overview** Discards bytes until `text` has come in. After a mismatch it starts again at the first character, so a
+text that repeats its own start (`aab` in `aaab`) can be missed.
+
+**Parameters** `text` a `String`, not empty, up to 80 characters; `ms` a `Word`, the longest wait for one byte in
+milliseconds.
+
+**Returns** `Boolean`: True when the text has arrived, False on a timeout.
 
 **Example**
 ```basic
 SerialWrite("AT")
 SerialNewLine()
 If SerialWaitFor("OK", 200) Then
+    ' the modem answered
+End If
+```
+**Notes** About 86 words on the PIC18F27Q10.
+
+**See also** `SerialReadDec`, `SerialReadLine`
+
+### SerialReadDec
+
+**Syntax**
+```basic
+ok = SerialReadDec(ms)
+```
+**Overview** Reads a decimal number into `SerialNumber` (a `LongInt`). Characters before the first digit are skipped
+(a `-` right before it makes the number negative); then digits are read, and the first other character ends the
+number and is dropped. A timeout after at least one digit also ends it.
+
+**Parameters** `ms` a `Word`, the longest wait for one byte in milliseconds.
+
+**Returns** `Boolean`: False (and `SerialNumber` 0) when no digit came. A value past 32 bits wraps.
+
+**Example**
+```basic
+If SerialWaitFor("+CSQ: ", 500) Then
     If SerialReadDec(500) Then
         v = Integer(SerialNumber)         ' "+CSQ: 17,99" gives 17
     End If
 End If
-If SerialReadLine(1000) Then SerialWrite(SerialLine)
 ```
+**Notes** `SerialNumber` is shared and overwritten by the next call. About 113 words on the PIC18F27Q10; using several
+of the receive routines adds only the difference.
+
+**See also** `SerialWaitFor`, `SerialReadTimeout`
 
 ### SerialOnRx / SerialRxService
 
@@ -3954,6 +4223,94 @@ Serial2NewLine()
 be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
 unproven.
 
+## shift  (`Include "shift"`, synchronous shift on any two pins)
+
+Bit-banged synchronous shift for shift registers (74HC595, 74HC165), DACs, ADCs and any device with a data line and a
+clock. Pins are numbered 0..23 as in `pinio` (RA0 = 0, RB0 = 8, RC0 = 16). The clock idles low; data changes while the
+clock is low and is valid at its rising edge (SPI mode 0, which suits the 74HC595 and most chips). Each clock phase is
+about 1 us plus the instruction time, so the rate is below 250 kHz at 64 MHz. Each routine sets its pins (clock an
+output, data an output or input) and makes them digital. A pin the part lacks, the same pin twice, or a bit count out
+of range stops the routine at once: nothing is sent, and a read returns 0. Test: `tests/exec/lib_shift.bas` (set-up
+only; the simulator has no pin model).
+
+### ShiftOut
+
+**Syntax**
+```basic
+ShiftOut(data, dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** Clocks out the low `bits` bits of `data`.
+
+**Parameters** `data` a `Byte`; `dataPin`, `clkPin` pins 0..23; `lsbFirst` a `Boolean`: False sends the most
+significant of the bits first, True the least significant first; `bits` 1..8.
+
+**Example**
+```basic
+Include "shift"
+ShiftOut($A5, 8, 9, False, 8)     ' data on RB0, clock on RB1
+High(PORTB.2)                     ' pulse the latch pin (on RB2)
+Low(PORTB.2)
+```
+**See also** `ShiftOut16`, `ShiftIn`, `spi` module
+
+### ShiftOut16
+
+**Syntax**
+```basic
+ShiftOut16(data, dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** `ShiftOut` for up to 16 bits.
+
+**Parameters** `data` a `Word`; `bits` 1..16; the rest as `ShiftOut`.
+
+**Example**
+```basic
+ShiftOut16($3FF0, 8, 9, False, 16)   ' a 16-bit DAC word
+```
+**See also** `ShiftOut`
+
+### ShiftIn
+
+**Syntax**
+```basic
+b = ShiftIn(dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** Clocks in `bits` bits. The data pin is made an input and read while the clock is high, just before it
+goes low again.
+
+**Parameters** `dataPin`, `clkPin` pins 0..23; `lsbFirst` False when the device sends the most significant bit
+first; `bits` 1..8.
+
+**Returns** `Byte`: the bits read, right-justified. 0 when the pins or the count are not valid.
+
+**Example**
+```basic
+Include "shift"
+Dim sw As Byte
+Low(PORTB.2)                      ' pulse the load pin (on RB2)
+High(PORTB.2)
+sw = ShiftIn(8, 9, False, 8)      ' data on RB0, clock on RB1
+```
+**See also** `ShiftIn16`, `ShiftOut`
+
+### ShiftIn16
+
+**Syntax**
+```basic
+w = ShiftIn16(dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** `ShiftIn` for up to 16 bits.
+
+**Parameters** `bits` 1..16; the rest as `ShiftIn`.
+
+**Returns** `Word`: the bits read, right-justified.
+
+**Example**
+```basic
+w = ShiftIn16(8, 9, False, 12)    ' a 12-bit ADC reading
+```
+**See also** `ShiftIn`
+
 ## softserial  (`Include "softserial"`, asynchronous serial on any two pins, 8N1)
 
 Serial on pins the EUSART cannot reach, on a part with one EUSART or none to spare, or on a line that idles low
@@ -3962,14 +4319,6 @@ times are counted in instruction cycles from `Clock`; no timer. A byte that arri
 lost: `SoftReadByte` is a poll, not a buffer (for an always-listening, buffered UART use the hardware EUSART,
 `serial`). Interrupts are held off for the length of a byte (see `SoftHoldIrq`). The module shares the bound-pin state of `pinio` (as `pulse`
 and `shift` do), so it is not reentrant and its routines cannot be used from a handler.
-
-| Routine | Effect |
-|---|---|
-| `SoftInit(tx, rx, baud, inverted)` | sets the pins and the speed; **call it first**. A `tx` or `rx` above 23, or a pin the part lacks, is not used. `inverted` is True for a line that idles low. Returns False (both pins unused) when the baud rate is too high for the `Clock`, or so low that one bit is over 65535 cycles (below about 980 baud at 64 MHz) |
-| `SoftWriteByte(b)`, `SoftWrite(text)`, `SoftNewLine()` | send a byte; send a `String` (up to 80 characters); send CR LF |
-| `SoftReadByte(ms)` | waits up to `ms` milliseconds for a start bit, then returns the byte (0 to 255), **-1** when none came, or **-2** when the stop bit was not at the idle level (a framing error: wrong baud rate, noise or a break); it then waits one more bit, so a line that stays low answers -2 again at every call. An `ms` of 0 looks once |
-| `SoftHoldIrq(on)` | True (the default): a byte is sent, or received from its start edge on, with the global interrupt enable (bit 7 of `INTCON`, `INTCON0` on the PIC18-Q41) cleared, and put back as it was, so an interrupt cannot stretch a bit. A received byte therefore stops other interrupts for 10 bit times (about 1 ms at 9600 baud). False: nothing is touched, and an interrupt that runs during a byte distorts it, which a low baud rate and a short handler can live with |
-| `SoftAvailable()` | True when the receive pin is at its start-bit level, so a `SoftReadByte` now returns the byte |
 
 How accurate: a bit is a wait of whole passes of a counting loop (7 cycles a pass on the PIC18, 9 on the PIC16) plus a
 fixed number of cycles, so the bit time is within half a pass of the ideal one, and the start edge of a received byte
@@ -4015,6 +4364,147 @@ If SoftInit(9, 10, 9600, False) Then       ' TX on RB1, RX on RB2
     End If
 End If
 ```
+
+### SoftInit
+
+**Syntax**
+```basic
+ok = SoftInit(tx, rx, baud, inverted)
+```
+**Overview** Sets the two pins and the speed. **Call it first.**
+
+**Parameters** `tx`, `rx` pins 0..23 (a pin above 23, or one the part lacks, is not used: give 255 for a send-only or
+receive-only line); `baud` a `LongWord`; `inverted` a `Boolean`, True for a line that idles low (RS-232 levels through
+a driver chip, or a transistor inverter).
+
+**Returns** `Boolean`: False, with both pins unused, when the baud rate is too high for the `Clock`, or so low that one
+bit is over 65535 cycles (below about 980 baud at 64 MHz).
+
+**Example**
+```basic
+Include "softserial"
+If SoftInit(9, 10, 9600, False) Then      ' TX on RB1, RX on RB2
+    SoftWrite("ready")
+End If
+```
+**Notes** About 76 words on the PIC18F27Q10 with the start-up.
+
+### SoftWriteByte
+
+**Syntax**
+```basic
+SoftWriteByte(b)
+```
+**Overview** Sends one byte (8N1) on the `tx` pin. With `SoftHoldIrq(True)` (the default) the global interrupt enable
+is held off for the frame and put back after it.
+
+**Parameters** `b` a `Byte`.
+
+**Example**
+```basic
+SoftWriteByte(65)                 ' "A"
+```
+**Notes** +83 words on the PIC18F27Q10.
+
+**See also** `SoftWrite`, `SoftNewLine`
+
+### SoftWrite
+
+**Syntax**
+```basic
+SoftWrite(text)
+```
+**Overview** Sends a `String`, a character at a time, up to its `Null`.
+
+**Parameters** `text` a `String` or a literal, up to 80 characters.
+
+**Example**
+```basic
+SoftWrite("temp ")
+FmtDec(t, 3, " ")
+SoftWrite(FmtBuf)
+```
+**Notes** +99 words on the PIC18F27Q10 (it contains `SoftWriteByte`).
+
+**See also** `SoftWriteByte`, `format` module
+
+### SoftNewLine
+
+**Syntax**
+```basic
+SoftNewLine()
+```
+**Overview** Sends CR LF.
+
+**Example**
+```basic
+SoftWrite("ok")
+SoftNewLine()
+```
+
+### SoftReadByte
+
+**Syntax**
+```basic
+c = SoftReadByte(ms)
+```
+**Overview** Waits up to `ms` milliseconds for a start bit on the `rx` pin, then receives the byte. It is a poll, not a
+buffer: a byte that arrives while the program is elsewhere is lost.
+
+**Parameters** `ms` a `Word`; 0 looks once.
+
+**Returns** `Integer`: the byte (0 to 255), **-1** when none came, or **-2** when the stop bit was not at the idle level
+(a framing error: wrong baud rate, noise or a break). After -2 it waits one more bit, so a line that stays low answers
+-2 again at every call.
+
+**Example**
+```basic
+Dim c As Integer
+c = SoftReadByte(1000)            ' up to 1 s
+If c >= 0 Then
+    SoftWriteByte(Byte(c))        ' echo
+End If
+```
+**Notes** +157 words on the PIC18F27Q10.
+
+**See also** `SoftAvailable`, `SoftHoldIrq`
+
+### SoftAvailable
+
+**Syntax**
+```basic
+b = SoftAvailable()
+```
+**Overview** Looks at the `rx` pin once.
+
+**Returns** `Boolean`: True when the pin is at its start-bit level, so a `SoftReadByte` now returns the byte.
+
+**Example**
+```basic
+If SoftAvailable() Then
+    c = SoftReadByte(0)
+End If
+```
+**Notes** +46 words on the PIC18F27Q10.
+
+### SoftHoldIrq
+
+**Syntax**
+```basic
+SoftHoldIrq(on)
+```
+**Overview** Chooses whether a byte is sent, or received from its start edge on, with the global interrupt enable (bit
+7 of `INTCON`, `INTCON0` on the PIC18-Q41) cleared and put back as it was, so an interrupt cannot stretch a bit.
+
+**Parameters** `on` a `Boolean`. True (the default): a received byte stops other interrupts for 10 bit times (about
+1 ms at 9600 baud). False: nothing is touched, and an interrupt that runs during a byte distorts it, which a low baud
+rate and a short handler can live with.
+
+**Example**
+```basic
+SoftHoldIrq(False)                ' the timer interrupt must not wait a whole byte
+```
+**Notes** +3 words on the PIC18F27Q10.
 
 ## spi  (`Include "spi"`, MSSP1 host)
 
@@ -6019,36 +6509,50 @@ k = Ncd(1000)                ' 10: 1000 needs ten bits
 
 **See also** `Dcd`.
 
-### Random / Seed
+### Random
 
 **Syntax**
 ```basic
-Seed(s)
 r = Random()
 ```
-**Overview** `Random` returns the next number of a 16-bit xorshift sequence (period 65535, never 0).
-`Seed` starts the sequence at `s`; a seed of 0 is replaced by 1.
+**Overview** Returns the next number of a 16-bit xorshift sequence (period 65535, never 0).
 
-**Parameters** `s` is a `Word`.
-
-**Returns** `Random` returns a `Word`.
+**Returns** `Word`.
 
 **Example**
 ```basic
-Seed(AdcRead(0))          ' an unconnected analog input is a cheap noise source
 dice = Byte(Random() Mod 6) + 1
 ```
-**Notes** Without a `Seed` call the sequence is the same on every run. The generator state is one
-`Word` shared by the whole program; the routines are not reentrant.
+**Notes** Without a `Seed` call the sequence is the same on every run. The generator state is one `Word` shared by the
+whole program; the routine is not reentrant.
 
-### Rol / Ror
+**See also** `Seed`
+
+### Rol
 
 **Syntax**
 ```basic
 v = Rol(v)
+```
+**Overview** Rotates `v` left by one bit; the top bit comes back in at bit 0.
+
+**Parameters** `v` is a `Byte` or a `Word`.
+
+**Returns** The rotated value, of the type of `v`.
+
+**Example**
+```basic
+x = Rol(Byte(%10010000))  ' %00100001
+```
+**See also** `Ror`
+
+### Ror
+
+**Syntax**
+```basic
 v = Ror(v)
 ```
-**Overview** Rotates `v` left or right by one bit; the bit shifted out comes back in at the other end.
+**Overview** Rotates `v` right by one bit; bit 0 comes back in at the top.
 
 **Parameters** `v` is a `Byte` or a `Word`.
 
@@ -6058,6 +6562,23 @@ v = Ror(v)
 ```basic
 x = Ror(Byte(%10010000))  ' %01001000
 ```
+**See also** `Rol`
+
+### Seed
+
+**Syntax**
+```basic
+Seed(s)
+```
+**Overview** Starts the `Random` sequence at `s`; a seed of 0 is replaced by 1.
+
+**Parameters** `s` is a `Word`.
+
+**Example**
+```basic
+Seed(AdcRead(0))          ' an unconnected analog input is a cheap noise source
+```
+**See also** `Random`
 
 ### SetBit
 
@@ -6075,20 +6596,37 @@ x = SetBit(x, 3)
 ```
 **See also** `ClearBit`, `LoadBit`, `GetBit`.
 
-### SwapNibbles / SwapBytes
+### SwapBytes
+
+**Syntax**
+```basic
+w = SwapBytes(w)
+```
+**Overview** Exchanges the two bytes of a `Word` (`$AB34` becomes `$34AB`).
+
+**Returns** `Word`.
+
+**Example**
+```basic
+w = SwapBytes(w)          ' big-endian from a sensor to little-endian
+```
+**See also** `SwapNibbles`
+
+### SwapNibbles
 
 **Syntax**
 ```basic
 b = SwapNibbles(b)
-w = SwapBytes(w)
 ```
-**Overview** `SwapNibbles` exchanges the two nibbles of a `Byte` (`$3C` becomes `$C3`). `SwapBytes`
-exchanges the two bytes of a `Word` (`$AB34` becomes `$34AB`).
+**Overview** Exchanges the two nibbles of a `Byte` (`$3C` becomes `$C3`).
+
+**Returns** `Byte`.
 
 **Example**
 ```basic
 packed = SwapNibbles(packed)
 ```
+**See also** `SwapBytes`
 Tests: `tests/exec/lib_bits.bas`.
 
 ## floatlib  (automatic)
@@ -6096,6 +6634,151 @@ Tests: `tests/exec/lib_bits.bas`.
 Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong
 FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does when a program
 uses `Float`.
+
+## fmath  (`Include "fmath"`, run-time square root, logarithms, powers and trigonometry for `Float`)
+
+Run-time maths on `Float`, built on its `+ - * /`. The names start with `F` so that they do not clash with the
+build-time `Sqr`, `Sin`, `Cos`, `Pow` and `Log2`, which take constants only. Accuracy is a few units in the sixth digit.
+A result too big for a `Float` is infinity, one too small is zero. Like all `Float` arithmetic, these cannot be called
+from an interrupt handler (`E-ISR-CALL`). Tests: `tests/exec/lib_fmath.bas`, `fmath_sqrt3.bas`, `fmath_log_acc.bas`.
+
+### FCos
+
+**Syntax**
+```basic
+y = FCos(x)
+```
+**Overview** The cosine of `x` radians.
+
+**Parameters** `x` a `Float`; |x| under 200000 (a larger angle gives NaN), best under 1000.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+Include "fmath"
+Dim y As Float
+y = FCos(3.14159)             ' -1.0
+```
+**See also** `FSin`, `FTan`
+
+### FExp
+
+**Syntax**
+```basic
+y = FExp(x)
+```
+**Overview** e to the power `x`.
+
+**Returns** `Float`: infinity when the result is too big, zero when too small.
+
+**Example**
+```basic
+y = FExp(1.0)                 ' 2.71828
+```
+**See also** `FLog`, `FPow`
+
+### FLog
+
+**Syntax**
+```basic
+y = FLog(x)
+```
+**Overview** The natural logarithm of `x`.
+
+**Returns** `Float`: -infinity for 0, NaN for a negative `x`.
+
+**Example**
+```basic
+y = FLog(10.0)                ' 2.30259
+```
+**See also** `FLog10`, `FExp`
+
+### FLog10
+
+**Syntax**
+```basic
+y = FLog10(x)
+```
+**Overview** The base-10 logarithm of `x`.
+
+**Returns** `Float`: as `FLog` for 0 and negative numbers.
+
+**Example**
+```basic
+db = 20.0 * FLog10(v / vref)
+```
+**See also** `FLog`
+
+### FPow
+
+**Syntax**
+```basic
+y = FPow(x, p)
+```
+**Overview** `x` to the power `p`, as `FExp(p * FLog(x))`.
+
+**Parameters** `x` a `Float`, greater than 0; `p` a `Float`.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+y = FPow(2.0, 0.5)            ' 1.41421
+```
+**See also** `FExp`, `FSqr`
+
+### FSin
+
+**Syntax**
+```basic
+y = FSin(x)
+```
+**Overview** The sine of `x` radians. The angle is reduced by whole turns in `Integer` arithmetic.
+
+**Parameters** `x` a `Float`; |x| under 200000 (a larger angle gives NaN), best under 1000.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+y = FSin(1.5708)              ' 1.0
+```
+**See also** `FCos`, `BSin` (8-bit, binary radians)
+
+### FSqr
+
+**Syntax**
+```basic
+y = FSqr(x)
+```
+**Overview** The square root of `x`: three Newton steps from a guess made by halving the exponent.
+
+**Returns** `Float`: NaN for a negative `x`; 0 for 0; infinity for infinity.
+
+**Example**
+```basic
+y = FSqr(2.0)                 ' 1.41421
+```
+**See also** `ISqr` (integer), `FPow`
+
+### FTan
+
+**Syntax**
+```basic
+y = FTan(x)
+```
+**Overview** The tangent of `x` radians, `FSin(x) / FCos(x)`.
+
+**Parameters** as `FSin`.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+y = FTan(0.7854)              ' 1.0
+```
+**See also** `FSin`, `FCos`
 
 ## format  (`Include "format"`, numbers as text with a width, a fill and a radix)
 
@@ -6107,25 +6790,86 @@ routine replaces the `Str` expansion at every call site, and the output modules 
 program uses are compiled. A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and
 117 for a `LongWord` on the PIC18, start-up included.
 
-| Routine | Effect |
-|---|---|
-| `FmtDec(n, width, fill)` | unsigned decimal, at least `width` characters (0 to 32), padded on the left with the `Char` `fill` (`"0"` or `" "`); a longer number is never cut |
-| `FmtSDec(n, width, fill)` | the same for a signed number (`ShortInt`, `Integer`, `LongInt`); the minus sign counts in the width and comes before the zeros of a `"0"` fill and right before the digits of any other fill |
-| `FmtHex(n, digits)` | the low `digits` (0 to 8) hexadecimal digits, capitals, with leading zeros |
-| `FmtBin(n, digits)` | the low `digits` (0 to 32) binary digits, with leading zeros |
+A width or digit count above the limit is taken as the limit. Portable (no device registers); `tests/exec/lib_format.bas`
+runs on the PIC18 and PIC16 parts.
 
+### FmtBin
+
+**Syntax**
+```basic
+FmtBin(n, digits)
+```
+**Overview** Writes the low `digits` binary digits of `n` into `FmtBuf`, with leading zeros. Uses shifts, no divide.
+
+**Parameters** `n` a `Byte`, `Word` or `LongWord`; `digits` 0 to 32.
+
+**Example**
+```basic
+FmtBin(b, 8)               ' b = 5:   00000101
+SerialWrite(FmtBuf)
+```
+**See also** `FmtHex`
+
+### FmtDec
+
+**Syntax**
+```basic
+FmtDec(n, width, fill)
+```
+**Overview** Writes `n` as an unsigned decimal number into `FmtBuf`, at least `width` characters, padded on the left
+with `fill`. A longer number is never cut.
+
+**Parameters** `n` a `Byte`, `Word` or `LongWord` (a `Byte` pays for no 16-bit divide); `width` 0 to 32; `fill` a
+`Char`, usually `"0"` or `" "`.
+
+**Example**
 ```basic
 Include "format"
 Include "serial"
 FmtDec(w, 5, "0")          ' w = 42:  00042
 SerialWrite(FmtBuf)
-FmtSDec(t, 6, " ")         ' t = -42: "   -42"
-FmtHex(b, 2)               ' b = 42:  2A
-FmtBin(b, 8)               ' b = 5:   00000101
 ```
+**Notes** A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and 117 for a
+`LongWord` on the PIC18, start-up included.
 
-A width or digit count above the limit is taken as the limit. Portable (no device registers); `tests/exec/lib_format.bas`
-runs on the PIC18 and PIC16 parts.
+**See also** `FmtSDec`, `Str`
+
+### FmtHex
+
+**Syntax**
+```basic
+FmtHex(n, digits)
+```
+**Overview** Writes the low `digits` hexadecimal digits of `n` into `FmtBuf`, in capitals, with leading zeros. Uses
+shifts, no divide.
+
+**Parameters** `n` a `Byte`, `Word` or `LongWord`; `digits` 0 to 8.
+
+**Example**
+```basic
+FmtHex(b, 2)               ' b = 42:  2A
+LcdWrite(FmtBuf)
+```
+**See also** `FmtBin`, `SerialWriteHex`
+
+### FmtSDec
+
+**Syntax**
+```basic
+FmtSDec(n, width, fill)
+```
+**Overview** `FmtDec` for a signed number. The minus sign counts in the width; it comes before the zeros of a `"0"`
+fill and right before the digits of any other fill.
+
+**Parameters** `n` a `ShortInt`, `Integer` or `LongInt`; `width` 0 to 32; `fill` a `Char`.
+
+**Example**
+```basic
+FmtSDec(t, 6, " ")         ' t = -42: "   -42"
+FmtSDec(t, 6, "0")         ' t = -42: "-00042"
+```
+**See also** `FmtDec`
+
 
 ## strings  (`Include "strings"`)
 
@@ -6185,35 +6929,37 @@ reports these rather than miscompiling them.
 
 ## Not available (or different)
 
-| Feature of other BASIC compilers | basil 0.1.153 |
+| Feature of other BASIC compilers | basil |
 |---|---|
-| Other devices | only PIC18F27Q10 and the PIC18F04/05/06/14/15/16Q41 parts compile (see *Supported device*) |
+| Other devices | only the PIC18 and PIC16 parts in the table of *Supported device* compile; no 12-bit core |
 | Statements without parentheses (`High LED`, `DelayMs 500`, `HRsout "x"`) | parentheses required |
 | `Declare` switches (LCD pins, baud, pin routing) | only `Declare Xtal`; peripherals take arguments in `...Init(...)` calls |
 | `PinHigh`, `PinLow`, `PinGet`, pin numbers in `High` | use register bits / aliases; `PinMode`, `PinSet`, `PinClear` and `PinPullup` are available (see *PinMode*, *PinSet / PinClear*, *PinPullup*) |
 | `Pin` type, `SDword`, `Double`, 24-bit `Long`, `Global`/`Shared` variables | not accepted (`Static` and `Volatile` are supported, see *Variables and types*) |
-| `Print`, `Cls`, `Cursor` on a character LCD | `lcd` module routines |
+| `Print`, `Cls`, `Cursor`, `LcdOut`, `LcdIn` on a character LCD | `lcd` module routines; *LcdRead*, *LcdStatus* and *LcdRwInit* read the display back |
 | `Plot`, `UnPlot`, `Pixel`, `Line`, `LineTo`, `Box`, `Circle`, `LCDwrite`, `LCDread`, `Toshiba_Command`, `Toshiba_UDG`, graphic `Print` / `Cls` | `glcd` module (`GlcdPlot`, `GlcdUnplot`, `GlcdPixel`, `GlcdLine`, `GlcdLineTo`, `GlcdBox`, `GlcdCircle`, `GlcdWriteByte`, `GlcdReadByte`, `GlcdCommand`, `GlcdUdg`, `GlcdWrite`, `GlcdClear`); KS0108, T6963C and ST7920, `(x, y)` order |
-| `Serin`, `Serout`, `Serin2`, `Serout2` | `softserial` module (any pin, inverted line, timeout); `serial` / `serial2` for the hardware EUSART |
-| `HRsout`, `HRsin`, `HSerout`, `Rsout` | `serial` / `serial2` routines (`SerialReadTimeout`, `SerialReadLine`, `SerialWaitFor` and `SerialReadDec` for the timeout, `Wait`, `Str` and `Dec` forms of the input) |
-| `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: `FmtDec`, `FmtSDec`, `FmtHex`, `FmtBin` fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
+| `Serin`, `Serout`, `Serin2`, `Serout2` | `softserial` module: *SoftInit*, *SoftReadByte* (timeout), *SoftWrite*, *SoftWriteByte* (any pin, inverted line); `serial` / `serial2` for the hardware EUSART |
+| `HRsout`, `HRsin`, `HSerout`, `HSerin`, `Rsout` | `serial` / `serial2` routines (*SerialReadTimeout*, *SerialReadLine*, *SerialWaitFor* and *SerialReadDec* for the timeout, `Wait`, `Str` and `Dec` forms of the input) |
+| `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: *FmtDec*, *FmtSDec*, *FmtHex*, *FmtBin* fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
-| `Counter`, `Button` | `buttons` module (`Buttons.Counter`, `Buttons.Button`, a call returning True instead of a branch) |
+| `Counter`, `Button`, `Count` | `buttons` module: *Counter*, *Button* (a call returning True instead of a branch); *FreqCount* of the `timer` module counts with Timer1 |
 | `ClrWdt` | `ClrWdt()` (the `clrwdt` instruction) |
 | `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
-| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout`, `DtmfOut` | `pulse` module (see *pulse, irremote and x10*) |
-| `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules |
+| `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout`, `DtmfOut` | `pulse` module: *Pot*, *RCin*, *PulseIn*, *PulseOut*, *Servo*, *PwmPin* (the software `PWM`), *Sound*, *Sound2*, *Freqout* (square waves, no sine), *DtmfOut* |
+| `SonyIn`, `RC5in`, `Xin`, `Xout` | `irremote` and `x10` modules: *SonyIn*, *RC5In*, *Xin*, *Xout* |
 | `HPWM` | `pwm` module (hardware PWM) |
-| `Freqout` | `Pulse.Freqout(pin, ms, f1)` and `Pulse.Freqout(pin, ms, f1, f2)` of the `pulse` module (square waves; no sine) |
-| `Busin/Busout`, `I2Cin/I2Cout`, `Hbusin`, `Shin/Shout`, `Owrite/Oread`, `USBin`, `USBout`, `USBinit`, `USBpoll` | `i2c`, `spi` modules; `Shin`/`Shout` are `ShiftIn`/`ShiftOut` of the `shift` module; no 1-wire; no USB (no supported device has a USB peripheral) |
-| `Read`/`Write` EEPROM, `Edata`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; `EData` header line (the pre-loaded EEPROM image); `Const` arrays |
+| `Busin/Busout`, `I2Cin/I2Cout`, `I2cRead/I2cWrite`, `Hbusin` | `i2c` module (MSSP host); `spi` module for SPI |
+| `Shin/Shout`, `ShiftIn/ShiftOut` | `shift` module: *ShiftIn*, *ShiftOut*, *ShiftIn16*, *ShiftOut16* (any two pins, mode 0) |
+| `Owrite/Oread`, `OWin/OWout` | `onewire` module: *OwReset* (reset and presence), *OwWriteByte*, *OwReadByte*, *OwWriteBit*, *OwReadBit*, *OwSkip*, *OwSelect*, *OwSearchFirst*, *OwSearchNext*, *OwCrc8* |
+| `USBin`, `USBout`, `USBinit`, `USBpoll` | not available (no supported device has a USB peripheral) |
+| `Read`/`Write` EEPROM, `Edata`, `Data`, `Cdata`, `LookUp`, `LookDown` | `eeprom` module; *EData* header line (the pre-loaded EEPROM image); `Const` arrays |
 | `Branch`, `On GoTo` | `Branch index, l0, l1` and `On index GoTo l0, l1` (count from 0; out of range falls through) |
 | `On GoSub`, `GoSub`, `Return` | `GoSub label`, `On index GoSub l0, l1`, `Return` (labels of the same routine); `Call Name(args)` (same as `Name(args)`; `Call` is not reserved) |
 | `Select Case x` | `Select x` |
 | `Break`, `Continue`, `While/Wend`, `Repeat/Until`, `For/Next` | supported |
-| `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module; the routines return the new value instead of changing the argument, and `Swap` is `SwapNibbles` / `SwapBytes` |
+| `ClearBit`, `SetBit`, `LoadBit`, `GetBit`, `Rol`, `Ror`, `Swap`, `Dcd`, `Ncd`, `Dig`, `ISqr`, `Random`, `Seed` | `bits` module, one entry each; the routines return the new value instead of changing the argument, and `Swap` is *SwapNibbles* / *SwapBytes* |
 | `Cos`, `Sin`, `Sqr`, `Pow`, `Log2`, `Round` | compile-time only (constant expressions, see *Computing constants at build time*); the 8-bit run-time forms are `BSin`, `BCos`, `BAtn` and `BHyp` of the `bits` module (angles in 256 steps to the turn) |
-| `Tan`, `Log`, `Log10`, `Exp` | `FTan`, `FLog`, `FLog10`, `FExp` of the `fmath` module (also `FSqr`, `FSin`, `FCos`, `FPow`) |
+| `Tan`, `Log`, `Log10`, `Exp`, run-time `Sqr`, `Sin`, `Cos`, `Pow` on a `Float` | `fmath` module: *FTan*, *FLog*, *FLog10*, *FExp*, *FSqr*, *FSin*, *FCos*, *FPow* |
 | `Div32`, `@`, `?` | not available |
 | `Len`, `Left$`, `Mid$`, `Right$`, `Str$` | `Len(s)` of the `strings` module; `Left$`, `Mid$`, `Right$`, `Str$` as expressions (zero-based positions) and `Left`, `Mid`, `Right`, `Str` as statements; string arrays are `Dim s(3) As String(8)` |
 | `Tern` | `Tern(cond, a, b)` (only the chosen value is evaluated) |
