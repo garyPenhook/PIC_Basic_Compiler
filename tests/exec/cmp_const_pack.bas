@@ -1664,6 +1664,9 @@ Dim R1469 As Word
 Dim R1470 As Word
 Dim R1471 As Word
 
+' A store the compiler cannot know (PORTA) keeps every compare below generated (opt::global_value_sets)
+xWord = PORTA
+xLongWord = PORTA
 xWord = 0
 R1 = 0
 If xWord < 0 Then

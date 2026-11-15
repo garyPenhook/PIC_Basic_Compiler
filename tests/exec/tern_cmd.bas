@@ -33,6 +33,11 @@ Function Bump(ByVal n As Byte) As Byte
 End Function
 
 tn_a = Tern(x = 5, 10, 20)
+' Inc then Dec: the value is unchanged, but the compiler no longer knows it, so the code below is generated as written (opt::global_value_sets)
+Inc(x)
+Dec(x)
+Inc(w)
+Dec(w)
 tn_b = Tern(x <> 5, 10, 20)
 tn_c = Tern(x > 3, w + 700, 0)
 t = Tern(x < 9, True, False)

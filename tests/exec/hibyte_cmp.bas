@@ -986,6 +986,9 @@ Dim R868 As Byte
 Dim R869 As Byte
 Dim R870 As Byte
 
+' A store the compiler cannot know (PORTA) keeps every compare below generated (opt::global_value_sets)
+xw = PORTA
+xl = PORTA
 xw = 0
 R1 = 0
 If xw < 256 Then

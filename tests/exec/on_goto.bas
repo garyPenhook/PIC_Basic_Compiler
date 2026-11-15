@@ -12,6 +12,9 @@ Dim og_d As Byte
 Dim og_e As Byte
 
 i = 1
+' Inc then Dec: the value is unchanged, but the compiler no longer knows it, so the code below is generated as written (opt::global_value_sets)
+Inc(i)
+Dec(i)
 On (i + 0) GoTo l0, l1, l2
 og_a = 99
 Stop
@@ -50,6 +53,8 @@ og_c = 2
 done3:
 ' a Word index
 w = 3
+Inc(w)
+Dec(w)
 Branch w, p0, p1, p2, p3
 og_d = 1
 GoTo done4

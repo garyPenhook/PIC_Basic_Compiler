@@ -37,7 +37,7 @@ Sub WriteHundredths(ByVal v As Word)
     FmtDec(v / 100, 0, " ")
     OledWrite(FmtBuf)
     OledWrite(".")
-    FmtDec(Byte(v Mod 100), 2, "0")
+    FmtDec(v Mod 100, 2, "0")    ' Word, as above: one form of FmtDec is linked
     OledWrite(FmtBuf)
 End Sub
 
@@ -71,7 +71,8 @@ While True
     Else
         OledTextGoto(0, 5)
         OledWrite("Sensor error ")
-        OledWriteWord(st)
+        FmtDec(Word(st), 0, " ")
+        OledWrite(FmtBuf)
         OledWrite("  ")
     End If
     DelayMS(920)                ' with the 80 ms of the measurement: one reading a second

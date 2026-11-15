@@ -21,6 +21,9 @@ Sub Glyph(ByVal ch As Byte)
 End Sub
 wf_ch = 65
 wf_k = 3
+' Inc then Dec: the value is unchanged, but the compiler no longer knows it, so the code below is generated as written (opt::global_value_sets)
+Inc(wf_k)
+Dec(wf_k)
 If wf_k = 1 Then
     wf_r = 7
 ElseIf wf_k = 3 Then

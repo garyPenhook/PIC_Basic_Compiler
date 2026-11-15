@@ -280,6 +280,56 @@ fn examples_build() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// A global that every reachable store sets to a constant (`opt::global_value_sets`): a comparison that cannot
+/// be true for any of those values goes with its `If` arm, so a mode only an uncalled routine sets costs nothing.
+/// Each case writes $A5 to PORTA in the arm that tests for that mode; the arm must stay whenever the values are
+/// not all known.
+#[test]
+fn a_mode_no_reachable_code_sets_drops_its_branch() {
+    let out = scratch("valuesets");
+    let src = out.join("v.bas");
+    let asm = |decl: &str, extra: &str, body: &str| -> String {
+        let prog = format!(
+            "Program T\nDevice = 18F27Q10\n{decl}\nSub StartB()\n mode = 2\nEnd Sub\nSub StartA()\n mode = 1\nEnd Sub\n{extra}\nStartA()\n{body}\nIf mode = 2 Then\n PORTA = $A5\nElseIf mode = 1 Then\n PORTA = $3C\nEnd If\n"
+        );
+        std::fs::write(&src, prog).unwrap();
+        let r = Command::new(basil()).arg(&src).arg("-S").output().unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        std::fs::read_to_string(out.join("v.S")).unwrap().to_lowercase()
+    };
+    let byte = "Dim mode As Byte";
+    // StartB is never called: mode is 0 or 1, the test for 2 goes, the one for 1 stays.
+    let a = asm(byte, "", "");
+    assert!(!a.contains("0xa5") && a.contains("0x3c"), "{a}");
+    // Called: 2 is a value it can hold.
+    assert!(asm(byte, "", "StartB()").contains("0xa5"));
+    // Volatile, a store that is not a constant (here from a handler), Inc, an address taken, or a name in Asm: unknown.
+    assert!(asm("Volatile Dim mode As Byte", "", "").contains("0xa5"));
+    assert!(asm(byte, "Interrupt H()\n mode = PORTB\nEnd Interrupt\n", "Enable(H)").contains("0xa5"));
+    assert!(asm(byte, "", "Inc(mode)").contains("0xa5"));
+    assert!(asm(&format!("{byte}\nDim p As Word"), "", "p = AddressOf(mode)").contains("0xa5"));
+    assert!(asm(byte, "", "Asm\n movlw 2\n movwf T_MODE, c\nEnd Asm").contains("0xa5"));
+    // Linked with C (here an `Export` routine C may call): C code may write any global by name.
+    assert!(asm(byte, "Export Sub Poke()\n mode = 1\nEnd Sub\n", "").contains("0xa5"));
+}
+
+/// A helper that answers with `retlw` (the PIC16 string compare) moved into its only caller (`Acc`, called twice so it
+/// stays a routine) by
+/// `codegen::inline_single_calls` must not return from the caller: before the fix the `If` after the compare was lost and
+/// `hits` was never set.
+#[test]
+fn an_inlined_retlw_helper_does_not_return_from_its_caller() {
+    let out = scratch("inline_retlw");
+    let src = out.join("r.bas");
+    std::fs::write(&src, "Program T\nDevice = 16F17146\nClock = 32\nDim hits As Byte\nSub Acc(ByRefConst s As String(16))\n If s = \"hello\" Then\n  hits = 1\n End If\nEnd Sub\nAcc(\"hello\")\nAcc(\"hi\")\nPORTA = hits\n").unwrap();
+    let r = Command::new(basil()).arg(&src).arg("--keep-vars").arg("-S").output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("r.S")).unwrap();
+    let body: String = asm.lines().skip_while(|l| !l.starts_with("T_ACC:")).skip(1).take_while(|l| !l.starts_with("__") && !l.trim_start().starts_with("; helper") && !l.trim_start().starts_with("; Sub/Function")).collect::<Vec<_>>().join("\n");
+    assert!(!body.contains("retlw"), "{body}");
+    assert!(body.contains("movwf T_HITS"), "{body}");
+}
+
 #[test]
 fn reentrant_routines_use_a_software_stack_and_only_then() {
     let out = scratch("reentrant");

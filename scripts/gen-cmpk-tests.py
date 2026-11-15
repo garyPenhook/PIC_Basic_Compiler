@@ -8,7 +8,7 @@ OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b, ">": lambda a, b: a >
 W = ([0, 1, 255, 256, 999, 1000, 1001, 0x7FFF, 0x8000, 0xFFFE, 0xFFFF], [0, 1, 999, 1000, 1001, 255, 256, 65534, 65535])
 L = ([0, 1, 255, 65535, 65536, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFE, 0xFFFFFFFF], [0, 1, 65535, 65536, 0x123456, 0xFFFFFFFE, 0xFFFFFFFF])
 
-decls, body, expect = ["Dim hi As Byte", "Dim lo As Byte"], [], []
+decls, body, expect = ["Dim hi As Byte", "Dim lo As Byte"], ["' A store the compiler cannot know (PORTA) keeps every compare below generated (opt::global_value_sets)", "xWord = PORTA", "xLongWord = PORTA"], []
 n = 0
 
 def new(ty, cond=None, val=None):

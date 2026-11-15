@@ -8,6 +8,10 @@
 //! * A call of a routine that only returns a constant is replaced by the constant.
 //! * `specialize_best`: calls that pass constants get a private copy of the routine (so `PinOk(18)` and
 //!   `PinOk(17)` each fold to a constant); a copy is kept only when the generated program is smaller.
+//! * `global_value_sets`: a global every reachable store sets to a constant holds one of a few known values, so a
+//!   comparison that is the same for all of them is a constant (a bus mode that only an uncalled `Init` sets costs
+//!   nothing).
+//! * `pool_literals`: the RAM copies of string literals share one block, filled by one table copy at start-up.
 //!
 //! Together these turn `SerialInit(115200)` into a handful of register writes instead of a
 //! run-time 32-bit divide.
@@ -1101,6 +1105,222 @@ fn propagate_locals(p: &mut Program) -> bool {
             out.push(s);
         }
         *body = out;
+    }
+    changed
+}
+
+/// The routines the program can run: those the main program, an interrupt handler or C (`Export`, `Extern`)
+/// calls, those whose address is taken or that an `Asm` block names, and everything they call in turn.
+fn reachable_funcs(p: &Program) -> HashSet<FuncId> {
+    let mut seen: HashSet<FuncId> = reachable_otherwise(p);
+    seen.extend(p.isrs.iter().map(|(f, _)| *f));
+    seen.extend(p.ext_funcs.iter().copied());
+    for g in scan(&p.main.body).sites.into_keys() {
+        seen.insert(g);
+    }
+    let mut todo: Vec<FuncId> = seen.iter().copied().collect();
+    while let Some(f) = todo.pop() {
+        for g in scan(&p.funcs[f].body).sites.into_keys() {
+            if seen.insert(g) {
+                todo.push(g);
+            }
+        }
+    }
+    seen
+}
+
+/// Records, for each variable in `vals`, the constant stored by every write in `b`; a write that is not a
+/// constant store of the whole variable removes the variable (its values are then unknown).
+fn value_writes(b: &[S], vars: &[Var], vals: &mut HashMap<VarId, HashSet<u32>>) {
+    let lose = |pl: &Place, vals: &mut HashMap<VarId, HashSet<u32>>| {
+        if let Base::Var(v) | Base::Ptr(v) = pl.base {
+            vals.remove(&v);
+        }
+    };
+    for s in b {
+        match &s.st {
+            St::Assign(pl, e) => match (whole_var(pl, vars), e.as_const()) {
+                (Some(v), Some(k)) if e.w == pl.width() => {
+                    if let Some(set) = vals.get_mut(&v) {
+                        set.insert(k & mask(pl.width()));
+                    }
+                }
+                _ => lose(pl, vals),
+            },
+            St::Clear(pl) => match whole_var(pl, vars) {
+                Some(v) => {
+                    if let Some(set) = vals.get_mut(&v) {
+                        set.insert(0);
+                    }
+                }
+                None => lose(pl, vals),
+            },
+            St::Add(pl, _) | St::SetBit(pl, _) | St::ToggleBit(pl) | St::ClearMem(pl, _) | St::Direction { place: pl, .. } => lose(pl, vals),
+            St::Copy { dst, .. } | St::StrSet { dst, .. } => lose(dst, vals),
+            St::For { var, .. } => lose(var, vals),
+            St::Count { counter, step, .. } => {
+                lose(counter, vals);
+                if let Some((pl, _)) = step {
+                    lose(pl, vals);
+                }
+            }
+            St::Save { items, .. } => {
+                for i in items {
+                    if let SaveIt::Var(v) = i {
+                        vals.remove(v);
+                    }
+                }
+            }
+            // Argument places are the callee's parameters, but a global there must not be missed either.
+            St::Call(_, args) => {
+                for (pl, _) in args {
+                    lose(pl, vals);
+                }
+            }
+            // Every other kind writes no variable. Listed one by one, so a new kind of statement has to be decided here.
+            St::FlashSeek(..)
+            | St::If(..)
+            | St::While(..)
+            | St::Repeat(..)
+            | St::Break
+            | St::Continue
+            | St::Return
+            | St::Goto(_)
+            | St::GoSub(_)
+            | St::SubRet
+            | St::Label(_)
+            | St::Asm(_)
+            | St::DelayUs(_)
+            | St::DelayMs(_)
+            | St::Halt
+            | St::Int { .. } => {}
+        }
+        for sub in sub_blocks_of(&s.st) {
+            value_writes(sub, vars, vals);
+        }
+    }
+}
+
+/// Drops, at any depth, the arms of an `If` whose condition is a constant false, and makes a constant true one the
+/// `Else` (later arms go). An arm that holds a label, `Goto` or `GoSub` is kept with everything around it. An `If`
+/// left with no arm is replaced by its `Else` block.
+fn prune_const_ifs(b: &mut Vec<S>) -> bool {
+    let mut changed = false;
+    let mut out: Vec<S> = Vec::with_capacity(b.len());
+    for mut s in std::mem::take(b) {
+        for sub in blocks_mut(&mut s.st) {
+            changed |= prune_const_ifs(sub);
+        }
+        let decided = matches!(&s.st, St::If(arms, _) if arms.iter().any(|(c, _)| c.as_const().is_some()));
+        if decided
+            && !has_jump_target(std::slice::from_ref(&s))
+            && let St::If(arms, other) = &mut s.st
+        {
+            let mut kept = Vec::new();
+            for (c, blk) in std::mem::take(arms) {
+                match c.as_const() {
+                    Some(0) => {}
+                    Some(_) => {
+                        *other = blk;
+                        break;
+                    }
+                    None => kept.push((c, blk)),
+                }
+            }
+            changed = true;
+            if kept.is_empty() {
+                out.append(other);
+                continue;
+            }
+            *arms = kept;
+        }
+        out.push(s);
+    }
+    *b = out;
+    changed
+}
+
+/// A global that every reachable store sets to a constant holds one of a few known values: those constants and its
+/// start-up value (its `init`, or 0, since start-up clears the globals). A comparison of the variable with a constant
+/// that comes out the same for every one of them is that constant, and the `If` arms it decides go. So a module that
+/// picks its bus at run time (`If mode = 1 … ElseIf mode = 2`) loses the code for the bus the program never starts:
+/// `oled` over I2C drops its SPI path when `OledInitSpi`, the only store of 2, is never called.
+/// Only scalar globals (not `Volatile`, address never taken, not named in an `Asm` block), and nothing for a program
+/// that links with C (calls it or is called by it), which could write any global.
+fn global_value_sets(p: &mut Program) -> bool {
+    if p.c_link() || !p.cfiles.is_empty() {
+        return false;
+    }
+    let reach = reachable_funcs(p);
+    let mut vals: HashMap<VarId, HashSet<u32>> = HashMap::new();
+    for (i, v) in p.vars.iter().enumerate() {
+        let scalar = matches!(v.ty, Ty::Int(8 | 16 | 32, _) | Ty::Bool) && v.bytes * 8 == match v.ty {
+            Ty::Int(w, _) => w as u32,
+            _ => 8,
+        };
+        if v.kind == VarKind::Global && v.owner.is_none() && scalar && !v.volatile && !v.by_ref {
+            vals.insert(i, HashSet::from([v.init.unwrap_or(0) & mask((v.bytes * 8) as u8)]));
+        }
+    }
+    let mut all = Facts::default();
+    let mut lines: Vec<&String> = Vec::new();
+    let bodies: Vec<&Vec<S>> = p.funcs.iter().enumerate().filter(|(i, _)| reach.contains(i)).map(|(_, f)| &f.body).chain(std::iter::once(&p.main.body)).collect();
+    for b in &bodies {
+        w_block(&mut all, b);
+        collect_asm(b, &mut lines);
+        value_writes(b, &p.vars, &mut vals);
+    }
+    // An address taken anywhere, also in code not reached, keeps the variable out.
+    for f in &p.funcs {
+        let fx = scan(&f.body);
+        all.addr.extend(fx.addr);
+    }
+    let in_asm: HashSet<&str> = lines.iter().flat_map(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))).collect();
+    vals.retain(|v, set| !all.addr.contains(v) && set.len() <= 16 && !in_asm.contains(p.vars[*v].asm.as_str()));
+    if vals.is_empty() {
+        return false;
+    }
+    let vars = &p.vars;
+    let mut changed = false;
+    let mut decide = |e: &mut Ex| {
+        let ExK::Cmp(k, a, b) = &e.k else { return };
+        let (x, c, k) = match (&a.k, b.as_const()) {
+            (ExK::Load(_), Some(c)) => (a, c, *k),
+            _ => match (&b.k, a.as_const()) {
+                (ExK::Load(_), Some(c)) => (b, c, k.swap()),
+                _ => return,
+            },
+        };
+        let ExK::Load(pl) = &x.k else { return };
+        let Some(v) = whole_var(pl, vars) else { return };
+        let Some(set) = vals.get(&v) else { return };
+        if x.w != pl.width() || a.w != b.w {
+            return;
+        }
+        // Each value in place of the variable, compared by `fold` itself.
+        let signed = a.signed || b.signed;
+        let mut res = set.iter().map(|&val| {
+            let mut t = Ex::new(ExK::Cmp(k, Box::new(Ex::konst(val, x.w, signed)), Box::new(Ex::konst(c, x.w, signed))), e.w, e.signed);
+            fold(&mut t);
+            t.as_const()
+        });
+        let first = res.next().unwrap();
+        if first.is_some() && res.all(|r| r == first) {
+            *e = Ex::konst(first.unwrap(), e.w, e.signed);
+            changed = true;
+        }
+    };
+    for (fi, body) in p.funcs.iter_mut().enumerate().map(|(i, f)| (Some(i), &mut f.body)).chain(std::iter::once((None, &mut p.main.body))) {
+        if fi.is_some_and(|i| !reach.contains(&i)) {
+            continue;
+        }
+        m_block(body, &mut decide);
+    }
+    if changed {
+        for (_, body) in all_bodies(p) {
+            m_block(body, &mut fold);
+            prune_const_ifs(body);
+        }
     }
     changed
 }
@@ -2553,6 +2773,7 @@ fn optimize_core(p: &mut Program) {
         fold_all(p);
         changed |= const_result_calls(p);
         changed |= propagate_locals(p);
+        changed |= global_value_sets(p);
         changed |= drop_dead(p);
         if !changed {
             break;
@@ -2572,4 +2793,122 @@ fn optimize_post(p: &mut Program) {
         drop_dead(p);
     }
     free_loop_ends(p);
+    pool_literals(p);
+}
+
+/// The RAM copies of string literals (`__STRLITn`, made for `ByRefConst` arguments, see `lower::lit_place`) each cost a
+/// start-up copy of their own: TBLPTR and FSR0 set and a helper called, about 11 words a literal. When there are two
+/// or more, they become one block (`__STRLITS`, each literal at its offset with its Null) filled by one table copy at
+/// start-up. A literal nothing reads any more loses its copy. Each one's only write must be its start-up `StrSet` at the
+/// top level of the main program.
+fn pool_literals(p: &mut Program) {
+    let lits: HashSet<VarId> = p.vars.iter().enumerate().filter(|(_, v)| v.kind == VarKind::Hidden && v.name == "(string literal)" && v.owner.is_none()).map(|(i, _)| i).collect();
+    if lits.is_empty() {
+        return;
+    }
+    // The start-up copy of each literal: (statement index in the main body, variable, text).
+    let mut inits: Vec<(usize, VarId, Vec<u8>)> = Vec::new();
+    for (i, s) in p.main.body.iter().enumerate() {
+        if let St::StrSet { dst, parts, keep: false, .. } = &s.st
+            && let Base::Var(v) = dst.base
+            && lits.contains(&v)
+            && dst.off == 0
+            && dst.idx.is_none()
+            && let [StrSrc::Lit(b)] = parts.as_slice()
+            && b.len() as u32 + 1 == p.vars[v].bytes
+        {
+            inits.push((i, v, b.clone()));
+        }
+    }
+    // Everything else the program does with the literals, without their start-up copies.
+    let mut rest = Facts::default();
+    for f in &p.funcs {
+        w_block(&mut rest, &f.body);
+    }
+    for (i, s) in p.main.body.iter().enumerate() {
+        if !inits.iter().any(|(k, _, _)| *k == i) {
+            w_block(&mut rest, std::slice::from_ref(s));
+        }
+    }
+    let mut seen: HashSet<VarId> = HashSet::new();
+    inits.retain(|(_, v, _)| seen.insert(*v) && !rest.written.contains(v) && !rest.ptr_written.contains(v));
+    // Copies of literals nothing reads go; the others are pooled when there are two or more.
+    let (used, unused): (Vec<_>, Vec<_>) = inits.into_iter().partition(|(_, v, _)| rest.read.contains(v) || rest.addr.contains(v));
+    let mut drop: HashSet<usize> = unused.iter().map(|(i, _, _)| *i).collect();
+    if used.len() >= 2 {
+        let mut data: Vec<u8> = Vec::new();
+        let mut at: HashMap<VarId, u32> = HashMap::new();
+        for (_, v, b) in &used {
+            at.insert(*v, data.len() as u32);
+            data.extend_from_slice(b);
+            data.push(0);
+        }
+        let total = data.len() as u32;
+        let ty = Ty::Array(Box::new(Ty::Int(8, false)), total);
+        let pool = p.vars.len();
+        p.vars.push(Var { asm: "__STRLITS".into(), name: "(string literals)".into(), ty: ty.clone(), bytes: total, kind: VarKind::Hidden, owner: None, init: None, by_ref: false, volatile: false });
+        let f = p.flash.len();
+        p.flash.push(FlashObj { asm: "__STRLITS_F".into(), bytes: data });
+        let first = used[0].0;
+        drop.extend(used.iter().map(|(i, _, _)| *i));
+        drop.remove(&first);
+        let span = p.main.body[first].span;
+        // `Copy` moves 1 to 255 bytes: a longer block is copied in pieces of at most that.
+        let mut copies: Vec<S> = Vec::new();
+        let mut off = 0;
+        while off < total {
+            let n = (total - off).min(255);
+            let piece = Ty::Array(Box::new(Ty::Int(8, false)), n);
+            let place = |base: Base| Place { base, off, bit: None, idx: None, dbit: None, ty: piece.clone() };
+            copies.push(S { st: St::Copy { dst: place(Base::Var(pool)), src: place(Base::Flash(f)), bytes: n }, span });
+            off += n;
+        }
+        p.main.body.splice(first..=first, copies.iter().cloned());
+        // The statements after `first` moved by the extra pieces.
+        let extra = copies.len() - 1;
+        drop = drop.into_iter().map(|i| if i > first { i + extra } else { i }).collect();
+        let fix = |pl: &mut Place| {
+            if let Base::Var(v) = pl.base
+                && let Some(&o) = at.get(&v)
+            {
+                pl.base = Base::Var(pool);
+                pl.off += o;
+            }
+        };
+        fn src_fix(s: &mut StrSrc, fix: &dyn Fn(&mut Place)) {
+            match s {
+                StrSrc::Ram(p) => fix(p),
+                StrSrc::Lit(_) | StrSrc::Char(_) => {}
+                StrSrc::Cat { tmp, parts } => {
+                    fix(tmp);
+                    for q in parts {
+                        src_fix(q, fix);
+                    }
+                }
+            }
+        }
+        for (_, body) in all_bodies(p) {
+            stmt_places(body, &mut |pl| fix(pl), &mut |_| {});
+            m_block(body, &mut |e: &mut Ex| match &mut e.k {
+                ExK::Load(pl) | ExK::Addr(pl) => fix(pl),
+                ExK::Call(_, args) => {
+                    for (pl, _) in args {
+                        fix(pl);
+                    }
+                }
+                ExK::StrEq(a, b) => {
+                    src_fix(a, &fix);
+                    src_fix(b, &fix);
+                }
+                _ => {}
+            });
+        }
+    }
+    if !drop.is_empty() {
+        let mut i = 0;
+        p.main.body.retain(|_| {
+            i += 1;
+            !drop.contains(&(i - 1))
+        });
+    }
 }

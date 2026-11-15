@@ -19,6 +19,9 @@ Dim x As Byte
 Dim s As String(8)
 
 x = 5
+' Inc then Dec: the value is unchanged, but the compiler no longer knows it, so the code below is generated as written (opt::global_value_sets)
+Inc(x)
+Dec(x)
 s = "abc"
 If x == 5 Then
     a1 = 1

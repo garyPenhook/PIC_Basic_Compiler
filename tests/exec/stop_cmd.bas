@@ -11,6 +11,9 @@ Dim st_c As Byte
 st_a = 1
 st_b = 7
 st_c = 3
+' Inc then Dec: the value is unchanged, but the compiler no longer knows it, so the code below is generated as written (opt::global_value_sets)
+Inc(st_b)
+Dec(st_b)
 If st_b = 0 Then
     Stop
     st_c = 9

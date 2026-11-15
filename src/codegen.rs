@@ -6867,7 +6867,30 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
             if body.iter().any(|it| matches!(it, Item::Call(t) if body.iter().any(|b| matches!(b, Item::Label(l) if l == t)))) {
                 continue;
             }
+            // A `retfie` would leave the caller as well. A `retlw` that is not the last instruction becomes two (`movlw`,
+            // then the jump to the end), so a skip right before it would skip only the first: such a body stays a routine.
+            let op = |it: &Item| match it {
+                Item::Ins(t) => t.split_whitespace().next().map(str::to_string),
+                _ => None,
+            };
+            let skips = |m: &str| matches!(m, "btfsc" | "btfss" | "decfsz" | "dcfsnz" | "incfsz" | "infsnz" | "tstfsz" | "cpfseq" | "cpfsgt" | "cpfslt");
+            let tail = body.iter().rposition(|it| !matches!(it, Item::Comment(_) | Item::Fence));
+            let skipped_retlw = body.iter().enumerate().any(|(k, it)| {
+                op(it).as_deref() == Some("retlw") && Some(k) != tail && body[..k].iter().rev().find(|b| !matches!(b, Item::Comment(_) | Item::Fence)).and_then(op).is_some_and(|m| skips(&m))
+            });
+            if skipped_retlw || body.iter().any(|it| op(it).as_deref() == Some("retfie")) {
+                continue;
+            }
             let is_ret = |it: &Item| matches!(it, Item::Ins(t) if t.trim() == "return");
+            // `retlw k` (the PIC16 string compare hands its result back so) leaves `k` in W: inside the caller it is
+            // `movlw k`, which changes no flag either, then the jump to the end.
+            let retlw = |it: &Item| match it {
+                Item::Ins(t) => {
+                    let mut w = t.split_whitespace();
+                    (w.next() == Some("retlw")).then(|| w.collect::<Vec<_>>().join(" "))
+                }
+                _ => None,
+            };
             let last = body.iter().rposition(|it| !matches!(it, Item::Comment(_) | Item::Fence));
             let end = format!("_Lr{serial}");
             serial += 1;
@@ -6875,6 +6898,12 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
             let mut jumps = false;
             for (k, it) in body.iter().enumerate() {
                 if is_ret(it) {
+                    if Some(k) != last {
+                        inl.push(Item::Br(Cc::Always, end.clone()));
+                        jumps = true;
+                    }
+                } else if let Some(k_lit) = retlw(it) {
+                    inl.push(Item::Ins(format!("movlw {k_lit}")));
                     if Some(k) != last {
                         inl.push(Item::Br(Cc::Always, end.clone()));
                         jumps = true;

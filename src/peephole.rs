@@ -936,7 +936,8 @@ fn pass_wreg(items: &mut Vec<Item>, env: &Env) -> bool {
 
 /// Deletes `movwf v` when `v` is a compiler-placed byte (or a byte `v+k` of a compiler-placed variable) that nothing
 /// in the program reads, takes the address of or names any other way (typically a copy of `WREG` that `pass_wreg` made
-/// redundant to reload).
+/// redundant to reload). `setf v` goes too, and `clrf v` when nothing reads the Z flag it sets: a store of a constant
+/// (`opt::global_value_sets` folds `f = (b = 5)` to `f = 0`) must not keep a write-only variable alive.
 fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
     fn idents(t: &str) -> impl Iterator<Item = &str> {
         t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|s| !s.is_empty())
@@ -948,7 +949,7 @@ fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
         match it {
             Item::Ins(t) => {
                 if let Some((m, ops)) = parse(t)
-                    && m == "movwf"
+                    && (m == "movwf" || m == "setf" || (m == "clrf" && !flags_live(items, i, Z)))
                     && !keep[i]
                     && let Some(&whole) = ops.first()
                     && env.is_plain(whole)
@@ -6636,8 +6637,9 @@ mod tests {
     }
     #[test]
     fn p16_scratch_byte_just_stored_is_not_reloaded() {
-        // `movwf __A0` leaves W and `__A0` equal, so the reload goes; a later read of `__A0` is still a read.
-        let r = run16(&[ins("moviw 0[FSR0]"), ins("movwf __A0"), ins("movf __A0, w"), ins("movwf X"), ins("clrf X+1"), ins("movf __A0, w"), ins("xorwf Y, f"), Item::Fence]);
+        // `movwf __A0` leaves W and `__A0` equal, so the reload goes; a later read of `__A0` is still a read. (The `incf X, f`
+        // reads X, so its stores are not write-only.)
+        let r = run16(&[ins("moviw 0[FSR0]"), ins("movwf __A0"), ins("movf __A0, w"), ins("movwf X"), ins("clrf X+1"), ins("movf __A0, w"), ins("xorwf Y, f"), ins("incf X, f"), Item::Fence]);
         assert_eq!(r.iter().position(|t| t == "movf __A0, w"), Some(4), "{r:?}");
         assert!(r.contains(&"movwf X".to_string()), "{r:?}");
         // Something that writes W in between makes the reload real.

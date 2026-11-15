@@ -8,7 +8,7 @@ XS = [0, 1, 255, 256, 257, 511, 512, 513, 0x7FFF, 0x8000, 0xFEFF, 0xFF00, 0xFFFF
 CONSTS = [256, 255, 512, 511, 0xFF00, 0xFEFF, 0xFFFF, 1000]
 LONGS = [0, 1, 0x100, 0x10000, 0x1000000, 0x80000000]
 
-decls, body, expect = ["Dim xw As Word", "Dim xl As LongWord"], [], []
+decls, body, expect = ["Dim xw As Word", "Dim xl As LongWord"], ["' A store the compiler cannot know (PORTA) keeps every compare below generated (opt::global_value_sets)", "xw = PORTA", "xl = PORTA"], []
 n = 0
 
 def test(cond, val):

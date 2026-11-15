@@ -58,6 +58,9 @@ ElseIf arr(LATA) = 0 Then
     a5 = 1
 End If
 k = 42
+' Inc then Dec: the value is unchanged, but the compiler no longer knows it, so the code below is generated as written (opt::global_value_sets)
+Inc(k)
+Dec(k)
 If k = 1 Then
     a6 = 1
 ElseIf Txt() = "42" Then
