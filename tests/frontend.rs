@@ -49,6 +49,13 @@ fn header(path: &Path, key: &str) -> BTreeSet<String> {
     set
 }
 
+/// The text of every `' says:` header line: each must appear somewhere in the rendered
+/// diagnostics, so that help lines and notes are tested and not just codes.
+fn says(path: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap();
+    text.lines().take_while(|l| l.starts_with('\'')).filter_map(|l| l.trim_start_matches('\'').trim().strip_prefix("says:")).map(|r| r.trim().to_string()).collect()
+}
+
 fn bas_files(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "bas")).collect();
     v.sort();
@@ -81,6 +88,11 @@ fn negative_programs_report_the_expected_errors() {
         assert!(!want.is_empty(), "{} has no `' expect:` line", f.display());
         if o.errors != want {
             failures.push(format!("{}: got {:?}, wanted {:?}\n{}", f.display(), o.errors, want, o.rendered));
+        }
+        for line in says(f) {
+            if !o.rendered.contains(&line) {
+                failures.push(format!("{}: output does not contain {line:?}\n{}", f.display(), o.rendered));
+            }
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -155,4 +167,27 @@ fn damaged_input_never_panics() {
         }
     }
     assert!(runs > 1000);
+}
+
+/// Every example of `basil --explain`: the wrong program raises its code, the right one compiles
+/// without errors and without that code.
+#[test]
+fn explain_examples() {
+    let dir = std::env::temp_dir().join(format!("basil-explain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut failures = Vec::new();
+    for (i, e) in basil::explain::ENTRIES.iter().enumerate() {
+        for (text, want) in [(e.wrong, true), (e.right, false)] {
+            let prog = format!("Program T\nDevice = 18F27Q10\n{text}\nEnd\n");
+            let path = dir.join(format!("x{i}_{want}.bas"));
+            std::fs::write(&path, &prog).unwrap();
+            let o = check(&path);
+            let has = o.errors.contains(e.code) || o.warnings.contains(e.code);
+            if has != want || (!want && !o.errors.is_empty()) {
+                failures.push(format!("{} ({}):\n{prog}\n{}", e.code, if want { "wrong" } else { "right" }, o.rendered));
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

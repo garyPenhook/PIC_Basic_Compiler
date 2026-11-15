@@ -11,6 +11,10 @@ const { CANONICAL, ALIASES, KEYWORDS, DOCS } = require('../../vscode-extension/s
 
 // diagnostic line: file:line:col: error[E-CODE]: message
 const RE_DIAG = /^(.+?):(\d+):(\d+): (error|warning)\[([^\]]+)\]: (.*)$/;
+// Lines under a diagnostic: `  = help: ...`, `  = note: ...`, or a note with its own place.
+// Echoed source lines are indented four spaces, so they never match.
+const RE_HELP = /^ {2}= (help|note): (.*)$/;
+const RE_NOTE = /^(.+?):(\d+):(\d+): note: (.*)$/;
 // LSP kinds
 const K = { function: 12, variable: 13, constant: 21, struct: 23, module: 2, keyword: 14, event: 24, field: 5 };
 const TYPE_NAMES = ['Bit', 'Boolean', 'Byte', 'Char', 'Float', 'Integer', 'LongInt', 'LongWord', 'ShortInt', 'String', 'Word', 'SByte', 'SWord', 'Long', 'Dword'];
@@ -86,7 +90,18 @@ function runCheck(uri, file, cleanup) {
     const real = uriToPath(uri);
     const lines = (docs.get(uri) || '').split(/\r?\n/);
     const byFile = new Map();
+    let last = null;
     for (const raw of (stdout + '\n' + stderr).split(/\r?\n/)) {
+      const h = last && RE_HELP.exec(raw);
+      if (h) { last.message += `\n${h[1]}: ${h[2]}`; continue; }
+      const n = last && RE_NOTE.exec(raw);
+      if (n) {
+        let nf = path.resolve(cwd, n[1]);
+        if (nf === file) nf = real;
+        const at = { line: Math.max(0, +n[2] - 1), character: Math.max(0, +n[3] - 1) };
+        (last.relatedInformation = last.relatedInformation || []).push({ location: { uri: pathToUri(nf), range: { start: at, end: at } }, message: n[4] });
+        continue;
+      }
       const m = RE_DIAG.exec(raw);
       if (!m) continue;
       let f = path.resolve(cwd, m[1]);
@@ -98,6 +113,7 @@ function runCheck(uri, file, cleanup) {
         range: { start: { line: ln, character: col }, end: { line: ln, character: col + (w ? w[0].length : Math.max(1, text.length - col)) } },
         severity: m[4] === 'error' ? 1 : 2, code: m[5], source: 'basil', message: m[6],
       };
+      last = d;
       if (!byFile.has(f)) byFile.set(f, []);
       byFile.get(f).push(d);
     }

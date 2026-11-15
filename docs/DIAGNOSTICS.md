@@ -4,6 +4,18 @@ Every message carries a stable code, shown as `error[E-TYPE]` / `warning[W-NARRO
 codes, not on wording. Warnings can be switched off with `#option Warn.<id> = false` (for example
 `Warn.Narrow`); `#option Strict = true` turns `W-NARROW` into the error `E-NARROW`.
 
+A message is printed as `file:line:col: error[CODE]: text`, then the source line with the word at
+fault underlined, then `  = help: ...` lines (a suggested fix, such as "did you mean `counter`?")
+and notes: `file:line:col: note: ...` with its own source line when the note has a place, or
+`  = note: ...` when it has none (source lines are indented four spaces, so a `  = ` line is
+never program text). Only the first line has the `error[` / `warning[` shape that editors
+and problem matchers look for. A negative test can check the text with `' says: <text>` header lines,
+each of which must appear somewhere in the output.
+
+`basil --explain CODE` prints a code's row from this table and, for the commonest codes, a longer
+explanation with a program that raises it and the corrected program (`src/explain.rs`; the test
+`explain_examples` compiles both).
+
 ## Source text
 | Code | Meaning |
 |---|---|
@@ -19,7 +31,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 | Code | Meaning |
 |---|---|
 | E-NODEVICE, E-DEVICE | No `Device`, or no description file for it / it disagrees |
-| E-CLOCK | `Clock` not a positive number, or two different values |
+| E-CLOCK | `Clock` not a positive number, two different values, or a value of 1000 or more (a speed in Hz where MHz is meant) |
 | W-CLOCK | `Clock` differs from the speed `RSTOSC` starts the part at and nothing sets the oscillator (`Include "intosc"` or a write to `OSCFRQ` / `OSCCON1`); see `docs/CLOCK.md` |
 | E-CONFIG | Unknown configuration setting or value, setting given twice |
 | E-INCLUDE | Module not found, include cycle, name mismatch, program included |

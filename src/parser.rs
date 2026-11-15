@@ -16,6 +16,64 @@ pub struct Parser<'a> {
     diags: &'a mut Diagnostics,
     next_id: &'a mut NodeId,
     bare_not_cmp: Vec<NodeId>,
+    /// The statement blocks open at the cursor, outermost first: the opening word as written
+    /// in messages (`For`), where it starts, and the words that may close it.
+    open: Vec<Open>,
+    /// Where the declaration being parsed starts, for "the `Sub` starts here".
+    decl_start: Span,
+    /// Set when a closing word for an outer block was met inside an inner one: the inner
+    /// blocks give up quietly (no further errors, no skipping) until the block it closes
+    /// takes it.
+    unwinding: bool,
+    /// Set when the wrong closing word (`Next` for a `While`) was taken as the innermost
+    /// block's end: its `expect_block_end` then succeeds once without another error.
+    substituted: bool,
+}
+
+struct Open {
+    word: &'static str,
+    span: Span,
+    stops: Vec<&'static str>,
+}
+
+/// The line a designator starts on.
+fn span_line(d: &Designator) -> u32 {
+    d.head.span.line
+}
+
+/// The closing word used here for a spelling of other languages (`End While` is `Wend`).
+fn native_closer(w: &str) -> Option<&'static str> {
+    match w {
+        "endwhile" => Some("wend"),
+        "endfor" => Some("next"),
+        "enddo" => Some("loop"),
+        "endrepeat" => Some("until"),
+        _ => None,
+    }
+}
+
+/// The block a closing word belongs to: `Next` closes a `For`.
+fn opener_of(closer: &str) -> &'static str {
+    match closer {
+        "next" => "For",
+        "wend" | "endwhile" => "While",
+        "endfor" => "For",
+        "enddo" => "Do",
+        "endrepeat" => "Repeat",
+        "until" => "Repeat",
+        "loop" => "Do",
+        "endif" | "else" | "elseif" => "If",
+        "endselect" | "case" => "Select",
+        "restore" => "Save",
+        "endsub" => "Sub",
+        "endfunction" => "Function",
+        "endproc" => "Proc",
+        "endinterrupt" => "Interrupt",
+        "endevent" => "Event",
+        "endstructure" => "Structure",
+        "endasm" => "Asm",
+        _ => "block",
+    }
 }
 
 const DECL_STARTERS: &[&str] =
@@ -24,7 +82,7 @@ const DECL_STARTERS: &[&str] =
 const TYPE_KEYWORDS: &[&str] = &["boolean", "bit", "byte", "shortint", "word", "integer", "longword", "longint", "float", "char", "string"];
 
 pub fn parse_unit(file: u32, toks: Vec<Token>, diags: &mut Diagnostics, next_id: &mut NodeId) -> Unit {
-    let mut p = Parser { toks, pos: 0, file, diags, next_id, bare_not_cmp: Vec::new() };
+    let mut p = Parser { toks, pos: 0, file, diags, next_id, bare_not_cmp: Vec::new(), open: Vec::new(), decl_start: Span::default(), unwinding: false, substituted: false };
     let mut unit = p.unit();
     unit.bare_not_cmp = std::mem::take(&mut p.bare_not_cmp);
     unit
@@ -103,10 +161,19 @@ impl<'a> Parser<'a> {
         let sp = self.span();
         // A lexical error on this line already explains the problem; do not pile a syntax error on it.
         let lexed = self.diags.items.iter().any(|d| d.code == "E-LEX" && d.span.file == sp.file && d.span.line == sp.line);
-        if !lexed {
+        // While unwinding to an outer block the closing word has been reported already.
+        if !lexed && !self.unwinding {
             self.diags.error(code, sp, msg);
         }
         Err(())
+    }
+    /// An E-SYNTAX error with a suggested fix, unless the line already has a lexical error
+    /// (which explains it) or the parser is unwinding to an outer block.
+    fn hint(&mut self, sp: Span, msg: impl Into<String>, help: impl Into<String>) {
+        let lexed = self.diags.items.iter().any(|d| d.code == "E-LEX" && d.span.file == sp.file && d.span.line == sp.line);
+        if !lexed && !self.unwinding {
+            self.diags.error_with("E-SYNTAX", sp, msg).help(help);
+        }
     }
     fn expected<T>(&mut self, what: &str) -> PResult<T> {
         let found = self.describe();
@@ -152,6 +219,9 @@ impl<'a> Parser<'a> {
     }
     /// Ends a statement or declaration.
     fn end_stmt(&mut self) -> PResult<()> {
+        if self.unwinding {
+            return Ok(());
+        }
         if self.at_eol() {
             if !self.at_eof() {
                 self.bump();
@@ -193,6 +263,11 @@ impl<'a> Parser<'a> {
                     Tok::Kw("interrupt") => "endinterrupt",
                     Tok::Kw("event") => "endevent",
                     Tok::Kw("asm") => "endasm",
+                    // Not a closing word here (`Wend` is); recognised so that it is reported as such.
+                    Tok::Kw("while") => "endwhile",
+                    Tok::Kw("for") => "endfor",
+                    Tok::Kw("do") => "enddo",
+                    Tok::Kw("repeat") => "endrepeat",
                     _ => return Some(("end", 1)),
                 };
                 Some((w, 2))
@@ -201,6 +276,13 @@ impl<'a> Parser<'a> {
         }
     }
     fn expect_block_end(&mut self, word: &str) -> PResult<()> {
+        if self.unwinding {
+            return Ok(());
+        }
+        if self.substituted {
+            self.substituted = false;
+            return Ok(());
+        }
         match self.block_word() {
             Some((w, n)) if w == word => {
                 for _ in 0..n {
@@ -212,6 +294,88 @@ impl<'a> Parser<'a> {
                 let found = self.describe();
                 self.fail("E-SYNTAX", format!("expected `{}`, found {found}", pretty_word(word)))
             }
+        }
+    }
+
+    /// True when `w` closes a block outside the innermost open one (or is the program's
+    /// final `End`), so that the innermost block was left unclosed.
+    fn closes_outer(&self, w: &str) -> bool {
+        // Only a bare `End` is the final one; `End Foo` with an unknown word is not.
+        (w == "end" && matches!(self.peek_at(1), Tok::Newline | Tok::Eof | Tok::Colon)) || self.open.iter().rev().skip(1).any(|o| o.stops.contains(&w))
+    }
+
+    /// A closing word `w` at `sp` that the innermost open block does not take. When it closes
+    /// an outer block, the inner one is reported as unclosed and the parser unwinds to the
+    /// outer block; otherwise the word is reported as having no block to close.
+    fn stray_closer(&mut self, w: &'static str, sp: Span) {
+        let found = pretty_word(w);
+        let inner = self.open.last().map(|o| (o.word, o.span, *o.stops.last().unwrap()));
+        match inner {
+            Some((word, at, closer)) if self.closes_outer(w) => {
+                let close = pretty_word(closer);
+                self.diags
+                    .error_with("E-SYNTAX", sp, format!("`{found}` found while the `{word}` on line {} is still open", at.line))
+                    .note(at, format!("this `{word}` needs its `{close}` before the `{found}`"));
+                self.unwinding = true;
+            }
+            Some((word, at, closer)) => {
+                let close = pretty_word(closer);
+                let owner = opener_of(w);
+                // A final closing word of the wrong kind (`Next` for a `While`) is most likely
+                // meant to close the innermost block: take it as that, so the block's own end
+                // does not give a second error. `Until` is left alone (a condition follows it).
+                // A `Select` is never closed this way: its `Case` arms go on after a body.
+                let ends = ["next", "wend", "loop", "endif", "restore"];
+                let native = native_closer(w);
+                let take = closer != "until" && ((owner != word && ends.contains(&w) && ends.contains(&closer)) || native == Some(closer));
+                let msg = if let Some(n) = native.filter(|n| *n == closer) {
+                    format!("`{found}` is written `{}` here", pretty_word(n))
+                } else if let Some(n) = native {
+                    format!("`{found}` has no `{owner}` to close (a `{owner}` ends with `{}`): the innermost open block is the `{word}` on line {}, closed by `{close}`", pretty_word(n), at.line)
+                } else if owner == word {
+                    format!("unexpected `{found}`")
+                } else { format!("`{found}` has no `{owner}` to close: the innermost open block is the `{word}` on line {}, closed by `{close}`", at.line) };
+                let d = self.diags.error_with("E-SYNTAX", sp, msg);
+                d.note(at, format!("the `{word}` starts here"));
+                if take {
+                    d.help(format!("write `{close}` here to close the `{word}`"));
+                    self.substituted = true;
+                }
+            }
+            None => {
+                let owner = opener_of(w);
+                self.diags.error("E-SYNTAX", sp, format!("`{found}` has no `{owner}` to close"));
+            }
+        }
+    }
+
+    /// True while unwinding with the cursor on the closing word (or the end of the file) that
+    /// started it, so a loop may go round again without skipping. Anywhere else unwinding is
+    /// given up, so that a loop never spins on a token it cannot read.
+    fn unwinding_here(&mut self) -> bool {
+        if self.unwinding && (self.at_eof() || self.block_word().is_some()) {
+            return true;
+        }
+        self.unwinding = false;
+        false
+    }
+
+    /// The end of the file inside a block that needs one of `stops`.
+    fn unclosed_at_eof(&mut self, stops: &[&str]) -> PResult<()> {
+        // `If` waits for `ElseIf`, `Else` or `End If`; only the last one closes it.
+        let want = stops.last().map(|s| format!("`{}`", pretty_word(s))).unwrap_or_default();
+        let sp = self.span();
+        match self.open.last().map(|o| (o.word, o.span)) {
+            Some((word, at)) if !self.unwinding => {
+                self.diags
+                    .error_with("E-SYNTAX", sp, format!("the `{word}` on line {} is not closed: expected {want} before the end of the file", at.line))
+                    .note(at, format!("the `{word}` starts here"));
+                // One report for the innermost block; the outer ones are unclosed for the same reason.
+                self.unwinding = true;
+                Err(())
+            }
+            Some(_) => Err(()),
+            None => self.fail("E-SYNTAX", format!("block is not closed: expected {want} before the end of the file")),
         }
     }
 
@@ -293,6 +457,7 @@ impl<'a> Parser<'a> {
                     self.end_stmt()?;
                     unit.includes.push(Include { name, span: sp });
                 } else if self.at_kw("end") && self.block_word().is_some_and(|(w, _)| w == "end") {
+                    self.unwinding = false;
                     self.bump();
                     self.skip_blank();
                     if !self.at_eof() {
@@ -300,6 +465,10 @@ impl<'a> Parser<'a> {
                         self.diags.error("E-SYNTAX", self.span(), format!("unexpected {found} after the final `End`"));
                     }
                     self.pos = self.toks.len() - 1;
+                } else if let Some((w, _)) = self.block_word().filter(|(w, _)| *w != "end") {
+                    // A closing word with no block open (`Next` with no `For`).
+                    self.stray_closer(w, sp);
+                    return Err(());
                 } else if self.starts_decl() {
                     if phase == 3 {
                         self.diags.error("E-ORDER", sp, "declarations must come before the first executable statement");
@@ -315,6 +484,13 @@ impl<'a> Parser<'a> {
                 Ok(())
             })();
             if r.is_err() {
+                if self.unwinding_here() {
+                    // Unwound to here: the closing word is read again by this loop.
+                    if self.at_eof() || self.block_word().is_some_and(|(w, _)| w == "end") {
+                        continue;
+                    }
+                    self.unwinding = false;
+                }
                 self.sync();
                 if self.pos == start {
                     self.bump();
@@ -422,6 +598,7 @@ impl<'a> Parser<'a> {
 
     fn decl(&mut self) -> PResult<Decl> {
         let span = self.span();
+        self.decl_start = span;
         let vis = if self.eat_kw("public") {
             Some(Vis::Public)
         } else if self.eat_kw("private") {
@@ -614,6 +791,18 @@ impl<'a> Parser<'a> {
                             let e = self.expr()?;
                             self.expect_punct(")")?;
                             Some(Box::new(e))
+                        } else if self.at_punct("*") {
+                            // `String * 8` is the fixed-length form of other BASICs: report it with
+                            // the spelling here and read it as `String(8)`, so the variable exists.
+                            let sp = self.span();
+                            self.bump();
+                            let e = self.primary()?;
+                            let n = match &e.kind {
+                                ExprKind::Int(v) => v.to_string(),
+                                _ => "n".to_string(),
+                            };
+                            self.hint(sp, "a string's size is written in parentheses", format!("write `String({n})`"));
+                            Some(Box::new(e))
                         } else {
                             None
                         };
@@ -773,23 +962,35 @@ impl<'a> Parser<'a> {
     }
 
     /// Local declarations, then statements, up to and including the block-ending word.
-    fn body(&mut self, end: &str) -> PResult<Body> {
+    fn body(&mut self, end: &'static str) -> PResult<Body> {
+        let word = opener_of(end);
+        self.open.push(Open { word, span: self.decl_start, stops: vec![end] });
+        let r = self.body_inner(end);
+        self.open.pop();
+        r
+    }
+
+    fn body_inner(&mut self, end: &'static str) -> PResult<Body> {
         let mut decls = Vec::new();
         let mut stmts = Vec::new();
         loop {
             self.skip_blank();
             if self.at_eof() {
-                return self.expected(&format!("`{}`", pretty_word(end)));
+                self.unclosed_at_eof(&[end])?;
             }
             if matches!(self.block_word(), Some((w, _)) if w == end) {
+                self.unwinding = false;
                 break;
+            }
+            if self.unwinding && self.block_word().is_some_and(|(w, _)| self.closes_outer(w)) {
+                // The final `End` of the program: this routine was never closed. Keep what was read.
+                return Ok(Body { decls, stmts });
             }
             let start = self.pos;
             let sp = self.span();
             let r: PResult<()> = (|| {
                 if let Some((w, _)) = self.block_word() {
-                    let msg = format!("unexpected `{}`", pretty_word(w));
-                    self.diags.error("E-SYNTAX", sp, msg);
+                    self.stray_closer(w, sp);
                     return Err(());
                 }
                 if self.starts_decl() {
@@ -810,6 +1011,9 @@ impl<'a> Parser<'a> {
                 Ok(())
             })();
             if r.is_err() {
+                if self.unwinding_here() {
+                    continue;
+                }
                 self.sync();
                 if self.pos == start {
                     self.bump();
@@ -824,27 +1028,46 @@ impl<'a> Parser<'a> {
     // ---- statements ----------------------------------------------------------------------
 
     /// Statements up to (not including) one of the `stops` words.
-    fn block(&mut self, stops: &[&str]) -> PResult<Vec<Stmt>> {
+    fn block(&mut self, stops: &[&'static str]) -> PResult<Vec<Stmt>> {
+        // A wrong closing word is taken only by the block it was met in.
+        self.substituted = false;
+        // The innermost open block (pushed by `stmt`) now waits for these words.
+        if let Some(o) = self.open.last_mut() {
+            o.stops = stops.to_vec();
+        }
         let mut out = Vec::new();
         loop {
             self.skip_blank();
             if self.at_eof() {
-                let want = stops.iter().map(|s| format!("`{}`", pretty_word(s))).collect::<Vec<_>>().join(" or ");
-                return self.fail("E-SYNTAX", format!("block is not closed: expected {want} before the end of the file"));
+                self.unclosed_at_eof(stops)?;
             }
             let start = self.pos;
             let sp = self.span();
             if let Some((w, _)) = self.block_word() {
                 if stops.contains(&w) {
+                    self.unwinding = false;
                     return Ok(out);
                 }
-                self.diags.error("E-SYNTAX", sp, format!("unexpected `{}`", pretty_word(w)));
+                if self.unwinding {
+                    // Closed by an outer block's word: keep the statements read so far.
+                    return Ok(out);
+                }
+                self.stray_closer(w, sp);
+                if self.unwinding {
+                    return Ok(out);
+                }
                 self.sync();
+                if self.substituted {
+                    return Ok(out);
+                }
                 continue;
             }
             match self.stmt() {
                 Ok(s) => out.push(s),
                 Err(()) => {
+                    if self.unwinding_here() {
+                        continue;
+                    }
                     self.sync();
                     if self.pos == start {
                         self.bump();
@@ -855,6 +1078,25 @@ impl<'a> Parser<'a> {
     }
 
     fn stmt(&mut self) -> PResult<Stmt> {
+        let word = match self.peek() {
+            Tok::Kw("if") => Some("If"),
+            Tok::Kw("select") => Some("Select"),
+            Tok::Kw("while") => Some("While"),
+            Tok::Kw("repeat") => Some("Repeat"),
+            Tok::Kw("do") => Some("Do"),
+            Tok::Kw("for") => Some("For"),
+            Tok::Kw("save") => Some("Save"),
+            _ => None,
+        };
+        let Some(word) = word else { return self.stmt_inner() };
+        let depth = self.open.len();
+        self.open.push(Open { word, span: self.span(), stops: Vec::new() });
+        let r = self.stmt_inner();
+        self.open.truncate(depth);
+        r
+    }
+
+    fn stmt_inner(&mut self) -> PResult<Stmt> {
         let span = self.span();
         let kind = match self.peek().clone() {
             Tok::Kw("if") => self.if_stmt()?,
@@ -889,6 +1131,11 @@ impl<'a> Parser<'a> {
                 self.end_stmt()?;
                 let body = self.block(&["next"])?;
                 self.expect_block_end("next")?;
+                if !self.unwinding && !self.at_eol() && matches!(self.peek(), Tok::Ident(_)) {
+                    let sp = self.span();
+                    self.hint(sp, "`Next` is written without the loop variable", format!("write `Next` alone; it closes the `For` on line {}", span_line(&var)));
+                    self.sync();
+                }
                 self.end_stmt()?;
                 StmtKind::For { var, from, to, step, body }
             }
@@ -904,11 +1151,24 @@ impl<'a> Parser<'a> {
             }
             Tok::Kw("exit" | "exitproc") => {
                 self.bump();
+                if let Tok::Kw(k @ ("for" | "do" | "while" | "sub" | "function")) = self.peek().clone() {
+                    let sp = self.span();
+                    self.bump();
+                    let (fix, why) = if matches!(k, "for" | "do" | "while") { ("Break", "`Break` leaves the innermost loop; `Exit` leaves the whole routine") } else { ("Exit", "`Exit` alone leaves the current routine") };
+                    self.hint(sp, format!("`Exit {}` is not a statement here", crate::suggest::pretty(k)), format!("write `{fix}`: {why}"));
+                    self.end_stmt()?;
+                    return Ok(Stmt { span, kind: if fix == "Break" { StmtKind::Break } else { StmtKind::Exit } });
+                }
                 self.end_stmt()?;
                 StmtKind::Exit
             }
             Tok::Kw("goto") => {
                 self.bump();
+                if matches!(self.peek(), Tok::Int(_)) {
+                    let sp = self.span();
+                    self.hint(sp, "`GoTo` needs a label name, not a line number", "put a label on its own line (`Again:`) and write `GoTo Again`");
+                    return Err(());
+                }
                 let l = self.ident()?;
                 self.end_stmt()?;
                 StmtKind::GoTo(l)
@@ -1009,6 +1269,13 @@ impl<'a> Parser<'a> {
                 self.end_stmt()?;
                 StmtKind::Select { subject, cases, otherwise: None }
             }
+            // `Let x = 1`: report it and read the assignment.
+            Tok::Ident(w) if w.eq_ignore_ascii_case("let") && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Punct("=" | "(" | ".")) => {
+                let sp = self.span();
+                self.bump();
+                self.hint(sp, "`Let` is not used here", "leave it out: an assignment is written `x = 1`");
+                return self.stmt_inner();
+            }
             // `Call Name(args)`: the same as `Name(args)`. `Call` is not reserved: a variable or routine of that name still works.
             Tok::Ident(w) if w.eq_ignore_ascii_case("call") && matches!(self.peek_at(1), Tok::Ident(_)) => {
                 self.bump();
@@ -1028,6 +1295,10 @@ impl<'a> Parser<'a> {
                     self.end_stmt()?;
                     StmtKind::Assign { target: d, value }
                 } else {
+                    // A hint explains the line; the statement is dropped so it gives no second error.
+                    if !self.at_eol() && !self.unwinding && self.statement_shape_hint(&d) {
+                        return Err(());
+                    }
                     self.end_stmt()?;
                     StmtKind::Call(d)
                 }
@@ -1043,6 +1314,47 @@ impl<'a> Parser<'a> {
             _ => return self.expected("a statement"),
         };
         Ok(Stmt { span, kind })
+    }
+
+    /// After a designator statement that is followed by more than the end of the line: the
+    /// forms other languages use for `x += 1`, `x++` and `Print x`, reported with the spelling
+    /// here; true when one was given. The caller's `end_stmt` reports anything else.
+    fn statement_shape_hint(&mut self, d: &Designator) -> bool {
+        let name = d.head.name.clone();
+        let sp = self.span();
+        let op = match (self.peek(), self.peek_at(1)) {
+            (Tok::Punct(o @ ("+" | "-" | "*" | "/")), Tok::Punct("=")) => Some(*o),
+            _ => None,
+        };
+        if let Some(o) = op {
+            let extra = match o {
+                "+" => format!(" (or `Inc({name}, …)`)"),
+                "-" => format!(" (or `Dec({name}, …)`)"),
+                _ => String::new(),
+            };
+            self.hint(sp, format!("`{o}=` is not an operator here"), format!("write `{name} = {name} {o} …`{extra}"));
+            self.sync();
+            return true;
+        }
+        if let (Tok::Punct(o @ ("+" | "-")), Tok::Punct(o2)) = (self.peek(), self.peek_at(1))
+            && o == o2
+        {
+            let f = if *o == "+" { "Inc" } else { "Dec" };
+            self.hint(sp, format!("`{o}{o}` is not an operator here"), format!("write `{f}({name})`"));
+            self.sync();
+            return true;
+        }
+        // `High 1`, `Print x`: a call with its arguments not in parentheses.
+        if d.parts.is_empty() && matches!(self.peek(), Tok::Ident(_) | Tok::Int(_) | Tok::Float(_) | Tok::Str(_) | Tok::CharCode(_)) {
+            let shown = match crate::lexer::keyword(&name.to_ascii_lowercase()) {
+                Some(k) => crate::suggest::pretty(k),
+                None => name.clone(),
+            };
+            self.hint(sp, format!("unexpected {} after `{shown}`", self.describe()), format!("a call puts its arguments in parentheses: `{shown}(…)`"));
+            self.sync();
+            return true;
+        }
+        false
     }
 
     /// Whether a `GoTo` comes before the end of the line (`On n GoTo ...`, where `On` may be followed by a parenthesis).
@@ -1086,7 +1398,7 @@ impl<'a> Parser<'a> {
         }
         let mut arms = Vec::new();
         let mut otherwise = None;
-        self.expect_kw("then")?;
+        self.then_or_eol()?;
         if !self.at_eol() {
             return self.fail("E-SYNTAX", "a single-line `If … Then statement` is not supported; put the statements on their own lines, or use `If … GoTo label`");
         }
@@ -1099,7 +1411,17 @@ impl<'a> Parser<'a> {
                 Some(("elseif", _)) => {
                     self.bump();
                     cur = self.expr()?;
-                    self.expect_kw("then")?;
+                    self.then_or_eol()?;
+                    self.end_stmt()?;
+                }
+                Some(("else", _)) if matches!(self.peek_at(1), Tok::Kw("if")) => {
+                    // `Else If` as two words: read it as `ElseIf`, which is what it means.
+                    let sp = self.span();
+                    self.bump();
+                    self.bump();
+                    self.hint(sp, "`Else If` is written as one word here", "write `ElseIf`; two words would open a second `If` that needs its own `End If`");
+                    cur = self.expr()?;
+                    self.then_or_eol()?;
                     self.end_stmt()?;
                 }
                 Some(("else", _)) => {
@@ -1119,8 +1441,28 @@ impl<'a> Parser<'a> {
         Ok(StmtKind::If { arms, otherwise })
     }
 
+    /// `Then` after an `If` or `ElseIf` condition. A missing `Then` at the end of the line is
+    /// reported and the `If` read on as if it were there, so its body and `End If` do not
+    /// give errors of their own.
+    fn then_or_eol(&mut self) -> PResult<()> {
+        if self.eat_kw("then") {
+            return Ok(());
+        }
+        if self.at_eol() && !self.unwinding {
+            let sp = self.span();
+            self.hint(sp, "expected `Then` at the end of the condition", "an `If` condition ends with `Then`: `If x = 3 Then`, with the statements on the lines below and `End If` after them");
+            return Ok(());
+        }
+        self.expected("`Then`")
+    }
+
     fn select_stmt(&mut self) -> PResult<StmtKind> {
         self.bump();
+        if self.at_kw("case") {
+            let sp = self.span();
+            self.bump();
+            self.hint(sp, "`Select` is followed by the value itself", "write `Select x`, without `Case`; each branch below still starts with `Case`");
+        }
         let subject = self.expr()?;
         self.end_stmt()?;
         let mut cases = Vec::new();
@@ -1199,7 +1541,10 @@ impl<'a> Parser<'a> {
         self.end_stmt()?;
         let body = self.block(&["loop"])?;
         self.expect_block_end("loop")?;
-        let bottom = if self.eat_kw("until") {
+        // While unwinding, an `Until` here closes an outer `Repeat`, not this loop.
+        let bottom = if self.unwinding {
+            None
+        } else if self.eat_kw("until") {
             Some((true, self.expr()?))
         } else if self.eat_kw("while") {
             Some((false, self.expr()?))
@@ -1382,6 +1727,9 @@ impl<'a> Parser<'a> {
 }
 
 fn pretty_word(w: &str) -> String {
+    if w == "elseif" {
+        return "ElseIf".into();
+    }
     match w.strip_prefix("end") {
         Some(rest) if !rest.is_empty() && w != "end" => {
             let mut c = rest.chars();

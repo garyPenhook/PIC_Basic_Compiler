@@ -342,6 +342,15 @@ pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
                 } else if let Some(p) = ["(", ")", ",", ".", "=", "<", ">", "+", "-", "*", "/", "@"].iter().find(|p| p.starts_with(c)) {
                     adv!();
                     toks.push(Token { tok: Tok::Punct(p), span: sp });
+                } else if let Some((sym, word)) = [("&&", "and"), ("||", "or"), ("&", "and"), ("|", "or"), ("!", "not"), ("~", "not"), ("^", "xor")].iter().find(|(p, _)| two.starts_with(p)) {
+                    // Operators of C and other BASICs: one error naming the word, then read
+                    // as that word, so the rest of the expression is still checked.
+                    let shown = crate::suggest::pretty(word);
+                    diags.error_with("E-LEX", sp, format!("`{sym}` is not an operator here")).help(format!("write `{shown}`"));
+                    for _ in 0..sym.len() {
+                        adv!();
+                    }
+                    toks.push(Token { tok: Tok::Kw(word), span: sp });
                 } else {
                     diags.error("E-LEX", sp, format!("unexpected character `{c}`"));
                     adv!();

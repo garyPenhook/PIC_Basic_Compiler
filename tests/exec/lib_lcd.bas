@@ -15,10 +15,10 @@ Dim lat As Byte
 Dim ok1 As Byte
 TRISC = 255
 ANSELC = 255
-' Refused: no lines, three lines, a pin above 23, a pin used twice.
+' Refused: no lines, three lines, a pin above 47 (the highest any part has), a pin used twice.
 bad1 = Lcd.LcdInit(16, 17, 18, 19, 20, 21, 0)
 bad2 = Lcd.LcdInit(16, 17, 18, 19, 20, 21, 3)
-bad3 = Lcd.LcdInit(16, 17, 18, 19, 20, 24, 2)
+bad3 = Lcd.LcdInit(16, 17, 18, 19, 20, 48, 2)
 bad4 = Lcd.LcdInit(16, 17, 18, 19, 20, 16, 2)
 ' RS = RC0, E = RC1, DB4..DB7 = RC2..RC5: six outputs, digital. The last nibble written is 12
 ' (the display-on instruction 0CH, low nibble), so DB6 and DB7 are high.

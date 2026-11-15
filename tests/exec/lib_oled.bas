@@ -43,8 +43,8 @@ b1 = Oled.OledInitI2c(200, 255)
 ' I2C module not set up: every transfer reports status 4 (not initialised); the init returns 0.
 nobus = Oled.OledInitI2c(60, 255)
 nobusst = Oled.OledStatus()
-' SPI refused: D/C# above 23, CS# = D/C#, RES# = D/C#.
-bad1 = Oled.OledInitSpi(24, 255, 255)
+' SPI refused: D/C# above 47 (the highest pin any part has), CS# = D/C#, RES# = D/C#.
+bad1 = Oled.OledInitSpi(48, 255, 255)
 bad2 = Oled.OledInitSpi(16, 16, 255)
 bad3 = Oled.OledInitSpi(16, 17, 16)
 ' D/C# = RC0, CS# = RC1, RES# = RC2: outputs; at the end CS# and RES# are high and D/C# low (the last

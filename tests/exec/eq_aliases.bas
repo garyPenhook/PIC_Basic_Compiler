@@ -1,5 +1,6 @@
 ' expect: T_A1=1 T_A2=0 T_A3=1 T_A4=0 T_A5=2 T_A6=7 T_A7=1
 ' expect-O0: T_A1=1 T_A2=0 T_A3=1 T_A4=0 T_A5=2 T_A6=7 T_A7=1
+' expect-18F16Q41: T_A6=0
 ' `==` is another spelling of `=` and `!=` of `<>`, in expressions, Case and #if.
 Program T
 Device = 18F27Q10
@@ -36,6 +37,8 @@ Select x
     Case != 4
         a5 = 2
 End Select
+' Set on every part, so it has storage where the #if is false (the 18F16Q41 run).
+a6 = 0
 #if _device == 18F27Q10 and _clock != 32
 a6 = 7
 #endif

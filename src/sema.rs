@@ -281,6 +281,65 @@ pub fn val_of(text: &str) -> i32 {
     if neg { acc.wrapping_neg() } else { acc }
 }
 
+/// The modifiers a number takes after a dot (LANGUAGE.md §3.4), as suggestions spell them.
+const MODIFIER_NAMES: &[&str] = &["Byte0", "Byte1", "Byte2", "Byte3", "Word0", "Word1", "Bytes", "Words", "Bits", "Booleans", "AsByte", "AsShortInt", "AsWord", "AsInteger", "AsLongWord", "AsLongInt"];
+
+/// The names a module's text declares `Public` (`Public Sub SerialWrite(...)`,
+/// `Public Const BAUD = ...`), read from the start of each line.
+fn public_names(text: &str) -> impl Iterator<Item = &str> {
+    text.lines().flat_map(|line| {
+        let mut out: Vec<&str> = Vec::new();
+        let ident = |w: &str| w.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
+        let mut words = line.trim_start().split(|c: char| c.is_whitespace() || c == '(' || c == '=' || c == ',').filter(|w| !w.is_empty());
+        if !words.next().is_some_and(|w| w.eq_ignore_ascii_case("public")) {
+            return out;
+        }
+        const SKIP: &[&str] = &["inline", "noinline", "reentrant", "sub", "function", "proc", "const", "dim", "type", "symbol", "volatile", "structure", "event"];
+        let mut list = false;
+        let mut first = None;
+        for w in words.by_ref() {
+            if SKIP.iter().any(|k| w.eq_ignore_ascii_case(k)) {
+                list |= w.eq_ignore_ascii_case("const") || w.eq_ignore_ascii_case("dim");
+                continue;
+            }
+            first = Some(w);
+            break;
+        }
+        let Some(first) = first.filter(|w| ident(w)) else { return out };
+        out.push(first);
+        // `Public Const A = 1, B = 2` and `Public Dim a, b As Byte` declare several names: the
+        // first word of each later comma-separated part (only a name followed by `=` for a Const,
+        // so commas inside a value are not read as names).
+        if list {
+            let is_const = line.to_ascii_lowercase().contains(" const ");
+            for part in line.split(',').skip(1) {
+                let part = part.trim_start();
+                let name: &str = part.split(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or("");
+                if !ident(name) || (is_const && !part[name.len()..].trim_start().starts_with('=')) {
+                    continue;
+                }
+                out.push(name);
+            }
+        }
+        out
+    })
+}
+
+/// The modifiers that fit a value of `bits` bits: `Byte0` to `Byte3` only as far as it has
+/// bytes, and so on.
+fn modifier_names(bits: u32) -> Vec<String> {
+    let mut v: Vec<String> = (0..bits / 8).map(|i| format!("Byte{i}")).chain((0..bits / 16).map(|i| format!("Word{i}"))).collect();
+    v.extend(["Bytes", "Words", "Bits", "Booleans"].iter().filter(|m| **m != "Words" || bits >= 16).map(|m| m.to_string()));
+    v.extend(["AsByte", "AsShortInt", "AsWord", "AsInteger", "AsLongWord", "AsLongInt"].iter().map(|m| m.to_string()));
+    v
+}
+
+/// True for a lower-case member name that `modifier` handles (`byte2`, `bits`, `asword`).
+fn is_modifier_name(key: &str) -> bool {
+    let numbered = |p: &str| key.strip_prefix(p).is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+    numbered("byte") || numbered("word") || matches!(key, "bytes" | "words" | "bits" | "booleans") || MODIFIER_NAMES.iter().any(|m| m.eq_ignore_ascii_case(key) && key.starts_with("as"))
+}
+
 const PREDEFINED_INTRINSICS: &[&str] = &["abs", "min", "max", "sin", "cos", "sqr", "pow", "log2", "round", "left", "mid", "right", "left$", "mid$", "right$", "str$", "toupper", "tolower", "str", "val", "stop", "sizeof", "tern", "pinmode", "pinset", "pinclear", "pinpullup", "clrwdt"];
 
 pub struct Sema<'p, 'd> {
@@ -292,6 +351,12 @@ pub struct Sema<'p, 'd> {
     unit_scopes: Vec<HashMap<String, SymId>>,
     scopes: Vec<HashMap<String, SymId>>,
     predef: HashMap<String, SymId>,
+    /// Each label as written, by its lower-case key (for "did you mean").
+    label_spelling: HashMap<String, String>,
+    /// Public names of the built-in library modules, by lower-case name (built on first use).
+    lib_index: Option<HashMap<String, Vec<String>>>,
+    /// Predefined names, registers and built-ins offered as suggestions (built on first use).
+    fixed_names: Option<Vec<(String, Option<Span>)>>,
     ctx: Ctx,
     for_vars: Vec<SymId>,
     enabled: HashMap<Option<i64>, SymId>,
@@ -323,6 +388,9 @@ pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Ana
         unit_scopes: vec![HashMap::new(); proj.units.len()],
         scopes: Vec::new(),
         predef: HashMap::new(),
+        label_spelling: HashMap::new(),
+        lib_index: None,
+        fixed_names: None,
         ctx: Ctx::main(),
         for_vars: Vec::new(),
         enabled: HashMap::new(),
@@ -343,6 +411,91 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     fn err<T>(&mut self, code: &'static str, span: Span, msg: impl Into<String>) -> Option<T> {
         self.diags.error(code, span, msg);
+        None
+    }
+
+    /// Every name visible from here, with where it is declared (`None` for predefined names,
+    /// registers and built-ins), in the order suggestions prefer: locals, this file, included
+    /// modules, predefined names, registers, built-ins.
+    fn visible_names(&mut self) -> Vec<(String, Option<Span>)> {
+        let mut out: Vec<(String, Option<Span>)> = Vec::new();
+        // Each group sorted by name: scopes are hash maps, and the output must not change
+        // from run to run when two names are equally close.
+        let group = |out: &mut Vec<(String, Option<Span>)>, ids: Vec<SymId>, place: bool| {
+            let mut g: Vec<(String, Option<Span>)> = ids.into_iter().map(|id| {
+                let s = &self.a.symbols[id];
+                (s.name.clone(), (place && s.unit != usize::MAX).then_some(s.span))
+            }).collect();
+            g.sort_by(|a, b| a.0.cmp(&b.0));
+            out.extend(g);
+        };
+        for sc in self.scopes.iter().rev() {
+            group(&mut out, sc.values().copied().collect(), true);
+        }
+        group(&mut out, self.unit_scopes[self.unit].values().copied().collect(), true);
+        for &inc in &self.proj.units[self.unit].includes {
+            group(&mut out, self.unit_scopes[inc].values().copied().filter(|&id| self.a.symbols[id].vis == Vis::Public).collect(), true);
+            if let Some(n) = &self.proj.units[inc].unit.name {
+                out.push((n.name.clone(), None));
+            }
+        }
+        // Predefined names, registers and built-ins do not change during analysis: built once.
+        if self.fixed_names.is_none() {
+            let mut fixed: Vec<(String, Option<Span>)> = Vec::new();
+            group(&mut fixed, self.predef.values().copied().collect(), false);
+            if let Some(dev) = &self.a.device {
+                fixed.extend(dev.sfr.iter().map(|s| (s.name.clone(), None)));
+                fixed.extend(dev.joined.iter().map(|j| (j.name.clone(), None)));
+            }
+            fixed.extend(crate::lexer::CALLABLE_KEYWORDS.iter().chain(PREDEFINED_INTRINSICS).map(|k| (crate::suggest::pretty(k), None)));
+            self.fixed_names = Some(fixed);
+        }
+        out.extend(self.fixed_names.iter().flatten().cloned());
+        out
+    }
+
+    /// The library modules built into the compiler that declare `name` as Public, by module
+    /// name (`serial` for `SerialWrite`). Only read when a name is unknown.
+    fn library_modules_declaring(&mut self, name: &str) -> Vec<String> {
+        let index = self.lib_index.get_or_insert_with(|| {
+            let mut index: HashMap<String, Vec<String>> = HashMap::new();
+            for (file, text) in crate::embedded::LIB {
+                let module = file.trim_end_matches(".bas").to_string();
+                for n in public_names(text) {
+                    let mods = index.entry(n.to_ascii_lowercase()).or_default();
+                    if !mods.contains(&module) {
+                        mods.push(module.clone());
+                    }
+                }
+            }
+            index
+        });
+        index.get(&name.to_ascii_lowercase()).cloned().unwrap_or_default()
+    }
+
+    /// Reports an unknown `name` with a "did you mean" line for the closest of `candidates`
+    /// (only the program's own names when one of them is among the closest), and a note at the declaration when there is exactly one and it has a place.
+    fn unknown<T>(&mut self, span: Span, name: &str, msg: String, candidates: Vec<(String, Option<Span>)>) -> Option<T> {
+        self.unknown_as("E-UNDECLARED", span, name, msg, candidates)
+    }
+
+    /// As `unknown`, with another code (`E-NOMEMBER`, `E-CONFIG`, ...).
+    fn unknown_as<T>(&mut self, code: &'static str, span: Span, name: &str, msg: String, candidates: Vec<(String, Option<Span>)>) -> Option<T> {
+        let mut found = crate::suggest::closest(name, candidates.iter().map(|c| c.0.as_str()));
+        // The program's own names beat a register or built-in that is just as close.
+        let placed = |f: &String| candidates.iter().any(|c| &c.0 == f && c.1.is_some());
+        if found.iter().any(placed) {
+            found.retain(placed);
+        }
+        let d = self.diags.error_with(code, span, msg);
+        if let Some(h) = crate::suggest::did_you_mean(&found) {
+            d.help(h);
+        }
+        if let [one] = found.as_slice()
+            && let Some(at) = candidates.iter().find(|c| &c.0 == one).and_then(|c| c.1)
+        {
+            d.note(at, format!("`{one}` is declared here"));
+        }
         None
     }
 
@@ -651,7 +804,12 @@ impl<'p, 'd> Sema<'p, 'd> {
                     None => false,
                 },
                 n => {
-                    self.diags.error("E-OPTION", d.span, format!("unknown option `{n}` (known: Strict, BoundsCheck, ISR_SHADOW, FetchNop, Optimize, I2c, Warn.<id>)"));
+                    let known = ["Strict", "BoundsCheck", "ISR_SHADOW", "FetchNop", "Optimize", "I2c"];
+                    let found = crate::suggest::closest(&d.name, known);
+                    let e = self.diags.error_with("E-OPTION", d.span, format!("unknown option `{n}` (known: Strict, BoundsCheck, ISR_SHADOW, FetchNop, Optimize, I2c, Warn.<id>)"));
+                    if let Some(h) = crate::suggest::did_you_mean(&found) {
+                        e.help(h);
+                    }
                     continue;
                 }
             };
@@ -742,10 +900,17 @@ impl<'p, 'd> Sema<'p, 'd> {
                 }
                 HeaderKind::Clock(e) => {
                     let Some(v) = self.const_value(e) else { continue };
-                    let Some(mhz) = v.as_f64() else {
+                    let Some(mut mhz) = v.as_f64() else {
                         self.diags.error("E-CLOCK", e.span, "Clock must be a number of MHz");
                         continue;
                     };
+                    // `Clock = 64000000` is the speed in Hz: say so, and go on with the MHz value
+                    // so that library modules reading `_Clock` give no errors of their own.
+                    if mhz >= 1000.0 {
+                        let as_mhz = mhz / 1_000_000.0;
+                        self.diags.error_with("E-CLOCK", e.span, format!("Clock is in MHz, so {mhz} is far faster than any PIC")).help(format!("write `Clock = {as_mhz}` for {mhz} Hz"));
+                        mhz = as_mhz;
+                    }
                     if mhz <= 0.0 {
                         self.diags.error("E-CLOCK", e.span, "Clock must be greater than zero");
                     } else if let Some(prev) = self.a.clock_mhz
@@ -833,7 +998,8 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
         let found = dev.config.iter().find_map(|r| r.fields.iter().find(|f| f.name.eq_ignore_ascii_case(&key)).map(|f| (r, f)));
         let Some((reg, field)) = found else {
-            self.diags.error("E-CONFIG", it.name.span, format!("`{}` is not a configuration setting of {}", it.name.name, dev.device.name));
+            let names: Vec<(String, Option<Span>)> = dev.config.iter().flat_map(|r| r.fields.iter().map(|f| (f.name.clone(), None))).collect();
+            self.unknown_as::<()>("E-CONFIG", it.name.span, &it.name.name, format!("`{}` is not a configuration setting of {}", it.name.name, dev.device.name), names);
             return;
         };
         let value = match &it.value {
@@ -841,7 +1007,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                 Some(s) => s.value,
                 None => {
                     let list: Vec<&str> = field.settings.iter().map(|s| s.name.as_str()).take(12).collect();
-                    self.diags.error("E-CONFIG", n.span, format!("`{}` is not a value of {} (values: {}{})", n.name, field.name, list.join(", "), if field.settings.len() > 12 { ", …" } else { "" }));
+                    let names: Vec<(String, Option<Span>)> = field.settings.iter().map(|s| (s.name.clone(), None)).collect();
+                    self.unknown_as::<()>("E-CONFIG", n.span, &n.name, format!("`{}` is not a value of {} (values: {}{})", n.name, field.name, list.join(", "), if field.settings.len() > 12 { ", …" } else { "" }), names);
                     return;
                 }
             },
@@ -1055,7 +1222,10 @@ impl<'p, 'd> Sema<'p, 'd> {
                 SymKind::EventType { .. } => Some(Ty::EventVar(s)),
                 _ => self.err("E-TYPE", id.span, format!("`{}` is not a type", id.name)),
             },
-            None => self.err("E-UNDECLARED", id.span, format!("unknown type `{}`", id.name)),
+            None => {
+                let names = self.visible_names();
+                self.unknown(id.span, &id.name, format!("unknown type `{}`", id.name), names)
+            }
         }
     }
 
@@ -1649,6 +1819,8 @@ impl<'p, 'd> Sema<'p, 'd> {
     }
 
     fn check_labels(&mut self, stmts: &'p [Stmt]) {
+        // Labels belong to one routine; so do their spellings.
+        self.label_spelling.clear();
         let mut seen: HashMap<String, Span> = HashMap::new();
         fn walk(ss: &[Stmt], out: &mut Vec<(String, Span)>, gosub: &mut bool) {
             for s in ss {
@@ -1684,6 +1856,12 @@ impl<'p, 'd> Sema<'p, 'd> {
             if let Some(prev) = seen.insert(k.clone(), sp) {
                 self.diags.error("E-LABEL", sp, format!("label `{k}` is already defined on line {}", prev.line));
             }
+            if let Some(line) = self.proj.sources.line_text(sp) {
+                let text: String = line.chars().skip(sp.col.saturating_sub(1) as usize).take(k.chars().count()).collect();
+                if text.eq_ignore_ascii_case(&k) {
+                    self.label_spelling.insert(k.clone(), text);
+                }
+            }
             self.ctx.labels.insert(k);
         }
     }
@@ -1700,7 +1878,16 @@ impl<'p, 'd> Sema<'p, 'd> {
         if let Some(ei) = self.check_expr(e)
             && ei.ty != Ty::Bool
         {
-            self.diags.error("E-COND", e.span, format!("a condition must be Boolean, found {}", ei.ty));
+            let d = self.diags.error_with("E-COND", e.span, format!("a condition must be Boolean, found {}", ei.ty));
+            match ei.ty {
+                Ty::Bit => {
+                    d.help("compare the bit: `If PORTB.0 = 1 Then`");
+                }
+                Ty::Int(..) => {
+                    d.help("compare the number: `x <> 0` is true when it is not zero");
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1805,14 +1992,22 @@ impl<'p, 'd> Sema<'p, 'd> {
 
     fn check_goto(&mut self, l: &Ident) {
         if !self.ctx.labels.contains(&l.key()) {
-            self.diags.error("E-LABEL", l.span, format!("no label `{}` in this routine", l.name));
+            // Labels are kept in lower case; offer them as written.
+            let mut labels: Vec<String> = self.ctx.labels.iter().map(|k| self.label_spelling.get(k).cloned().unwrap_or_else(|| k.clone())).collect();
+            labels.sort();
+            let found = crate::suggest::closest(&l.name, labels.iter().map(String::as_str));
+            let e = self.diags.error_with("E-LABEL", l.span, format!("no label `{}` in this routine", l.name));
+            if let Some(h) = crate::suggest::did_you_mean(&found) {
+                e.help(h);
+            }
         }
     }
 
     fn enable(&mut self, n: &Ident, enabling: bool) {
         let Some(found) = self.lookup(&n.key(), n.span) else { return };
         let Some(id) = found else {
-            self.diags.error("E-UNDECLARED", n.span, format!("`{}` is not declared", n.name));
+            let names = self.visible_names();
+            self.unknown::<()>(n.span, &n.name, format!("`{}` is not declared", n.name), names);
             return;
         };
         let SymKind::Interrupt { priority } = self.a.symbols[id].kind.clone() else {
@@ -2130,7 +2325,10 @@ impl<'p, 'd> Sema<'p, 'd> {
                     (Ty::Char, Ty::Int(..)) => " (write a character code as #65)",
                     _ => "",
                 };
-                self.diags.error("E-TYPE", span, format!("{what}: cannot use {vt} where {target} is expected{hint}"));
+                let e = self.diags.error_with("E-TYPE", span, format!("{what}: cannot use {vt} where {target} is expected{hint}"));
+                if matches!((target, vt), (Ty::Int(..), Ty::Str(_))) {
+                    e.help("`Val(s)` reads the number written in a string; a one-character text such as \"A\" as a code is `#65`");
+                }
                 false
             }
         }
@@ -2640,8 +2838,33 @@ impl<'p, 'd> Sema<'p, 'd> {
         });
         if let Some(m) = owner.and_then(|u| self.proj.units[u].unit.name.as_ref()) {
             msg.push_str(&format!("; it is declared in module `{0}`, add `Include \"{1}\"` to this file (an Include is not inherited from another file)", m.name, m.name.to_lowercase()));
+            return self.err("E-UNDECLARED", d.head.span, msg);
         }
-        self.err("E-UNDECLARED", d.head.span, msg)
+        // `INTCONbits.GIE` is how C headers name a register's bits.
+        if key.len() > 4
+            && let Some(base) = key.strip_suffix("bits")
+            && let Some(r) = self.find_register(base)
+        {
+            let e = self.diags.error_with("E-UNDECLARED", d.head.span, msg);
+            match d.parts.first() {
+                Some(Part::Member(n)) => e.help(format!("a register's bits are named on the register itself: write `{}.{}`, not `{}.{}`", r.name, n.name, d.head.name, n.name)),
+                Some(Part::BitIndex(n, _)) => e.help(format!("a register's bits are numbered on the register itself: write `{}.{n}`", r.name)),
+                _ => e.help(format!("the register is `{}`; its bits are `{}.NAME` or `{}.3`", r.name, r.name, r.name)),
+            };
+            return None;
+        }
+        // A Public name of a library module the program does not include.
+        let mods: Vec<String> = self.library_modules_declaring(&d.head.name).into_iter().filter(|m| self.module_by_name(m).is_none()).collect();
+        if let Some(first) = mods.first() {
+            let e = self.diags.error_with("E-UNDECLARED", d.head.span, msg);
+            e.help(format!("`{}` is in the library module `{first}`: add `Include \"{first}\"` after `Device`", d.head.name));
+            if mods.len() > 1 {
+                e.remark(format!("it is also declared in {}", mods[1..].iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ")));
+            }
+            return None;
+        }
+        let names = self.visible_names();
+        self.unknown(d.head.span, &d.head.name, msg, names)
     }
 
     /// Evaluates a designator. The flag in the result is true when it names a routine without
@@ -2655,7 +2878,9 @@ impl<'p, 'd> Sema<'p, 'd> {
                 (Cur::Module(u), Part::Member(n)) => {
                     let Some(&id) = self.unit_scopes[u].get(&n.key()) else {
                         let m = self.proj.units[u].unit.name.as_ref().map(|x| x.name.clone()).unwrap_or_default();
-                        return self.err("E-UNDECLARED", n.span, format!("module `{m}` has no declaration `{}`", n.name));
+                        let mut names: Vec<(String, Option<Span>)> = self.unit_scopes[u].values().filter(|&&id| self.a.symbols[id].vis == Vis::Public).map(|&id| (self.a.symbols[id].name.clone(), Some(self.a.symbols[id].span))).collect();
+                        names.sort_by(|a, b| a.0.cmp(&b.0));
+                        return self.unknown(n.span, &n.name, format!("module `{m}` has no declaration `{}`", n.name), names);
                     };
                     if self.a.symbols[id].vis != Vis::Public {
                         return self.err("E-PRIVATE", n.span, format!("`{}` is Private to its module", n.name));
@@ -2667,6 +2892,19 @@ impl<'p, 'd> Sema<'p, 'd> {
                     let key = n.key();
                     match r.fields.iter().find(|f| f.0.eq_ignore_ascii_case(&key)) {
                         Some((_, _, w)) => Cur::Val(EI::place(if *w == 1 { Ty::Bit } else { Self::reg_value_ty(*w) }, Place::Var)),
+                        None if !is_modifier_name(&key) => {
+                            let mut names: Vec<(String, Option<Span>)> = r.fields.iter().map(|f| (f.0.clone(), None)).collect();
+                            names.extend(modifier_names(r.ty.width().map_or(8, u32::from)).into_iter().map(|m| (m, None)));
+                            let msg = if r.fields.is_empty() { format!("register `{}` has no member `{}`", r.name, n.name) } else { format!("register `{}` has no bit or field `{}`", r.name, n.name) };
+                            let reg = r.name.clone();
+                            let fields: Vec<String> = r.fields.iter().map(|f| f.0.clone()).take(16).collect();
+                            let more = r.fields.len() > 16;
+                            self.unknown_as::<()>("E-NOMEMBER", n.span, &n.name, msg, names);
+                            if !fields.is_empty() && self.diags.items.last().is_some_and(|x| x.help.is_empty()) {
+                                self.diags.items.last_mut().unwrap().remark(format!("the fields of {reg} are {}{}; a bit by number is written `{reg}.3`", fields.join(", "), if more { ", …" } else { "" }));
+                            }
+                            return None;
+                        }
                         None => self.modifier(EI::place(r.ty.clone(), Place::Var), n, d, &mut i)?,
                     }
                 }
@@ -2682,7 +2920,11 @@ impl<'p, 'd> Sema<'p, 'd> {
                                 let ty = f.ty.clone();
                                 Cur::Val(EI { ty, place: v.place, bits: f.bf.map_or(0, |b| b.2), ..EI::new(Ty::Void) })
                             }
-                            None => return self.err("E-NOMEMBER", n.span, format!("the structure has no field `{}`", n.name)),
+                            None => {
+                                let names: Vec<(String, Option<Span>)> = fields.iter().map(|f| (f.name.clone(), None)).collect();
+                                let sname = self.a.symbols[*sid].name.clone();
+                                return self.unknown_as("E-NOMEMBER", n.span, &n.name, format!("structure `{sname}` has no field `{}`", n.name), names);
+                            }
                         }
                     }
                     _ => self.modifier(v, n, d, &mut i)?,
@@ -2872,7 +3114,10 @@ impl<'p, 'd> Sema<'p, 'd> {
                 }
                 mk(target)
             }
-            _ => self.err("E-NOMEMBER", n.span, format!("a {} has no member or modifier `{}`", v.ty, n.name)),
+            _ => {
+                let names: Vec<(String, Option<Span>)> = modifier_names(bits).into_iter().map(|m| (m, None)).collect();
+                self.unknown_as("E-NOMEMBER", n.span, &n.name, format!("a {} has no member or modifier `{}`", v.ty, n.name), names)
+            }
         }
     }
 
@@ -2882,7 +3127,23 @@ impl<'p, 'd> Sema<'p, 'd> {
         let required = params.iter().filter(|p| !p.has_default).count();
         if args.len() < required || args.len() > params.len() {
             let want = if required == params.len() { format!("{required}") } else { format!("{required} to {}", params.len()) };
-            return self.err("E-ARGS", span, format!("`{name}` takes {want} argument(s), {} given", args.len()));
+            let sig = |p: &ParamInfo| format!("{}{} As {}", p.name, if p.is_array { "()" } else { "" }, p.ty);
+            let decl = self.a.symbols[id].span;
+            let has_place = self.a.symbols[id].unit != usize::MAX;
+            let d = self.diags.error_with("E-ARGS", span, format!("`{name}` takes {want} argument(s), {} given", args.len()));
+            if args.len() < required {
+                let missing: Vec<String> = params[args.len()..required].iter().map(|p| format!("`{}`", sig(p))).collect();
+                d.help(format!("missing {}", missing.join(", ")));
+            } else {
+                d.help(format!("`{name}` has no parameter for argument {}", params.len() + 1));
+            }
+            let all: Vec<String> = params.iter().map(sig).collect();
+            if has_place {
+                d.note(decl, format!("`{name}({})` is declared here", all.join(", ")));
+            } else {
+                d.remark(format!("`{name}({})`", all.join(", ")));
+            }
+            return None;
         }
         if self.ctx.kind == Kind::Interrupt && self.ctx.saves == 0 {
             self.diags.error("E-ISR-CALL", span, format!("an interrupt handler cannot call `{name}` directly; its frame may overlay main-line storage. Wrap the call in Save(…) … Restore (LANGUAGE.md §8)"));
@@ -3504,5 +3765,23 @@ fn op_text(op: BinOp) -> &'static str {
         BinOp::Gt => ">",
         BinOp::Le => "<=",
         _ => ">=",
+    }
+}
+
+#[cfg(test)]
+mod public_name_tests {
+    use super::public_names;
+
+    #[test]
+    fn public_names_of_a_module() {
+        let text = "Public Sub SerialInit(ByVal baud As LongWord)\n\
+                    Public Inline Function Peek(a As Byte, b As Byte) As Byte\n\
+                    Public Proc Old(p As Byte)\n\
+                    Public Const BAUD = 9600, PARITY = Max(1, 2), STOP = 1\n\
+                    Public Dim rxCount, txCount As Byte\n\
+                    Private Sub Hidden()\n\
+                    Dim notPublic As Byte\n";
+        let names: Vec<&str> = public_names(text).collect();
+        assert_eq!(names, vec!["SerialInit", "Peek", "Old", "BAUD", "PARITY", "STOP", "rxCount", "txCount"]);
     }
 }

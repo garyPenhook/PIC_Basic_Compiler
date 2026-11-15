@@ -168,7 +168,20 @@ impl Loader<'_> {
                 }
             }
             match found {
-                None => diags.error("E-INCLUDE", inc.span, format!("module `{}` not found (looked for {fname} next to the including file and in the library folders)", inc.name)),
+                None => {
+                    let mut names: Vec<String> = std::iter::once(&dir)
+                        .chain(self.cfg.lib_dirs.iter())
+                        .filter_map(|d| std::fs::read_dir(d).ok())
+                        .flatten()
+                        .filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".bas").map(str::to_string))
+                        .collect();
+                    names.sort();
+                    let found = crate::suggest::closest(&inc.name, names.iter().map(String::as_str));
+                    let e = diags.error_with("E-INCLUDE", inc.span, format!("module `{}` not found (looked for {fname} next to the including file and in the library folders)", inc.name));
+                    if let Some(h) = crate::suggest::did_you_mean(&found) {
+                        e.help(h);
+                    }
+                }
                 Some(p) => {
                     if let Some(i) = self.load_file(proj, diags, &p, inc.span) {
                         let m = &proj.units[i].unit;

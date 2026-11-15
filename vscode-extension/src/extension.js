@@ -547,6 +547,10 @@ const signatureHelp = {
 const diagnostics = vscode.languages.createDiagnosticCollection('basil');
 const output = vscode.window.createOutputChannel('PIC BASIC');
 const RE_DIAG = /^(.+?):(\d+):(\d+): (error|warning)\[([^\]]+)\]: (.*)$/;
+// Lines under a diagnostic: `  = help: ...`, `  = note: ...`, or a note with its own place.
+// Echoed source lines are indented four spaces, so they never match.
+const RE_HELP = /^ {2}= (help|note): (.*)$/;
+const RE_NOTE = /^(.+?):(\d+):(\d+): note: (.*)$/;
 
 function compilerArgs(extra) {
   return [...extra, ...cfg().get('compilerArgs', [])];
@@ -567,7 +571,21 @@ function runCheck(doc, file, done) {
       return;
     }
     const byFile = new Map();
+    let last = null;
     for (const raw of (stdout + '\n' + stderr).split(/\r?\n/)) {
+      const h = last && RE_HELP.exec(raw);
+      if (h) {
+        last.message += `\n${h[1]}: ${h[2]}`;
+        continue;
+      }
+      const n = last && RE_NOTE.exec(raw);
+      if (n) {
+        let nf = path.resolve(cwd, n[1]);
+        if (nf === file) nf = doc.uri.fsPath;
+        const pos = new vscode.Position(Math.max(0, +n[2] - 1), Math.max(0, +n[3] - 1));
+        last.relatedInformation = (last.relatedInformation || []).concat(new vscode.DiagnosticRelatedInformation(new vscode.Location(vscode.Uri.file(nf), pos), n[4]));
+        continue;
+      }
       const m = RE_DIAG.exec(raw);
       if (!m) continue;
       let f = path.resolve(cwd, m[1]);
@@ -579,6 +597,7 @@ function runCheck(doc, file, done) {
       const d = new vscode.Diagnostic(new vscode.Range(ln, col, ln, col + (w ? w[0].length : Math.max(1, lineText.length - col))), m[6], m[4] === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
       d.code = m[5];
       d.source = 'basil';
+      last = d;
       if (!byFile.has(f)) byFile.set(f, []);
       byFile.get(f).push(d);
     }

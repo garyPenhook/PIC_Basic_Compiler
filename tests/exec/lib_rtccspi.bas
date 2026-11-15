@@ -14,7 +14,7 @@ Dim arg3 As Byte
 Dim val As Byte
 val = 77
 ' A pin the part does not have is refused; a good one is made the chip select.
-bad = Rtccspi.RtccspiInit(24)
+bad = Rtccspi.RtccspiInit(48)
 init = Rtccspi.RtccspiInit(16)
 ' Spi not initialised: the bus routines answer 4 and leave the outputs alone.
 nospi = Rtccspi.RtccspiRead()

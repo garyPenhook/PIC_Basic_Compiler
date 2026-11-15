@@ -7,10 +7,10 @@ const CANONICAL = [
   'Absolute', 'Access', 'AddressOf', 'And', 'As', 'Asm', 'Bit', 'BitOf', 'Boolean', 'Bound', 'Break',
   'ByRef', 'ByRefConst', 'Byte', 'ByVal', 'Case', 'Char', 'Clear', 'Clock', 'Compound', 'Config',
   'Const', 'Continue', 'Dec', 'DelayMs', 'DelayUs', 'Device', 'Dim', 'Disable', 'Else', 'ElseIf',
-  'Enable', 'End', 'EndIf', 'EndSelect', 'Event', 'Exit', 'False', 'Float', 'For', 'Function', 'GoTo',
+  'Enable', 'End', 'EndIf', 'EndSelect', 'Event', 'Exit', 'False', 'Float', 'For', 'Function', 'GoSub', 'GoTo',
   'High', 'If', 'Inc', 'Include', 'Inline', 'Input', 'Integer', 'Interrupt', 'LongInt', 'LongWord',
   'Low', 'Mod', 'Module', 'Next', 'NoInline', 'Not', 'Null', 'Or', 'Output', 'Private', 'Program',
-  'Public', 'Reentrant', 'Repeat', 'Restore', 'Result', 'Save', 'Select', 'ShortInt', 'Static', 'Step',
+  'Public', 'Reentrant', 'Repeat', 'Restore', 'Result', 'Return', 'Save', 'Select', 'ShortInt', 'Static', 'Step',
   'String', 'Structure', 'Sub', 'Terminate', 'Then', 'To', 'Toggle', 'True', 'Type', 'Until', 'Volatile', 'Wend',
   'While', 'Word', 'Xor',
   // Alternative spellings

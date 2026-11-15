@@ -25,6 +25,7 @@ Compiles <program.bas> to <program>.hex, with <program>.S (assembly) and
 options:
   -o FILE         write the hex file to FILE
   --check         front end only (syntax, types, declarations); no output files
+  --explain CODE  explain a diagnostic code (E-TYPE, W-NARROW, ...) with an example
   -S              stop after writing the assembly
   --report        also print words per routine and every RAM object
   -O0             no optimisation (-O1, -O2 and -Os mean the default, optimise)
@@ -213,6 +214,13 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--check" => check_only = true,
+            "--explain" => {
+                let Some(code) = args.next() else {
+                    eprintln!("basil: --explain needs a code, e.g. `basil --explain E-TYPE`");
+                    return ExitCode::from(2);
+                };
+                return explain(&code);
+            }
             "-S" => asm_only = true,
             "--report" => want_report = true,
             "-O0" => optimise = false,
@@ -284,6 +292,7 @@ fn main() -> ExitCode {
             eprintln!("{}", Render(d, &project.sources));
         }
         eprintln!("basil: {} error(s)", diags.error_count());
+        explain_hint(&diags.items);
         return ExitCode::from(1);
     }
     let analysis = analyze(&project, &SemaConfig { devices_dirs: dev_dirs }, &mut diags);
@@ -340,6 +349,7 @@ fn main() -> ExitCode {
     let warnings = items.iter().filter(|d| d.severity == Severity::Warning).count();
     if errors > 0 {
         eprintln!("basil: {errors} error(s), {warnings} warning(s)");
+        explain_hint(&items);
         return ExitCode::from(1);
     }
     if check_only {
@@ -462,6 +472,30 @@ fn main() -> ExitCode {
     let color = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none();
     eprint!("{}", usage_summary(analysis.device.as_ref().unwrap(), &generated, color));
     ExitCode::SUCCESS
+}
+
+/// `basil --explain CODE`.
+fn explain(code: &str) -> ExitCode {
+    match basil::explain::explain(code) {
+        Some(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        None => {
+            let codes = basil::explain::all_codes();
+            let found = basil::suggest::closest(&code.to_ascii_uppercase(), codes.iter().map(String::as_str));
+            eprintln!("basil: no diagnostic code `{code}`{}", basil::suggest::did_you_mean(&found).map(|h| format!("; {h}")).unwrap_or_default());
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// After the error count: one line naming `--explain` for the first error code that has a
+/// long explanation.
+fn explain_hint(items: &[basil::diag::Diagnostic]) {
+    if let Some(d) = items.iter().find(|d| d.severity == Severity::Error && basil::explain::ENTRIES.iter().any(|e| e.code == d.code)) {
+        eprintln!("basil: `basil --explain {}` explains this error with an example", d.code);
+    }
 }
 
 fn usage() -> ExitCode {

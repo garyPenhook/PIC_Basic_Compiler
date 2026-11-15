@@ -95,7 +95,7 @@ whether the chosen device has a register or bit field with `#if _has(REG)` / `#i
 ## Running the compiler
 
 ```
-basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
+basil [--check] [--explain CODE] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
        [--devices DIR] [--pic-as PATH] [--version] [--help] <program.bas>
 ```
 
@@ -103,6 +103,7 @@ basil [--check] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAME] [-L LIBDIR]
 |---|---|
 | *(none)* | Compile, assemble and link. Writes `prog.hex`, `prog.S` (assembly), `prog.map`. |
 | `--check` | Front end only (syntax, types, declarations). No output files. Fast. |
+| `--explain CODE` | Explain a diagnostic code (`E-TYPE`, `W-NARROW`, ...), with an example program and its fix for the common ones. |
 | `-S` | Stop after writing the assembly (`prog.S`). |
 | `--report` | Also print words per routine and every RAM object. |
 | `--keep-vars` | Keep stores to variables that nothing reads (the optimiser normally drops them), so a test can inspect them in RAM. A `Volatile` variable is always kept. |
@@ -10577,7 +10578,38 @@ n = Len("abc")       ' 3
 # 4. Diagnostics
 
 Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with meanings:
-`docs/DIAGNOSTICS.md`. The ones met most often:
+`docs/DIAGNOSTICS.md`. Under the message the source line is shown with the word at fault
+underlined, then any `help:` lines (a likely fix) and `note:` lines (another place that matters):
+
+```
+main.bas:7:1: error[E-UNDECLARED]: `countr` is not declared and is not a register of PIC18F27Q10
+    countr = 5
+    ^^^^^^
+  = help: did you mean `counter`?
+main.bas:6:5: note: `counter` is declared here
+    Dim counter As Byte
+        ^^^^^^^
+```
+
+A misspelt variable, constant, routine, type, register, register bit, structure field, modifier,
+`Config` setting or value, `#option`, `Include` module or `GoTo` label gets the closest names as
+a "did you mean". A name the program declares is preferred to a register just as close. In VS Code
+and Zed the `help:` text is part of the squiggle's message and a located note is a related
+location that can be clicked.
+
+`basil --explain CODE` prints what a code means and, for the codes met most often, a short
+program that raises it next to the corrected one (`basil --explain E-SIGN`). After the error
+count, basil names the command for the first error that has such an example.
+
+Mistakes carried over from other languages are named with the spelling used here, and the rest
+of the program is still checked: `Select Case x` (write `Select x`), `Next i` (`Next`), `Else If`
+(`ElseIf`), `End While` (`Wend`), `Exit For` (`Break`), `x += 1`, `x++`, `Let x = 1`, `&&`, `||`,
+`!`, `String * 8` (`String(8)`), `High 1` (`High(1)`), `GoTo 10`, `INTCONbits.GIE` (`INTCON.GIE`)
+and `Clock = 64000000` (`Clock = 64`; the value is in MHz). An unclosed block is reported once,
+at the word that shows it, with a note at the line that opened it; a library routine used
+without its `Include` names the module to include.
+
+The ones met most often:
 
 | Code | Cause |
 |---|---|

@@ -193,6 +193,18 @@ Function RefGet(ByVal pin As Byte) As Boolean
     ElseIf pin >= 16 And pin < 24 Then
         Result = (PORTC And m) <> 0
 #endif
+#if _has(LATD)
+    ElseIf pin >= 24 And pin < 32 Then
+        Result = (PORTD And m) <> 0
+#endif
+#if _has(ANSELE)
+    ElseIf pin >= 32 And pin < 40 Then
+        Result = (PORTE And m) <> 0
+#endif
+#if _has(LATF)
+    ElseIf pin >= 40 And pin < 48 Then
+        Result = (PORTF And m) <> 0
+#endif
     End If
 End Function
 
