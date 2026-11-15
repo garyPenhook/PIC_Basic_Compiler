@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.249**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
+Revision for **basil 0.1.250**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -9966,9 +9966,36 @@ PwmStop(1)
 
 ## timer  (`Include "timer"`, Timer0, Timer1, Timer2)
 
-The module configures a timer and reads its flag. It declares no interrupt handler: to be
-interrupted, call `TimerNEnableInterrupt`, write your own `Interrupt`, and call `TimerNAck` in it
-(flags are not cleared by hardware). All timers count FOSC/4 unless a Timer1 source says otherwise.
+The module starts, reads and stops the timers. When a timer overflows it sets
+its interrupt flag, and there are three ways for a program to act on that flag (N is 0, 1 or 2):
+
+1. **Poll it.** Call `TimerNExpired()` in the main loop; it is true once per overflow and clears the flag
+   itself. Nothing else is needed. This is the simplest way and is what most programs want.
+2. **Poll it with a handler.** Assign an `Event` to `TimerNOnExpire` and call `TimerNService()` in the main
+   loop; each overflow runs the handler once.
+3. **Be interrupted.** The module does not declare an `Interrupt` routine of its own, so it never takes an
+   interrupt vector your program might want. Write the `Interrupt` routine yourself:
+   * call `TimerNEnableInterrupt()` once, and `Enable` your handler (global interrupts);
+   * in the handler, call `TimerNAck()` (or `TimerNService()`). The hardware does not clear the flag when the
+     interrupt is taken, so a handler that does not clear it is entered again as soon as it returns, and the
+     main program never runs again;
+   * wrap the call in `Save(0, TimerNAck)` (no module routine is reentrant; without `Save` the call is
+     `E-ISR-CALL`).
+
+   ```basic
+   Interrupt Tick()
+       Save(0, Timer0Ack)
+           Timer0Ack()          ' clear the flag first
+       Restore
+       Toggle(led)              ' then do the work
+   End Interrupt
+
+   Timer0Start(15, 244)
+   Timer0EnableInterrupt()
+   Enable(Tick)
+   ```
+
+All timers count FOSC/4 unless a Timer1 source says otherwise.
 `prescale` ranges are per timer. External pins (T1CKI, T1G, T2IN) must be digital inputs; the
 module does not set them up.
 
