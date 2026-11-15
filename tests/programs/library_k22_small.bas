@@ -1,0 +1,67 @@
+' The peripheral modules ported to the PIC18(L)F2x/4xK22 in one program, for the 8 KB parts (PIC18(L)F23K22 / 43K22), where the whole
+' library of library_k22.bas does not fit: it must build with no warning on every part of the family.
+Program T
+Device = 18F25K22
+Clock = 64
+Config FOSC = INTIO67, WDTEN = OFF, LVP = ON, MCLRE = EXTMCLR
+Include "intosc"
+Include "gpio"
+Include "delay"
+Include "timer"
+Include "serial"
+Include "serial2"
+Include "adc"
+Include "eeprom"
+Include "flashwrite"
+Include "spi"
+Include "system"
+Include "i2c"
+Include "pwm"
+Dim x As Word
+Dim x10ok As Boolean
+Dim r As Byte
+Dim hz As LongWord
+Dim ok As Boolean
+Gpio.GpioAllDigital()
+Gpio.GpioPullUps(0, 3, 0)
+Delay.DelaySeconds(1)
+ok = IntOsc.SetClock(16)
+Timer.Timer0Start(1, 99)
+x = Timer.Timer0Read()
+Timer.Timer1Start(0)
+x = Timer.Timer1Read()
+Timer.Timer2Start(0, 0, 99)
+r = Timer.Timer2Read()
+hz = Timer.FreqCount(16, 10)
+Serial.SerialInit(115200)
+Serial.SerialWrite("hello")
+Serial.SerialWriteWord(1234)
+Serial.SerialWriteHex(171)
+Serial.SerialNewLine()
+Serial.SerialFlush()
+r = Serial.SerialRead()
+Serial2.Serial2Init(9600)
+Serial2.Serial2WriteByte(65)
+r = Serial2.Serial2Read()
+Adc.AdcInit()
+x = Adc.AdcRead(0)
+x = Adc.ADin(1)
+x = Adc.AdcMillivolts(x, 3300)
+r = Eeprom.EepromWrite(0, 5)
+x = Eeprom.EepromReadWord(0)
+r = Flashwrite.FlashEraseSector(Flashwrite.FlashLastSector)
+x = Flashwrite.FlashReadWord(0)
+r = Spi.SpiInit(1000000, 0, 19, 21, 20)
+r = Spi.SpiTransfer(85)
+hz = System.SysClockHz()
+r = System.SysResetCause()
+System.Snooze(1)
+r = I2c.I2cInit(100000, 19, 20)
+r = I2c.I2cStart()
+r = I2c.I2cSend(112)
+x = I2c.I2cReceive(False)
+r = I2c.I2cStop()
+r = Pwm.PwmInit(5000)
+r = Pwm.PwmStart(1, 18, 100)
+Pwm.PwmPercent(1, 50)
+Pwm.PwmStop(1)

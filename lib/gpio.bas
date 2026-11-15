@@ -6,6 +6,12 @@ Module Gpio
 ' ANSELE on the 40-pin PIC16F18076 and ANSELF on the PIC16F15385/86 (the only parts with port F); the mask routines below cover ports A, B and C only.
 ' Single pins need no library: `Input(p)`, `Output(p)`, `High(p)`, `Low(p)`, `Toggle(p)` are
 ' compiler intrinsics and `Dim led As PORTB.0` names a pin.
+'
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 10; chosen with `_has(INTCON2.nRBPU)`): ANSELA..ANSELE as above (ANSELD and ANSELE on the
+' 40/44-pin parts only, p.149-151), but weak pull-ups exist on port B only: WPUB (reset FFh, p.152) selects the pins and they work only
+' while INTCON2.RBPU is 0 (p.110). GpioPullUps writes WPUB and clears RBPU when maskB has a pin, sets it when maskB is 0; maskA and
+' maskC are ignored (the RE3 pull-up is WPUE3, TRISE bit 7, p.151). The part has no open-drain register: GpioOpenDrain does nothing there
+' (Pinio.PinDriveLow and PinRelease emulate it).
 
 ' Makes every pin of every port a digital pin. ANSELx resets to 1 (analog, input buffer
 ' off), so a pin read as digital stays 0 until this runs [Q10 p.247, 16F171xx 16.14.4].
@@ -37,6 +43,9 @@ Public Sub GpioPullUps(ByVal maskA As Byte, ByVal maskB As Byte, ByVal maskC As 
 #endif
 #if _has(WPUB)
     WPUB = maskB
+#endif
+#if _has(INTCON2.nRBPU)
+    INTCON2.nRBPU = Bit(maskB = 0)
 #endif
 #if _has(WPUC)
     WPUC = maskC

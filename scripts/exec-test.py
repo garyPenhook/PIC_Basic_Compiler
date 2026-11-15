@@ -40,7 +40,7 @@ ap.add_argument("--flags", default="", help="extra compiler flags, e.g. -O0 for 
 ap.add_argument("files", nargs="+")
 a = ap.parse_args()
 if a.engine is None:
-    a.engine = "sim" if a.device.startswith("18F") and os.path.exists(a.sim) else "mdb"
+    a.engine = "sim" if a.device.startswith(("18F", "18LF")) and os.path.exists(a.sim) else "mdb"
 mdb = a.mdb or ((sorted(glob.glob("/opt/microchip/mplabx/v*/mplab_platform/bin/mdb.sh")) or [None])[-1] if a.engine != "sim" else None)
 if mdb is None and a.engine == "sim":
     # DMA programs still need MDB (the DMA model attaches to a live session); use it when it is installed.
@@ -77,6 +77,11 @@ for src in a.files:
             rst = "HFINT32" if a.device.startswith(("16F183", "16LF183", "16F153", "16LF153")) else "HFINTOSC_32MHz"
             text = re.sub(r"^[ \t]*Config[ \t].*$", f"Config FEXTOSC = OFF, RSTOSC = {rst}, WDTE = OFF, LVP = ON", text, flags=re.M | re.I)
             text = re.sub(r"^(\s*Clock\s*=\s*)64\b", lambda m: m.group(1) + "32", text, flags=re.M | re.I)
+        elif "K22" in a.device:
+            # PIC18(L)F2x/4xK22: no RSTOSC; the programs keep Clock = 64 and are run from a 64 MHz external clock (FOSC = ECHPIO6), so no
+            # oscillator code is needed. A program written for the part (tests/exec_k22) has its own Config line, which is kept.
+            # Only the Q-series oscillator line is replaced (as backend.rs `for_k22` does); other Config lines are kept.
+            text = re.sub(r"^[ \t]*Config[ \t].*(RSTOSC|FEXTOSC).*$", "Config FOSC = ECHPIO6, WDTEN = OFF, LVP = ON", text, flags=re.M | re.I)
         for cf in re.findall(r'^\s*CFile\s+"([^"]+)"', text, re.M | re.I):
             shutil.copy(os.path.join(os.path.dirname(src), cf), work)
         # Modules the program includes from its own folder (a test double of a library module, or a link to the module under test)

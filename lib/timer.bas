@@ -32,9 +32,38 @@ Include "pinio"
 ' T1GATE, T1GCON, RD16) and Timer2 (T2CON, T2HLT, T2CLKCON, T2RST, T2PR) have the layout of the PIC16F171xx, with the flags as on the PIC18F27Q10: PIR0 (TMR0IF bit 5), PIR4 (TMR1IF bit 0, TMR2IF bit 1) and their
 ' enables in PIE0 and PIE4 [DS40001889E Table 26-3 p.289, Table 27-2 p.314]; TMR1GIF is PIR5 bit 0 and is not used. The clock, gate and reset source codes are the part's own [DS40001889E Registers 26-3, 26-4, 27-4]. Errata (DS80000728D 5.1, DS80000717K 5.1): with FOSC/4
 ' as the Timer0 clock, T0ASYNC must be 1 (in 16-bit mode TMR0H may not count otherwise), so Timer0Start and Timer0Start16 set it on this family. No secondary oscillator source is offered.
+'
+' PIC18(L)F2x/4xK22 (DS40001412H chapters 11, 12 and 13; chosen with `#if _has(T0CON.T08BIT)`, before the PIC16F183xx test, which it also
+' passes): Timer0 is the older one: T0CON = TMR0ON (7) | T08BIT (6) | T0CS (5) | T0SE (4) | PSA (3) | T0PS<2:0>, prescaler 1:2 to 1:256
+' or none (PSA = 1) [Register 11-1 p.154], so the prescale argument is 0..8 for 1:1 to 1:256 (a larger value is 1:256). In 8-bit mode it has
+' no period register and always counts to FFh: Timer0Start writes TMR0L = 255 - period and Timer0Expired, Timer0Ack and Timer0Service add
+' 255 - period to TMR0L again when they take the flag, so the period is (period + 1) counts measured from the overflow, less the two
+' instruction cycles a TMR0L write holds the timer, and a write also clears the prescaler's partial count [11.2, 11.4 p.155-156]: exact
+' for prescale 0, short by up to one prescaled count otherwise. TMR0IF and TMR0IE are INTCON bits 2 and 5 [Register 9-1 p.109].
+' Timer1 is that of the PIC16F183xx with RD16: T1CON = TMR1CS<1:0> (7-6: 00 FOSC/4, 01 FOSC, 10 the T1CKI pin or, with T1SOSCEN, the
+' secondary oscillator; 11 reserved) | T1CKPS<1:0> | T1SOSCEN | T1SYNC | T1RD16 | TMR1ON [Register 12-1 p.166, Table 12-2 p.158]; the
+' module sets RD16, so Timer1Read takes both bytes at one instant. T1CKI is RC0 (pin 16) on every part [Tables 1-2, 1-3 p.17, p.21], so
+' FreqCount takes only pin 16. The gate sources are T1GSS = 00 the T1G pin, 01 the Timer2 match, 10 comparator C1, 11 C2 [Register 12-2
+' p.167]; TMR1GIF is PIR3 bit 0 [12.7.6 p.161]. Errata 11 (DS80000498K) and 5 (DS80000512J, DS80000514J): an asynchronous external clock
+' can raise a spurious TMR1IF; the module always synchronises (T1SYNC = 0), which avoids it. Errata 10 / 4: with T1ClkFosc the gate
+' edges are synchronised to FOSC/4, so a gated or pulse measurement (Timer1StartGated, Timer1StartPulse) is exact to 4 counts only. Timer2 is that of the PIC16F183xx with the
+' prescaler 1, 4, 16 for 0, 1, 2 (3 is 1:16 as well) [Register 13-1 p.171]; TMR2IF / TMR1IF are PIR1 bits 1 and 0.
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
-#if _has(T1CON.TMR1CS)
+#if _has(T0CON.T08BIT)
+' Timer1 clock sources: TMR1CS in bits 1-0, the T1SOSCEN bit in bit 2 [Table 12-2 p.158]. T1ClkPin counts rising edges on T1CKI (RC0);
+' T1ClkSosc runs from a 32.768 kHz crystal on SOSCI/SOSCO (give it its start-up time before relying on the count, 12.4 p.159).
+Public Const T1ClkFosc4 = 0
+Public Const T1ClkFosc = 1
+Public Const T1ClkPin = 2
+Public Const T1ClkSosc = 6
+
+' Timer1 gate sources, T1GSS of T1GCON [Register 12-2 p.167]. T1GatePin is the T1G pin; T1GateTmr2 the Timer2 match to PR2.
+Public Const T1GatePin = 0
+Public Const T1GateTmr2 = 1
+Public Const T1GateCmp1 = 2
+Public Const T1GateCmp2 = 3
+#elseif _has(T1CON.TMR1CS)
 ' Timer1 clock sources, the TMR1CS field of T1CON [DS40001839E Table 27-2 p.285]. T1ClkPin counts rising edges on the pin selected by T1CKIPPS.
 Public Const T1ClkFosc4 = 0
 Public Const T1ClkFosc = 1
@@ -320,7 +349,17 @@ Public Const T2RstCmp1 = 8
 Public Const T2RstCmp2 = 9
 #endif
 
-#if _has(T1CON.TMR1CS)
+#if _has(T0CON.T08BIT)
+Dim Tmr0If As INTCON.2
+Dim Tmr0Ie As INTCON.5
+Dim Tmr1If As PIR1.0
+Dim Tmr1GIf As PIR3.0
+Dim Tmr1Ie As PIE1.0
+Dim Tmr2If As PIR1.1
+Dim Tmr2Ie As PIE1.1
+' The value added to TMR0L when the flag is taken: 255 - period in 8-bit mode, 0 in 16-bit mode.
+Dim t0Reload As Byte
+#elseif _has(T1CON.TMR1CS)
 Dim Tmr0If As PIR0.5
 Dim Tmr0Ie As PIE0.5
 Dim Tmr1If As PIR1.0
@@ -376,6 +415,49 @@ Dim Tmr2On As T2CON.2
 Dim Tmr2On As T2CON.7
 #endif
 
+#if _has(T0CON.T08BIT)
+' T0CON for `prescale` 0..8: PSA = 1 (no prescaler) for 0, else T0PS = prescale - 1; FOSC/4 clock (T0CS = 0).
+Private Function T0Ps(ByVal prescale As Byte) As Byte
+    If prescale = 0 Then
+        Result = 8
+    ElseIf prescale >= 8 Then
+        Result = 7
+    Else
+        Result = prescale - 1
+    End If
+End Function
+
+' 8-bit periodic timer. period = 0..255 (see the header: TMR0L is reloaded when the flag is taken).
+Public Sub Timer0Start(ByVal prescale As Byte, ByVal period As Byte)
+    T0CON = 0
+    t0Reload = 255 - period
+    TMR0L = t0Reload
+    Tmr0If = 0
+    T0CON = T0Ps(prescale) Or 192
+End Sub
+
+' 16-bit free-running timer, read with Timer0Read.
+Public Sub Timer0Start16(ByVal prescale As Byte)
+    T0CON = 0
+    t0Reload = 0
+    TMR0H = 0
+    TMR0L = 0
+    Tmr0If = 0
+    T0CON = T0Ps(prescale) Or 128
+End Sub
+
+Public Sub Timer0Stop()
+    T0CON = 0
+End Sub
+
+' Takes the flag: clears it and, in 8-bit mode, starts the next period [11.2 p.155].
+Private Sub T0Take()
+    Tmr0If = 0
+    If t0Reload <> 0 Then
+        TMR0L = TMR0L + t0Reload
+    End If
+End Sub
+#else
 ' 8-bit periodic timer. period = 0..255.
 Public Sub Timer0Start(ByVal prescale As Byte, ByVal period As Byte)
     T0CON0 = 0
@@ -409,6 +491,11 @@ Public Sub Timer0Stop()
     T0CON0 = 0
 End Sub
 
+Private Sub T0Take()
+    Tmr0If = 0
+End Sub
+#endif
+
 ' 16-bit count. TMR0L is read first, which latches TMR0H [19.1.2].
 Public Function Timer0Read() As Word
     Result = TMR0L
@@ -419,13 +506,13 @@ End Function
 Public Function Timer0Expired() As Boolean
     Result = False
     If Tmr0If = 1 Then
-        Tmr0If = 0
+        T0Take()
         Result = True
     End If
 End Function
 
 Public Sub Timer0Ack()
-    Tmr0If = 0
+    T0Take()
 End Sub
 
 Public Sub Timer0EnableInterrupt()
@@ -443,7 +530,7 @@ End Sub
 Public Dim Timer0OnExpire As TTimerEvent
 Public Sub Timer0Service()
     If Tmr0If = 1 Then
-        Tmr0If = 0
+        T0Take()
         Timer0OnExpire()
     End If
 End Sub
@@ -460,7 +547,9 @@ Public Sub Timer1Start(ByVal prescale As Byte)
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
-#if _has(T1CON.TMR1CS)
+#if _has(T0CON.T08BIT)
+    T1CON = (prescale And 3) * 16 + 3
+#elseif _has(T1CON.TMR1CS)
     T1CON = (prescale And 3) * 16 + 1
 #else
     T1CON = (prescale And 3) * 16 + 3
@@ -481,7 +570,9 @@ Public Sub Timer1StartSource(ByVal clk As Byte, ByVal prescale As Byte)
     TMR1L = 0
     TMR1H = 0
     Tmr1If = 0
-#if _has(T1CON.TMR1CS)
+#if _has(T0CON.T08BIT)
+    T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + (clk And 4) * 2 + 3
+#elseif _has(T1CON.TMR1CS)
     T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + 1
 #else
     T1CON = (prescale And 3) * 16 + 3
@@ -515,7 +606,9 @@ Public Sub Timer1StartGated(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
 #if _has(PIR1.TMR1IF)
     Tmr1GIf = 0
 #endif
-#if _has(T1CON.TMR1CS)
+#if _has(T0CON.T08BIT)
+    T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + (clk And 4) * 2 + 3
+#elseif _has(T1CON.TMR1CS)
     T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + 1
 #else
     T1CON = (prescale And 3) * 16 + 3
@@ -547,7 +640,9 @@ Public Sub Timer1StartPulse(ByVal clk As Byte, ByVal prescale As Byte, ByVal sou
 #if _has(PIR1.TMR1IF)
     Tmr1GIf = 0
 #endif
-#if _has(T1CON.TMR1CS)
+#if _has(T0CON.T08BIT)
+    T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + (clk And 4) * 2 + 3
+#elseif _has(T1CON.TMR1CS)
     T1CON = (clk And 3) * 64 + (prescale And 3) * 16 + 1
 #else
     T1CON = (prescale And 3) * 16 + 3
@@ -570,7 +665,7 @@ Public Sub Timer1Stop()
 End Sub
 
 Public Function Timer1Read() As Word
-#if _has(T1CON.TMR1CS)
+#if _has(T1CON.TMR1CS) And Not _has(T0CON.T08BIT)
     Dim lo As Byte
     ' No RD16 buffer: read the high byte before and after the low byte; when it changed the low byte wrapped in between, so read it again.
     Dim hi As Byte
@@ -609,8 +704,16 @@ Public Function FreqCount(ByVal pin As Byte, ByVal ms As Word) As LongWord
         Exit
     End If
 #endif
+#if _has(T1CKIPPS)
     Pinio.PinInput(pin)
     T1CKIPPS = pin
+#else
+    ' No PPS: T1CKI is RC0 [DS40001412H Tables 1-2, 1-3].
+    If pin <> 16 Then
+        Exit
+    End If
+    Pinio.PinInput(pin)
+#endif
     Timer1StartCounter(0)
     last = 0
     While ms > 0

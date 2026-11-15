@@ -11,7 +11,7 @@ A BASIC compiler for PIC microcontrollers, built for small, fast code. It turns 
 typed BASIC (modules, subroutines and functions, structures, interrupts) into a `.hex` file, and
 comes with a library of ready-made modules for the common peripherals.
 
-First target: **PIC18F27Q10**. The **PIC18F04/05/06/14/15/16Q41** family, the enhanced mid-range **PIC16F17126/17146**, the
+First target: **PIC18F27Q10**. The **PIC18F04/05/06/14/15/16Q41** family, the sixteen-part **PIC18(L)F23/24/25/26/43/44/45/46K22** family (28 and 40/44 pins, no PPS), the enhanced mid-range **PIC16F17126/17146**, the
 nine-part **PIC16F13113/13114/13115/13123/13124/13125/13143/13144/13145** family (8, 14 and 20 pins), the six-part **PIC16F13214/13215/13224/13225/13244/13245** family (8, 14 and 20 pins) and the eight-part
 **PIC16F18313/18323/18324/18325/18326/18344/18345/18346** family and its low-voltage **PIC16LF** twins (8, 14 and 20 pins) and the six-part
 **PIC16F15213/15214/15223/15224/15243/15244** family (8, 14 and 20 pins), the thirteen-part **PIC16F15313/15323/15324/15325/15344/15345/15354/15355/15356/15375/15376/15385/15386** family and its low-voltage **PIC16LF** twins (8 to 48 pins) and the **PIC16F18056/18076** (28 and 40 pins) are supported too (see

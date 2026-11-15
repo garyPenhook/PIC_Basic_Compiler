@@ -87,7 +87,7 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
         "18xxxx" => Ok(FamilyFacts {
             family: "pic18",
             vectors: (0x00, 0x08, 0x18),
-            vectors_source: "PIC18F27/47Q10 data sheet DS40002043F p.108 and p.193 (fixed vectors: reset 0000h, high 0008h, low 0018h); PIC18F0x/1xQ41 data sheet DS40002214G p.57 and p.114 (reset 000000h; with MVECEN = 0 the IVTBASE default 000008h is the high vector and the low vector is eight words on, 000018h)",
+            vectors_source: "PIC18F27/47Q10 data sheet DS40002043F p.108 and p.193 (fixed vectors: reset 0000h, high 0008h, low 0018h); PIC18F0x/1xQ41 data sheet DS40002214G p.57 and p.114 (reset 000000h; with MVECEN = 0 the IVTBASE default 000008h is the high vector and the low vector is eight words on, 000018h); PIC18(L)F2X/4XK22 data sheet DS40001412H 5.1 p.64 and Fig. 5-1 p.65 (reset vector 0000h, interrupt vectors 0008h and 0018h, 31-level stack)",
         }),
         // Enhanced mid-range: one interrupt vector, so high and low are both 0004h.
         "16Exxx" => Ok(FamilyFacts {
@@ -101,6 +101,19 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
 
 // ---------------------------------------------------------------------------------------------
 // Generation
+
+/// The implemented-bit mask of an SFR from its `access` letters (the bits whose letter is not `-`) when the pack gives eight letters
+/// for an 8-bit register, else the pack's `impl`. Used for the PIC18F-K_DFP pack only: its `impl` is wrong for the PIC18(L)F2x/4xK22
+/// (PIR3, PIE3, WPUB 0; CCP3CON .. CTMUICON 07h) while its `access` letters agree with Table 5-2 of DS40001412H (p.79-83) except where
+/// that summary is the family's (ADCON0 bit 6 is CHS4 per Register 17-1 p.295; TRISE of the 28-pin parts has WPUE3 only; EECON2 is
+/// written by the unlock sequence), as picsim's tools/audit/audit_summary.py shows. The Q10/Q41 `impl` is also often wrong (PMDx,
+/// PIR/PIE/IPR, DACx): picsim's corrected files match the `access` mask in most of those, but not all (OPA1CON0, PWM2ERSPPS, IVTADU).
+fn implemented_of(width: u8, access: Option<&str>, imp: Option<u32>) -> Option<u32> {
+    match access {
+        Some(a) if width == 8 && a.len() == 8 => Some(a.bytes().enumerate().filter(|&(_, c)| c != b'-').map(|(i, _)| 1u32 << (7 - i)).sum()),
+        _ => imp,
+    }
+}
 
 fn pack_info(pic: &Path) -> Res<(String, String)> {
     // .../<PackName>/<version>/edc/<PART>.PIC
@@ -117,6 +130,7 @@ fn generate(pic: &Path, out: &Path) -> Res<()> {
     let arch = req(root, "arch")?;
     let facts = family_facts(arch)?;
     let (pack, pack_version) = pack_info(pic)?;
+    let access_mask = pack == "PIC18F-K_DFP";
 
     let device = Device {
         device: Info {
@@ -136,7 +150,7 @@ fn generate(pic: &Path, out: &Path) -> Res<()> {
         },
         memory: memory(root, facts.family)?,
         config: config_registers(root)?,
-        sfr: sfrs(root)?,
+        sfr: sfrs(root, access_mask)?,
         joined: Vec::new(),
     };
     let device = Device { joined: joined(root, &device.sfr)?, ..device };
@@ -315,7 +329,7 @@ fn config_registers(root: roxmltree::Node) -> Res<Vec<ConfigRegister>> {
     Ok(out)
 }
 
-fn sfrs(root: roxmltree::Node) -> Res<Vec<Sfr>> {
+fn sfrs(root: roxmltree::Node, access_mask: bool) -> Res<Vec<Sfr>> {
     let mut by_name: BTreeMap<String, Sfr> = BTreeMap::new();
     for reg in descendants(root, "SFRDef") {
         // Simulator-internal registers (TMR0_Internal, ...) carry an `nmmrid` and no address: they
@@ -355,7 +369,7 @@ fn sfrs(root: roxmltree::Node) -> Res<Vec<Sfr>> {
             por: text("por"),
             mclr: text("mclr"),
             access: text("access"),
-            implemented: attr(reg, "impl").map(num).transpose()?,
+            implemented: if access_mask { implemented_of(width, attr(reg, "access"), attr(reg, "impl").map(num).transpose()?) } else { attr(reg, "impl").map(num).transpose()? },
             module: module.strip_suffix(".Module").unwrap_or(&module).to_string(),
             aliases,
             fields,

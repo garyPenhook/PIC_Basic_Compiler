@@ -1,0 +1,7 @@
+# An SSD1306-type OLED on MSSP1 of the PIC18(L)F2x/4xK22: SCL1 = RC3, SDA1 = RC4 (no PPS).
+[[oled]]
+bus = "i2c1"
+scl = "RC3"
+sda = "RC4"
+address = 0x3C
+height = 64

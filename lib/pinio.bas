@@ -11,9 +11,7 @@ Module Pinio
 ' interrupt handler and the main program on the same port.
 
 ' One more than the highest pin number a part can have: 24 (ports A to C), 32 (with port D), 40 (with port E) or 48 (with port F).
-#if _has(PRODL)
-Public Const PinCount = 24
-#elseif _has(LATF)
+#if _has(LATF)
 Public Const PinCount = 48
 #elseif _has(ANSELE)
 Public Const PinCount = 40
@@ -49,15 +47,46 @@ End Function
 ' Output level of pin (True = high).
 #if _has(PRODL)
 ' PIC18: the LATx registers are consecutive (LATA, LATB, LATC) on every supported part [18F27Q10 LATA..LATC 0xF82..0xF84,
-' PIC18-Q41 0x4BE..0x4C0, from the device files; the 18F0xQ41 parts have no LATB but keep LATC at LATA + 2], so the port is
-' LATA + (pin >> 3), reached through FSR0 (compiler-owned, nothing is live in it across a call), and the mask is built by a
-' shift loop. A pin 24 and above, or on a port the part lacks, is ignored.
+' PIC18-Q41 0x4BE..0x4C0, PIC18(L)F2x/4xK22 LATA..LATE 0xF89..0xF8D (PORTx 0xF80.., TRISx 0xF92..), from the device files; the
+' 18F0xQ41 parts have no LATB but keep LATC at LATA + 2], so the port is LATA + (pin >> 3), reached through FSR0 (compiler-owned,
+' nothing is live in it across a call), and the mask is built by a shift loop. A pin at or above PinCount (24, or 40 on the
+' 40/44-pin K22 parts with ports D and E), or on a port the part lacks, is ignored.
 Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
 #if Not _has(LATB)
     If pin >= 8 And pin < 16 Then
         Exit
     End If
 #endif
+#if _has(ANSELE)
+    Asm
+        movf PINIO_PINSET__PIN, w, c
+        sublw 39
+        bnc PINIO_PINSET_END
+        lfsr 0, LATA
+        rrncf PINIO_PINSET__PIN, w, c
+        rrncf WREG, w, c
+        rrncf WREG, w, c
+        andlw 7
+        addwf FSR0L, f, c
+        movlw 7
+        andwf PINIO_PINSET__PIN, f, c
+        movlw 1
+PINIO_PINSET_SHL:
+        decf PINIO_PINSET__PIN, f, c
+        bnc PINIO_PINSET_GOT
+        rlncf WREG, w, c
+        bra PINIO_PINSET_SHL
+PINIO_PINSET_GOT:
+        tstfsz PINIO_PINSET__LEVEL, c
+        bra PINIO_PINSET_HI
+        comf WREG, w, c
+        andwf INDF0, f, c
+        bra PINIO_PINSET_END
+PINIO_PINSET_HI:
+        iorwf INDF0, f, c
+PINIO_PINSET_END:
+    End Asm
+#else
     Asm
         movf PINIO_PINSET__PIN, w, c
         sublw 23
@@ -86,6 +115,7 @@ PINIO_PINSET_HI:
         iorwf INDF0, f, c
 PINIO_PINSET_END:
     End Asm
+#endif
 End Sub
 #else
 #if _has(LATF)
@@ -203,6 +233,33 @@ Public Function PinGet(ByVal pin As Byte) As Boolean
         Exit
     End If
 #endif
+#if _has(ANSELE)
+    Asm
+        clrf PINIO_PINGET__RESULT, c
+        movf PINIO_PINGET__PIN, w, c
+        sublw 39
+        bnc PINIO_PINGET_END
+        lfsr 0, PORTA
+        rrncf PINIO_PINGET__PIN, w, c
+        rrncf WREG, w, c
+        rrncf WREG, w, c
+        andlw 7
+        addwf FSR0L, f, c
+        movlw 7
+        andwf PINIO_PINGET__PIN, f, c
+        movlw 1
+PINIO_PINGET_SHL:
+        decf PINIO_PINGET__PIN, f, c
+        bnc PINIO_PINGET_GOT
+        rlncf WREG, w, c
+        bra PINIO_PINGET_SHL
+PINIO_PINGET_GOT:
+        andwf INDF0, w, c
+        bz PINIO_PINGET_END
+        incf PINIO_PINGET__RESULT, f, c
+PINIO_PINGET_END:
+    End Asm
+#else
     Asm
         clrf PINIO_PINGET__RESULT, c
         movf PINIO_PINGET__PIN, w, c
@@ -228,6 +285,7 @@ PINIO_PINGET_GOT:
         incf PINIO_PINGET__RESULT, f, c
 PINIO_PINGET_END:
     End Asm
+#endif
 End Function
 #else
 ' Enhanced mid-range: PORTA, PORTB, PORTC are consecutive too; the scheme of PinSet. False for a pin that is not OK.
@@ -428,8 +486,26 @@ Dim dMask As Byte
 Dim cAddr As Word
 Dim cMask As Byte
 
-' LATx address of pin 0..23 (0 otherwise).
+' LATx address of a pin below PinCount (0 otherwise).
 Function PinAddr(ByVal pin As Byte) As Word
+#if _has(ANSELE)
+    Asm
+        clrf PINIO_PINADDR__RESULT, c
+        clrf PINIO_PINADDR__RESULT+1, c
+        movf PINIO_PINADDR__PIN, w, c
+        sublw 39
+        bnc PINIO_PINADDR_END
+        rrncf PINIO_PINADDR__PIN, w, c
+        rrncf WREG, w, c
+        rrncf WREG, w, c
+        andlw 7
+        addlw low LATA
+        movwf PINIO_PINADDR__RESULT, c
+        movlw high LATA
+        movwf PINIO_PINADDR__RESULT+1, c
+PINIO_PINADDR_END:
+    End Asm
+#else
     Asm
         clrf PINIO_PINADDR__RESULT, c
         clrf PINIO_PINADDR__RESULT+1, c
@@ -446,6 +522,7 @@ Function PinAddr(ByVal pin As Byte) As Word
         movwf PINIO_PINADDR__RESULT+1, c
 PINIO_PINADDR_END:
     End Asm
+#endif
 End Function
 
 Public Sub BindData(ByVal pin As Byte)

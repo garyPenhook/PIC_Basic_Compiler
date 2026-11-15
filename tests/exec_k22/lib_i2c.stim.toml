@@ -1,0 +1,5 @@
+# A register device at 50h on MSSP1 of the PIC18(L)F2x/4xK22.
+[[i2c]]
+port = 1
+address = 0x50
+data = [0x11, 0x22, 0x33]

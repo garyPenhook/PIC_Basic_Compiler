@@ -27,13 +27,33 @@ Module Serial2
 ' RC2PPS (or RB6PPS) = 11h selects TX2/CK2 [Table 15-4 p.199]; RX2DTPPS = PORT[5:3] | PIN[2:0], RC1 = 010 001 = 17 (RB7 = 15) [Table 15-1 p.195 gives RC1 as the reset selection on the 14- and 20-pin parts]. TX2IF and RC2IF are PIR3 bits 6 and 7. Erratum 5.1 of DS80000725F (the
 ' PIC16(L)F15356/75/76/85/86): SerialWriteByte's twin waits for TRMT there. The registers and the baud-rate formula are those of EUSART1.
 '
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 16; chosen with `_has(RCON)`): EUSART2 (TXSTA2, RCSTA2, BAUDCON2, SPBRGH2:SPBRG2, TXREG2,
+' RCREG2) with fixed pins, no PPS: TX2 on RB6 and RX2 on RB7 on the 28-pin parts (also the ICSP clock and data pins; RB6 and RB7 have
+' no analog function), TX2 on RD6 and RX2 on RD7 on the 40/44-pin parts (AN26, AN27: ANSELD bits 6 and 7 are cleared) [Tables 2, 3
+' p.6-7]. Both TRIS bits are set, SPEN takes the TX pin [16.1.1.7 p.262]. TX2IF and RC2IF are PIR3 bits 4 and 5. Errata as for module
+' Serial (BRGH = BRG16 = 1 is always used).
+'
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
 #if Not _has(U2CON0) And Not _has(TX2STA)
 #error "serial2 needs a second EUSART: the PIC16F13145 family, the PIC16F183xx parts, the PIC16F152xx parts and the PIC16F153xx parts except the PIC16(L)F15313/23 have one (DS40002519D Table 1 p.1; DS40001799F Family Types table p.3; DS40002195E Table 1 p.1; DS40001897C Table 1 p.3); use module Serial"
 #endif
-#if _has(U2CON0)
+#if _has(RCON)
+Dim TxIf As PIR3.4
+Dim RxIf As PIR3.5
+Dim OverrunErr As RCSTA2.1
+Dim RxEnable As RCSTA2.4
+#if _has(LATD)
+Dim TxPin As TRISD.6
+Dim RxPin As TRISD.7
+Dim TxAnalog As ANSELD.6
+Dim RxAnalog As ANSELD.7
+#else
+Dim TxPin As TRISB.6
+Dim RxPin As TRISB.7
+#endif
+#elseif _has(U2CON0)
 Dim TxFull As U2FIFO.4
 Dim TxBufEmpty As U2FIFO.5
 Dim RxEmpty As U2FIFO.1
@@ -95,10 +115,25 @@ Public Const FoscHz = LongWord(_Clock * 1000000)
 Public Sub Serial2Init(ByVal baud As LongWord)
     Dim n As LongWord
     n = (FoscHz + baud * 2) / (baud * 4) - 1
+#if _has(RCON)
+#if _has(LATD)
+    TxAnalog = 0
+    RxAnalog = 0
+#endif
+    RxPin = 1
+    TxPin = 1
+    SPBRG2 = Byte(n)
+    SPBRGH2 = Byte(n >> 8)
+    BAUDCON2 = 8
+    TXSTA2 = 36
+    RCSTA2 = 144
+#else
     RxAnalog = 0
     RxPin = 1
     TxPin = 0
-#if _has(U2CON0)
+#endif
+#if _has(RCON)
+#elseif _has(U2CON0)
     TxAnalog = 0
     RC2PPS = 19
     U2RXPPS = 17

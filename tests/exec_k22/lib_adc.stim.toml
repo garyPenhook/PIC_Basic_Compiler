@@ -1,0 +1,15 @@
+# AN0 (RA0), AN12 (RB0) and the FVR buffer 2 channel (CHS 31) of the PIC18(L)F2x/4xK22.
+[[adc]]
+channel = 0
+value = 512
+at = 0
+
+[[adc]]
+channel = 12
+value = 1000
+at = 0
+
+[[adc]]
+channel = 31
+value = 333
+at = 0

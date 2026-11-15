@@ -26,6 +26,23 @@ Module System
 ' reported. The oscillator is that of the PIC16F183xx with other HFFRQ codes: COSC 110 and 000 (RSTOSC = HFINT32) are the HFINTOSC at HFFRQ 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz (7 reserved), COSC 001 is the
 ' HFINTOSC with the 2x PLL from 16 MHz (RSTOSC = HFINTPLL), CDIV divides by 1 to 512 [Register 5-1 p.76, Tables 9-1 and 9-2 p.111, Registers 9-2 and 9-6].
 '
+' PIC18(L)F2x/4xK22 (DS40001412H chapters 2, 4 and 24; chosen with `_has(RCON)`): there is no PCON0. The Reset flags are RCON (RI bit 4,
+' TO bit 3, PD bit 2, POR bit 1, BOR bit 0, all active low) and STKPTR (STKFUL bit 7, STKUNF bit 6) [Register 4-1 p.56, Register 5-1 p.67];
+' SysResetFlags returns them in one byte: STKFUL 7, STKUNF 6, RI 4, TO 3, PD 2, POR 1, BOR 0. A MCLR Reset changes none of them (Table 4-3
+' p.62), so with every flag inactive SysResetCause reports 3 (MCLR): call SysClearResetFlags after reading the cause, as on the other parts.
+' A watchdog Reset is TO = 0 with PD = 1. TO = 0 with PD = 0 is a watchdog wake-up from Sleep, not a Reset (Table 4-3), and leaves
+' the Reset flags as they were, so after SysClearResetFlags it reads as cause 3 like any state with no Reset flag. There is no window watchdog
+' (cause 5 is never reported). POR and BOR are set back by writing them; TO and PD only by CLRWDT, which SysClearResetFlags executes as
+' well. TO and PD are in RCON, not STATUS, so SysWakeFrom takes an RCON value there and SysWakeCause reads RCON.
+' Clock: OSCCON.SCS = 1x is the internal block at OSCCON.IRCF (16 MHz down to 31.25 kHz); SCS = 00 is the primary clock that FOSC
+' (CONFIG1H bits 3:0, read with TBLRD) selects, the internal block when FOSC = 100x, and then times 4 when OSCCON2.PLLRDY says the
+' 4x PLL runs [Registers 2-1, 2-2 p.30-31, Table 2-1 p.28]. SysClockFrom(scs, ircf, pri) takes SCS, IRCF and pri = 0 (external primary
+' clock), 1 (internal block as the primary clock) or 3 (the same through the PLL). An external clock or the secondary oscillator gives 0.
+' Watchdog: the period is fixed by Config WDTPS (CONFIG2H bits 5:2, 4 ms times 1:1 .. 1:32768) and WDTCON has only SWDTEN [24.3 p.354,
+' Register 24-14 p.355], so Snooze and Sleep(seconds) read WDTPS and sleep as many watchdog periods as make up the time (one period
+' when it is longer than the time asked for): give the watchdog a short period, `Config WDTEN = SWON, WDTPS = 4` (16 ms) for example. A
+' wake-up by an interrupt (TO still 1) ends them, as on the other parts.
+'
 ' Clock check: the library modules and DelayUs/DelayMs compute from the compile-time `Clock`; the
 ' module does not change the clock at run time (that would make every one of them wrong), it
 ' reads what the oscillator really does and compares it with `Clock`.
@@ -33,6 +50,41 @@ Module System
 ' The cause of the latest Reset not yet cleared, tested in this order:
 '   1 power-on, 2 brown-out, 7 stack overflow, 8 stack underflow, 5 watchdog window violation,
 '   4 watchdog time-out, 3 MCLR pin, 6 RESET instruction, 0 none (all flags cleared).
+#if _has(RCON)
+' RCON bits 4:0 with STKPTR's STKFUL and STKUNF in bits 7 and 6.
+Public Function SysResetFlags() As Byte
+    Result = (RCON And 31) Or (STKPTR And 192)
+End Function
+
+Public Function SysResetCause() As Byte
+    Dim f As Byte
+    f = SysResetFlags()
+    If (f And 2) = 0 Then
+        Result = 1
+    ElseIf (f And 1) = 0 Then
+        Result = 2
+    ElseIf (f And 128) <> 0 Then
+        Result = 7
+    ElseIf (f And 64) <> 0 Then
+        Result = 8
+    ElseIf (f And 12) = 4 Then
+        Result = 4
+    ElseIf (f And 16) = 0 Then
+        Result = 6
+    Else
+        Result = 3
+    End If
+End Function
+
+' Sets POR, BOR and RI back to 1, clears STKFUL and STKUNF, and executes CLRWDT (TO and PD back to 1).
+Public Sub SysClearResetFlags()
+    RCON = RCON Or 19
+    STKPTR = STKPTR And 31
+    Asm
+        clrwdt
+    End Asm
+End Sub
+#else
 Public Function SysResetCause() As Byte
     Dim f As Byte
     f = PCON0
@@ -67,6 +119,7 @@ End Function
 Public Sub SysClearResetFlags()
     PCON0 = 63
 End Sub
+#endif
 
 ' Wake-up / power-down cause from the STATUS flags TO and PD (the flags the older PIC18 parts keep in RCON). Every part has them in
 ' STATUS: PIC16 TO = bit 4, PD = bit 3 (DS40002325C 9.7.4 p.61); PIC18 TO = bit 6, PD = bit 5 (DS40002043F 11.8.5 p.131). TO = 0 means a
@@ -77,7 +130,9 @@ End Sub
 '   2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
 Const WakeTab(4) As Byte = (2, 3, 1, 0)
 Public Function SysWakeFrom(ByVal st As Byte) As Byte
-#if _has(PRODL)
+#if _has(RCON)
+    Result = WakeTab((st >> 2) And 3)
+#elseif _has(PRODL)
     Result = WakeTab((st >> 5) And 3)
 #else
     Result = WakeTab((st >> 3) And 3)
@@ -86,7 +141,11 @@ End Function
 
 ' The wake-up / power-down cause now, from STATUS (see SysWakeFrom).
 Public Function SysWakeCause() As Byte
+#if _has(RCON)
+    Result = SysWakeFrom(RCON)
+#else
     Result = SysWakeFrom(STATUS)
+#endif
 End Function
 
 ' Sets TO and PD back to 1 (the `clrwdt` instruction, which also restarts the watchdog count), so the next Sleep or watchdog time-out shows only its own cause.
@@ -96,6 +155,54 @@ Public Sub SysClearWakeFlags()
     End Asm
 End Sub
 
+#if _has(RCON)
+' Configuration byte 3000xxh (`lo` = its address' low byte), read with TBLRD (TBLPTR and TABLAT are scratch registers, ABI.md).
+Private Function CfgByte(ByVal lo As Byte) As Byte
+    Asm
+        movlw 0x30
+        movwf TBLPTRU, c
+        clrf TBLPTRH, c
+        movf SYSTEM_CFGBYTE__LO, w, c
+        movwf TBLPTRL, c
+        tblrd*
+        movf TABLAT, w, c
+        movwf SYSTEM_CFGBYTE__RESULT, c
+    End Asm
+End Function
+
+' Internal block frequency in Hz for each IRCF code [Register 2-1 p.30]; code 0 is 31.25 kHz from any of the three sources.
+Const IrcfHz(8) As LongWord = (31250, 250000, 500000, 1000000, 2000000, 4000000, 8000000, 16000000)
+
+' The system clock in Hz for OSCCON.SCS `scs`, OSCCON.IRCF `ircf` and `pri` (0 external primary clock, 1 internal block as the primary
+' clock, 3 the same through the 4x PLL); 0 for the secondary oscillator or an external clock (see the header).
+Public Function SysClockFrom(ByVal scs As Byte, ByVal ircf As Byte, ByVal pri As Byte) As LongWord
+    Result = 0
+    If ircf > 7 Then
+        Exit
+    End If
+    If scs >= 2 Then
+        Result = IrcfHz(ircf)
+    ElseIf scs = 0 And (pri And 1) <> 0 Then
+        Result = IrcfHz(ircf)
+        If (pri And 2) <> 0 Then
+            Result = Result << 2
+        End If
+    End If
+End Function
+
+' The system clock in Hz as the oscillator is set now.
+Public Function SysClockHz() As LongWord
+    Dim pri As Byte
+    pri = 0
+    If (CfgByte(1) And 14) = 8 Then
+        pri = 1
+        If OSCCON2.PLLRDY = 1 Then
+            pri = 3
+        End If
+    End If
+    Result = SysClockFrom(OSCCON And 3, (OSCCON >> 4) And 7, pri)
+End Function
+#else
 ' HFINTOSC megahertz for each OSCFRQ code. The PIC16F183xx table also holds, from index 8, the PLL clocks for codes 4..6.
 #if _has(ADCON1.PREF) Or (_has(OSCFRQ.FRQ) And Not _has(OSCCON1))
 Const MhzTab(6) As Byte = (1, 2, 4, 8, 16, 32)
@@ -192,6 +299,7 @@ Public Function SysClockHz() As LongWord
     Result = SysClockFrom((OSCCON2 >> 4) And 7, OSCCON2 And 15, OSCFRQ And 15)
 #endif
 End Function
+#endif
 
 ' True when the oscillator runs at the frequency the program was compiled for (`Clock`).
 Public Function SysClockOk() As Boolean
@@ -224,6 +332,33 @@ End Sub
 ' SEN/SWDTEN counts only when the Config has WDTE = SWDTEN (01); with WDTE = ON (11) the watchdog always runs and the bit is
 ' ignored; with WDTE = 10 (on except in Sleep) or OFF it does not run in Sleep and the part sleeps until another interrupt. On the newer parts PS is read-only
 ' unless the Config has WDTCPS = 11111 (software control), and then the period stays at the Config one.
+#if _has(RCON)
+Private Sub SysWdtSleep(ByVal ps As Byte)
+    Dim old As Byte
+    Dim wps As Byte
+    Dim n As Word
+    ' WDTPS, CONFIG2H bits 5:2: one watchdog period is 2^(WDTPS + 7) LFINTOSC cycles, period code ps asks for 2^(ps + 5).
+    wps = (CfgByte(3) >> 2) And 15
+    n = 1
+    If ps >= wps + 2 Then
+        n = n << (ps - 2 - wps)
+    End If
+    old = WDTCON
+    WDTCON = 1
+    While n <> 0
+        Asm
+            clrwdt
+        End Asm
+        Sleep()
+        ' TO = 1 after the wake-up: not the watchdog, so an interrupt (or another wake-up source) ends the sleep.
+        If RCON.nTO = 1 Then
+            Break
+        End If
+        n = n - 1
+    Wend
+    WDTCON = old
+End Sub
+#else
 Private Sub SysWdtSleep(ByVal ps As Byte)
     Dim old As Byte
     ' Cleared first: with WDTE = ON the watchdog is already running, and a period shorter than its count would reset the part.
@@ -244,6 +379,7 @@ Private Sub SysWdtSleep(ByVal ps As Byte)
     WDTCON = old
 #endif
 End Sub
+#endif
 
 ' A short sleep, as in classic BASIC: the part sleeps for about 2^period x 16 ms (period 0..7: 16, 32, 64, 128, 256, 512 ms, 1 s,
 ' 2 s; a larger value counts as 7). The time comes from the watchdog, so it is independent of the oscillator and is

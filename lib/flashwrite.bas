@@ -61,6 +61,191 @@ Module Flashwrite
 ' be set again by a Reset after an interrupted write, which FlashWriteWord handles as on the PIC16F183xx (it clears NVMCON1 and reports success only by the read-back). The data EEPROM does not exist, so use this module.
 ' PIC16F18056/76 (DS40002325C, section 15.1; the same branch, `Not _has(PRODL)`): 16384 words of 14 bits, a row of 32 words with 32 write latches [15.1 p.122], the same NVMCON1 bits, the unlock sequence
 ' 55h, AAh, WR [15.1.2.2 p.124] and the CPU stall during an operation. The silicon errata (DS80001014D) show nothing for the NVM, so the code is that of the PIC16F17126/46.
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 6; chosen with `#if _has(EEADR)`): no NVMADR / NVMDAT. Program memory is read with TBLRD through
+' TBLPTR (a byte address) and written through 64 holding registers loaded with TBLWT; a "sector" is the 64-byte erase and write block, 32
+' words, so sector s starts at word 32 * s and FlashLastSector is 127, 255, 511 or 1023 for the 8, 16, 32 and 64 KB parts [6.1, 6.5, 6.6
+' p.90-97, Table 1 p.2]. Erase: TBLPTR in the block, EECON1 = EEPGD | WREN | FREE, interrupts off, 55h and AAh to EECON2, WR; write: the
+' holding registers, EECON1 = EEPGD | WREN, the same unlock and WR [6.5.1 p.95, 6.6.1 p.96, Examples 6-2, 6-3]. The CPU stalls about 2 ms
+' for each, so there is no wait for WR. The holding registers read FFh after a Reset and after every write, and an FFh byte leaves the
+' flash byte as it is (6.6 note p.96); FlashWriteWord still loads all 64 (FFh but its two bytes), because MDB leaves them 00h after a
+' write, and writes the block; TBLPTR is put back inside the block before WR is set (6.6.1 note). WRERR may read 1 after a Reset during a write (6.2.1 note p.91), so success is the read-back: erased words
+' for an erase, the value for a write. Write protection (WRTn) makes the write do nothing, which the read-back reports. The silicon errata
+' (DS80000498K, DS80000512J, DS80000514J) list nothing for the program memory; the instruction after WR needs no NOP. TBLPTR and TABLAT
+' are saved by the compiler's interrupt handlers (ABI.md), so the reads need no interrupt lock; erase and write turn interrupts off from
+' before TBLPTR is loaded to the end of the operation.
+#if _has(EEADR)
+Dim IntEn As INTCON.7
+Dim NvmWr As EECON1.1
+
+' Words in a sector (the 64-byte block), and the number of the last sector.
+Public Const FlashSectorWords = 32
+Public Const FlashLastSector As Word = _FlashBytes / 64 - 1
+
+' The PFM word address of the first word of sector s.
+Public Function FlashSectorAddr(ByVal sector As Word) As Word
+    Result = sector << 5
+End Function
+
+' TBLPTR = byte address of word `addr`.
+Sub SetAddr(ByVal addr As Word)
+    TBLPTRU = Byte(addr >> 15)
+    TBLPTRH = Byte(addr >> 7)
+    TBLPTRL = Byte(addr << 1)
+End Sub
+
+' The unlock sequence and WR, with EECON1 set up by the caller [6.5.1 steps 4-6]; the CPU stalls until the operation ends.
+Sub Unlock()
+    EECON2 = 85
+    EECON2 = 170
+    NvmWr = 1
+End Sub
+
+' The word at PFM word address addr (65535 = FFFFh when erased).
+Public Function FlashReadWord(ByVal addr As Word) As Word
+    SetAddr(addr)
+    Asm
+        tblrd*+
+        movff TABLAT, FLASHWRITE_FLASHREADWORD__RESULT
+        tblrd*
+        movff TABLAT, FLASHWRITE_FLASHREADWORD__RESULT+1
+    End Asm
+End Function
+
+' True when the 32 words of sector `sector` all read FFFFh.
+Function Blank(ByVal sector As Word) As Boolean
+    Dim i As Byte
+    Dim a As Word
+    a = sector << 5
+    Result = True
+    For i = 0 To 31
+        If FlashReadWord(a + i) <> 65535 Then
+            Result = False
+            Exit
+        End If
+    Next
+End Function
+
+' Erases the sector (every word becomes FFFFh). Returns 1 on success, 0 for a sector past FlashLastSector or when the sector does not
+' read back erased (write-protected).
+Public Function FlashEraseSector(ByVal sector As Word) As Byte
+    Dim ie As Byte
+    Result = 0
+    If sector <= FlashLastSector Then
+        ie = IntEn
+        IntEn = 0
+        SetAddr(sector << 5)
+        EECON1 = 148
+        Unlock()
+        EECON1 = 0
+        If ie = 1 Then
+            IntEn = 1
+        End If
+        If Blank(sector) Then
+            Result = 1
+        End If
+    End If
+End Function
+
+' Programs one word that is still erased (FFFFh), about 2 ms (the whole block is written, the other bytes as FFh, which leaves them).
+' Returns 1 when the word reads back as value, 0 when it does not (the word was not erased, or write protection).
+Public Function FlashWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
+    Dim ie As Byte
+    Dim base As Word
+    Dim i As Byte
+    Result = 0
+    If addr >= _FlashBytes / 2 Then
+        Exit
+    End If
+    ie = IntEn
+    IntEn = 0
+    ' All 64 holding registers are loaded, FFh except the word's two bytes, so the write does not depend on their reset value (the
+    ' data sheet says FFh after every write, 6.6 note; MDB leaves them 00h after a write, which would program the rest of the block).
+    base = addr And 65504
+    SetAddr(base)
+    For i = 0 To 31
+        If base + i = addr Then
+            TABLAT = Byte(value)
+            Asm
+                tblwt*+
+            End Asm
+            TABLAT = Byte(value >> 8)
+        Else
+            TABLAT = 255
+            Asm
+                tblwt*+
+            End Asm
+        End If
+        Asm
+            tblwt*+
+        End Asm
+    Next
+    SetAddr(base)
+    EECON1 = 132
+    Unlock()
+    EECON1 = 0
+    If ie = 1 Then
+        IntEn = 1
+    End If
+    If FlashReadWord(addr) = value Then
+        Result = 1
+    End If
+End Function
+
+' Replaces one word and keeps the other 31 of its sector, about 4 ms. Does nothing when the word already holds value, and uses the word
+' write when it is erased. Otherwise follows 6.6.1 (Example 6-3): the 32 words into a RAM image, block erase, the 64 bytes into the
+' holding registers, block write. Returns 1 when the word reads back as value, 0 on failure; after a failure in the middle the sector may
+' be erased, so a program that needs its data should write it again.
+Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
+    Dim cur As Word
+    Dim ie As Byte
+    Dim img(32) As Word
+    Dim base As Word
+    Dim i As Byte
+    Result = 0
+    If addr >= _FlashBytes / 2 Then
+        Exit
+    End If
+    cur = FlashReadWord(addr)
+    If cur = value Then
+        Result = 1
+    ElseIf cur = 65535 Then
+        Result = FlashWriteWord(addr, value)
+    Else
+        base = addr And 65504
+        For i = 0 To 31
+            img(i) = FlashReadWord(base + i)
+        Next
+        img(Byte(addr And 31)) = value
+        ie = IntEn
+        IntEn = 0
+        SetAddr(base)
+        EECON1 = 148
+        Unlock()
+        SetAddr(base)
+        For i = 0 To 31
+            TABLAT = img(i).Byte0
+            Asm
+                tblwt*+
+            End Asm
+            TABLAT = img(i).Byte1
+            Asm
+                tblwt*+
+            End Asm
+        Next
+        ' Back inside the block before WR (the increments left TBLPTR on the next block) [6.6.1 note].
+        SetAddr(base)
+        EECON1 = 132
+        Unlock()
+        EECON1 = 0
+        If ie = 1 Then
+            IntEn = 1
+        End If
+        If FlashReadWord(addr) = value Then
+            Result = 1
+        End If
+    End If
+End Function
+#else
 #if _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim NvmErr As NVMCON1.7
@@ -459,3 +644,4 @@ Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
 #endif
     End If
 End Function
+#endif

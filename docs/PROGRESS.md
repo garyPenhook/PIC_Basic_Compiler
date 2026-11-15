@@ -1495,3 +1495,27 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `oled` takes its pin limit from `PinCount`. `glcd` still takes pins 0..23 (its used-pin mask is a LongWord).
 - Tests: `tests/exec_p153_big` (PIC16F15386: pinio, pwm, spi, i2c, serial2), `tests/exec_p153_40` (PIC16F15376: pwm), `tests/exec_p153_small` (PIC16F15344: every pin allowed), and the PIC16F15356 `lib_pwm` moved PWM3 to RB1; all run from `p153_programs_in_simulator`. The old-versus-new library comparison (173 programs on the other families) shows no difference.
 - Not done: `glcd` on ports D to F; the PIC18F27Q10 and PIC18-Q41 have no port D or beyond and keep pins 0..23; the input PPS restrictions of signals other than T1CKI, SSP1CLK/DAT and RX1DT are not used by the library; nothing ran on a real part.
+
+## PIC18(L)F2x/4xK22 family: PIC18(L)F23K22 / 24K22 / 25K22 / 26K22 / 43K22 / 44K22 / 45K22 / 46K22 (done 2026-11-15, 0.1.245)
+- Device files `devices/18F23K22.toml` … `18LF46K22.toml` (16) generated from PIC18F-K_DFP 1.17.312 and cross-checked by hand-written `.expect.toml` files (DS40001412H Table 1 p.2,
+  Fig. 5-1 p.65, Table 24-1 p.344, 24.6 p.359; peripheral counts). The pack's `impl` masks are wrong for this family, so devgen takes the implemented mask from the `access` letters for
+  this pack only (checked against Table 5-2 with picsim's new `tools/audit/audit_summary.py`). The vector source of every PIC18 file now cites DS40001412H too (one line each).
+  pic-config `.cfgdata` for all 16 parts.
+- Compiler: two interrupt priorities set IPEN where the part has it (`Target::ipen`: RCON bit 7 on the K22, whose INTCON bit 5 is TMR0IE; the Q10 and Q41 unchanged); `XINST = ON` is
+  refused (E-CONFIG) on every PIC18; a program larger than the part's program memory is refused with the new E-ROM (on a PIC18 it used to be accepted, e.g. a
+  10 KB image for the 8 KB PIC18F23K22; the PIC16 back end's existing check, reported as E-BACKEND, is E-ROM now too);
+  `W-CLOCK` for `FOSC = INTIO67/INTIO7` (1 MHz at reset) and writes of `OSCCON`/`OSCTUNE` count as setting the oscillator.
+- Library: K22 branches in `intosc`, `system`, `gpio`, `pinio` (ports D and E), `timer`, `serial`, `serial2`, `adc`, `eeprom`, `flashwrite`, `spi` (MSSP1 or MSSP2), `i2c`, `pwm`
+  (CCP1..CCP5); `dma` stops with #error. Errata worked in: EUSART Start bit (BRGH = BRG16 = 1), SPI host CKE = 0 (wait and WCOL retry), ADC GO stuck (time-out and restart),
+  VREFCON0 reset value, CCP3..5 PWM clock (all on Timer2), Timer1 asynchronous flag (always synchronous). Facts: `docs/FACTS-18F-K22.md`.
+- Found while porting: `_has()` matches the pack's aliases, so `_has(RCSTA1)` (Q10, PIC16F153xx/183xx) and `_has(EECON1)` (PIC16F183xx) are not K22 markers; the first version took
+  the K22 branch of `serial`, `serial2`, `eeprom` and `flashwrite` on those parts (caught by the Q10 `lib_serial` run); the markers are now `RCON` and `EEADR`. LIBRARY.md's porting
+  steps say so. The other families' builds were compared with the previous compiler's, program by program (see below).
+- Simulator: basil-sim (picsim 0.2.10) models the K22 interrupt controller (IPEN in RCON, INTCON/INTCON3 sources), the older Timer0/1/2, EUSART baud register names, the ADC with
+  ACQT, the EECON1 EEPROM/flash controller with TBLWT holding registers, CCP1..CCP5 PWM on the fixed pins (CONFIG3H CCP2MX/CCP3MX), the oscillator status bits, the XINST polarity and
+  an OLED on the fixed MSSP pins (picsim `docs/FACTS-SIM.md`, "PIC18(L)F2x/4xK22", D-SIM-12 to D-SIM-14). `scripts/exec-test.py` knows the K22 Config names.
+- Tests: `tests/exec_k22` (adc, eeprom, flashwrite, gpio, i2c, intosc, oled, pinio, pwm_out, serial, serial2, spi, timer and the six interrupt programs), `k22_parts_build_the_standard_programs`,
+  `k22_library_modules_build`, `k22_ipen_xinst_and_flash_size`, `k22_programs_in_simulator` (`tests/exec` on the PIC18F26K22 and `tests/exec_k22`, optimised and `-O0`, basil-sim). The
+  `tests/exec` programs and `tests/exec_k22` were also run in MDB: same results, and the same cycles but for the differences picsim lists.
+- Not done: nothing ran on a real part; capture/compare, half/full-bridge PWM, Timer3/5 pins, the RB interrupt-on-change and the INT pin edges are not modelled in basil-sim; MDB does not model
+  the oscillator status bits, so `intosc` is tested in basil-sim only.

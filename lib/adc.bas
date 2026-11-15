@@ -64,6 +64,201 @@ Module Adc
 '  1.4.2  Burst Average mode is not used here.
 ' The pin that is read must be an analog input: call AdcPin first (ANSELx resets to 1 but the
 ' pin may have been changed by `Gpio.GpioAllDigital`).
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 17, 10 bits; chosen with `#if _has(ADCON2.ACQT)`): the classic ADC. ADCON0 = CHS<4:0> (bits 6-2) |
+' GO/DONE | ADON, ADCON1 = TRIGSEL | PVCFG<1:0> (3-2) | NVCFG<1:0>, ADCON2 = ADFM | ACQT<2:0> (5-3) | ADCS<2:0> [Registers 17-1 to 17-3
+' p.295-297]. CHS is an AN number, not a pin: AN0..AN3 = RA0..RA3, AN4 = RA5, AN5..AN7 = RE0..RE2, AN8 = RB2, AN9 = RB3, AN10 = RB1,
+' AN11 = RB4, AN12 = RB0, AN13 = RB5, AN14..AN19 = RC2..RC7, AN20..AN27 = RD0..RD7 (AN5..AN7 and AN20..AN27 on the 40/44-pin parts only)
+' [Tables 2, 3 p.6-7]. The module keeps the library's numbering (channel = pin number, RA0 = 0, RB0 = 8, RC0 = 16, RD0 = 24, RE0 = 32) and
+' translates; a pin with no AN input reads 0. The internal channels are AdcChCtmu (CHS 29), AdcChDac (30) and AdcChFvr (31, FVR BUF2).
+' Conversion clock: TAD must be 1..25 us (parameter 130, Table 27-22 p.452); FOSC/n with the smallest n of 2, 4, 8, 16, 32, 64 that gives
+' TAD >= 1 us (so TAD is 1..2 us), and the dedicated FRC (600 kHz nominal, ADCS = 011) when `Clock` is below 1 MHz. Acquisition is done by
+' the hardware after GO (ACQT): 8 TAD (at least 8 us; the worked example of Equation 17-1 p.299 is 7.45 us for 10 kohm), and 16 TAD (at
+' least 16 us) on the FVR channel, which needs more than 15 us (Register 17-1 note 2). The positive reference is AVDD (PVCFG = 00) or the
+' FVR BUF2 (10); the negative one is AVSS. The FVR is VREFCON0 (FVREN, FVRST ready, FVRS gain 1x/2x/4x) [Register 21-1 p.332].
+' Errata: DS80000498K item 1.1 (25/45K22 A2, A3): VREFCON0 resets to 00h, not 10h; AdcRefFvr writes all of it. Item 1.2: the reference may
+' be unstable at low temperature on those revisions (no work-around). Item 8: GO/DONE can stay set; Convert gives up after a bounded wait,
+' clears GO and starts again (twice at most), and returns 0 if it still did not finish. The DS80000512J and DS80000514J parts list no ADC
+' item.
+#if _has(ADCON2.ACQT)
+Public Const AdcChCtmu = 61
+Public Const AdcChDac = 62
+Public Const AdcChFvr = 63
+Public Const AdcMax = 1023
+
+' AN number of each pin 0..39, 255 for a pin with no analog input. AN5..AN7 (RE0..RE2) and AN20..AN27 (RD0..RD7) exist on the 40/44-pin
+' parts only (Register 17-1 note 1 p.295); the 28-pin parts have no port D and E.
+#if _has(ANSELD)
+Const PinAn(40) As Byte = (0, 1, 2, 3, 255, 4, 255, 255, 12, 10, 8, 9, 11, 13, 255, 255, 255, 255, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 5, 6, 7, 255, 255, 255, 255, 255)
+#else
+Const PinAn(40) As Byte = (0, 1, 2, 3, 255, 4, 255, 255, 12, 10, 8, 9, 11, 13, 255, 255, 255, 255, 14, 15, 16, 17, 18, 19, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255)
+#endif
+
+' ADCS for TAD >= 1 us: FOSC/n codes for n = 2, 4, 8, 16, 32, 64 are 0, 4, 1, 5, 2, 6; FRC is 3 [Register 17-3].
+#if _clock < 1
+Const AdcCs As Byte = 3
+#elseif _clock <= 2
+Const AdcCs As Byte = 0
+#elseif _clock <= 4
+Const AdcCs As Byte = 4
+#elseif _clock <= 8
+Const AdcCs As Byte = 1
+#elseif _clock <= 16
+Const AdcCs As Byte = 5
+#elseif _clock <= 32
+Const AdcCs As Byte = 2
+#else
+Const AdcCs As Byte = 6
+#endif
+' ADCON2: right-justified, ACQT = 8 TAD (100) or 16 TAD (110) for the FVR channel.
+Const AdcCon2 As Byte = 128 + 32 + AdcCs
+Const AdcCon2Fvr As Byte = 128 + 48 + AdcCs
+
+' Polls of GO/DONE before Convert gives up: about 2 ms at any clock (a conversion takes at most 11 + 16 TAD = 54 us here).
+Const AdcWait As LongWord = Max(20, LongWord(_Clock * 60))
+
+Dim AdcGo As ADCON0.1
+Dim lastCh As Byte
+Dim adinUp As Boolean
+
+Public Sub AdcInit()
+    ADCON0 = 0
+    ADCON1 = 0
+    ADCON2 = AdcCon2
+    lastCh = 255
+    ADCON0 = 1
+End Sub
+
+' Makes the pin of channel 0..23 (0..34 on the 40/44-pin parts) an analog input (TRISx = 1, ANSELx = 1). Other channel numbers
+' are internal and need no pin.
+Public Sub AdcPin(ByVal ch As Byte)
+    Dim m As Byte
+    m = 1 << (ch And 7)
+    If ch < 8 Then
+        TRISA = TRISA Or m
+        ANSELA = ANSELA Or m
+    ElseIf ch < 16 Then
+        TRISB = TRISB Or m
+        ANSELB = ANSELB Or m
+    ElseIf ch < 24 Then
+        TRISC = TRISC Or m
+        ANSELC = ANSELC Or m
+#if _has(ANSELD)
+    ElseIf ch < 32 Then
+        TRISD = TRISD Or m
+        ANSELD = ANSELD Or m
+    ElseIf ch < 35 Then
+        TRISE = TRISE Or m
+        ANSELE = ANSELE Or m
+#endif
+    End If
+End Sub
+
+' Positive reference = AVDD, negative = AVSS (the reset state). The FVR is left as it is (the comparators and the DAC may use it).
+Public Sub AdcRefVdd()
+    ADCON1 = 0
+    lastCh = 255
+End Sub
+
+' Positive reference = FVR BUF2 at gain 1, 2 or 4 (1.024, 2.048, 4.096 V; the output cannot exceed VDD) [Register 21-1]. Waits, bounded, for FVRST.
+Public Sub AdcRefFvr(ByVal gain As Byte)
+    Dim n As Word
+    ' FVRS: 1 = 1x, 2 = 2x, 3 = 4x
+    If gain >= 4 Then
+        gain = 3
+    End If
+    If gain = 0 Then
+        gain = 1
+    End If
+    VREFCON0 = 128 Or (gain << 4)
+    n = 0
+    While VREFCON0.FVRST = 0 And n < 60000
+        Inc(n)
+    Wend
+    ADCON1 = 8
+    lastCh = 255
+End Sub
+
+' One conversion on the selected channel (0..AdcMax), with the GO/DONE work-around of erratum 8.
+Function Convert() As Word
+    Dim tries As Byte
+    Dim n As Word
+    Result = 0
+    For tries = 0 To 2
+        AdcGo = 1
+        n = 0
+        While AdcGo = 1 And n < AdcWait
+            Inc(n)
+        Wend
+        If AdcGo = 0 Then
+            Result = ADRESL
+            Result.Byte1 = ADRESH
+            Exit
+        End If
+        AdcGo = 0
+    Next
+End Function
+
+' Converts channel `ch` (a pin number, or one of the AdcCh constants) and returns 0..AdcMax; 0 for a pin with no analog input.
+Public Function AdcRead(ByVal ch As Byte) As Word
+    Dim an As Byte
+    ch = ch And 63
+    If ch <> lastCh Then
+        If ch >= 61 Then
+            an = ch - 32
+        ElseIf ch < 40 Then
+            an = PinAn(ch)
+        Else
+            an = 255
+        End If
+        If an = 255 Then
+            Result = 0
+            Exit
+        End If
+        If an = 31 Then
+            ADCON2 = AdcCon2Fvr
+        Else
+            ADCON2 = AdcCon2
+        End If
+        ADCON0 = (an << 2) Or 1
+        lastCh = ch
+    End If
+    Result = Convert()
+End Function
+
+' Mean of `count` (1..64) conversions, rounded down; 0 for a count of 0.
+Public Function AdcReadAvg(ByVal ch As Byte, ByVal count As Byte) As Word
+    Dim sum As Word
+    Dim i As Byte
+    sum = 0
+    i = 0
+    While i < count
+        sum = sum + AdcRead(ch)
+        Inc(i)
+    Wend
+    Result = 0
+    If count > 0 Then
+        Result = sum / count
+    End If
+End Function
+
+' Converts a result to millivolts for a reference of `vrefMv` millivolts: raw * vref / AdcMax.
+Public Function AdcMillivolts(ByVal raw As Word, ByVal vrefMv As Word) As Word
+    Result = Word(LongWord(raw) * vrefMv / AdcMax)
+End Function
+
+' ADin: the one-call read, as on the other parts (AdcInit on the first call, AdcPin on a channel change).
+Public Function ADin(ByVal ch As Byte) As Word
+    If Not adinUp Then
+        AdcInit()
+        adinUp = True
+    End If
+    ch = ch And 63
+    If ch <> lastCh Then
+        AdcPin(ch)
+    End If
+    Result = AdcRead(ch)
+End Function
+#else
 ' ADC channel numbers, the ADPCH values of Table 33-1. Pins: RA0..RA7 = 0..7, RB0..RB7 = 8..15,
 ' RC0..RC7 = 16..23.
 #if _has(ADCON1.PREF)
@@ -423,3 +618,4 @@ Public Function ADin(ByVal ch As Byte) As Word
     End If
     Result = AdcRead(ch)
 End Function
+#endif

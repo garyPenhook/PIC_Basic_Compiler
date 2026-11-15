@@ -27,11 +27,25 @@ Module Serial
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
 ' flags used are the buffer status bits of U1FIFO (TXBF, RXBE) and the shift register flag TXMTIF of U1ERRIR,
 ' not the interrupt flags. Chosen with `#if _has(U1CON0)`.
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 16; chosen with `#if _has(RCON)`): EUSART1 with the registers TXSTA1, RCSTA1, BAUDCON1,
+' SPBRGH1:SPBRG1, TXREG1, RCREG1 and no PPS: TX1 is RC6 and RX1 RC7 on every part [Tables 2, 3 p.6-7]. Both TRIS bits are set and SPEN
+' makes TX an output [16.1.1.1 p.261, 16.1.1.7 p.262]; ANSELC bits 6 and 7 are cleared (RC6 is AN18, RC7 AN19). TX1IF and RC1IF are PIR1
+' bits 4 and 5. Erratum 12.1 (DS80000498K; 6.1 in DS80000512J and DS80000514J, earlier silicon): the receiver can miss a Start bit unless
+' BRGH = 1 and BRG16 = 1, which is what the module always uses. Erratum 12.2 / 6.2 concerns the synchronous mode only.
 '
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP1BRGH:SP1BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
-#if _has(U1CON0)
+#if _has(RCON)
+Dim TxIf As PIR1.4
+Dim RxIf As PIR1.5
+Dim TxPin As TRISC.6
+Dim RxPin As TRISC.7
+Dim TxAnalog As ANSELC.6
+Dim RxAnalog As ANSELC.7
+Dim OverrunErr As RCSTA1.1
+Dim RxEnable As RCSTA1.4
+#elseif _has(U1CON0)
 Dim TxFull As U1FIFO.4
 Dim TxBufEmpty As U1FIFO.5
 Dim RxEmpty As U1FIFO.1
@@ -140,7 +154,15 @@ Public Sub SerialInit(ByVal baud As LongWord)
     RxAnalog = 0
     RxPin = 1
     TxPin = 0
-#if _has(U1CON0)
+#if _has(RCON)
+    TxAnalog = 0
+    TxPin = 1
+    SPBRG1 = Byte(n)
+    SPBRGH1 = Byte(n >> 8)
+    BAUDCON1 = 8
+    TXSTA1 = 36
+    RCSTA1 = 144
+#elseif _has(U1CON0)
     TxAnalog = 0
     RC4PPS = SerTxCode
     U1RXPPS = SerRxCode

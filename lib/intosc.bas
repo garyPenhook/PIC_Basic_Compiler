@@ -46,6 +46,150 @@ Module IntOsc
 ' as the Q10 [Registers 9-1 .. 9-6 p.110-114]: NOSC = 110 is the HFINTOSC at OSCFRQ.HFFRQ = 0..6 = 1, 2, 4, 8, 12, 16, 32 MHz (code 7 is reserved) and NDIV divides it by 1 to 512 [Tables 9-1, 9-2 p.111].
 ' So the Q10 sequence is used with 64 and 48 MHz refused; `CSWEN = ON` is needed for every speed but the one RSTOSC gives (OSCCON1 is read-only while CSWEN = 0, note 3 p.110).
 '
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 2; chosen with `_has(OSCCON.IRCF)`): no OSCFRQ, OSCCON1 or clock divider. The 16 MHz HFINTOSC
+' goes through a postscaler chosen by OSCCON.IRCF (bits 6:4): 111 = 16, 110 = 8, 101 = 4, 100 = 2, 011 = 1 MHz (the reset value),
+' 010 = 500 kHz, 001 = 250 kHz and 000 = 31.25 kHz (from the HFINTOSC with OSCTUNE.INTSRC = 1 and OSCCON2.MFIOSEL = 0) [Register 2-1 p.30,
+' Register 2-2 p.31, Register 2-3 p.35]. OSCCON.SCS = 1x runs the part from that internal block whatever FOSC says [2.2.1 p.27]. The 4x PLL
+' (OSCTUNE.PLLEN) sits only on the primary clock path, and it multiplies the internal block only when FOSC = 100x (INTIO67 or INTIO7) makes
+' it the primary clock; its input must be 4 to 16 MHz [Fig. 2-1 p.26, Table 2-1 p.28, 2.8.2 p.37]. So:
+'   64, 32 MHz                       IRCF = 111 / 110, PLLEN = 1, SCS = 00: needs `Config FOSC = INTIO67` (or INTIO7)
+'   16, 8, 4, 2, 1, 0.5, 0.25 MHz    IRCF, PLLEN = 0, SCS = 10 (any FOSC)
+'   0.03125 (31.25 kHz)              IRCF = 000 from the HFINTOSC (INTSRC = 1, MFIOSEL = 0), SCS = 10
+' Order: for a PLL speed IRCF is written (with SCS = 00) before PLLEN, so the PLL never sees an input below 4 MHz; otherwise PLLEN is cleared
+' first, so the clock never runs above the faster of the old and the new speed. The routine then waits, bounded, for OSCCON.HFIOFS (HFINTOSC
+' stable) and, for a PLL speed, OSCCON2.PLLRDY [Registers 2-1, 2-2]. The tuning bits OSCTUNE.TUN are kept. With another FOSC a PLL speed
+' is refused: SetClock returns False and the start-up code runs the internal block without the PLL (`System.SysClockOk()` is False). SetClockDiv(mhz, shift) is
+' SetClock(mhz >> shift) there (16 >> 5 = 0.5 MHz is not reachable that way, use Clock).
+#if _has(OSCCON.IRCF)
+#if _clock = 64
+Const ClockIrcf As Byte = 7
+Const ClockPll As Boolean = True
+#elseif _clock = 32
+Const ClockIrcf As Byte = 6
+Const ClockPll As Boolean = True
+#elseif _clock = 16
+Const ClockIrcf As Byte = 7
+Const ClockPll As Boolean = False
+#elseif _clock = 8
+Const ClockIrcf As Byte = 6
+Const ClockPll As Boolean = False
+#elseif _clock = 4
+Const ClockIrcf As Byte = 5
+Const ClockPll As Boolean = False
+#elseif _clock = 2
+Const ClockIrcf As Byte = 4
+Const ClockPll As Boolean = False
+#elseif _clock = 1
+Const ClockIrcf As Byte = 3
+Const ClockPll As Boolean = False
+#elseif _clock = 0.5
+Const ClockIrcf As Byte = 2
+Const ClockPll As Boolean = False
+#elseif _clock = 0.25
+Const ClockIrcf As Byte = 1
+Const ClockPll As Boolean = False
+#elseif _clock = 0.03125
+Const ClockIrcf As Byte = 0
+Const ClockPll As Boolean = False
+#else
+#error "Clock is not an internal oscillator speed of the PIC18(L)F2x/4xK22: use 64 or 32 (with Config FOSC = INTIO67), 16, 8, 4, 2, 1, 0.5, 0.25 or 0.03125"
+Const ClockIrcf As Byte = 3
+Const ClockPll As Boolean = False
+#endif
+
+' True when CONFIG1H FOSC is 100x (INTIO67 or INTIO7), the only primary clock the module may put through the PLL: with a crystal or an
+' external clock PLLEN would multiply that instead (Table 2-1 p.28). CONFIG1H is read with TBLRD (TBLPTR and TABLAT are scratch, ABI.md).
+Private Function IntioPrimary() As Boolean
+    Dim c As Byte
+    Asm
+        movlw 0x30
+        movwf TBLPTRU, c
+        clrf TBLPTRH, c
+        movlw 1
+        movwf TBLPTRL, c
+        tblrd*
+        movff TABLAT, INTOSC_INTIOPRIMARY__C
+    End Asm
+    Result = (c And 14) = 8
+End Function
+
+' Waits, bounded, for HFIOFS and, with the PLL, PLLRDY.
+Private Sub WaitSettle(ByVal pll As Boolean)
+    Dim n As Word
+    n = 0
+    While (OSCCON.HFIOFS = 0 Or (pll And OSCCON2.PLLRDY = 0)) And n < 60000
+        Inc(n)
+    Wend
+End Sub
+
+' Puts the internal block on IRCF code `ircf`, through the PLL when `pll`. True when the clock reports ready (HFIOFS, and PLLRDY for the PLL);
+' False, and nothing changed, for the PLL when FOSC is not INTIO67 or INTIO7.
+Private Function Apply(ByVal ircf As Byte, ByVal pll As Boolean) As Boolean
+    Result = False
+    If pll And Not IntioPrimary() Then
+        Exit
+    End If
+    OSCCON2.MFIOSEL = 0
+    If pll Then
+        OSCCON = ircf << 4
+        OSCTUNE.PLLEN = 1
+    Else
+        OSCTUNE.PLLEN = 0
+        OSCTUNE.INTSRC = 1
+        OSCCON = (ircf << 4) Or 2
+    End If
+    WaitSettle(pll)
+    Result = OSCCON.HFIOFS = 1 And (Not pll Or OSCCON2.PLLRDY = 1)
+End Function
+
+' The speeds in MHz by IRCF code (3..7; the PLL speeds are IRCF 110 and 111 times four).
+Const MhzTab(8) As Byte = (0, 0, 0, 1, 2, 4, 8, 16)
+
+' Runs the part at `mhz` MHz: 64 or 32 (through the PLL, needs FOSC = INTIO67 or INTIO7), 16, 8, 4, 2 or 1. False, and nothing changed, for
+' any other value; False too when the clock did not report ready.
+Public Function SetClock(ByVal mhz As Byte) As Boolean
+    Dim i As Byte
+    Result = False
+    If mhz = 64 Or mhz = 32 Then
+        Result = Apply((mhz >> 5) + 5, True)
+        Exit
+    End If
+    For i = 3 To 7
+        If MhzTab(i) = mhz Then
+            Result = Apply(i, False)
+            Exit
+        End If
+    Next
+End Function
+
+' SetClock(mhz >> shift): the K22 has no divider of its own (see the header).
+Public Function SetClockDiv(ByVal mhz As Byte, ByVal shift As Byte) As Boolean
+    Result = False
+    If shift <= 7 Then
+        Result = SetClock(mhz >> shift)
+    End If
+End Function
+
+' Start-up: the same steps as Apply with the constants written in. For 64 or 32 MHz with a FOSC other than INTIO67/INTIO7 the PLL is left off
+' and the internal block runs at IRCF (16 or 8 MHz), so the part is never clocked above 64 MHz; System.SysClockOk() is then False.
+OSCCON2.MFIOSEL = 0
+#if _clock >= 32
+If IntioPrimary() Then
+    OSCCON = ClockIrcf << 4
+    OSCTUNE.PLLEN = 1
+    WaitSettle(True)
+Else
+    OSCTUNE.PLLEN = 0
+    OSCCON = (ClockIrcf << 4) Or 2
+    WaitSettle(False)
+End If
+#else
+OSCTUNE.PLLEN = 0
+OSCTUNE.INTSRC = 1
+OSCCON = (ClockIrcf << 4) Or 2
+WaitSettle(False)
+#endif
+#else
 ' HFINTOSC frequency codes: OSCFRQ.HFFRQ (Q10: 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz = codes 0..8) or
 ' OSCFRQ.FRQ (PIC16F171xx: 1, 2, 4, 8, 16, 32 MHz = codes 0..5, DS40002343F 11.5.6).
 #if _has(ADCON0.CHS) And Not _has(ADCON1.PREF) And Not (_has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF))
@@ -297,3 +441,4 @@ Else
 End If
 #endif
 WaitSettle()
+#endif

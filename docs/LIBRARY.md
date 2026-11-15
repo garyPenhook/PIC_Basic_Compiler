@@ -179,6 +179,35 @@ Parts with a fixed clock (no clock switching), the 10-bit ADCC of the PIC16F171x
 | `dma` | `#error` (no DMA) |
 | `floatlib` | done (as the PIC16F171xx) |
 
+### PIC18F23K22 … 46K22 and PIC18LF23K22 … 46K22 (DS40001412H, errata DS80000498K, DS80000512J, DS80000514J; facts in `FACTS-18F-K22.md`)
+
+An older PIC18: no PPS (every peripheral has fixed pins), the legacy interrupt controller with IPEN in RCON, the classic Timer0 (`T0CON`),
+Timer1/3/5 without `TxCLK`, Timer2/4/6 with `PRx`, the 10-bit ADC with `ADCON2`, the `EECON1` memory controller with 64-byte flash blocks
+and 256 (1024) bytes of EEPROM, EUSART1/2, MSSP1/2 and CCP1..CCP5. Each module chooses its K22 branch by a register no other supported part
+has (aliases included): `RCON`, `T0CON.T08BIT`, `OSCCON.IRCF`, `ADCON2.ACQT`, `EEADR`, `PSTR1CON`, `INTCON2.nRBPU`, or `SSP1CON1` without
+`SSP1CLKPPS`. The other families' code is unchanged (their builds are byte-identical). The tests (`tests/exec_k22`, and the
+device-independent programs of `tests/exec` on the PIC18F26K22) run in basil-sim, whose K22 models are in the picsim repository, and
+most also in MDB (`BASIL_SIM=1 cargo test k22`); every part builds the library (`tests/programs/library_k22.bas`, and
+`library_k22_small.bas` for the 8 KB parts). Nothing was run on a real part.
+
+| Module | PIC18(L)F2x/4xK22 |
+|---|---|
+| `delay`, `strings`, `bits`, `format`, `fmath`, `floatlib`, `buttons`, `shift`, `pulse`, `irremote`, `x10`, `softserial`, `onewire`, `lcd`, `glcd`, `rtcc`, `rtccspi`, `oled`, `aht30`, `epaper` | build (no register differences, or through the modules below); `oled` runs over the hardware `i2c` in basil-sim |
+| `gpio` | done (`ANSELA`..`ANSELE`; pull-ups on port B only: `WPUB` and `INTCON2.RBPU`; no open-drain register, `GpioOpenDrain` does nothing) |
+| `pinio` | done (pins 0..39 on the 40/44-pin parts with ports D and E; `PinCount` = 40 there, 24 on the 28-pin parts) |
+| `intosc` | done (`OSCCON.IRCF` and the 4x PLL: `Clock` = 64 or 32 needs `Config FOSC = INTIO67` or `INTIO7`, 16 .. 1, 0.5, 0.25 and 0.03125 MHz run from the internal block with `SCS = 10`; `SetClockDiv(mhz, s)` is `SetClock(mhz >> s)`) |
+| `system` | done (`RCON` and `STKPTR` reset flags, a MCLR Reset sets none so it is cause 3 with every flag inactive; TO/PD in `RCON`; `SysClockFrom(scs, ircf, pri)`; Snooze and Sleep(seconds) count watchdog periods of the Config `WDTPS`, which needs `WDTEN = SWON`) |
+| `timer` | done (Timer0 prescale 0..8 = 1:1..1:256 and an 8-bit period by reloading `TMR0L`; Timer1 with RD16, `T1ClkFosc4`, `T1ClkFosc`, `T1ClkPin` (RC0), `T1ClkSosc`; gates `T1GatePin` (RB5), `T1GateTmr2`, `T1GateCmp1`, `T1GateCmp2`; Timer2 prescale 0..2 = 1, 4, 16; `FreqCount` on pin 16 only; no `Timer2StartLimit`) |
+| `serial` | done (EUSART1 on RC6/RC7; BRG16 = BRGH = 1 also works round the Start-bit erratum) |
+| `serial2` | done (EUSART2 on RB6/RB7, the ICSP pins, or RD6/RD7 on the 40/44-pin parts) |
+| `adc` | done (10 bits; channel = pin number, translated to the AN number, a pin without one reads 0; `AdcChCtmu`, `AdcChDac`, `AdcChFvr`; TAD 1..2 us from FOSC or FRC below 1 MHz, 8 TAD acquisition, 16 on the FVR; GO/DONE time-out and restart for erratum 8) |
+| `eeprom` | done (256 or 1024 bytes through `EECON1`) |
+| `flashwrite` | done (a sector is the 64-byte block, 32 words; `FlashWriteWord` loads all 64 holding registers) |
+| `spi` | done (MSSP1 on RC3/RC5/RC4 = pins 19/21/20, or MSSP2 on RB1/RB3/RB2 = 9/11/10, RD0/RD4/RD1 = 24/28/25 on the 40/44-pin parts, chosen by the pins; one SCK period wait and WCOL retry in modes 1 and 3 for erratum 13.1) |
+| `i2c` | done (MSSP1 hardware host on RC3/RC4 = pins 19/20 only) |
+| `pwm` | done (channels 1..5 = CCP1..CCP5 on Timer2, prescalers 1, 4, 16; each on its pin: RC2, RC1 or RB3 (CCP2MX), RB5 or RC6/RE0 (CCP3MX), RB0/RD1, RA4/RE2; `PwmInvert` on channels 1..3) |
+| `dma` | `#error` (no DMA) |
+
 On the PIC18-Q41 the `Gpio`, `Timer`, `Serial`, `Adc`, `Eeprom`, `Flashwrite`, `Spi`, `I2c`, `Pwm`, `Lcd`, `Oled`, `Aht30` and `Dma` tests (those in
 `tests/exec_q41/` and the portable ones of `tests/exec`) run in the MPLAB X simulator (`BASIL_MDB=1 cargo test q41`); they check
 register values and set-up, not waveforms (no part of the PIC18-Q41 transfer code ran against a real bus). Limits of the simulator: it
@@ -192,6 +221,8 @@ How to port a module (the pattern used so far):
 2. Confirm each difference in the part's data sheet and errata, and cite the section in the module.
 3. Gate the difference with `_has(...)` (one branch per layout, never a list of part numbers, so a future
    part with the same layout works without an edit). Add a pin default per part where the module owns a pin.
+   `_has` also matches the pack's aliases (the PIC18F27Q10 answers `_has(RCSTA1)`, the PIC16F183xx `_has(EECON1)`), so check a new
+   test against the names *and* the aliases of every device file.
 4. Check that the Q10 output is **byte-identical** to before (every byte counts), then run `cargo test`.
 5. Update this table.
 

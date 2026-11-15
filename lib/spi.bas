@@ -48,6 +48,172 @@ Include "pinio"
 ' PIC16F18056/76 (DS40002325C chapters 18 and 29; chosen with `Not _has(OSCCON1)`): the same MSSP1 host and settings; SCK1/SCL1 = RxyPPS 15h (21) and SDO1/SDA1 = 16h (22) [Table 18-2 p.170], SSP1CLKPPS and SSP1DATPPS take
 ' the pin number [18.8.1 p.173]. The 28- and 40-pin parts route MSSP1 to port B or port C only [Tables 18-1 and 18-2 p.169-170], so only pins 8..23 (RB0..RB7, RC0..RC7) are accepted. RB6 and RB7 are also the ICSP
 ' clock and data pins. The silicon errata (DS80001014D) list nothing for the MSSP.
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 15; chosen with `#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)`, no PPS): two MSSP modules with fixed
+' pins [Tables 2, 3 p.6-7], and the module uses the one whose pins are given: MSSP1 = SCK 19 (RC3), SDI 20 (RC4), SDO 21 (RC5); MSSP2 = SCK 9
+' (RB1), SDI 10 (RB2), SDO 11 (RB3) on the 28-pin parts and SCK 24 (RD0), SDI 25 (RD1), SDO 28 (RD4) on the 40/44-pin parts. Other pins make
+' SpiInit return 0. SSPxCON1, SSPxSTAT and SSPxADD have the Q10 layout (SSPM 0000 = FOSC / 4, 1010 = FOSC / (4 * (SSPxADD + 1)), CKP, CKE,
+' SMP) [Registers 15-2, 15-3 p.252-254], so the clock and the modes are those described above. SCK and SDO are outputs, SDI an input, all
+' digital (Pinio.PinOutput / PinInput) [Register 15-3 note 2]. Errata 13.1 (DS80000498K) and 7 (DS80000512J, DS80000514J), all revisions:
+' with CKE = 0 (modes 1 and 3) BF rises half an SCK period early, so a write to SSPxBUF right after it can collide (WCOL). The module uses
+' both work-arounds of method 1: after a transfer in those modes it waits one SCK period before it returns, and a write that sets WCOL is
+' repeated.
+#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+Dim ready As Boolean
+Dim lastStatus As Byte
+' True when MSSP2 is in use.
+Dim two As Boolean
+' Loop passes of at least one SCK period after a transfer (modes 1 and 3), 0 otherwise.
+Dim spiWait As Byte
+
+#if _has(LATD)
+Const Sck2 = 24
+Const Sdi2 = 25
+Const Sdo2 = 28
+#else
+Const Sck2 = 9
+Const Sdi2 = 10
+Const Sdo2 = 11
+#endif
+
+' Sets up MSSP1 or MSSP2 (chosen by the pins, see above) as a host at about `hz` (1..16000000) in mode 0..3. Returns 1, or 0 for pins
+' that are not one module's, a mode above 3, or a clock below FOSC / 1024.
+Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As Byte, ByVal sdo As Byte, ByVal sdi As Byte) As Byte
+    Dim d As LongWord
+    Dim con As Byte
+    Dim st As Byte
+    Result = 0
+    If mode > 3 Or hz = 0 Or hz > 16000000 Then
+        Exit
+    End If
+    ' SSPxADD = ceil(FOSC / (4 * hz)) - 1 = floor((FOSC - 1) / (4 * hz)); 0 means FOSC / 4.
+    d = LongWord(_Clock * 1000000 - 1) / (hz << 2)
+    If d > 255 Then
+        Exit
+    End If
+    If sck = 19 And sdi = 20 And (sdo = 21 Or sdo = 255) Then
+        two = False
+    ElseIf sck = Sck2 And sdi = Sdi2 And (sdo = Sdo2 Or sdo = 255) Then
+        two = True
+    Else
+        Exit
+    End If
+    Pinio.PinOutput(sck)
+    Pinio.PinInput(sdi)
+    If sdo <> 255 Then
+        Pinio.PinOutput(sdo)
+    End If
+    con = 0
+    If d <> 0 Then
+        con = 10
+    End If
+    If mode >= 2 Then
+        con = con Or 16
+    End If
+    st = 0
+    spiWait = 0
+    If (mode And 1) = 0 Then
+        st = 64
+    Else
+        ' Erratum 13.1 / 7: one SCK period is d + 1 instruction cycles.
+        spiWait = Byte(d) + 1
+    End If
+    If two Then
+        SSP2CON1 = 0
+        SSP2ADD = Byte(d)
+        SSP2STAT = st
+        SSP2CON3 = 0
+        SSP2CON1 = con Or 32
+    Else
+        SSP1CON1 = 0
+        SSP1ADD = Byte(d)
+        SSP1STAT = st
+        SSP1CON3 = 0
+        SSP1CON1 = con Or 32
+    End If
+    ready = True
+    lastStatus = 0
+    Result = 1
+End Function
+
+' Disables the module of those pins; the pins go back to their LATxy bits (SSPEN = 0) [Register 15-3].
+Public Sub SpiOff(ByVal sck As Byte, ByVal sdo As Byte)
+    If sck = 19 Then
+        SSP1CON1 = 0
+    ElseIf sck = Sck2 Then
+        SSP2CON1 = 0
+    End If
+    ready = False
+End Sub
+
+' 0 after the last transfer completed, 1 after a timeout, 4 when not initialised.
+Public Function SpiStatus() As Byte
+    Result = lastStatus
+End Function
+
+' Sends one byte and returns the byte received at the same time (0 on an error, see SpiStatus).
+Public Function SpiTransfer(ByVal b As Byte) As Byte
+    Dim n As Word
+    Dim k As Byte
+    Result = 0
+    lastStatus = 4
+    If Not ready Then
+        Exit
+    End If
+    lastStatus = 1
+    n = 0
+    If two Then
+        SSP2CON1.WCOL = 0
+        SSP2BUF = b
+        k = 0
+        While SSP2CON1.WCOL = 1 And k < 255
+            SSP2CON1.WCOL = 0
+            SSP2BUF = b
+            Inc(k)
+        Wend
+        While n < 60000
+            If SSP2STAT.BF = 1 Then
+                Result = SSP2BUF
+                lastStatus = 0
+                Break
+            End If
+            Inc(n)
+        Wend
+    Else
+        SSP1CON1.WCOL = 0
+        SSP1BUF = b
+        k = 0
+        While SSP1CON1.WCOL = 1 And k < 255
+            SSP1CON1.WCOL = 0
+            SSP1BUF = b
+            Inc(k)
+        Wend
+        While n < 60000
+            If SSP1STAT.BF = 1 Then
+                Result = SSP1BUF
+                lastStatus = 0
+                Break
+            End If
+            Inc(n)
+        Wend
+    End If
+    ' Erratum 13.1 / 7: the next write waits one SCK period after BF in modes 1 and 3.
+    k = spiWait
+    While k <> 0
+        Dec(k)
+    Wend
+End Function
+
+' Sends one byte and ignores the byte received.
+Public Sub SpiWrite(ByVal b As Byte)
+    Dim r As Byte
+    r = SpiTransfer(b)
+End Sub
+
+' Receives one byte (sends 255 on SDO).
+Public Function SpiRead() As Byte
+    Result = SpiTransfer(255)
+End Function
+#else
 Dim ready As Boolean
 Dim lastStatus As Byte
 #if _has(SPI1CON0)
@@ -378,3 +544,4 @@ End Sub
 Public Function SpiRead() As Byte
     Result = SpiTransfer(255)
 End Function
+#endif

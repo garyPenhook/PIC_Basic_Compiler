@@ -707,6 +707,7 @@ impl<'p, 'd> Sema<'p, 'd> {
         self.check_recursion();
         self.check_isr_extern();
         self.check_vector_table();
+        self.check_xinst();
         self.check_ram();
         self.check_clock_setup();
         let off = self.a.options.warn_off.clone();
@@ -731,11 +732,42 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
     }
 
+    /// The PIC18 extended instruction set (`XINST = ON`) turns every Access Bank operand below 60h into an FSR2-indexed one
+    /// `[DS40001412H 5.7.1 p.87]`; the compiler addresses its variables there directly and never uses the extended instructions,
+    /// so the setting is refused. Unprogrammed it is off on every supported PIC18 (the pack's `CONFIG4L` default).
+    fn check_xinst(&mut self) {
+        let Some(dev) = self.a.device.clone() else { return };
+        let Some(field) = dev.config.iter().flat_map(|r| r.fields.iter()).find(|f| f.name == "XINST") else { return };
+        let Some(off) = field.settings.iter().find(|s| s.name == "OFF").map(|s| s.value) else { return };
+        if let Some(c) = self.a.config.iter().find(|c| c.field == "XINST") {
+            if c.value != off {
+                self.diags.error("E-CONFIG", c.span, "XINST = ON (the extended instruction set) makes the Access Bank addresses below 60h FSR2-relative, which the compiler's code does not expect; use XINST = OFF (the default)");
+            }
+        }
+    }
+
     /// `Clock` only tells the compiler the speed to expect. When it differs from the speed the
     /// `RSTOSC` setting starts the part at (Table 5-1: `HFINTOSC_64MHZ` 64 MHz, `HFINTOSC_1MHZ`
     /// 1 MHz) and nothing in the program sets the oscillator, every delay and baud rate is wrong.
     fn check_clock_setup(&mut self) {
         let (Some(clock), Some(span)) = (self.a.clock_mhz, self.a.clock_span) else { return };
+        // PIC18(L)F2x/4xK22: no RSTOSC. With FOSC = INTIO67 or INTIO7 (100x) the part starts on the internal block at
+        // IRCF = 011, 1 MHz, and the PLL (OSCTUNE.PLLEN, reset 0) off `[DS40001412H Register 2-1 note 3 p.30, Table 2-1 p.28]`.
+        if !self.a.config.iter().any(|c| c.field == "RSTOSC") {
+            let Some(dev) = &self.a.device else { return };
+            let Some(fosc) = self.a.config.iter().find(|c| c.field == "FOSC") else { return };
+            let intio = dev.config.iter().flat_map(|c| c.fields.iter()).filter(|f| f.name == "FOSC").flat_map(|f| f.settings.iter()).any(|st| st.value == fosc.value && st.name.starts_with("INTIO"));
+            if !intio || (clock - 1.0).abs() < 1e-9 {
+                return;
+            }
+            let proj = self.proj;
+            let by_module = proj.units.iter().any(|u| u.path.file_stem().is_some_and(|n| n.eq_ignore_ascii_case("intosc")));
+            if by_module || proj.sources.texts().any(|t| writes_oscillator(t, &["osccon", "osctune"])) {
+                return;
+            }
+            self.diags.warn("W-CLOCK", span, format!("Clock is {clock} MHz but FOSC = INTIO starts the part at 1 MHz and nothing sets the oscillator: Include \"intosc\", write OSCCON, or set Clock = 1 (docs/CLOCK.md)"));
+            return;
+        }
         let Some(rst) = self.a.config.iter().find(|c| c.field == "RSTOSC") else { return };
         // The speed comes from the setting's name in the device description (`HFINTOSC_64MHZ`, `HFINTOSC_32MHz`, ...).
         let Some(dev) = &self.a.device else { return };
@@ -756,7 +788,7 @@ impl<'p, 'd> Sema<'p, 'd> {
         }
         let proj = self.proj;
         let by_module = proj.units.iter().any(|u| u.path.file_stem().is_some_and(|n| n.eq_ignore_ascii_case("intosc")));
-        if by_module || proj.sources.texts().any(writes_oscillator) {
+        if by_module || proj.sources.texts().any(|t| writes_oscillator(t, &["oscfrq", "osccon1"])) {
             return;
         }
         self.diags.warn(
@@ -3745,12 +3777,13 @@ fn params_with_ast(ast: &[Param], infos: &[ParamInfo]) -> Vec<(Ident, ParamInfo)
     ast.iter().zip(infos).map(|(a, i)| (a.name.clone(), i.clone())).collect()
 }
 
-/// True when the text has a statement that assigns to `OSCFRQ` or `OSCCON1` (a line starting with
-/// the register name and then `=` or `.`). Comments are ignored; reads in conditions do not count.
-fn writes_oscillator(text: &str) -> bool {
+/// True when the text has a statement that assigns to one of `regs` (lower case; a line starting with the register name and then
+/// `=` or `.`): `OSCFRQ`/`OSCCON1` on the Q-series and PIC16 parts, `OSCCON`/`OSCTUNE` on the PIC18(L)F2x/4xK22, where OSCTUNE holds
+/// PLLEN (on the others it only trims). Comments are ignored; reads in conditions do not count.
+fn writes_oscillator(text: &str, regs: &[&str]) -> bool {
     text.lines().any(|l| {
         let code = l.split('\'').next().unwrap_or("").trim_start().to_ascii_lowercase();
-        ["oscfrq", "osccon1"].iter().any(|r| {
+        regs.iter().any(|r| {
             code.strip_prefix(r).is_some_and(|rest| matches!(rest.trim_start().chars().next(), Some('=') | Some('.')))
         })
     })

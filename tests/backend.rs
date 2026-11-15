@@ -836,6 +836,153 @@ fn q41_programs_in_simulator() {
     assert!(r.status.success(), "{text}");
 }
 
+// ---- PIC18(L)F2x/4xK22 -----------------------------------------------------------------------------
+
+const K22_PARTS: [&str; 16] = [
+    "18F23K22", "18F24K22", "18F25K22", "18F26K22", "18F43K22", "18F44K22", "18F45K22", "18F46K22", "18LF23K22", "18LF24K22", "18LF25K22", "18LF26K22", "18LF43K22", "18LF44K22", "18LF45K22",
+    "18LF46K22",
+];
+
+/// The Q10 interrupt programs of `tests/exec` raise their interrupt through PIR0; `tests/exec_k22` has the K22 versions.
+const K22_SKIP: &[&str] = &["isr_single", "isr_dual", "isr_save", "events_isr", "gosub_isr", "bit_packed_isr"];
+
+/// A K22 copy of a Q-series program: the Device line, and a Q-series Config line becomes an external 64 MHz clock (FOSC = ECHPIO6), so
+/// `Clock = 64` stays true without oscillator code.
+fn for_k22(src: &Path, device: &str, into: &Path) -> PathBuf {
+    let p = for_device(src, device, into);
+    let text = std::fs::read_to_string(&p).unwrap();
+    let out: String = text
+        .lines()
+        .map(|l| if l.trim_start().to_ascii_lowercase().starts_with("config ") && (l.contains("RSTOSC") || l.contains("FEXTOSC")) { "Config FOSC = ECHPIO6, WDTEN = OFF, LVP = ON".to_string() } else { l.to_string() })
+        .map(|l| l + "\n")
+        .collect();
+    std::fs::write(&p, out).unwrap();
+    p
+}
+
+/// The 40/44-pin parts (PIC18(L)F4xK22).
+fn k22_big(dev: &str) -> bool {
+    dev.trim_start_matches("18LF").trim_start_matches("18F").starts_with('4')
+}
+
+/// A program meant for the 40/44-pin parts only (`' devices: 18F45K22`).
+fn k22_big_only(p: &Path) -> bool {
+    std::fs::read_to_string(p).unwrap().lines().any(|l| l.starts_with("' devices:") && l.contains("18F45K22") && !l.contains("18F25K22"))
+}
+
+/// The standard programs (with handlers, both priorities) and the K22 library programs build for every part of the family; on the
+/// parts other than the 64 KB ones a program too big for the part's RAM or flash may be refused with E-RAM or E-ROM, the right answer.
+#[test]
+fn k22_parts_build_the_standard_programs() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("k22parts");
+    let programs = ["arith_byte", "arith_word", "arith_longword", "arrays", "flow", "funcs", "reentrant", "str_basic", "structs"];
+    let mut failures = Vec::new();
+    for dev in K22_PARTS {
+        let mut srcs: Vec<PathBuf> = programs.iter().map(|p| for_k22(&root().join(format!("tests/exec/{p}.bas")), dev, &out.join(format!("{p}_{dev}.bas")))).collect();
+        for f in bas_files(&root().join("tests/exec_k22")) {
+            if k22_big_only(&f) && !k22_big(dev) {
+                continue;
+            }
+            let name = f.file_stem().unwrap().to_string_lossy().into_owned();
+            srcs.push(for_device(&f, dev, &out.join(format!("k22_{name}_{dev}.bas"))));
+        }
+        for src in srcs {
+            let r = Command::new(basil()).arg(&src).arg("-o").arg(src.with_extension("hex")).output().unwrap();
+            let text = String::from_utf8_lossy(&r.stderr).into_owned();
+            // Every program fits the largest parts (64 KB, 3896 bytes: 26K22, 46K22); the others may refuse one as too big
+            // (arith_longword needs 2547 bytes of RAM, more than the 1536 of the x5 parts).
+            let small = !(dev.ends_with("26K22") || dev.ends_with("46K22"));
+            let too_big = small && (text.contains("error[E-RAM]") || text.contains("error[E-ROM]"));
+            if (!r.status.success() && !too_big) || text.contains("pic-as:") {
+                failures.push(format!("{} for {dev}:\n{text}", src.display()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every library module but `dma` builds on all sixteen parts with no warning: the whole library on the 16 KB and larger parts, the
+/// ported peripheral modules on the 8 KB PIC18(L)F23K22 / 43K22 (`library_k22_small.bas`); `dma` stops with #error.
+#[test]
+fn k22_library_modules_build() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("k22lib");
+    for dev in K22_PARTS {
+        let small = dev.contains("23K22") || dev.contains("43K22");
+        let all = root().join(if small { "tests/programs/library_k22_small.bas" } else { "tests/programs/library_k22.bas" });
+        let src = for_device(&all, dev, &out.join(format!("library_{dev}.bas")));
+        let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join(format!("library_{dev}.hex"))).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        assert!(r.status.success() && !text.contains("warning"), "{dev}:\n{text}");
+    }
+    let src = out.join("uses_dma.bas");
+    std::fs::write(&src, "Program T\nDevice = 18F25K22\nClock = 16\nInclude \"dma\"\n").unwrap();
+    let r = Command::new(basil()).arg(&src).arg("-o").arg(out.join("uses_dma.hex")).output().unwrap();
+    let text = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(!r.status.success() && text.contains("E-PP-ERROR"), "{text}");
+}
+
+/// Two interrupt priorities set IPEN, which is RCON bit 7 on the K22 (its INTCON bit 5 is TMR0IE, DS40001412H Registers 4-1, 9-1); the
+/// extended instruction set (XINST = ON) is refused; a program larger than the 8 KB of the PIC18F23K22 is refused with E-ROM.
+#[test]
+fn k22_ipen_xinst_and_flash_size() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("k22core");
+    let src = for_device(&root().join("tests/exec_k22/isr_dual.bas"), "18F25K22", &out.join("isr_dual.bas"));
+    let r = Command::new(basil()).arg(&src).arg("-S").arg("-o").arg(out.join("isr_dual.hex")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(out.join("isr_dual.S")).unwrap();
+    assert!(asm.contains("bsf RCON, 7, c"), "IPEN must be RCON bit 7:\n{asm}");
+    let x = out.join("xinst.bas");
+    std::fs::write(&x, "Program T\nDevice = 18F25K22\nClock = 16\nConfig XINST = ON\n").unwrap();
+    let r = Command::new(basil()).arg(&x).arg("-o").arg(out.join("xinst.hex")).output().unwrap();
+    let text = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(!r.status.success() && text.contains("E-CONFIG") && text.contains("XINST"), "{text}");
+    let big = for_device(&root().join("tests/programs/library_k22.bas"), "18F23K22", &out.join("big.bas"));
+    let r = Command::new(basil()).arg(&big).arg("-o").arg(out.join("big.hex")).output().unwrap();
+    let text = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(!r.status.success() && text.contains("E-ROM"), "{text}");
+}
+
+/// With `BASIL_MDB=1` (or `BASIL_SIM=1`): the programs that touch no peripheral run on the simulated PIC18F26K22 (the 3.9 KB part, so
+/// the RAM-hungry ones fit), and `tests/exec_k22` on the PIC18F25K22 and, for the 40/44-pin programs, the PIC18F45K22, optimised and at
+/// `-O0`. basil-sim models the K22's interrupts, timers, EUSART, MSSP, ADC, EEPROM/flash, CCP PWM and oscillator status (the picsim
+/// repository); programs that MDB cannot check say `' engine: sim`.
+#[test]
+fn k22_programs_in_simulator() {
+    if std::env::var("BASIL_MDB").is_err() && std::env::var("BASIL_SIM").is_err() {
+        eprintln!("set BASIL_MDB=1 (or BASIL_SIM=1) to run the simulator tests");
+        return;
+    }
+    let core: Vec<PathBuf> = bas_files(&root().join("tests/exec"))
+        .into_iter()
+        .filter(|p| {
+            let t = std::fs::read_to_string(p).unwrap();
+            let name = p.file_stem().unwrap().to_string_lossy().into_owned();
+            !t.contains("Include \"") && !K22_SKIP.contains(&name.as_str())
+        })
+        .collect();
+    let k22: Vec<PathBuf> = bas_files(&root().join("tests/exec_k22"));
+    let big: Vec<PathBuf> = k22.iter().filter(|p| k22_big_only(p)).cloned().collect();
+    // Unoptimised, these two are larger than the 64 KB of the PIC18F26K22 (E-ROM; the PIC18F27Q10 has 128 KB).
+    let o0_big = ["arith_mulconst", "array_rmw"];
+    for (dev, files) in [("18F26K22", &core), ("18F25K22", &k22), ("18F45K22", &big)] {
+        for flags in ["", "-O0"] {
+            let files: Vec<&PathBuf> = files.iter().filter(|p| flags.is_empty() || !o0_big.contains(&p.file_stem().unwrap().to_string_lossy().as_ref())).collect();
+            let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--basil").arg(basil()).arg(format!("--flags={flags}")).arg("--device").arg(dev).args(&files).output().unwrap();
+            let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+            assert!(r.status.success(), "{dev}, flags `{flags}`:\n{text}");
+        }
+    }
+}
+
 const P16_PARTS: [&str; 2] = ["16F17126", "16F17146"];
 
 /// The programs of `tests/exec` that run on the enhanced mid-range core with only the `Device`, `Config` and

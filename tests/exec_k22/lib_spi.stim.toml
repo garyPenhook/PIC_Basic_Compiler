@@ -1,0 +1,8 @@
+# A client on MSSP1 and one on MSSP2 of the PIC18(L)F2x/4xK22.
+[[spi]]
+port = 1
+data = [0xA5, 0x3C, 0x81]
+
+[[spi]]
+port = 2
+data = [0x42]

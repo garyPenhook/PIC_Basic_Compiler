@@ -741,8 +741,16 @@ End Function
 ' choose when the bus levels matter [15.3 note p.198]. The errata documents (DS80000717K, DS80000721D, DS80000725F, DS80000728D) list for the MSSP only SPI client mode (SSPBUF corruption), which this host module does not use.
 ' PIC16F18056/76 (DS40002325C chapters 18 and 29; chosen with `Not _has(OSCCON1)`): the same MSSP1 host, `RxyPPS` 15h (21) = SCL1 and 16h (22) = SDA1 [Table 18-2 p.170], SSP1IF and BCL1IF in PIR3 bits 6 and 7 [12.10.10 p.111].
 ' The 28- and 40-pin parts route MSSP1 to port B or port C only [Tables 18-1 and 18-2 p.169-170], so the pins are numbered 8..23 as on the Q10 (RB0..RB7 = 8..15, RC0..RC7 = 16..23). The silicon errata (DS80001014D) list nothing for the MSSP.
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 15; chosen with `_has(SSP1CON1) And Not _has(SSP1CLKPPS)`, no PPS): the same MSSP1 host [Register 15-3
+' p.253-254: SSPM = 1000, SSPxADD 0..2 not supported], on its fixed pins only: SCL1 = RC3 (19) and SDA1 = RC4 (20) [Tables 2, 3 p.6-7], both
+' inputs (Register 15-3 note 3) and digital; I2cInit returns 0 for other pins. SSP1IF is PIR1 bit 3 and BCL1IF PIR2 bit 3 [Registers 9-4,
+' 9-5 p.112-113]. MSSP2 is not used here (module Spi can drive it while this one has MSSP1). The errata list for the MSSP only the SPI host
+' item (BF early with CKE = 0), which I2C does not use.
 #else
-#if _has(PRODL)
+#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+Dim FlagSsp As PIR1.3
+Dim FlagBcl As PIR2.3
+#elseif _has(PRODL)
 Dim FlagSsp As PIR3.0
 Dim FlagBcl As PIR3.1
 #elseif _has(ADCON1.PREF)
@@ -778,7 +786,15 @@ Dim BitWcol As SSP1CON1.7
 Dim ready As Boolean
 Dim lastStatus As Byte
 
-#if Not _has(PRODL)
+#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+' RC3 and RC4: inputs, digital.
+Sub PinSetup(ByVal pin As Byte)
+    Dim m As Byte
+    m = 1 << (pin And 7)
+    TRISC = TRISC Or m
+    ANSELC = ANSELC And (m Xor 255)
+End Sub
+#elseif Not _has(PRODL)
 ' RxyPPS = code for pin 0..23 (a pin PinOk accepted). The RxyPPS registers are contiguous from RA0PPS in the order of the pin numbers
 ' (RA0..RC7 = 0..23; checked in the device files of every enhanced mid-range part: RA0PPS at 0E90h, 1D8Ch or 1F10h), so one write
 ' through FSR0 replaces a comparison per pin. FSR0 is compiler-owned (nothing is live in it across a statement) and the block clobbers
@@ -934,7 +950,9 @@ Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As By
     Dim fosc As LongWord
     Dim d As LongWord
     Result = 0
-#if _has(PRODL)
+#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+    If scl <> 19 Or sda <> 20 Or hz = 0 Or hz > 1000000 Then
+#elseif _has(PRODL)
     If scl < 8 Or scl > 23 Or sda < 8 Or sda > 23 Or scl = sda Or hz = 0 Or hz > 1000000 Then
 #else
     If Not PinOk(scl) Or Not PinOk(sda) Or scl = sda Or hz = 0 Or hz > 1000000 Then
@@ -950,12 +968,15 @@ Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As By
     SSP1CON1 = 0
     PinSetup(scl)
     PinSetup(sda)
+#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+#elseif _has(PRODL)
     SSP1CLKPPS = scl
     SSP1DATPPS = sda
-#if _has(PRODL)
     SetPps(scl, 15)
     SetPps(sda, 16)
 #else
+    SSP1CLKPPS = scl
+    SSP1DATPPS = sda
     SetPps(scl, SclCode)
     SetPps(sda, SdaCode)
 #endif
@@ -979,7 +1000,8 @@ End Function
 ' I2cInit).
 Public Sub I2cOff(ByVal scl As Byte, ByVal sda As Byte)
     SSP1CON1 = 0
-#if _has(PRODL)
+#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+#elseif _has(PRODL)
     If scl >= 8 And scl <= 23 Then
         SetPps(scl, 0)
     End If

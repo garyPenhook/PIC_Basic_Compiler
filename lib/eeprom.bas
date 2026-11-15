@@ -30,10 +30,21 @@ Module Eeprom
 ' may not write below 2.2 V at -40 C (item 4.1, silicon A3/A4 only) and may not access NVM at all below 2.0 V at 25 C or less (item 5.3, all revisions).
 ' PIC16F18056/76 (DS40002325C, section 15.2; chosen with `Not _has(PRODL)`): the same 256 bytes at 70h:address through NVMREGS = 1, the same read (RD), write (WREN | NVMREGS, 55h and AAh, WR; erase before write) and flag (NVMIF is PIR1 bit 0) as the PIC16F17126/46
 ' [15.2.2.1 to 15.2.2.5 p.135-139]. Writing the data flash through the FSRs is not supported there [15.2.1.2]. The silicon errata (DS80001014D) show nothing for the NVM.
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 7; chosen with `#if _has(EEADR)`): 256 bytes (1024 on the PIC18(L)F26K22 / 46K22, which add
+' EEADRH) [Table 1 p.2, 7.1 p.99]. A read is EEADR(H), EECON1.EEPGD = CFGS = 0, RD, and EEDATA holds the byte on the next cycle [7.3,
+' Example 7-1 p.101]. A write is EEADR(H), EEDATA, WREN, interrupts off, 55h and AAh to EECON2, WR; the byte is erased first, the CPU goes on
+' running and WR clears at the end, when EEIF (PIR2 bit 4) is set [7.4, Example 7-2 p.101]. WREN is cleared afterwards. WRERR may read 1
+' after a Reset during a write (7.2 note), so success is the read-back here too. The errata (DS80000498K, DS80000512J, DS80000514J) list
+' nothing for the data EEPROM.
 #if _eeprom = 0
 #error "eeprom needs a part with data EEPROM: the PIC16F13145 family, the PIC16F152xx parts and the PIC16F153xx parts have none (DS40002519D Table 1 p.1; DS40002195E Table 1 p.1; DS40001897C Table 1 p.3); use module Flashwrite"
 #endif
-#if _has(NVMLOCK)
+#if _has(EEADR)
+Dim NvmWr As EECON1.1
+Dim NvmRd As EECON1.0
+Dim IntEn As INTCON.7
+Dim NvmDone As PIR2.4
+#elseif _has(NVMLOCK)
 Dim NvmGo As NVMCON0.0
 Dim IntEn As INTCON0.7
 Dim NvmDone As PIR0.4
@@ -62,7 +73,15 @@ Public Const EepromSize = _EepromBytes
 Public Function EepromRead(ByVal addr As Word) As Byte
     Result = 255
     If addr < EepromSize Then
-#if _has(NVMLOCK)
+#if _has(EEADR)
+#if _has(EEADRH)
+        EEADRH = Byte(addr >> 8)
+#endif
+        EEADR = Byte(addr)
+        EECON1 = 0
+        NvmRd = 1
+        Result = EEDATA
+#elseif _has(NVMLOCK)
         NVMADRU = 56
         NVMADRH = Byte(addr >> 8)
         NVMADRL = Byte(addr)
@@ -86,7 +105,9 @@ Public Function EepromRead(ByVal addr As Word) As Byte
         While NvmRd = 1
         Wend
 #endif
+#if Not _has(EEADR)
         Result = NVMDATL
+#endif
     End If
 End Function
 
@@ -98,9 +119,27 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
     If addr < EepromSize Then
         Result = 1
         If EepromRead(addr) <> value Then
+#if _has(EEADR)
+            EEDATA = value
+            ie = IntEn
+            EECON1 = 4
+            IntEn = 0
+            EECON2 = 85
+            EECON2 = 170
+            NvmWr = 1
+            If ie = 1 Then
+                IntEn = 1
+            End If
+            While NvmWr = 1
+            Wend
+            EECON1 = 0
+            NvmDone = 0
+#else
             NVMDATL = value
             ie = IntEn
-#if _has(NVMLOCK)
+#endif
+#if _has(EEADR)
+#elseif _has(NVMLOCK)
             NVMCON1 = 3
             IntEn = 0
             NVMLOCK = 85
@@ -144,7 +183,7 @@ Public Function EepromWrite(ByVal addr As Word, ByVal value As Byte) As Byte
                 Result = 0
             End If
         End If
-#if _has(PRODL) And Not _has(NVMLOCK)
+#if _has(PRODL) And Not _has(NVMLOCK) And Not _has(EEADR)
         NvmErr = 0
 #endif
     End If

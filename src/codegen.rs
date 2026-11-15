@@ -32,6 +32,11 @@ pub struct Target {
     /// The interrupt controller saves WREG, STATUS, BSR, FSR0..2, PROD and PCLAT itself, on two
     /// levels (VIC, `SHADCON`), and `RETFIE, FAST` restores all of them.
     pub hw_context: bool,
+    /// IPEN: register and bit. INTCON bit 5 on the Q10 (DS40002043F p.198), RCON bit 7 on the PIC18(L)F2x/4xK22, whose INTCON bit 5 is
+    /// TMR0IE (DS40001412H Registers 4-1 and 9-1 p.56, 109). `None` keeps INTCON bit 5.
+    pub ipen: Option<(String, u8)>,
+    /// PIC18 program memory in bytes (the enhanced mid-range keeps its size in `pic16`); 0 = not checked.
+    pub prog_bytes: u32,
     /// Highest data address plus one; `movff` reaches only the first 4096 bytes (`movffl` beyond).
     pub data_top: u32,
     /// Levels of the hardware return stack.
@@ -6695,10 +6700,18 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
 impl<'p> Gen<'p> {
     /// Zeroing of variables and initial values, then the body.
     fn startup(&mut self) {
-        // Priority levels are switched on before anything can be enabled (IPEN, INTCON bit 5).
+        // Priority levels are switched on before anything can be enabled (IPEN: INTCON bit 5, RCON bit 7 on the K22).
         if self.p.isrs.iter().any(|x| x.1 != Level::Single) {
-            let m = self.intcon();
-            self.fbit("bsf", &m, 5);
+            match self.tgt.ipen.clone() {
+                Some((reg, bit)) => {
+                    let m = self.sfr_mem(&reg);
+                    self.fbit("bsf", &m, bit);
+                }
+                None => {
+                    let m = self.intcon();
+                    self.fbit("bsf", &m, 5);
+                }
+            }
         }
         let Some(layout) = self.layout else { return };
         // The software stack for recursive calls.
@@ -6918,14 +6931,22 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     }
     let (g, unreferenced) = generate_inner(p, tgt);
     if unreferenced.is_empty() || !g.errors.is_empty() || !tgt.opt || tgt.keep_vars {
-        return g;
+        return fits_flash(g, tgt);
     }
     let names: HashSet<String> = unreferenced.into_iter().collect();
     if let Some(p2) = crate::opt::without_write_only(p, &names) {
         let (g2, _) = generate_inner(&p2, tgt);
         if g2.errors.is_empty() && g2.out.words <= g.out.words {
-            return g2;
+            return fits_flash(g2, tgt);
         }
+    }
+    fits_flash(g, tgt)
+}
+
+/// The image must fit the part's program memory, as `codegen16` checks for the enhanced mid-range (E-ROM).
+fn fits_flash(mut g: Generated, tgt: &Target) -> Generated {
+    if g.errors.is_empty() && tgt.prog_bytes > 0 && g.out.words * 2 > tgt.prog_bytes {
+        g.errors.push((Span::default(), format!("the program needs {} bytes of program memory but the device has {}", g.out.words * 2, tgt.prog_bytes)));
     }
     g
 }

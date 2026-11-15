@@ -158,6 +158,10 @@ warning[W-CLOCK]: Clock is 16 MHz but RSTOSC starts the part at 64 MHz and nothi
 are not checked, because their speed is not known to the compiler. `#option Warn.Clock = false`
 turns it off.
 
+PIC18(L)F2x/4xK22 (no `RSTOSC`): with `FOSC = INTIO67` or `INTIO7` the part starts on the internal block at 1 MHz (IRCF = 011,
+DS40001412H Register 2-1 p.30), and the warning is given when `Clock` is not 1 and nothing writes `OSCCON` or `OSCTUNE` (or includes
+`intosc`). Another `FOSC` (crystal, external clock, RC) is not checked.
+
 Limits of the check: it looks at the text of the source files, not at what runs. A write inside a single-line
 `If … Then OSCFRQ = x`, an `Asm` block or a `Sub` that is never called is not seen (or counts although it never
 runs). The `RSTOSC` values it knows are the Q10 ones.
@@ -193,6 +197,24 @@ the data-sheet-ordered write sequence.
 * Tests: `tests/exec/lib_intosc.bas`, `lib_intosc_div.bas`, `pp_if.bas` (simulator),
   `tests/negative/intosc_bad_clock.bas`, `pp_if_bad.bas`, `pp_constant_unsupported.bas`,
   `tests/valid/clock_*.bas`.
+
+## 9. PIC18(L)F2x/4xK22
+
+These parts have no `OSCCON1`/`OSCFRQ`. `intosc` writes `OSCCON.IRCF` (16 MHz HFINTOSC through a postscaler), `OSCCON.SCS` and
+`OSCTUNE.PLLEN`. The 4x PLL is on the primary clock path only, so 64 and 32 MHz need `Config FOSC = INTIO67` (or `INTIO7`): IRCF 111 or
+110, `SCS = 00`, then PLLEN; every other speed runs from the internal block with `SCS = 10` and any `FOSC`. The routine waits, bounded,
+for `OSCCON.HFIOFS` and, with the PLL, `OSCCON2.PLLRDY`. `System.SysClockHz()` reads `CONFIG1H` with TBLRD to know whether the primary
+clock is the internal block (DS40001412H Fig. 2-1 p.26, Table 2-1 p.28, Registers 2-1 to 2-3 p.30-35; `docs/FACTS-18F-K22.md`).
+
+```
+Device = 18F25K22
+Clock = 64
+Config FOSC = INTIO67, WDTEN = OFF, LVP = ON
+Include "intosc"
+```
+
+MDB does not model `OSTS`, `HFIOFS` or `PLLRDY` (they read as written), so in MDB `SetClock` reports failure; basil-sim models them
+(`tests/exec_k22/lib_intosc.bas`).
 
 Not yet checked on hardware (D6). The simulator does not model `ORDY`, `HFOR` or `OSCCON2`, so its
 tests check the values written and the refusals; whether the switch completes needs a part.

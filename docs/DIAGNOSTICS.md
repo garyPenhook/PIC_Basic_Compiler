@@ -33,12 +33,13 @@ explanation with a program that raises it and the corrected program (`src/explai
 | E-NODEVICE, E-DEVICE | No `Device`, or no description file for it / it disagrees |
 | E-CLOCK | `Clock` not a positive number, two different values, or a value of 1000 or more (a speed in Hz where MHz is meant) |
 | W-CLOCK | `Clock` differs from the speed `RSTOSC` starts the part at and nothing sets the oscillator (`Include "intosc"` or a write to `OSCFRQ` / `OSCCON1`); see `docs/CLOCK.md` |
-| E-CONFIG | Unknown configuration setting or value, setting given twice |
+| E-CONFIG | Unknown configuration setting or value, setting given twice, `MVECEN = ON` with a handler, `XINST = ON` (the extended instruction set) |
 | E-INCLUDE | Module not found, include cycle, name mismatch, program included |
 | W-REGNAME | A declaration reuses a device register's name and hides the register |
 | E-REDECL, E-UNDECLARED, E-AMBIG, E-PRIVATE | Name clash, unknown name, same name in two modules, Private access |
 | E-VIS, E-NESTED | `Public`/`Private` on a local; routine or type declared inside a routine |
 | E-RAM | Global variables exceed the device's usable RAM |
+| E-ROM | The program does not fit the device's program memory (the build summary shows the sizes) |
 | E-RECURSION | Call cycle without `Reentrant` (D13) |
 | E-FORWARD | `Declare` never defined, or a definition that differs from its `Declare` |
 | E-STACK | The hardware return stack can need more levels than the device has (31 on the Q10, 127 on the PIC18-Q41, `hw_stack` in the device file): deepest call chain of the main program (library helpers included) plus one level per interrupt priority and that handler's own chain |

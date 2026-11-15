@@ -100,12 +100,20 @@ inside the config region and every setting value fitting its field.
   vectors in the file are those of `MVECEN = 0`, the mode the compiler uses; see `docs/FACTS-18F-Q41.md`
   for what else differs (14-bit data addresses, an Access Bank made of two ranges, `INTCON0`, 127-level stack,
   hardware context save). `family_facts()` in `devgen` is keyed by the pack's `arch` (`18xxxx` for both the Q10
-  and the Q41), so its vector source cites both data sheets.
+  and the Q41), so its vector source cites both data sheets (and the K22's).
+* `pic18` PIC18(L)F2x/4xK22 (pack `PIC18F-K_DFP`, data sheet DS40001412H): the legacy interrupt controller of the Q10 with IPEN in
+  `RCON`, an Access Bank of 000h-05Fh and F60h-FFFh with banked SFRs at F38h-F5Fh, 31-level stack, no PPS; see `docs/FACTS-18F-K22.md`.
+  The pack's `impl` masks are wrong for these parts (PIR3, PIE3, WPUB 0; CCP3CON .. CTMUICON 07h), so for this pack only devgen takes
+  `implemented` from the SFR's `access` letters (the bits not `-`), which agree with the data sheet's Table 5-2 (p.79-83). The Q10/Q41
+  packs have wrong `impl` masks too (PMDx, PIR/PIE/IPR, DACx); the simulator's corrected files match the `access` mask for most of them,
+  but not all (OPA1CON0, PWM2ERSPPS, IVTADU), so their files are left as they are.
 * `pic16e` (enhanced mid-range, arch `16Exxx`): one interrupt vector, so `interrupt_high` and
   `interrupt_low` are equal (0004h); there is no Access Bank, so `access_ram` / `access_sfr` are
   empty ranges (`start = end = 0`); program, user-ID and configuration sizes and addresses count
   14-bit **words**, not bytes; GPR sectors that only shadow common RAM are skipped so `total_gpr`
   matches the data sheet.
+* Descriptions exist for the sixteen parts PIC18F23K22, 24K22, 25K22, 26K22, 43K22, 44K22, 45K22, 46K22 and their PIC18LF twins
+  (DS40001412H), with the `pic18` code generator.
 * Descriptions exist for `PIC16F17126` and `PIC16F17146` (DS40002343F), for the nine parts of the PIC16F13145 family (DS40002519D), for the six parts PIC16F13214, 13215, 13224, 13225, 13244 and 13245 (DS40002686B) and for the eight parts PIC16F18313, 18323, 18324, 18325, 18326, 18344,
   18345 and 18346 and their PIC16LF18313 … 18346 twins (DS40001799F, DS40001800E, DS40001795K, DS40001839E) and for the six parts PIC16F15213, 15214, 15223, 15224, 15243 and 15244 (DS40002195E) and for the twenty-six parts PIC16F15313 … 15386 and PIC16LF15313 … 15386 (DS40001897C, DS40001889E, DS40001865F, DS40001853E, DS40001866E) and for the PIC16F18056 and PIC16F18076 (DS40002325C); all compile with the `pic16e` code
   generator. A part with no data EEPROM (the PIC16F13145, PIC16F152xx and PIC16F153xx families) has `[memory.eeprom] size = 0`; `devgen` writes that only for `pic16e` when the pack has no `EEDataSector`. The PIC16F183xx parts have

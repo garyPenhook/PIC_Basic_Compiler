@@ -1,6 +1,8 @@
 ' expect: T_A1=1 T_A2=0 T_A3=1 T_A4=0 T_A5=2 T_A6=7 T_A7=1
-' expect-O0: T_A1=1 T_A2=0 T_A3=1 T_A4=0 T_A5=2 T_A6=7 T_A7=1
+' expect-O0: T_A1=1 T_A2=0 T_A3=1 T_A4=0 T_A5=2 T_A7=1
 ' expect-18F16Q41: T_A6=0
+' expect-18F25K22: T_A6=0
+' expect-18F26K22: T_A6=0
 ' `==` is another spelling of `=` and `!=` of `<>`, in expressions, Case and #if.
 Program T
 Device = 18F27Q10

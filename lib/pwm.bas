@@ -56,7 +56,270 @@ Include "pinio"
 ' code is 8 + channel. PPS offers CCP1 and CCP2 on port B or C on both parts, and PWM3 and PWM4 on port B and C on the 28-pin part but on port B and D on the 40-pin part [Table 18-2], so the pins accepted are RB0..RB7 and
 ' RC0..RC7 (pins 8..23) for channels 1 and 2 and RB0..RB7 for channels 3 and 4, plus RC0..RC7 where the part has no port D. The Timer2 flag is TMR2IF = PIR1 bit 7. CCPTMRS0 and PWMTMRS0 reset to Timer2
 ' [25.1.1, 27.1.1 p.273, 284], so they are left alone. The silicon errata (DS80001014D) show nothing for CCP or PWM. RB6 and RB7 are also the ICSP clock and data pins.
-#if _has(PWMEN)
+' PIC18(L)F2x/4xK22 (DS40001412H chapter 14; chosen with `#if _has(PSTR1CON)`): five channels on Timer2, channel n = CCPn in PWM mode (CCP1..CCP3
+' are ECCP modules, used with one output, PxM = 00; CCP4 and CCP5 standard). There is no PPS: each channel has its pin [Tables 2, 3 p.6-8],
+' and PwmStart takes only that one: channel 1 = RC2 (18); 2 = RC1 (17) with Config CCP2MX = PORTC1 (the default) or RB3 (11) with PORTB3;
+' 3 = RB5 (13) with CCP3MX = PORTB5 (the default), or RC6 (22) on the 28-pin parts / RE0 (32) on the 40/44-pin parts with the other
+' setting; 4 = RB0 (8) on the 28-pin parts, RD1 (25) on the 40/44-pin parts; 5 = RA4 (4) on the 28-pin parts, RE2 (34) on the 40/44-pin
+' parts. The module reads CONFIG3H (TBLRD) for CCP2MX and CCP3MX. Timer2 is the older one (PR2, TMR2, T2CON = TMR2ON | T2CKPS, prescalers
+' 1, 4, 16 [Register 13-1 p.171]), so f = FOSC / (4 * prescale * (PR2 + 1)) and a duty step is 1 / (4 * (PR2 + 1)) of the period
+' [Equations 14-1 to 14-3 p.181]; PwmInit tries the prescalers 1, 4 and 16. The duty is CCPRxL (8 MSbs) and DCxB<1:0> of CCPxCON (bits 5:4,
+' the 2 LSbs), double buffered at the period match [14.3.5]. CxTSEL = 00 in CCPTMRS0 / CCPTMRS1 selects Timer2 [Registers 14-3, 14-4 p.201]
+' and is written so. The start follows 14.3.2 (p.180-181): pin an input, timer selection, PR2, CCPxCON, duty, Timer2 on, wait for TMR2IF
+' (PIR1 bit 1), then the pin an output. PwmInvert works on the ECCP channels 1..3 (CCPxM = 1110, PxA active low [Register 14-2 p.200]);
+' CCP4 and CCP5 have no polarity bit (0). PSTRxCON keeps its reset value (STRxA = 1, the PWM on PxA) [Register 14-7 p.203]. Erratum 7
+' (DS80000498K, 25/45K22 A2 and A3): the PWM clock selection of CCP3..CCP5 is cross-wired with CCP2's; all channels use Timer2 here, so it
+' does not matter. The other errata list nothing for the CCP.
+#if _has(PSTR1CON)
+Dim Tmr2If As PIR1.1
+Dim steps As Word
+Dim period As Byte
+Dim ckps As Byte
+' A running channel has its pin number plus one in pins, an idle one 0; nact counts the running channels.
+Dim nact As Byte
+Dim freq As LongWord
+Dim pins(5) As Byte
+' CCPxM for each channel: 12 (active high) or 14 (PxA active low, channels 1..3).
+Dim modev(5) As Byte
+Dim ready As Boolean
+
+' Chooses the Timer2 prescale (1, 4, 16) and PR2 for `hz` (1..1000000) and returns 1, or 0 when no prescale reaches it or a channel is
+' running (the period is shared). Timer2 is started by PwmStart. n = round(FOSC / (4 * hz * prescale)) as in the other branches.
+Public Function PwmInit(ByVal hz As LongWord) As Byte
+    Dim t As LongWord
+    Dim n As Word
+    Dim e As Byte
+    Result = 0
+    If nact <> 0 Or hz = 0 Or hz > 1000000 Then
+        Exit
+    End If
+    t = LongWord(_Clock * 1000000) / (hz << 1)
+    e = 0
+    While t > 512 And e < 2
+        t = t >> 2
+        Inc(e)
+    Wend
+    If t >= 1 And t <= 512 Then
+        ckps = e
+        n = (Word(t) + 1) >> 1
+        period = Byte(n - 1)
+        steps = n << 2
+        freq = LongWord(_Clock * 1000000) / (LongWord(n) << (e * 2 + 2))
+        ready = True
+        Result = 1
+    End If
+End Function
+
+' The achieved frequency in Hz (0 before a successful PwmInit).
+Public Function PwmFrequency() As LongWord
+    Result = 0
+    If ready Then
+        Result = freq
+    End If
+End Function
+
+' Number of duty cycle steps in one period: 4 * (PR2 + 1), at most 1024.
+Public Function PwmSteps() As Word
+    Result = 0
+    If ready Then
+        Result = steps
+    End If
+End Function
+
+' CONFIG3H (300005h), read with TBLRD (TBLPTR and TABLAT are scratch registers, ABI.md).
+Function Config3H() As Byte
+    Asm
+        movlw 0x30
+        movwf TBLPTRU, c
+        clrf TBLPTRH, c
+        movlw 5
+        movwf TBLPTRL, c
+        tblrd*
+        movff TABLAT, PWM_CONFIG3H__RESULT
+    End Asm
+End Function
+
+' The pin of channel `ch` (1..5) as the part and its Config route it, 255 for another channel.
+Function ChPin(ByVal ch As Byte) As Byte
+    Result = 255
+    If ch = 1 Then
+        Result = 18
+    ElseIf ch = 2 Then
+        Result = 11
+        If (Config3H() And 1) <> 0 Then
+            Result = 17
+        End If
+    ElseIf ch = 3 Then
+#if _has(LATD)
+        Result = 32
+#else
+        Result = 22
+#endif
+        If (Config3H() And 4) <> 0 Then
+            Result = 13
+        End If
+    ElseIf ch = 4 Then
+#if _has(LATD)
+        Result = 25
+#else
+        Result = 8
+#endif
+    ElseIf ch = 5 Then
+#if _has(LATD)
+        Result = 34
+#else
+        Result = 4
+#endif
+    End If
+End Function
+
+' Writes CCPxCON of channel ch.
+Sub SetCon(ByVal ch As Byte, ByVal v As Byte)
+    If ch = 1 Then
+        CCP1CON = v
+    ElseIf ch = 2 Then
+        CCP2CON = v
+    ElseIf ch = 3 Then
+        CCP3CON = v
+    ElseIf ch = 4 Then
+        CCP4CON = v
+    Else
+        CCP5CON = v
+    End If
+End Sub
+
+' The duty `d` (at most 1023): CCPRxL = d >> 2 and CCPxCON = DCxB (d And 3) with the channel's mode.
+Sub SetDuty(ByVal ch As Byte, ByVal d As Word)
+    Dim hi As Byte
+    Dim con As Byte
+    If d > 1023 Then
+        d = 1023
+    End If
+    hi = (d.Byte1 << 6) Or (d.Byte0 >> 2)
+    con = ((d.Byte0 And 3) << 4) Or modev(ch - 1)
+    If ch = 1 Then
+        CCPR1L = hi
+    ElseIf ch = 2 Then
+        CCPR2L = hi
+    ElseIf ch = 3 Then
+        CCPR3L = hi
+    ElseIf ch = 4 Then
+        CCPR4L = hi
+    Else
+        CCPR5L = hi
+    End If
+    SetCon(ch, con)
+End Sub
+
+' Stops a channel: the module is disabled (it gives the pin back to the port) and the pin becomes an input. Timer2 is stopped when
+' the last channel stops.
+Public Sub PwmStop(ByVal ch As Byte)
+    If ch >= 1 And ch <= 5 Then
+        If pins(ch - 1) <> 0 Then
+            Pinio.PinInput(pins(ch - 1) - 1)
+            SetCon(ch, 0)
+            pins(ch - 1) = 0
+            Dec(nact)
+            If nact = 0 Then
+                T2CON = 0
+            End If
+        End If
+    End If
+End Sub
+
+' Starts a channel (1..5) on its pin (see the header) at `duty` steps of PwmSteps. Returns 0 (and does nothing) without a successful
+' PwmInit, or for a channel or pin that does not match; a running channel is restarted.
+Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word) As Byte
+    Dim old As Byte
+    Result = 0
+    If Not ready Or ch = 0 Or ch > 5 Then
+        Exit
+    End If
+    If ChPin(ch) <> pin Then
+        Exit
+    End If
+    If modev(ch - 1) = 0 Then
+        modev(ch - 1) = 12
+    End If
+    old = pins(ch - 1)
+    Pinio.PinInput(pin)
+    ' CxTSEL = 00: Timer2 [Registers 14-3, 14-4].
+    If ch = 1 Then
+        CCPTMRS0 = CCPTMRS0 And 252
+    ElseIf ch = 2 Then
+        CCPTMRS0 = CCPTMRS0 And 231
+    ElseIf ch = 3 Then
+        CCPTMRS0 = CCPTMRS0 And 63
+    ElseIf ch = 4 Then
+        CCPTMRS1 = CCPTMRS1 And 252
+    Else
+        CCPTMRS1 = CCPTMRS1 And 243
+    End If
+    If nact = 0 Then
+        T2CON = 0
+        PR2 = period
+        TMR2 = 0
+    End If
+    SetDuty(ch, duty)
+    Tmr2If = 0
+    If nact = 0 Then
+        T2CON = 4 + ckps
+    End If
+    While Tmr2If = 0
+    Wend
+    Tmr2If = 0
+    pins(ch - 1) = pin + 1
+    If old = 0 Then
+        Inc(nact)
+    End If
+    Pinio.PinOutput(pin)
+    Result = 1
+End Function
+
+' Duty cycle in steps (0..PwmSteps, at most 1023 are representable); no effect on a stopped channel.
+Public Sub PwmDuty(ByVal ch As Byte, ByVal duty As Word)
+    If ch >= 1 And ch <= 5 Then
+        If pins(ch - 1) <> 0 Then
+            SetDuty(ch, duty)
+        End If
+    End If
+End Sub
+
+' Duty cycle as a percentage 0..100 of the period (rounded down to a step).
+Public Sub PwmPercent(ByVal ch As Byte, ByVal pct As Byte)
+    Dim d As Word
+    If pct > 100 Then
+        pct = 100
+    End If
+    d = (steps >> 2) * pct / 25
+    PwmDuty(ch, d)
+End Sub
+
+' Output polarity of an ECCP channel (1..3): inverted = PxA active low (CCPxM = 1110); on a running channel it applies at once. Returns 0
+' for channels 4 and 5, which have no polarity bit.
+Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
+    Dim con As Byte
+    Result = 0
+    If ch >= 1 And ch <= 3 Then
+        If inverted Then
+            modev(ch - 1) = 14
+        Else
+            modev(ch - 1) = 12
+        End If
+        If pins(ch - 1) <> 0 Then
+            If ch = 1 Then
+                con = CCP1CON
+            ElseIf ch = 2 Then
+                con = CCP2CON
+            Else
+                con = CCP3CON
+            End If
+            SetCon(ch, (con And 48) Or modev(ch - 1))
+        End If
+        Result = 1
+    End If
+End Function
+#elseif _has(PWMEN)
 ' Output channels: three modules of two on the PIC18-Q41, two modules of two on the PIC16F171xx.
 #if _has(PWM3CON)
 Const Channels = 6

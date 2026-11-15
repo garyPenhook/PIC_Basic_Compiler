@@ -7,6 +7,17 @@ use devdesc::Device;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Where IPEN is when it is not bit 5 of INTCON (Q10) or INTCON0 (Q41): RCON bit 7 on the PIC18(L)F2x/4xK22 (DS40001412H Register 4-1
+/// p.56). PIC16 parts have no IPEN.
+fn ipen_of(dev: &Device) -> Option<(String, u8)> {
+    // By register name only: other registers have an IPEN field too (the PIC18-Q41's ADCON1.IPEN is the ADC's inverted precharge).
+    let field = |reg: &str| dev.sfr.iter().find(|s| s.name == reg).and_then(|s| s.fields.iter().find(|f| f.name == "IPEN").map(|f| f.pos as u8));
+    if dev.device.family != "pic18" || field("INTCON").is_some() || field("INTCON0").is_some() {
+        return None;
+    }
+    field("RCON").map(|b| ("RCON".to_string(), b))
+}
+
 pub fn target_of(dev: &Device) -> Target {
     let mut ram: Vec<(u32, u32)> = Vec::new();
     for g in dev.memory.data.gpr.iter().filter(|g| !g.system) {
@@ -41,6 +52,8 @@ pub fn target_of(dev: &Device) -> Target {
         access_sfr: (acc.start, acc.end),
         sfr,
         hw_context,
+        ipen: ipen_of(dev),
+        prog_bytes: if dev.device.family == "pic16e" { 0 } else { dev.memory.program.size },
         data_top,
         hw_stack: if dev.memory.hw_stack > 0 { dev.memory.hw_stack } else { crate::codegen::HW_STACK_LEVELS },
         opt: true,
