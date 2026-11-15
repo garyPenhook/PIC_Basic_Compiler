@@ -331,6 +331,8 @@ Program Name                        ' name is optional
   routine declarations are an error (`E-ORDER`).
 * Identifiers must be declared before use. A routine that is defined further down can be announced with `Declare` (see *Forward declarations*).
 * The program and all modules are compiled together. A module included by several files is loaded once.
+* The name in `Include "name"` is the file name without `.bas`, and its case must match the file's exactly, on every
+  system (`Include "Serial"` does not find `serial.bas`, also on Windows and macOS).
 
 A `Proc ... EndProc` flat/procedural layout is accepted (see *Procedures*).
 

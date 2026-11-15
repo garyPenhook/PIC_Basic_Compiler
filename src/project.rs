@@ -162,7 +162,10 @@ impl Loader<'_> {
             let fname = format!("{}.bas", inc.name);
             for d in std::iter::once(&dir).chain(self.cfg.lib_dirs.iter()) {
                 let cand = d.join(&fname);
-                if cand.is_file() {
+                // The name must match the file's case exactly, also on a case-insensitive file
+                // system (Windows, macOS), so a program builds the same everywhere.
+                let exact = || std::fs::read_dir(d).is_ok_and(|rd| rd.flatten().any(|e| e.file_name().to_str() == Some(fname.as_str())));
+                if cand.is_file() && exact() {
                     found = Some(cand);
                     break;
                 }
