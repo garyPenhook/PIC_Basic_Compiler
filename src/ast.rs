@@ -34,6 +34,9 @@ pub struct Unit {
     pub includes: Vec<Include>,
     pub decls: Vec<Decl>,
     pub stmts: Vec<Stmt>,
+    /// Comparisons whose left operand is an unparenthesised `Not` (`Not x = 5`, which is
+    /// `(Not x) = 5`); sema warns `W-NOTCMP` when that operand is an integer.
+    pub bare_not_cmp: Vec<NodeId>,
 }
 
 #[derive(Debug)]

@@ -15,6 +15,7 @@ pub struct Parser<'a> {
     file: u32,
     diags: &'a mut Diagnostics,
     next_id: &'a mut NodeId,
+    bare_not_cmp: Vec<NodeId>,
 }
 
 const DECL_STARTERS: &[&str] =
@@ -23,8 +24,10 @@ const DECL_STARTERS: &[&str] =
 const TYPE_KEYWORDS: &[&str] = &["boolean", "bit", "byte", "shortint", "word", "integer", "longword", "longint", "float", "char", "string"];
 
 pub fn parse_unit(file: u32, toks: Vec<Token>, diags: &mut Diagnostics, next_id: &mut NodeId) -> Unit {
-    let mut p = Parser { toks, pos: 0, file, diags, next_id };
-    p.unit()
+    let mut p = Parser { toks, pos: 0, file, diags, next_id, bare_not_cmp: Vec::new() };
+    let mut unit = p.unit();
+    unit.bare_not_cmp = std::mem::take(&mut p.bare_not_cmp);
+    unit
 }
 
 impl<'a> Parser<'a> {
@@ -215,7 +218,7 @@ impl<'a> Parser<'a> {
     // ---- compilation unit ----------------------------------------------------------------
 
     fn unit(&mut self) -> Unit {
-        let mut unit = Unit { kind: UnitKind::Program, name: None, file: self.file, headers: vec![], includes: vec![], decls: vec![], stmts: vec![] };
+        let mut unit = Unit { kind: UnitKind::Program, name: None, file: self.file, headers: vec![], includes: vec![], decls: vec![], stmts: vec![], bare_not_cmp: vec![] };
         self.skip_blank();
         if self.at_kw("module") || self.at_kw("program") {
             unit.kind = if self.at_kw("module") { UnitKind::Module } else { UnitKind::Program };
@@ -1237,7 +1240,9 @@ impl<'a> Parser<'a> {
         if level == LEVELS {
             return self.unary();
         }
+        let lhs_starts_not = matches!(self.peek(), Tok::Kw("not"));
         let mut lhs = self.binary_level(level + 1)?;
+        let mut first = true;
         loop {
             let op = match (level, self.peek()) {
                 (0, Tok::Kw("or")) => BinOp::Or,
@@ -1260,7 +1265,14 @@ impl<'a> Parser<'a> {
             };
             let span = self.bump().span;
             let rhs = self.binary_level(level + 1)?;
+            // `Not x = 5` (no parentheses) is `(Not x) = 5`: remember it for W-NOTCMP. A `(Not x)`
+            // starts with `(`, so the first token tells the two apart.
+            let bare_not = level == 2 && first && lhs_starts_not && matches!(lhs.kind, ExprKind::Unary(UnOp::Not, _));
+            first = false;
             lhs = Expr { id: self.id(), span, kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)) };
+            if bare_not {
+                self.bare_not_cmp.push(lhs.id);
+            }
             // The relational level is not associative: `a < b < c` is rejected.
             if level == 2 && matches!(self.peek(), Tok::Punct("=" | "==" | "<>" | "!=" | "<" | ">" | "<=" | ">=")) {
                 return self.fail("E-SYNTAX", "comparisons cannot be chained; use `And` to combine them");

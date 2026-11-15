@@ -776,6 +776,20 @@ Highest precedence first:
 | 6 | `And` |
 | 7 | `Or`, `Xor` |
 
+* **Grouping.** Operators of the same level group left to right: `20 - 5 - 3` is 12, `a / b * c` is
+  `(a / b) * c`. Parentheses override any level.
+* **Comparisons do not chain.** `1 < x < 5` is an error (`E-SYNTAX`); write `x > 1 And x < 5`, which
+  needs no parentheses because comparisons bind tighter than `And` and `Or`.
+* **Bit tests need parentheses.** `PortB And 1 = 1` reads as `PortB And (1 = 1)` and is rejected
+  (`E-MIX`); write `(PortB And 1) = 1` or `PortB.0 = 1`.
+* **`Not` binds tightest.** `Not x = 5` is `(Not x) = 5`. On a Boolean or a Bit both readings give the
+  same answer, but on a `Byte` or other integer it complements `x` and then compares, so the compiler
+  warns (`W-NOTCMP`). Write `Not (x = 5)` or `x <> 5` to negate the comparison, or `(Not x) = 5` to
+  keep the complement without the warning.
+  Unary minus binds the same way: `-x * 2` is `(-x) * 2`.
+* **Shifts are below `+` and `-`.** `x << 1 + 1` is `x << 2`; write `(x << 1) + 1` for the other.
+* **`#if` is different.** In a preprocessor condition `not` binds looser than the comparisons
+  (`#if not _clock = 64` means `not (_clock = 64)`), and there is no `Xor`. See [Preprocessor](#preprocessor).
 * `And`, `Or`, `Xor`, `Not` are **logical** on Booleans and **bitwise** on integers. Mixing a
   Boolean and a number is an error (`E-MIX`). Conditions short-circuit left to right.
 * There is no `\`, `^`, `&`, `|`, `~`, `<<=` or `Dig`/`?`, `@` bit reverse, `Dcd`/`Ncd`.
@@ -10585,6 +10599,7 @@ Every message has a code, `error[E-TYPE]` or `warning[W-NARROW]`. Full list with
 | `E-UNSUPPORTED` | reserved but not available (`BitOf`, `Declare` other than `Xtal`, ...) |
 | `W-CLOCK` | `Clock` differs from the `RSTOSC` speed and nothing sets the oscillator |
 | `W-REGNAME` | a declaration hides a register name |
+| `W-NOTCMP` | `Not x = 5` on an integer: `Not` complements `x` before the comparison; write `Not (x = 5)` or `(Not x) = 5` |
 
 `E-BACKEND` ("not supported by the back end yet") means the front end accepted a rare form that the
 code generator does not handle: a bit passed `ByRef`, a call inside the index

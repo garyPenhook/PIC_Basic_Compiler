@@ -36,6 +36,7 @@ codes, not on wording. Warnings can be switched off with `#option Warn.<id> = fa
 |---|---|
 | E-TYPE | Wrong type for the operation or assignment |
 | E-MIX | Boolean mixed with a number (D11) |
+| W-NOTCMP | The left side of a comparison is an unparenthesised `Not` of an integer (`Not x = 5`): `Not` binds tighter, so it complements `x` and then compares. Write `Not (x = 5)` to negate the comparison or `(Not x) = 5` to keep the meaning. Not raised for a Boolean or a Bit, where both readings agree (`Warn.NotCmp`) |
 | E-SIGN | Signed and unsigned operands that cannot be combined (D16) |
 | E-CONST-EXPR, E-CONST-RANGE, E-CONST, E-CONST-ARRAY | Not constant; constant does not fit; bad constant declaration |
 | E-DIM-ARRAY | An array or structure initialiser has a different number of values than the array has elements or the structure has fields |

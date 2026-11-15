@@ -305,6 +305,8 @@ pub struct Sema<'p, 'd> {
     in_bound: bool,
     /// True while the (empty) body of an `Extern` routine is checked: its result is set by C.
     in_extern: bool,
+    /// Comparisons written `Not x = ...` without parentheses (from every unit), for W-NOTCMP.
+    bare_not_cmp: HashSet<NodeId>,
 }
 
 pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Analysis {
@@ -327,6 +329,7 @@ pub fn analyze(proj: &Project, cfg: &SemaConfig, diags: &mut Diagnostics) -> Ana
         interrupts: Vec::new(),
         reentrant_ok: HashSet::new(),
         forward: HashSet::new(),
+        bare_not_cmp: proj.units.iter().flat_map(|u| u.unit.bare_not_cmp.iter().copied()).collect(),
         md_cur: None,
         in_bound: false,
         in_extern: false,
@@ -2337,6 +2340,13 @@ impl<'p, 'd> Sema<'p, 'd> {
             return self.logical(op, &a, &b, span);
         }
         if op.is_relational() {
+            if self.bare_not_cmp.contains(&e.id) && matches!(a.ty, Ty::Int(..)) {
+                self.warn_once(
+                    "W-NOTCMP",
+                    l.span,
+                    format!("`Not` binds tighter than `{o}`, so this compares the bitwise complement of the {}; write `Not (a {o} b)` to negate the comparison, or `(Not a) {o} b` to keep this meaning", a.ty, o = op_text(op)),
+                );
+            }
             return self.relational(op, &a, &b, l, r, span);
         }
         if matches!(op, BinOp::Shl | BinOp::Shr) {
@@ -2460,6 +2470,13 @@ impl<'p, 'd> Sema<'p, 'd> {
                 Some(EI::new(ct))
             }
             _ => self.err("E-TYPE", span, format!("`{name}` needs two Booleans or two integers, found {} and {}", a.ty, b.ty)),
+        }
+    }
+
+    /// A warning that a second check of the same expression does not repeat.
+    fn warn_once(&mut self, code: &'static str, span: Span, msg: String) {
+        if !self.diags.items.iter().any(|d| d.code == code && d.span == span) {
+            self.diags.warn(code, span, msg);
         }
     }
 
@@ -3476,4 +3493,16 @@ fn writes_oscillator(text: &str) -> bool {
             code.strip_prefix(r).is_some_and(|rest| matches!(rest.trim_start().chars().next(), Some('=') | Some('.')))
         })
     })
+}
+
+/// The source spelling of a comparison operator, for messages.
+fn op_text(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Eq => "=",
+        BinOp::Ne => "<>",
+        BinOp::Lt => "<",
+        BinOp::Gt => ">",
+        BinOp::Le => "<=",
+        _ => ">=",
+    }
 }

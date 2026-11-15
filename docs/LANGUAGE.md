@@ -221,6 +221,11 @@ Highest first. (SF; matches the reference language's table.)
 `And/Or/Xor/Not` are **logical** on Boolean operands and **bitwise** on integer operands;
 mixing the two is an error (D11). Only `=` and `<>` apply to strings. Avoid `=` on floats.
 
+Binary operators of one level are left-associative (`a - b - c` is `(a - b) - c`). The relational
+level is not associative: `a < b < c` is `E-SYNTAX`. Unary operators bind tightest, so `Not x = 5`
+is `(Not x) = 5` (warning `W-NOTCMP` when `x` is an integer), and `x And 1 = 1` is `x And (1 = 1)` (`E-MIX` for an integer `x`). In `#if`
+conditions `not` sits below the comparisons (`not a = b` is `not (a = b)`) and there is no `xor`.
+
 ### 5.2 Short-circuit evaluation (SF)
 In conditions (`If`, `While`, `Repeat…Until`, `If … GoTo`), `And`/`Or` over Booleans evaluate the
 right side only if needed. The order of evaluation of operands is otherwise left to right, and the
