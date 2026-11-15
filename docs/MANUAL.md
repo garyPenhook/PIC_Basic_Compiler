@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.245**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
+Revision for **basil 0.1.249**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -44,8 +44,8 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
    - Preprocessor
 2. Language commands (in categories, alphabetical within each)
    - Branching and loops; Compiler and assembler; Delays; General; Math; Pin input and output
-3. Library modules (in categories, alphabetical within each)
-   - System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths, strings and formatting
+3. Library modules (categories in alphabetical order, modules alphabetical within each)
+   - Analog and memory; Bits, maths and strings; Displays; Sensors, clocks and remote control; Serial and buses; System and clock; Timers and PWM
 4. Diagnostics
 5. Appendix A: Alternative spellings and unsupported forms
 6. Appendix B: Test checklist
@@ -1564,6 +1564,23 @@ The commands are in categories, each alphabetical: Branching and loops; Compiler
 
 ## Category: Branching and loops
 
+## Branch
+
+**Syntax**
+```basic
+Branch index, label0, label1, label2
+```
+**Overview** `On index GoTo` written with a comma: jumps to the label at position `index` of the list (the first is 0);
+an `index` past the end continues with the next statement. `Branch` is not a reserved word.
+
+**Example**
+```basic
+Branch mode, Idle, Run, Fault
+GoTo Unknown                        ' mode was 3 or more
+Idle:
+```
+**See also** `On ... GoTo`.
+
 ## Break
 
 **Syntax**
@@ -1584,6 +1601,35 @@ While True
 Wend
 ```
 **See also** `Continue`, `Exit`.
+
+## Call
+
+**Syntax**
+```basic
+Call Name(arguments)
+```
+**Overview** Calls the `Sub` or `Function` `Name`; exactly the same as writing `Name(arguments)`, for programs written with
+the keyword. The result of a `Function` is discarded. `Call` is not a reserved word: a variable or routine of that name still
+works. To run a subroutine of the current routine use `GoSub`.
+
+## ClrWdt
+
+**Syntax**
+```basic
+ClrWdt()
+```
+**Overview** Restarts the watchdog count: one `clrwdt` instruction (one word), on every supported part. Call it inside a long loop when the
+watchdog is on (`WDTE = ON` or `SWDTEN`), more often than the watchdog period. It also sets `TO` and `PD` to 1. Takes no arguments.
+
+**Example**
+```basic
+Dim i As Byte
+For i = 1 To 200
+    ClrWdt()               ' the watchdog is fed on every pass
+    DelayMs(20)
+Next
+```
+**See also** `System.Snooze`, `SysClearWakeFlags`.
 
 ## Continue
 
@@ -1710,26 +1756,6 @@ Next
 ```
 **See also** `Break`, `Continue`, `Bound`.
 
-## GoTo
-
-**Syntax**
-```basic
-GoTo label
-If condition GoTo label
-```
-**Overview** Jump to a label in the same routine. A label is a name followed by a colon at the start
-of a line. For a subroutine inside a routine see `GoSub` and `Return` (below); the computed jump is `On ... GoTo`.
-
-**Example**
-```basic
-Dim x As Byte
-Again:
-Inc(x)
-If x < 5 GoTo Again
-```
-**Notes** `GoTo` and labels are not allowed inside a `Save` block.
-**See also** `GoSub`, `On ... GoTo`, `Branch`.
-
 ## GoSub
 
 **Syntax**
@@ -1772,76 +1798,25 @@ Done:
 
 **See also** `Return`, `GoTo`, `On ... GoTo`, `Exit`, `Call`.
 
-## Return
+## GoTo
 
 **Syntax**
 ```basic
-Return
+GoTo label
+If condition GoTo label
 ```
-**Overview** Ends a subroutine entered with `GoSub`: execution goes back to the statement after that `GoSub`. It does
-not take a value and is not the way to leave a `Sub` or `Function` (that is `Exit`).
+**Overview** Jump to a label in the same routine. A label is a name followed by a colon at the start
+of a line. For a subroutine inside a routine see `GoSub` and `Return`; the computed jump is `On ... GoTo`.
 
 **Example**
 ```basic
-Dim n As Byte
-GoSub Bump
-GoSub Bump
-GoTo Done
-Bump:
-Inc(n)
-Return
-Done:
+Dim x As Byte
+Again:
+Inc(x)
+If x < 5 GoTo Again
 ```
-**Notes** A `Return` needs at least one `GoSub` in the same routine (`E-RETURN`). A `Return` reached with no `GoSub`
-active (by falling into the subroutine) returns from the whole routine, or resets the part when the stack is empty.
-
-**See also** `GoSub`.
-
-## Call
-
-**Syntax**
-```basic
-Call Name(arguments)
-```
-**Overview** Calls the `Sub` or `Function` `Name`; exactly the same as writing `Name(arguments)`, for programs written with
-the keyword. The result of a `Function` is discarded. `Call` is not a reserved word: a variable or routine of that name still
-works. To run a subroutine of the current routine use `GoSub`.
-
-## On ... GoTo
-
-**Syntax**
-```basic
-On index GoTo label0, label1, label2
-```
-**Overview** Jumps to the label whose position in the list equals `index` (the first is 0). An `index` past the end of
-the list jumps nowhere: execution continues with the next statement. The labels are in the same routine, as for `GoTo`.
-It is written as a `Select` on the index, so the cost is that of the `Select`. `On` is not a reserved word: a variable
-named `On` still works in an assignment or a call.
-
-**Example**
-```basic
-On mode GoTo Idle, Run, Fault
-GoTo Unknown                        ' mode was 3 or more
-Idle:
-```
-**See also** `Branch`, `GoSub` (`On ... GoSub`), `Select`.
-
-## Branch
-
-**Syntax**
-```basic
-Branch index, label0, label1, label2
-```
-**Overview** `On index GoTo` written with a comma: jumps to the label at position `index` of the list (the first is 0);
-an `index` past the end continues with the next statement. `Branch` is not a reserved word.
-
-**Example**
-```basic
-Branch mode, Idle, Run, Fault
-GoTo Unknown                        ' mode was 3 or more
-Idle:
-```
-**See also** `On ... GoTo`.
+**Notes** `GoTo` and labels are not allowed inside a `Save` block.
+**See also** `GoSub`, `On ... GoTo`, `Branch`.
 
 ## If ... Then ... ElseIf ... Else ... EndIf
 
@@ -1875,6 +1850,25 @@ EndIf
 **Notes** The single-line form `If x Then y = 2` is rejected with a message; use a block or
 `If c GoTo label`.
 
+## On ... GoTo
+
+**Syntax**
+```basic
+On index GoTo label0, label1, label2
+```
+**Overview** Jumps to the label whose position in the list equals `index` (the first is 0). An `index` past the end of
+the list jumps nowhere: execution continues with the next statement. The labels are in the same routine, as for `GoTo`.
+It is written as a `Select` on the index, so the cost is that of the `Select`. `On` is not a reserved word: a variable
+named `On` still works in an assignment or a call.
+
+**Example**
+```basic
+On mode GoTo Idle, Run, Fault
+GoTo Unknown                        ' mode was 3 or more
+Idle:
+```
+**See also** `Branch`, `GoSub` (`On ... GoSub`), `Select`.
+
 ## Repeat ... Until
 
 **Syntax**
@@ -1893,6 +1887,31 @@ Repeat
 Until x = 3
 ```
 **See also** `While`, `Do`.
+
+## Return
+
+**Syntax**
+```basic
+Return
+```
+**Overview** Ends a subroutine entered with `GoSub`: execution goes back to the statement after that `GoSub`. It does
+not take a value and is not the way to leave a `Sub` or `Function` (that is `Exit`).
+
+**Example**
+```basic
+Dim n As Byte
+GoSub Bump
+GoSub Bump
+GoTo Done
+Bump:
+Inc(n)
+Return
+Done:
+```
+**Notes** A `Return` needs at least one `GoSub` in the same routine (`E-RETURN`). A `Return` reached with no `GoSub`
+active (by falling into the subroutine) returns from the whole routine, or resets the part when the stack is empty.
+
+**See also** `GoSub`.
 
 ## Select ... Case ... EndSelect
 
@@ -1942,22 +1961,6 @@ not depend on the value. On the PIC18 that is `addwf PCL` and on the PIC16F1 `br
 smaller than the chain of tests (the same for `On n GoTo` and for an `If`/`ElseIf` chain of `x = k` tests), and
 under `#option Optimize = Speed` when it is not much larger. Ranges, relations and wider subjects use the chain of tests.
 
-## Terminate
-
-**Syntax**
-```basic
-Terminate()
-```
-**Overview** Stops the program: it falls into the halt loop (a self-branch). `Stop` (with or without parentheses)
-is the same statement; a program's own `Stop` replaces it.
-
-**Example**
-```basic
-Dim x As Byte
-x = 1
-Terminate()
-```
-
 ## Stop
 
 **Syntax**
@@ -1979,24 +1982,21 @@ End If
 ```
 **See also** `Terminate`, `System.Sleep`.
 
-## ClrWdt
+## Terminate
 
 **Syntax**
 ```basic
-ClrWdt()
+Terminate()
 ```
-**Overview** Restarts the watchdog count: one `clrwdt` instruction (one word), on every supported part. Call it inside a long loop when the
-watchdog is on (`WDTE = ON` or `SWDTEN`), more often than the watchdog period. It also sets `TO` and `PD` to 1. Takes no arguments.
+**Overview** Stops the program: it falls into the halt loop (a self-branch). `Stop` (with or without parentheses)
+is the same statement; a program's own `Stop` replaces it.
 
 **Example**
 ```basic
-Dim i As Byte
-For i = 1 To 200
-    ClrWdt()               ' the watchdog is fed on every pass
-    DelayMs(20)
-Next
+Dim x As Byte
+x = 1
+Terminate()
 ```
-**See also** `System.Snooze`, `SysClearWakeFlags`.
 
 ## While ... Wend
 
@@ -2049,6 +2049,28 @@ End Asm
 **Notes** Comments inside the block are assembler comments (`;`). The block ends at a line holding
 `End Asm`. Stack use of `call` in raw `Asm` is counted by the `E-STACK` check.
 
+## CFile
+
+**Syntax**
+```basic
+CFile "file.c"
+```
+**Overview** Names a C source file, XC8 object or library that is linked into the program. The routines in it are
+declared with `Extern`. A program that calls an `Extern` routine is linked by `xc8-cc` (see *Calling C* in chapter 1 for
+the whole picture and the full example).
+
+**Parameters** `file.c` is relative to the folder of the main program. `CFile` goes with the `Device`, `Clock` and
+`Config` lines, before the first `Include`, and can be given more than once.
+
+**Example**
+```basic
+CFile "checksum.c"
+Extern Function crc8(crc As Byte, data As Byte) As Byte
+```
+**Notes** The generated assembly is `<name>_basil.S`; the stub is `<name>_cstub.c`. Not yet run on hardware.
+
+**See also** `Extern`, *Calling C* (chapter 1), `docs/ABI.md` section 7.
+
 ## EData
 
 **Syntax**
@@ -2078,28 +2100,6 @@ EData At 16, 0x12, 0x34, 200, -1
   (byte address 0x1E000) with the data in the low byte of each word; the programmer must be set to write the
   EEPROM. The image costs no program flash.
 * The simulator does not model data EEPROM reads, so `tests/backend.rs` checks the records in the hex.
-
-## CFile
-
-**Syntax**
-```basic
-CFile "file.c"
-```
-**Overview** Names a C source file, XC8 object or library that is linked into the program. The routines in it are
-declared with `Extern`. A program that calls an `Extern` routine is linked by `xc8-cc` (see *Calling C* in chapter 1 for
-the whole picture and the full example).
-
-**Parameters** `file.c` is relative to the folder of the main program. `CFile` goes with the `Device`, `Clock` and
-`Config` lines, before the first `Include`, and can be given more than once.
-
-**Example**
-```basic
-CFile "checksum.c"
-Extern Function crc8(crc As Byte, data As Byte) As Byte
-```
-**Notes** The generated assembly is `<name>_basil.S`; the stub is `<name>_cstub.c`. Not yet run on hardware.
-
-**See also** `Extern`, *Calling C* (chapter 1), `docs/ABI.md` section 7.
 
 ## Extern
 
@@ -2259,45 +2259,6 @@ For i = 0 To Bound(a)
 Next
 ```
 **See also** `For ... Next`, `Clear`, `SizeOf`.
-
-## Tern
-
-**Syntax**
-```basic
-x = Tern(condition, ifTrue, ifFalse)
-```
-**Overview** A value chosen by a condition: `ifTrue` when the `Boolean` condition holds, otherwise `ifFalse`. Only
-the chosen one is worked out, so it may hold a function call whose side effects must not happen otherwise. The
-two values are integers (the result has the wider type), or two `Boolean`s, or two `Char`s (a `String` literal is
-not a `Char`; use `Char` variables). It is compiled as an `If` that sets a hidden variable, so the cost is that of the
-`If`. It can be used in any expression except the condition of an `ElseIf` (`E-BACKEND`, as for a call whose result needs statements before it): compute it into a variable first. A program's own `Tern` replaces it.
-
-**Example**
-```basic
-Dim x As Byte = 5
-Dim m As Byte
-m = Tern(x > 3, 10, 20)                ' 10
-```
-**See also** `If ... Then`, `Min`, `Max`.
-
-## SizeOf
-
-**Syntax**
-```basic
-n = SizeOf(variable)
-```
-**Overview** The number of RAM bytes a variable occupies, known when the program is built: 1 for a `Byte`,
-2 for a `Word`, 4 for a `LongInt`, the size plus one for a `String`, the whole array for an array (`Dim big(150) As Word`
-gives 300), the sum of the fields for a structure. It is a constant, so it costs no code. An array parameter
-has no size known to the compiler (`E-TYPE`); use `Bound`. A program's own `SizeOf` replaces it.
-
-**Example**
-```basic
-Dim buf(32) As Word
-Dim n As Byte
-n = SizeOf(buf) / SizeOf(buf(0))       ' 32
-```
-**See also** `Bound`.
 
 ## Clear
 
@@ -2459,6 +2420,45 @@ End Interrupt
 it are not supported.
 
 **See also** *Interrupts, events and context saving* (section 1).
+
+## SizeOf
+
+**Syntax**
+```basic
+n = SizeOf(variable)
+```
+**Overview** The number of RAM bytes a variable occupies, known when the program is built: 1 for a `Byte`,
+2 for a `Word`, 4 for a `LongInt`, the size plus one for a `String`, the whole array for an array (`Dim big(150) As Word`
+gives 300), the sum of the fields for a structure. It is a constant, so it costs no code. An array parameter
+has no size known to the compiler (`E-TYPE`); use `Bound`. A program's own `SizeOf` replaces it.
+
+**Example**
+```basic
+Dim buf(32) As Word
+Dim n As Byte
+n = SizeOf(buf) / SizeOf(buf(0))       ' 32
+```
+**See also** `Bound`.
+
+## Tern
+
+**Syntax**
+```basic
+x = Tern(condition, ifTrue, ifFalse)
+```
+**Overview** A value chosen by a condition: `ifTrue` when the `Boolean` condition holds, otherwise `ifFalse`. Only
+the chosen one is worked out, so it may hold a function call whose side effects must not happen otherwise. The
+two values are integers (the result has the wider type), or two `Boolean`s, or two `Char`s (a `String` literal is
+not a `Char`; use `Char` variables). It is compiled as an `If` that sets a hidden variable, so the cost is that of the
+`If`. It can be used in any expression except the condition of an `ElseIf` (`E-BACKEND`, as for a call whose result needs statements before it): compute it into a variable first. A program's own `Tern` replaces it.
+
+**Example**
+```basic
+Dim x As Byte = 5
+Dim m As Byte
+m = Tern(x > 3, 10, 20)                ' 10
+```
+**See also** `If ... Then`, `Min`, `Max`.
 
 ---
 
@@ -2622,25 +2622,32 @@ Output(led)
 
 **See also** `Input`, `High`, `Low`, `PinMode`.
 
-## Toggle
+## PinClear
 
 **Syntax**
 ```basic
-Toggle(bit)
+PinClear(pin)
 ```
-**Overview** Inverts a pin's latch (`LATx`). `bit` is as for `High`.
+**Overview** Clears the output latch of a pin without changing its direction, so a pin that is an input is low when it is
+later made an output. `pin` is as for `PinMode`: a port bit, a whole port, or a pin number (constant, or any `Byte`
+expression, `RA0` = 0, `RB0` = 8 ...).
 
 **Example**
 ```basic
-Dim led As PORTB.0
-ANSELB = 0
-Output(led)
-While True
-    Toggle(led)
-    DelayMS(250)
-Wend
+Dim p As Byte
+Output(PORTB)
+PinClear(9)            ' RB1 low
+For p = 8 To 15
+    PinClear(p)        ' each pin of port B in turn
+    DelayMS(100)
+    PinSet(p)
+Next
 ```
-**See also** `High`, `Low`.
+**Notes** `PinClear(PORTB)` writes `LATB = 0`. A run-time pin number changes `LATx` by read-modify-write (see `PinMode`);
+do not use it on a port that an interrupt handler also changes. A pin number the device has no port for changes nothing;
+a constant one is the error `E-PIN`.
+
+**See also** `PinSet`, `PinMode`, `Low`.
 
 ## PinMode
 
@@ -2704,33 +2711,6 @@ There are no `Pin_A0` style names: use `PORTA.0` or the number. The pull-up work
 
 **See also** `PinMode`, `PinSet`, `PinClear`.
 
-## PinClear
-
-**Syntax**
-```basic
-PinClear(pin)
-```
-**Overview** Clears the output latch of a pin without changing its direction, so a pin that is an input is low when it is
-later made an output. `pin` is as for `PinMode`: a port bit, a whole port, or a pin number (constant, or any `Byte`
-expression, `RA0` = 0, `RB0` = 8 ...).
-
-**Example**
-```basic
-Dim p As Byte
-Output(PORTB)
-PinClear(9)            ' RB1 low
-For p = 8 To 15
-    PinClear(p)        ' each pin of port B in turn
-    DelayMS(100)
-    PinSet(p)
-Next
-```
-**Notes** `PinClear(PORTB)` writes `LATB = 0`. A run-time pin number changes `LATx` by read-modify-write (see `PinMode`);
-do not use it on a port that an interrupt handler also changes. A pin number the device has no port for changes nothing;
-a constant one is the error `E-PIN`.
-
-**See also** `PinSet`, `PinMode`, `Low`.
-
 ## PinSet
 
 **Syntax**
@@ -2755,6 +2735,26 @@ PinSet(10)             ' RB2 high
   bare `PinSet(pin)` is this command.
 
 **See also** `PinClear`, `PinMode`, `PinPullup`, `High`.
+
+## Toggle
+
+**Syntax**
+```basic
+Toggle(bit)
+```
+**Overview** Inverts a pin's latch (`LATx`). `bit` is as for `High`.
+
+**Example**
+```basic
+Dim led As PORTB.0
+ANSELB = 0
+Output(led)
+While True
+    Toggle(led)
+    DelayMS(250)
+Wend
+```
+**See also** `High`, `Low`.
 
 ---
 
@@ -2801,3091 +2801,7 @@ first, as the language requires.
 
 ---
 
-Modules are grouped in categories, each alphabetical: System and clock; Timers and PWM; Serial and buses; Analog and memory; Displays; Sensors, clocks and remote control; Bits, maths, strings and formatting.
-
----
-
-## Category: System and clock
-
-## delay  (`Include "delay"`)
-
-`DelayMS` and `DelayUS` are language commands (section 2). The module adds:
-
-### DelaySeconds
-
-**Syntax**
-```basic
-DelaySeconds(s)
-```
-**Overview** Waits `s` seconds, as `s` calls of `DelayMS(1000)`.
-
-**Parameters** `s` is a `Byte` (0..255).
-
-**Example**
-```basic
-DelaySeconds(5)
-```
-**Notes** Interrupts lengthen the delay.
-
-### DelayNop
-
-**Syntax**
-```basic
-DelayNop()
-```
-**Overview** A short fixed pause of 5 instruction cycles: the call, one `nop` and the return.
-Where exactly one cycle is wanted, write `Asm nop End Asm` in place.
-
-**Example**
-```basic
-Dim p As PORTB.0
-Output(p)
-High(p) : DelayNop() : Low(p)
-```
-
-## gpio  (`Include "gpio"`)
-
-Port-level helpers for ports A, B and C. Single pins need no library: `Input`, `Output`, `High`,
-`Low`, `Toggle` are language commands and `Dim led As PORTB.0` names a pin.
-
-### GpioAllDigital
-
-**Syntax**
-```basic
-GpioAllDigital()
-```
-**Overview** Makes every pin of ports A, B and C a digital pin (`ANSELA/B/C = 0`). `ANSELx` resets to
-1 (analog, input buffer off), so a pin read as digital stays 0 until this runs [DS40002043F p.247].
-
-**Example**
-```basic
-Dim led As PORTB.0
-GpioAllDigital()
-Output(led)
-High(led)
-```
-**Notes** Call it before `AdcPin` if the same program also uses analog inputs, then re-select those
-pins with `AdcPin`.
-
-### GpioPullUps
-
-**Syntax**
-```basic
-GpioPullUps(maskA, maskB, maskC)
-```
-**Overview** Writes `WPUA/B/C`. A 1 bit enables the weak pull-up of that pin [p.251].
-
-**Parameters** `maskA`, `maskB`, `maskC` are `Byte` constants or variables, bit n = pin Rx*n*.
-
-**Example**
-```basic
-GpioAllDigital()
-GpioPullUps(0, 0, %00000001)      ' pull-up on RC0
-```
-**Notes** The mask replaces the whole register: pins not set in the mask lose their pull-up.
-
-### GpioOpenDrain
-
-**Syntax**
-```basic
-GpioOpenDrain(maskA, maskB, maskC)
-```
-**Overview** Writes `ODCONA/B/C`. A 1 bit makes the pin drive low only (open drain) [p.256].
-
-**Parameters** As `GpioPullUps`.
-
-**Example**
-```basic
-GpioOpenDrain(0, %00000010, 0)    ' RB1 open drain
-```
-
-## intosc  (`Include "intosc"`, internal oscillator set-up)
-
-`Clock` only tells the compiler what speed to expect; it does not touch the hardware. Including
-`intosc` makes the hardware match it. Its start-up code (run before the main program) writes
-`OSCFRQ` and `OSCCON1` and waits, each wait bounded, for `OSCCON3.ORDY` and `OSCSTAT.HFOR`. Include
-it **first**: module start-up code runs in include order. For `Clock` of 1 MHz or more the divider is
-never raised, so start-up writes `OSCFRQ` then `OSCCON1` without reading `OSCCON2`; below 1 MHz it
-reads `OSCCON2` to pick the order.
-
-Accepted `Clock` values (anything else is a compile error): 64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and
-0.5, 0.25, 0.125, 0.0625, 0.03125 MHz (1 MHz divided by 2 to 32). `Config` needs `CSWEN = ON` unless
-`Clock` already equals the `RSTOSC` speed. If a write is ignored, `SysClockOk()` is False.
-
-```basic
-Program Blink
-Device = 18F27Q10
-Clock = 16
-Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, CSWEN = ON, WDTE = OFF, LVP = ON
-Include "intosc"
-```
-
-### SetClock
-
-**Syntax**
-```basic
-ok = SetClock(mhz)
-```
-**Overview** Runs HFINTOSC at `mhz` with no divider, at run time.
-
-**Parameters** `mhz` is a `Byte`: 1, 2, 4, 8, 12, 16, 32, 48 or 64.
-
-**Returns** `Boolean`: True when the switch completed and read back; False (nothing written) for
-another value, or when the clock did not switch.
-
-**Example**
-```basic
-Dim ok As Boolean
-ok = SetClock(4)
-```
-**Notes** `DelayMS`, `DelayUS` and the serial, I2C, SPI and PWM modules keep timing for the
-compile-time `Clock`, so they are wrong until the clock is back at `Clock`.
-
-### SetClockDiv
-
-**Syntax**
-```basic
-ok = SetClockDiv(mhz, shift)
-```
-**Overview** As `SetClock`, with the clock divided by 2^`shift`.
-
-**Parameters** `mhz` as `SetClock`; `shift` is 0..9 (1:1 to 1:512).
-
-**Returns** `Boolean`, as `SetClock`.
-
-**Example**
-```basic
-Dim ok As Boolean
-ok = SetClockDiv(16, 2)           ' 16 MHz / 4 = 4 MHz
-```
-
-## pinio  (`Include "pinio"`, pin access by number)
-
-Run-time access to a pin by its number (`RA0` = 0, `RB0` = 8, `RC0` = 16, and on the parts with more ports `RD0` = 24,
-`RE0` = 32, `RF0` = 40), for code that picks its pins at run time. The bit-banged modules (`pulse`, `buttons`, `shift`,
-`softserial`, `onewire`, `irremote`, `x10`, `lcd`, `glcd`, `oled`, `epaper`) are built on it. A pin the part lacks is
-refused by `PinOk` and ignored by every routine. `PinOutput` and `PinInput` also clear the pin's `ANSELx` bit, so the pin is
-digital. The routines change `LATx` and `TRISx` by read-modify-write and are not reentrant: do not use them from an interrupt
-handler and the main program on the same port. Call them as `Pinio.Name(...)` (the bare `PinSet` is the language command).
-
-### PinCount
-
-**Syntax**
-```basic
-n = Pinio.PinCount
-```
-**Overview** A constant: one more than the highest pin number the part can have: 24 (ports A to C), 32 (with port D), 40 (with port E) or 48 (with port F).
-
-**Example**
-```basic
-Include "pinio"
-Dim p As Byte
-For p = 0 To Pinio.PinCount - 1
-    If Pinio.PinOk(p) Then
-        Pinio.PinOutput(p)
-    End If
-Next
-```
-**See also** `PinOk`
-
-### PinOk
-
-**Syntax**
-```basic
-ok = Pinio.PinOk(pin)
-```
-**Overview** True for a pin number the part has (a part without port B, for one, refuses 8..15).
-
-**Parameters** `pin` a `Byte`.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-If Pinio.PinOk(9) Then
-    Pinio.PinOutput(9)
-End If
-```
-**See also** `PinCount`
-
-### Pinio.PinSet
-
-**Syntax**
-```basic
-Pinio.PinSet(pin, level)
-```
-**Overview** Writes the pin's output latch (`LATx`): True = high. The direction is not changed.
-
-**Parameters** `pin` a pin number; `level` a `Boolean`.
-
-**Example**
-```basic
-Pinio.PinSet(9, True)
-```
-**Notes** The language command `PinSet(pin)` (no level) is a different thing: see *PinSet* in chapter 2.
-
-**See also** `PinGet`, `PinOutput`
-
-### PinGet
-
-**Syntax**
-```basic
-b = Pinio.PinGet(pin)
-```
-**Overview** Reads the pin's level (`PORTx`).
-
-**Parameters** `pin` a pin number.
-
-**Returns** `Boolean`: True = high; False for a pin that is not OK.
-
-**Example**
-```basic
-If Pinio.PinGet(10) Then
-    Pinio.PinSet(9, True)
-End If
-```
-**See also** `PinInput`
-
-### PinOutput
-
-**Syntax**
-```basic
-Pinio.PinOutput(pin)
-```
-**Overview** Makes the pin a digital output (clears its `ANSELx` and `TRISx` bits).
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.PinSet(9, False)
-Pinio.PinOutput(9)
-```
-**See also** `PinInput`
-
-### PinInput
-
-**Syntax**
-```basic
-Pinio.PinInput(pin)
-```
-**Overview** Makes the pin a digital input (clears `ANSELx`, sets `TRISx`).
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.PinInput(10)
-```
-**See also** `PinOutput`, `PinGet`
-
-### PinDriveLow
-
-**Syntax**
-```basic
-Pinio.PinDriveLow(pin)
-```
-**Overview** Open-drain use: clears the pin's latch and makes it an output, so the line is pulled low.
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.PinDriveLow(9)      ' pull the shared line low
-DelayUS(10)
-Pinio.PinRelease(9)       ' let the pull-up take it high
-```
-**See also** `PinRelease`
-
-### PinRelease
-
-**Syntax**
-```basic
-Pinio.PinRelease(pin)
-```
-**Overview** Open-drain use: makes the pin an input, so an external pull-up takes the line high.
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.PinRelease(9)
-```
-**See also** `PinDriveLow`
-
-### BindData
-
-**Syntax**
-```basic
-Pinio.BindData(pin)
-```
-**Overview** Picks the *data* pin that `DataPut` and `DataRead` then use with no pin argument, so a bit loop costs a few instructions per bit. There is one bound data pin and one bound clock pin for the whole program, shared by `shift`, `pulse`, `softserial` and the other bit-banged modules: bind again after calling one of them.
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.BindData(8)
-Pinio.PinOutput(8)
-Pinio.DataPut(True)
-```
-**See also** `DataPut`, `DataRead`, `BindClk`
-
-### BindClk
-
-**Syntax**
-```basic
-Pinio.BindClk(pin)
-```
-**Overview** Picks the *clock* pin that `ClkPut` then uses, as `BindData` does for the data pin.
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.BindClk(9)
-Pinio.PinOutput(9)
-Pinio.ClkPut(False)
-```
-**See also** `ClkPut`
-
-### DataPut
-
-**Syntax**
-```basic
-Pinio.DataPut(level)
-```
-**Overview** Writes the latch of the pin bound by `BindData`.
-
-**Parameters** `level` a `Boolean`.
-
-**Example**
-```basic
-Pinio.DataPut(False)
-```
-**See also** `BindData`
-
-### ClkPut
-
-**Syntax**
-```basic
-Pinio.ClkPut(level)
-```
-**Overview** Writes the latch of the pin bound by `BindClk`.
-
-**Parameters** `level` a `Boolean`.
-
-**Example**
-```basic
-Pinio.ClkPut(True)
-DelayUS(1)
-Pinio.ClkPut(False)
-```
-**See also** `BindClk`
-
-### DataRead
-
-**Syntax**
-```basic
-b = Pinio.DataRead()
-```
-**Overview** Reads the level of the pin bound by `BindData`.
-
-**Returns** `Boolean`: True = high.
-
-**Example**
-```basic
-Pinio.BindData(10)
-Pinio.PinInput(10)
-b = Pinio.DataRead()
-```
-**See also** `BindData`
-
-### BindOd
-
-**Syntax**
-```basic
-Pinio.BindOd(pin)
-```
-**Overview** Picks the open-drain pin that `OdLow`, `OdRelease` and `OdRead` use (`onewire` uses it). Before the first use the pin's latch must be 0 (`Pinio.PinSet(pin, False)` once) and the pin digital (`PinInput` once). On the PIC18 it is the same bound pin as `BindData`.
-
-**Parameters** `pin` a pin number.
-
-**Example**
-```basic
-Pinio.PinSet(9, False)
-Pinio.PinInput(9)
-Pinio.BindOd(9)
-```
-**See also** `OdLow`, `OdRelease`, `OdRead`
-
-### OdLow
-
-**Syntax**
-```basic
-Pinio.OdLow()
-```
-**Overview** Makes the bound open-drain pin an output, so the line is pulled low (a few instructions: only `TRISx` changes).
-
-**Example**
-```basic
-Pinio.OdLow()
-DelayUS(480)
-Pinio.OdRelease()
-```
-**See also** `OdRelease`, `BindOd`
-
-### OdRelease
-
-**Syntax**
-```basic
-Pinio.OdRelease()
-```
-**Overview** Makes the bound open-drain pin an input, so the pull-up takes the line high.
-
-**Example**
-```basic
-Pinio.OdRelease()
-```
-**See also** `OdLow`
-
-### OdRead
-
-**Syntax**
-```basic
-b = Pinio.OdRead()
-```
-**Overview** Reads the level of the bound open-drain line.
-
-**Returns** `Boolean`: True = high.
-
-**Example**
-```basic
-Pinio.OdRelease()
-b = Pinio.OdRead()
-```
-**See also** `BindOd`
-
-### PortDigital
-
-**Syntax**
-```basic
-Pinio.PortDigital(base)
-```
-**Overview** Makes the eight pins of a port digital (clears `ANSELx`).
-
-**Parameters** `base` the number of the port's first pin: 0 = port A, 8 = B, 16 = C, 24 = D, 32 = E, 40 = F.
-
-**Example**
-```basic
-Pinio.PortDigital(16)
-```
-**See also** `PortDirection`
-
-### PortDirection
-
-**Syntax**
-```basic
-Pinio.PortDirection(base, isInput)
-```
-**Overview** Makes the eight pins of a port inputs (`isInput` True) or outputs. Make them digital first (`PortDigital`).
-
-**Parameters** `base` as `PortDigital`; `isInput` a `Boolean`.
-
-**Example**
-```basic
-Pinio.PortDigital(16)
-Pinio.PortDirection(16, False)
-```
-**See also** `PortWrite`, `PortRead`
-
-### PortWrite
-
-**Syntax**
-```basic
-Pinio.PortWrite(base, v)
-```
-**Overview** Writes `v` to the port's latch.
-
-**Parameters** `base` as `PortDigital`; `v` a `Byte`.
-
-**Example**
-```basic
-Pinio.PortWrite(16, $55)
-```
-**See also** `PortRead`
-
-### PortRead
-
-**Syntax**
-```basic
-v = Pinio.PortRead(base)
-```
-**Overview** Reads the port's eight pins.
-
-**Parameters** `base` as `PortDigital`.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-v = Pinio.PortRead(8)
-```
-**See also** `PortWrite`
-
-### PortDigitalHigh
-
-**Syntax**
-```basic
-Pinio.PortDigitalHigh(base)
-```
-**Overview** Makes the upper four pins of a port digital; the lower four are not changed.
-
-**Parameters** `base` as `PortDigital`.
-
-**Example**
-```basic
-Pinio.PortDigitalHigh(16)
-```
-**See also** `PortDirectionHigh`
-
-### PortDirectionHigh
-
-**Syntax**
-```basic
-Pinio.PortDirectionHigh(base, isInput)
-```
-**Overview** Makes the upper four pins of a port inputs or outputs; the lower four stay as they are.
-
-**Parameters** `base` as `PortDigital`; `isInput` a `Boolean`.
-
-**Example**
-```basic
-Pinio.PortDirectionHigh(16, False)
-```
-**See also** `PortWriteHigh`
-
-### PortWriteHigh
-
-**Syntax**
-```basic
-Pinio.PortWriteHigh(base, v)
-```
-**Overview** Writes bits 7..4 of `v` to the upper four pins of the port's latch; the lower four are not changed (a 4-bit bus next to other pins).
-
-**Parameters** `base` as `PortDigital`; `v` a `Byte`.
-
-**Example**
-```basic
-Pinio.PortWriteHigh(16, $A0)
-```
-**See also** `PortReadHigh`
-
-### PortReadHigh
-
-**Syntax**
-```basic
-v = Pinio.PortReadHigh(base)
-```
-**Overview** Reads the upper four pins of the port into bits 7..4 (the lower four read as 0).
-
-**Parameters** `base` as `PortDigital`.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-v = Pinio.PortReadHigh(16) >> 4
-```
-**See also** `PortWriteHigh`
-
----
-
-## system  (`Include "system"`, reset cause, wake-up cause and clock check)
-
-### SysResetCause
-
-**Syntax**
-```basic
-cause = SysResetCause()
-```
-**Overview** Reports the cause of the latest Reset whose `PCON0` flags are not yet cleared.
-
-**Returns** `Byte`: 1 power-on, 2 brown-out, 3 MCLR pin, 4 watchdog time-out, 5 watchdog window
-violation, 6 `RESET` instruction, 7 stack overflow, 8 stack underflow, 0 none. Tested in the order
-1, 2, 7, 8, 5, 4, 3, 6.
-
-**Example**
-```basic
-Dim c As Byte
-c = SysResetCause()
-SysClearResetFlags()
-```
-**Notes** Hardware never clears the flags, so read the cause at start and then call
-`SysClearResetFlags`; otherwise an old cause is reported again.
-
-### SysResetFlags
-
-**Syntax**
-```basic
-raw = SysResetFlags()
-```
-**Overview** Returns the raw `PCON0` value.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-Dim f As Byte
-f = SysResetFlags()
-```
-
-### SysClearResetFlags
-
-**Syntax**
-```basic
-SysClearResetFlags()
-```
-**Overview** Puts every `PCON0` flag to its inactive state so the next Reset shows only its own cause.
-
-**Example**
-```basic
-SysClearResetFlags()
-```
-
-### SysWakeCause
-
-**Syntax**
-```basic
-cause = SysWakeCause()
-```
-**Overview** Reports why the part woke from Sleep or whether the watchdog timed out, from the `TO` and `PD` flags in `STATUS` (the flags older PIC18 data sheets list in `RCON`). Works on every supported part.
-
-**Returns** `Byte`: 0 none (power-up, or the flags cleared), 1 woke from Sleep by an interrupt or other non-watchdog event, 2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
-
-**Example**
-```basic
-Dim w As Byte
-Sleep()
-w = SysWakeCause()
-SysClearWakeFlags()
-```
-**Notes** `TO` and `PD` are read-only and keep their values until `clrwdt` or the next power-up, so call `SysClearWakeFlags` after reading. `SysWakeFrom(st)` gives the same result for a given `STATUS` value `st`.
-
-### SysWakeFrom
-
-**Syntax**
-```basic
-cause = SysWakeFrom(st)
-```
-**Overview** The wake-up or power-down cause for a saved `STATUS` value, decoded as `SysWakeCause` decodes the live one (only the TO and PD bits are looked at). Use it on a copy of `STATUS` taken early in the program, before anything clears the flags.
-
-**Parameters** `st` a `Byte`, a copy of `STATUS`.
-
-**Returns** `Byte`: 0 none (power-up, or cleared), 1 woke from Sleep by an interrupt or another event that is not the watchdog, 2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
-
-**Example**
-```basic
-Dim saved As Byte
-Dim cause As Byte
-saved = STATUS
-cause = SysWakeFrom(saved)
-```
-**See also** `SysWakeCause`, `SysClearWakeFlags`
-
-### SysClearWakeFlags
-
-**Syntax**
-```basic
-SysClearWakeFlags()
-```
-**Overview** Sets `TO` and `PD` back to 1 with `clrwdt`, which also restarts the watchdog count.
-
-**Example**
-```basic
-SysClearWakeFlags()
-```
-
-### SysClockHz
-
-**Syntax**
-```basic
-hz = SysClockHz()
-```
-**Overview** The system clock in Hz as the oscillator is set now (from `OSCCON2` and `OSCFRQ`).
-
-**Returns** `LongWord`; 0 when the source is not HFINTOSC (external and low-frequency sources have no
-frequency the module knows). The nominal HFINTOSC frequency is used; `OSCTUNE` is not applied.
-
-**Example**
-```basic
-Dim hz As LongWord
-hz = SysClockHz()
-```
-
-### SysClockFrom
-
-**Syntax**
-```basic
-hz = SysClockFrom(cosc, cdiv, hffrq)
-```
-**Overview** The same conversion from given field values.
-
-**Parameters** `cosc` is `OSCCON2` bits 6:4 (6 = HFINTOSC); `cdiv` is `OSCCON2` bits 3:0 (divider
-code 0..9); `hffrq` is `OSCFRQ` bits 3:0 (codes 0..8 = 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz).
-
-**Returns** `LongWord`; 0 for any other source or a reserved code.
-
-**Example**
-```basic
-Dim hz As LongWord
-hz = SysClockFrom(6, 0, 5)        ' HFINTOSC, 1:1, 16 MHz
-```
-
-### SysClockOk
-
-**Syntax**
-```basic
-ok = SysClockOk()
-```
-**Overview** True when the oscillator runs at the frequency the program was compiled for (`Clock`).
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-If SysClockOk() = False Then
-    Terminate()
-EndIf
-```
-
-### Sleep
-
-**Syntax**
-```basic
-System.Sleep()
-```
-**Overview** Puts the part to sleep with the `sleep` instruction (followed by two NOPs, which the PIC16F13xxx needs after a wake-up). It returns when an interrupt
-wakes the part, or the watchdog if the `Config` enables it; with interrupts enabled the handler runs first. This is the plain instruction; for timed sleeps see `Snooze` and `Sleep(seconds)` below. Set up the wake-up source before the call.
-
-**Example**
-```basic
-Device = 18F27Q10
-Clock = 64
-Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = ON, LVP = ON   ' the watchdog is on and wakes the part
-Include "system"
-Do
-    Toggle(PORTB.0)
-    System.Sleep()          ' asleep until the watchdog time-out (a wake-up, not a reset, as the part was asleep)
-Loop
-```
-
-### Snooze
-
-**Syntax**
-```basic
-System.Snooze(period)
-```
-**Overview** Sleeps for a short time, timed by the watchdog (so independent of the oscillator). `period` 0..7 gives about 2^period x 16 ms (16, 32, 64, 128, 256, 512 ms, 1 s, 2 s); a larger value counts as 7. The unit here is the nearest watchdog period (16 ms nominal). The time is approximate (the 31 kHz LFINTOSC varies with temperature and voltage), and an interrupt that wakes the part sooner ends the snooze sooner. The watchdog register is saved and restored, and it works the same on every supported family (WDTCON or WDTCON0, period in bits 5:1, enable in bit 0).
-
-**Requirements** The `Config` needs `WDTE = SWDTEN` (the call turns the watchdog on for the sleep and off again) or `WDTE = ON`. With `WDTE` off, or on-except-in-Sleep, nothing wakes the part but an interrupt. On the PIC16F13xxx, PIC16F171xx and PIC18 Q10/Q41 parts the period bits are read-only unless the `Config` has `WDTCPS = 11111`; the snooze then uses the `Config` period.
-
-**Example**
-```basic
-Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = SWDTEN, LVP = ON
-Include "system"
-Do
-    Toggle(PORTB.0)
-    System.Snooze(6)        ' about 1 second asleep
-Loop
-```
-
-### Sleep (timed)
-
-**Syntax**
-```basic
-System.Sleep(seconds)
-```
-**Overview** Sleeps for about `seconds` seconds (a Word; 0 returns at once), one watchdog second (period code 10) at a time. Same requirements and accuracy as `Snooze`; an interrupt that wakes the part ends only the second it arrived in.
-
-**Example**
-```basic
-Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = SWDTEN, LVP = ON
-Include "system"
-Do
-    Toggle(PORTB.0)
-    System.Sleep(10)        ' about ten seconds asleep
-Loop
-```
-**See also** `Snooze`
-
----
-
-## Category: Timers and PWM
-
-## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
-
-Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
-Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a channel
-runs, so do not use `Timer2` routines at the same time. On the PIC18F27Q10 CCP1/CCP2 can output on ports B and C
-(pins 8..23) and PWM3/PWM4 on ports A and C; the routing of the other parts is in `docs/LIBRARY.md` (*pwm*). The duty is a number of steps out of `PwmSteps()`.
-
-### PwmInit
-
-**Syntax**
-```basic
-ok = PwmInit(hz)
-```
-**Overview** Chooses the Timer2 prescale (1..128) and period for `hz`. Timer2 is started by `PwmStart`.
-
-**Parameters** `hz` is a `LongWord`, 1..1000000.
-
-**Returns** `Byte`: 1, or 0 when no prescale reaches `hz` or a channel is running (the period is shared).
-
-**Example**
-```basic
-Dim ok As Byte
-ok = PwmInit(1000)
-```
-
-### PwmFrequency
-
-**Syntax**
-```basic
-hz = PwmFrequency()
-```
-**Overview** The achieved frequency.
-
-**Returns** `LongWord`; 0 before a successful `PwmInit`.
-
-**Example**
-```basic
-Dim f As LongWord
-PwmInit(1000)
-f = PwmFrequency()
-```
-
-### PwmSteps
-
-**Syntax**
-```basic
-n = PwmSteps()
-```
-**Overview** Number of duty steps in one period: `4 * (T2PR + 1)`, at most 1024. The 10-bit resolution is
-reached only when `T2PR` = 255; a higher frequency gives fewer steps.
-
-**Returns** `Word`.
-
-**Example**
-```basic
-Dim n As Word
-PwmInit(1000)
-n = PwmSteps()
-```
-
-### PwmStart
-
-**Syntax**
-```basic
-ok = PwmStart(ch, pin, duty)
-```
-**Overview** Starts a channel on a pin, following the data sheet set-up order (driver off, routing,
-duty, Timer2 on, wait for its first overflow, then driver on) so the first period is complete.
-
-**Parameters** `ch` 1..4; `pin` a pin number (see the heading for the pins each channel can reach); `duty` in steps, 0..`PwmSteps()`.
-
-**Returns** `Byte`: 0 (and nothing done) without a successful `PwmInit`, for a channel or pin that cannot
-be used, or for a pin another running channel uses. A running channel is restarted.
-
-**Example**
-```basic
-Dim ok As Byte
-PwmInit(1000)
-ok = PwmStart(1, 18, 512)         ' CCP1 on RC2, half duty at 1024 steps
-```
-
-### PwmDuty
-
-**Syntax**
-```basic
-PwmDuty(ch, duty)
-```
-**Overview** Sets the duty in steps. No effect on a stopped channel.
-
-**Parameters** `ch` 1..4; `duty` 0..`PwmSteps()` (at most 1023 is representable).
-
-**Example**
-```basic
-PwmDuty(1, 256)
-```
-**Notes** Duty registers are double buffered and copied at the period match; if the match falls between
-the two byte writes, one period can use a mixed value.
-
-### PwmPercent
-
-**Syntax**
-```basic
-PwmPercent(ch, pct)
-```
-**Overview** Sets the duty as a percentage, rounded down to a step.
-
-**Parameters** `ch` 1..4; `pct` 0..100. 100 gives the highest representable duty, which with 1024
-steps is 1023/1024: the output cannot reach a true 100 %.
-
-**Example**
-```basic
-PwmPercent(1, 25)
-```
-
-### PwmInvert
-
-**Syntax**
-```basic
-ok = PwmInvert(ch, inverted)
-```
-**Overview** Sets the output polarity of PWM3 or PWM4 (`PWMxCON.POL`); on a running channel it applies at
-once.
-
-**Parameters** `ch` 3 or 4; `inverted` a `Boolean`.
-
-**Returns** `Byte`: 0 for channels 1 and 2, which have no polarity bit.
-
-**Example**
-```basic
-Dim ok As Byte
-ok = PwmInvert(3, True)
-```
-
-### PwmStop
-
-**Syntax**
-```basic
-PwmStop(ch)
-```
-**Overview** Stops a channel: the pin becomes an input again and returns to its `LATxy` bit and the module
-is disabled. Timer2 is stopped when the last channel stops.
-
-**Parameters** `ch` 1..4.
-
-**Example**
-```basic
-PwmStop(1)
-```
-
-## timer  (`Include "timer"`, Timer0, Timer1, Timer2)
-
-The module configures a timer and reads its flag. It declares no interrupt handler: to be
-interrupted, call `TimerNEnableInterrupt`, write your own `Interrupt`, and call `TimerNAck` in it
-(flags are not cleared by hardware). All timers count FOSC/4 unless a Timer1 source says otherwise.
-`prescale` ranges are per timer. External pins (T1CKI, T1G, T2IN) must be digital inputs; the
-module does not set them up.
-
-### Timer0Start
-
-**Syntax**
-```basic
-Timer0Start(prescale, period)
-```
-**Overview** Starts Timer0 as an 8-bit periodic timer counting 0..`period`. One overflow takes
-`(period + 1) * 2^prescale` instruction cycles.
-
-**Parameters** `prescale` 0..15 (1:1 to 1:32768); `period` 0..255.
-
-**Example**
-```basic
-Timer0Start(7, 124)               ' 16 MHz: 125 * 128 cycles = 4 ms
-```
-
-### Timer0Start16
-
-**Syntax**
-```basic
-Timer0Start16(prescale)
-```
-**Overview** Starts Timer0 as a 16-bit free-running timer, read with `Timer0Read`.
-
-**Parameters** `prescale` 0..15.
-
-**Example**
-```basic
-Timer0Start16(4)
-```
-
-### Timer0Read
-
-**Syntax**
-```basic
-count = Timer0Read()
-```
-**Overview** Reads the 16-bit count (`TMR0L` first, which latches `TMR0H`).
-
-**Returns** `Word`.
-
-**Example**
-```basic
-Dim t As Word
-Timer0Start16(4)
-t = Timer0Read()
-```
-
-### Timer0Expired
-
-**Syntax**
-```basic
-flag = Timer0Expired()
-```
-**Overview** True once per overflow; clears the flag when it reports it.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Dim led As PORTB.0
-ANSELB = 0
-Output(led)
-Timer0Start(15, 244)
-While True
-    If Timer0Expired() Then
-        Toggle(led)
-    EndIf
-Wend
-```
-
-### Timer0Ack
-
-**Syntax**
-```basic
-Timer0Ack()
-```
-**Overview** Clears the Timer0 flag. Call it from your own interrupt handler, wrapped in `Save`
-(a call from a handler is otherwise `E-ISR-CALL`).
-
-**Example**
-```basic
-Interrupt Tick()
-    Save(0, Timer0Ack)
-        Timer0Ack()
-    Restore
-End Interrupt
-Timer0Start(15, 244)
-Timer0EnableInterrupt()
-Enable(Tick)
-```
-
-### Timer0EnableInterrupt
-
-**Syntax**
-```basic
-Timer0EnableInterrupt()
-```
-**Overview** Clears the Timer0 flag and sets its interrupt enable (`PIE0.TMR0IE` on the PIC18F27Q10). Global interrupts
-are enabled separately with `Enable`.
-
-**Example**
-```basic
-Timer0Start(15, 244)
-Timer0EnableInterrupt()
-```
-**See also** `Timer0DisableInterrupt`, `Timer0Ack`, `Enable`.
-
-### Timer0DisableInterrupt
-
-**Syntax**
-```basic
-Timer0DisableInterrupt()
-```
-**Overview** Clears the Timer0 interrupt enable; the timer keeps running and its flag still sets.
-
-**Example**
-```basic
-Timer0DisableInterrupt()
-```
-**See also** `Timer0EnableInterrupt`.
-
-### Timer0OnExpire
-
-**Syntax**
-```basic
-Timer0OnExpire = Handler          ' Type TTimerEvent = Event()
-```
-**Overview** An event variable (type `TTimerEvent`, declared by the module) holding the handler that `Timer0Service`
-calls once for each overflow. Unassigned, nothing is called. The module declares no `Interrupt`, so it never claims a
-vector.
-
-**Example**
-```basic
-Dim ticks As Byte
-Event Tick()
-    Inc(ticks)
-End Event
-Timer0OnExpire = Tick
-Timer0Start(15, 255)
-While ticks < 10
-    Timer0Service()
-Wend
-```
-**See also** `Timer0Service`, *Events* (section 1).
-
-### Timer0Service
-
-**Syntax**
-```basic
-Timer0Service()
-```
-**Overview** Checks the Timer0 flag; if the timer has overflowed it clears the flag and calls the `Timer0OnExpire`
-handler once. With no handler assigned the flag is still cleared. Call it from the main loop, or from your own interrupt
-(wrap it in `Save(0, Timer0Service)`).
-
-**Example**
-```basic
-While True
-    Timer0Service()
-Wend
-```
-**See also** `Timer0OnExpire`, `Timer0Expired`, `Timer0EnableInterrupt`.
-
-### Timer0Stop
-
-**Syntax**
-```basic
-Timer0Stop()
-```
-**Overview** Stops Timer0.
-
-**Example**
-```basic
-Timer0Stop()
-```
-
-### Timer1Start
-
-**Syntax**
-```basic
-Timer1Start(prescale)
-```
-**Overview** Starts Timer1 as a 16-bit timer on FOSC/4, ungated. It overflows every
-`65536 * 2^prescale` cycles.
-
-**Parameters** `prescale` 0..3 (1:1 to 1:8).
-
-**Example**
-```basic
-Timer1Start(3)                    ' 16 MHz / 4 / 8 = 500 kHz
-While Timer1Expired() = False
-Wend
-```
-
-### Timer1StartSource
-
-**Syntax**
-```basic
-Timer1StartSource(clk, prescale)
-```
-**Overview** Timer1 from any clock source, free-running and ungated. External sources are
-synchronised to the system clock (`SYNC = 0`), so pulses must be longer than a system clock cycle;
-asynchronous operation is not offered.
-
-**Parameters** `clk` is one of `T1ClkPin` (T1CKI pin, rising edges, default RC0), `T1ClkFosc4`,
-`T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkMfIntOsc`, `T1ClkSosc`, `T1ClkTmr0` (the PIC16F13145 family has no secondary oscillator, so no `T1ClkSosc`; it has `T1ClkMfIntOsc32` and `T1ClkExtOsc`; the PIC16F152xx has no secondary oscillator either, and has `T1ClkSfIntOsc` and `T1ClkMfIntOsc32` with the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GatePwm3` and `T1GatePwm4`; the PIC16F183xx has only `T1ClkFosc4`, `T1ClkFosc`, `T1ClkPin` and `T1ClkLfIntOsc`, with the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateCmp1` and `T1GateCmp2`; the PIC16F153xx has no secondary oscillator either, and has `T1ClkMfIntOsc32` and `T1ClkClkr` with the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GatePwm3` .. `T1GatePwm6`, `T1GateNco1`, `T1GateCmp1` and `T1GateCmp2`).
-`prescale` 0..3.
-
-**Example**
-```basic
-Timer1StartSource(T1ClkFosc, 0)
-```
-**Notes** `T1ClkSosc` needs `OSCEN.SOSCEN` set and time to stabilise. In counter mode a falling edge
-must be seen before the first rising edge counts, so the first pulse after a start may be missed
-(data sheet 20.2.2).
-
-### Timer1StartCounter
-
-**Syntax**
-```basic
-Timer1StartCounter(prescale)
-```
-**Overview** Counts rising edges on the T1CKI pin; the same as `Timer1StartSource(T1ClkPin, prescale)`.
-
-**Example**
-```basic
-Dim n As Word
-Dim t1cki As PORTC.0
-GpioAllDigital()
-Input(t1cki)
-Timer1StartCounter(0)
-n = Timer1Read()
-```
-
-### Timer1StartGated
-
-**Syntax**
-```basic
-Timer1StartGated(clk, prescale, source, activeHigh)
-```
-**Overview** Counts only while the gate source is at the given level. The gate is set up before the
-timer is switched on, so no count is taken ungated.
-
-**Parameters** `clk` and `prescale` as `Timer1StartSource`. `source` is `T1GatePin` (T1G, RB5),
-`T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GateCmp1` or `T1GateCmp2`. `activeHigh`
-is True to count while the gate is high, False while low.
-
-**Example**
-```basic
-Timer1StartGated(T1ClkFosc4, 0, T1GatePin, True)
-```
-
-### Timer1StartPulse
-
-**Syntax**
-```basic
-Timer1StartPulse(clk, prescale, source, activeHigh, fullCycle)
-```
-**Overview** Times the first pulse of the gate source after the call, then holds. Poll
-`Timer1PulseDone`, then read `Timer1Read` for the length in clock counts.
-
-**Parameters** As `Timer1StartGated`, plus `fullCycle`: True toggles the gate on every rising edge, so
-the measured time is a whole period of the source instead of its high (or low) time.
-
-**Example**
-```basic
-Dim w As Word
-Timer1StartPulse(T1ClkFosc4, 0, T1GatePin, True, False)
-While Timer1PulseDone() = False
-Wend
-w = Timer1Read()
-```
-
-### Timer1PulseDone
-
-**Syntax**
-```basic
-flag = Timer1PulseDone()
-```
-**Overview** True once the pulse started by `Timer1StartPulse` has ended.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-While Timer1PulseDone() = False
-Wend
-```
-
-### Timer1GateState
-
-**Syntax**
-```basic
-level = Timer1GateState()
-```
-**Overview** The live state of the gate (`T1GCON.GVAL`); it is not affected by the gate enable.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Dim g As Boolean
-g = Timer1GateState()
-```
-
-### FreqCount
-
-**Syntax**
-```basic
-n = Timer.FreqCount(pin, ms)
-```
-**Overview** Counts the rising edges on `pin` (numbered `RA0` = 0, `RB0` = 8, `RC0` = 16) in `ms` milliseconds with Timer1, so no edge is missed up to about a quarter of the system clock
-(`Buttons.Counter` polls and loses the fast ones). The pin is made a digital input, routed to Timer1 with `T1CKIPPS`, and left routed. It takes Timer1 over (a running Timer1 is reset, and left stopped) so do not call it while Timer1 is in use. Timer1 is read every
-millisecond and the differences are added, so the count is not limited to 65535 (up to 65535 edges in each millisecond). The window is `ms` times `DelayMS(1)` plus the read loop, within
-0.1 per cent at 16 MHz and above; the first pulse after the start may be missed (see `Timer1StartSource`), and interrupts lengthen the window. A pin the part lacks, or `ms` = 0, returns 0.
-The frequency in Hz is the count * 1000 / `ms`. **Returns** `LongWord`.
-
-**Example**
-```basic
-Include "timer"
-Dim hz As LongWord
-hz = Timer.FreqCount(17, 100) * 10     ' RC1, 100 ms window
-```
-Test: `tests/exec/lib_freqcount.bas` (basil-sim with a stimulus file, on 5 parts). Not run on hardware.
-
-**See also** `Timer1StartCounter`, `Counter`
-
-### Timer1Read
-
-**Syntax**
-```basic
-count = Timer1Read()
-```
-**Overview** Reads the Timer1 count. With `RD16` set, reading `TMR1L` latches `TMR1H`, so the 16 bits are consistent.
-
-**Returns** `Word`.
-
-**Example**
-```basic
-Dim t As Word
-Timer1Start(0)
-t = Timer1Read()
-```
-
-### Timer1Expired
-
-**Syntax**
-```basic
-flag = Timer1Expired()
-```
-**Overview** True once per overflow (`PIR4.TMR1IF` on the PIC18F27Q10); clears the flag when it reports it.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Timer1Start(0)
-While Not Timer1Expired()
-Wend
-```
-
-### Timer1Ack
-
-**Syntax**
-```basic
-Timer1Ack()
-```
-**Overview** Clears the Timer1 flag. Call it from your own interrupt handler, wrapped in `Save` (a call from a handler is
-otherwise `E-ISR-CALL`).
-
-**Example**
-```basic
-Timer1Ack()
-```
-
-### Timer1Stop
-
-**Syntax**
-```basic
-Timer1Stop()
-```
-**Overview** Stops Timer1.
-
-**Example**
-```basic
-Timer1Stop()
-```
-
-### Timer1EnableInterrupt
-
-**Syntax**
-```basic
-Timer1EnableInterrupt()
-```
-**Overview** Clears the Timer1 flag and sets its interrupt enable (`PIE4.TMR1IE` on the PIC18F27Q10). Global interrupts are
-enabled separately with `Enable`.
-
-**Example**
-```basic
-Timer1EnableInterrupt()
-```
-
-### Timer1DisableInterrupt
-
-**Syntax**
-```basic
-Timer1DisableInterrupt()
-```
-**Overview** Clears the Timer1 interrupt enable.
-
-**Example**
-```basic
-Timer1DisableInterrupt()
-```
-
-### Timer1OnExpire
-
-**Syntax**
-```basic
-Timer1OnExpire = Handler        ' Type TTimerEvent = Event()
-```
-**Overview** As `Timer0OnExpire`, for Timer1: the handler `Timer1Service` calls once for each overflow.
-
-**Example**
-```basic
-Dim ticks As Byte
-Event Tick()
-    Inc(ticks)
-End Event
-Timer1OnExpire = Tick
-```
-
-### Timer1Service
-
-**Syntax**
-```basic
-Timer1Service()
-```
-**Overview** As `Timer0Service`, for Timer1: if Timer1 has overflowed, clears the flag and calls the `Timer1OnExpire`
-handler once. Call it from the main loop, or from your own interrupt inside `Save(0, Timer1Service)`.
-
-**Example**
-```basic
-While True
-    Timer1Service()
-Wend
-```
-
-### Timer2Start
-
-**Syntax**
-```basic
-Timer2Start(prescale, postscale, period)
-```
-**Overview** Starts Timer2 as a free-running 8-bit timer on FOSC/4, counting 0..`period`. The flag
-is set every `(period + 1) * 2^prescale * (postscale + 1)` cycles.
-
-**Parameters** `prescale` 0..7 (1:1 to 1:128); `postscale` 0..15 (1:1 to 1:16); `period` 0..255.
-
-**Example**
-```basic
-Timer2Start(7, 0, 249)            ' 16 MHz: 250 * 128 cycles = 8 ms
-```
-**Notes** `T2TMR` is not cleared by a `T2CON` write. The `pwm` module owns Timer2 while a channel runs.
-
-### Timer2StartLimit
-
-**Syntax**
-```basic
-Timer2StartLimit(prescale, postscale, period, mode, source)
-```
-**Overview** Timer2 with a hardware-limit mode. Writing `ON` arms the timer: in the edge and level
-modes it waits for the reset source; in the one-shot modes it runs once and clears `ON`.
-
-**Parameters** `prescale`, `postscale`, `period` as `Timer2Start`. `mode` is one of `T2ModeSoftware`,
-`T2ModeGateHigh`, `T2ModeGateLow`, `T2ModeResetAnyEdge`, `T2ModeResetRising`, `T2ModeResetFalling`,
-`T2ModeResetLow`, `T2ModeResetHigh`, `T2ModeOneShot`, `T2ModeOneShotRising`, `T2ModeOneShotFalling`,
-`T2ModeOneShotAnyEdge`, `T2ModeOneShotRisingReset`, `T2ModeOneShotFallingReset`,
-`T2ModeOneShotRisingLow`, `T2ModeOneShotFallingHigh`, `T2ModeMonoRising`, `T2ModeMonoFalling`,
-`T2ModeMonoAnyEdge`, `T2ModeOneShotLevelHigh`, `T2ModeOneShotLevelLow`. `source` is `T2RstPin` (T2IN,
-default RC3), `T2RstTmr4`, `T2RstTmr6`, `T2RstCcp1`, `T2RstCcp2`, `T2RstPwm3`, `T2RstPwm4`,
-`T2RstCmp1`, `T2RstCmp2`.
-
-**Example**
-```basic
-Timer2StartLimit(7, 0, 249, T2ModeOneShot, T2RstPin)
-While Timer2Running()
-Wend
-```
-**Notes** Edge-triggered modes need six timer clocks between triggers, level modes a level of at least
-three (data sheet 21.5).
-
-### Timer2Running
-
-**Syntax**
-```basic
-flag = Timer2Running()
-```
-**Overview** True while the timer is on (`T2CON.ON`). Use this, not the flag, to detect the end of a
-one-shot: the data sheet does not say `TMR2IF` is set when `ON` clears.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Dim r As Boolean
-r = Timer2Running()
-```
-
-### Timer2Read
-
-**Syntax**
-```basic
-count = Timer2Read()
-```
-**Overview** Reads the Timer2 count.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-Dim t As Byte
-Timer2Start(0, 0, 255)
-t = Timer2Read()
-```
-
-### Timer2Expired
-
-**Syntax**
-```basic
-flag = Timer2Expired()
-```
-**Overview** True once per overflow (`PIR4.TMR2IF` on the PIC18F27Q10); clears the flag when it reports it.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Timer2Start(0, 0, 255)
-While Not Timer2Expired()
-Wend
-```
-
-### Timer2Ack
-
-**Syntax**
-```basic
-Timer2Ack()
-```
-**Overview** Clears the Timer2 flag. Call it from your own interrupt handler, wrapped in `Save` (a call from a handler is
-otherwise `E-ISR-CALL`).
-
-**Example**
-```basic
-Timer2Ack()
-```
-
-### Timer2Stop
-
-**Syntax**
-```basic
-Timer2Stop()
-```
-**Overview** Stops Timer2. Stopping the timer also resets its counters.
-
-**Example**
-```basic
-Timer2Stop()
-```
-
-### Timer2EnableInterrupt
-
-**Syntax**
-```basic
-Timer2EnableInterrupt()
-```
-**Overview** Clears the Timer2 flag and sets its interrupt enable (`PIE4.TMR2IE` on the PIC18F27Q10). Global interrupts are
-enabled separately with `Enable`.
-
-**Example**
-```basic
-Timer2EnableInterrupt()
-```
-
-### Timer2DisableInterrupt
-
-**Syntax**
-```basic
-Timer2DisableInterrupt()
-```
-**Overview** Clears the Timer2 interrupt enable.
-
-**Example**
-```basic
-Timer2DisableInterrupt()
-```
-
-### Timer2OnExpire
-
-**Syntax**
-```basic
-Timer2OnExpire = Handler        ' Type TTimerEvent = Event()
-```
-**Overview** As `Timer0OnExpire`, for Timer2: the handler `Timer2Service` calls once for each overflow.
-
-**Example**
-```basic
-Dim ticks As Byte
-Event Tick()
-    Inc(ticks)
-End Event
-Timer2OnExpire = Tick
-```
-
-### Timer2Service
-
-**Syntax**
-```basic
-Timer2Service()
-```
-**Overview** As `Timer0Service`, for Timer2: if Timer2 has overflowed, clears the flag and calls the `Timer2OnExpire`
-handler once. Call it from the main loop, or from your own interrupt inside `Save(0, Timer2Service)`.
-
-**Example**
-```basic
-While True
-    Timer2Service()
-Wend
-```
-
-**Hardware untested** for external clock, gate and pulse use.
-
----
-
-## Category: Serial and buses
-
-## i2c  (`Include "i2c"`, MSSP1 host)
-
-I2C host (master). On the PIC18F27Q10 SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
-(19) and SDA = RC4 (20). The pins the other parts can route are in `docs/LIBRARY.md` (*i2c*). The module is the only host on the bus (no multi-master): a collision is an
-error. The bus needs external pull-ups. `Clock` must be FOSC in MHz. Every step is done by the hardware
-one at a time and each wait is bounded, so a stuck bus returns an error instead of hanging.
-
-**Status codes** (`I2cStatus`, and the return of Start, Restart, Stop and Send): 0 ok, 1 timeout (a bus
-line held low or no pull-up), 2 bus collision, 3 no acknowledge, 4 module not initialised, 5 a byte count outside
-1..8 (the block routines; nothing is sent).
-
-**PIC18-Q41.** The default is a software host on two ordinary pins (any of 0..23 as the part has them). With
-`#option I2c = Hardware` in the main program (next to `Device` and `Clock`) the module drives the I2C1 peripheral
-instead: exact bus clock (`FOSC / (20 * (BAUD + 1))`, at most the `hz` asked for, `hz` 1..400000), generated by the
-module, so an interrupt cannot stretch a bit or skew the clock, and a late CPU or a stretching client only stretches SCL
-(the calls still wait for the transfer). It does not make the program smaller by much. The peripheral
-counts the bytes of a transfer in hardware, so in this mode only the block routines `I2cReadRegs`, `I2cWriteRegs`
-and `I2cProbe` (and `I2cPing`, `I2cWriteReg`, `I2cReadReg`, `I2cStatus`, `I2cInit`, `I2cOff`) exist; `I2cStart`,
-`I2cRestart`, `I2cStop`, `I2cSend` and `I2cReceive` do not; `aht30`, which uses only them, stops with `#error`, and
-`oled` leaves out its I2C connection (`OledInitI2c` does not exist; the SPI connection works). `I2cOff` ignores its
-arguments in this mode (the module remembers its pins). The block routines also exist with the software host and the MSSP, so a program written with them builds
-either way. Wiring and pull-ups as for the software host; any pin works, the I2C-level input thresholds exist on
-RB4 (SDA1) and RB6 (SCL1) of the 20-pin parts only. `rtcc` uses the block routines in this mode.
-
-The module polls and clears `SSP1IF` itself; keep the MSSP1 interrupt disabled. It owns MSSP1: do not
-use `spi` at the same time.
-
-### I2cInit
-
-**Syntax**
-```basic
-ok = I2cInit(hz, scl, sda)
-```
-**Overview** Sets up MSSP1 as an I2C host at about `hz`. The clock is `FOSC / (4 * (SSPxADD + 1))`; the
-divider is rounded up so the clock is at or below `hz`. The highest clock is FOSC/16 and the lowest
-FOSC/1024. Slew rate control is disabled for 100 kHz or less and for 1 MHz and above, enabled in between.
-
-**Parameters** `hz` a `LongWord`, 1..1000000; `scl` and `sda` pin numbers the part can route (8..23 on the PIC18F27Q10), different.
-
-**Returns** `Byte`: 1 when set up, 0 when a pin is not allowed or no divider of 3..255 reaches `hz`.
-
-**Example**
-```basic
-Dim ok As Byte
-ok = I2cInit(100000, 19, 20)
-```
-
-### I2cOff
-
-**Syntax**
-```basic
-I2cOff(scl, sda)
-```
-**Overview** Disables the MSSP and gives both pins back to their `LATxy` bits.
-
-**Parameters** The same pins given to `I2cInit`.
-
-**Example**
-```basic
-I2cOff(19, 20)
-```
-
-### I2cStatus
-
-**Syntax**
-```basic
-s = I2cStatus()
-```
-**Overview** The status of the last Start, Restart, Stop, byte or register routine.
-
-**Returns** `Byte`, the codes above.
-
-**Example**
-```basic
-Dim s As Byte
-s = I2cStatus()
-```
-
-### I2cStart
-
-**Syntax**
-```basic
-s = I2cStart()
-```
-**Overview** Generates a start condition: the host takes the bus.
-
-**Returns** `Byte`, the status code.
-
-**Example**
-```basic
-Dim s As Byte
-s = I2cStart()
-s = I2cSend($A0)                  ' address 0x50 + write
-s = I2cStop()
-```
-**See also** `I2cRestart`, `I2cStop`, `I2cSend`.
-
-### I2cRestart
-
-**Syntax**
-```basic
-s = I2cRestart()
-```
-**Overview** Generates a repeated start: a new transfer (usually a read after writing a register address) without
-letting go of the bus.
-
-**Returns** `Byte`, the status code.
-
-**Example**
-```basic
-s = I2cStart()
-s = I2cSend($A0)                  ' write: register address
-s = I2cSend(0)
-s = I2cRestart()
-s = I2cSend($A1)                  ' read
-```
-**See also** `I2cStart`, `I2cReceive`.
-
-### I2cStop
-
-**Syntax**
-```basic
-s = I2cStop()
-```
-**Overview** Generates a stop condition: SDA rises while SCL is high, and the bus is free.
-
-**Returns** `Byte`, the status code.
-
-**Example**
-```basic
-s = I2cStop()
-```
-**See also** `I2cStart`.
-
-### I2cSend
-
-**Syntax**
-```basic
-s = I2cSend(b)
-```
-**Overview** Sends one byte (an address with its R/W bit, or data).
-
-**Parameters** `b` a `Byte`.
-
-**Returns** `Byte`: 0 when the client acknowledged, 3 when it did not.
-
-**Example**
-```basic
-Dim s As Byte
-s = I2cStart()
-s = I2cSend($A0)
-s = I2cSend(0)
-s = I2cStop()
-```
-
-### I2cReceive
-
-**Syntax**
-```basic
-b = I2cReceive(ack)
-```
-**Overview** Receives a byte, then sends an acknowledge or not-acknowledge.
-
-**Parameters** `ack` True when more bytes follow, False for the last byte.
-
-**Returns** `Byte`. On an error it returns 0 and `I2cStatus` is not 0.
-
-**Example**
-```basic
-Dim b As Byte
-Dim s As Byte
-s = I2cStart()
-s = I2cSend($A1)                  ' address 0x50 + read
-b = I2cReceive(False)
-s = I2cStop()
-```
-
-### I2cPing
-
-**Syntax**
-```basic
-found = I2cPing(addr)
-```
-**Overview** Tests whether a client acknowledges its address for writing.
-
-**Parameters** `addr` the 7-bit address, 0..127.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Dim here As Boolean
-here = I2cPing($50)
-```
-
-### I2cWriteReg
-
-**Syntax**
-```basic
-s = I2cWriteReg(addr, reg, value)
-```
-**Overview** Start, address + W, `reg`, `value`, Stop.
-
-**Parameters** `addr` 7-bit address; `reg` and `value` are `Byte`s.
-
-**Returns** `Byte`: the first status code that was not 0 (the Stop is always attempted).
-
-**Example**
-```basic
-Dim s As Byte
-s = I2cWriteReg($68, $6B, 0)
-```
-
-### I2cReadReg
-
-**Syntax**
-```basic
-v = I2cReadReg(addr, reg)
-```
-**Overview** Start, address + W, `reg`, Restart, address + R, one byte with not-acknowledge, Stop.
-
-**Returns** `Byte`. On an error it returns 0 and `I2cStatus` is not 0.
-
-**Example**
-```basic
-Dim v As Byte
-v = I2cReadReg($68, $75)
-```
-
-### I2cReadRegs
-
-**Syntax**
-```basic
-s = I2cReadRegs(addr, reg, n)
-```
-**Overview** Start, address + W, `reg`, Restart, address + R, `n` bytes, the last one not acknowledged, Stop. The bytes
-are in `I2cBuf(0)` .. `I2cBuf(n - 1)`. With the software host and the MSSP it is built from the step routines; with
-`#option I2c = Hardware` on the PIC18-Q41 it is one transfer of the I2C1 peripheral.
-
-**Parameters** `addr` the 7-bit address; `reg` the first register; `n` 1..8.
-
-**Returns** `Byte`: the first status code that was not 0 (the Stop is always attempted); 5 when `n` is not 1..8.
-
-**Example**
-```basic
-Dim s As Byte
-s = I2cReadRegs($6F, 0, 7)           ' seven timekeeping registers of an MCP7940N
-```
-
-### I2cWriteRegs
-
-**Syntax**
-```basic
-s = I2cWriteRegs(addr, reg, n)
-```
-**Overview** Start, address + W, `reg`, `I2cBuf(0)` .. `I2cBuf(n - 1)`, Stop.
-
-**Parameters** `addr` the 7-bit address; `reg` the first register; `n` 1..8.
-
-**Returns** `Byte`: the first status code that was not 0; 5 when `n` is not 1..8.
-
-**Example**
-```basic
-Dim s As Byte
-I2cBuf(0) = $26
-I2cBuf(1) = $10
-s = I2cWriteRegs($6F, 5, 2)          ' month and year
-```
-
-### I2cProbe
-
-**Syntax**
-```basic
-s = I2cProbe(addr)
-```
-**Overview** Start, address + W, Stop: the status of the address byte.
-
-**Parameters** `addr` the 7-bit address.
-
-**Returns** `Byte`: 0 acknowledged, 3 not acknowledged, 1 timeout, 2 bus collision, 4 not initialised.
-
-**Example**
-```basic
-Dim ok As Byte
-Dim s As Byte
-ok = I2cInit(100000, 19, 20)
-s = I2cProbe($68)
-If s = 0 Then
-    High(PORTB.0)           ' a device answers at $68
-End If
-```
-
-### I2cBuf
-
-**Syntax**
-```basic
-I2cBuf(i)
-```
-**Overview** An exported `Byte` array of 8 that holds the data of `I2cReadRegs` and `I2cWriteRegs`: `I2cReadRegs` leaves the bytes it read in `I2cBuf(0)` .. `I2cBuf(n - 1)` and `I2cWriteRegs` sends `I2cBuf(0)` .. `I2cBuf(n - 1)`.
-
-**Parameters** `i` the index, 0..7.
-
-**Example**
-```basic
-Dim s As Byte
-Dim sec As Byte
-s = I2cReadRegs($6F, 0, 3)           ' seconds, minutes, hours of an MCP7940N
-sec = I2cBuf(0)
-I2cBuf(0) = sec
-s = I2cWriteRegs($6F, 0, 1)          ' write the seconds back
-```
-**Notes** Not reentrant: the next `I2cReadRegs` or `I2cWriteRegs` overwrites or reuses the array.
-
-## onewire  (`Include "onewire"`, 1-Wire master on any one pin)
-
-A 1-Wire master at standard speed for the temperature sensors, serial numbers and switches of that bus (DS18B20, DS2401,
-DS2413 and the like). Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). The line is open drain: the pin is pulled low as an output
-and let go as an input, never driven high, so the bus needs an external pull-up (4.7 k to 5 k) and several devices share
-it. Slots are timed in microseconds from `Clock`. Each bit slot (70 us) runs with the global interrupt enable cleared and
-puts it back as it was, so an interrupt cannot stretch a low time past what a device accepts; between slots interrupts
-run. The module shares the bound-pin state of `pinio`, so it is not reentrant and cannot be used from a handler. It needs a
-`Clock` of at least 16 MHz on a PIC18 and 32 MHz on a PIC16 (the build stops with a message below that).
-
-Measured in the cycle-exact simulator (`scripts/test_onewire.py`) on PIC18F27Q10 and PIC18F16Q41 at 64 MHz and
-PIC16F17146 and PIC16F15244 at 32 MHz: reset low 489 to 490 us, write 1 low 2.6 to 2.8 us, write 0 low 61.8 to 61.9 us,
-read pulse 2.6 to 2.8 us with the line sampled about 10 us after the falling edge, slots of 75 to 79 us, 15 to 17 us of
-recovery between slots; the global interrupt enable is low inside every slot and set again after it; a simulated slave's
-presence pulse is seen, and a bit it holds low for 14 us reads 0 while one held for 6 us reads 1. The ROM search
-against three simulated slaves is checked by `scripts/test_onewire.py --search` (slow). **Nothing has run on a real part**,
-and the timings are the usual standard-speed values for the bus, not checked here against a device's data sheet.
-
-Example (one DS18B20 on RB1):
-```basic
-Include "onewire"
-Dim lo As Byte
-Dim hi As Byte
-If OwInit(9) Then
-    If OwReset() Then
-        OwSkip()
-        OwWriteByte($44)               ' convert T
-        DelayMs(750)
-        OwReset()
-        OwSkip()
-        OwWriteByte($BE)               ' read scratchpad
-        lo = OwReadByte()
-        hi = OwReadByte()              ' temperature = hi:lo / 16 degrees C
-    End If
-End If
-```
-
-### OwInit
-
-**Syntax**
-```basic
-ok = OwInit(pin)
-```
-**Overview** Sets up the bus pin: released (an input, so the pull-up holds the line high), digital, with its latch low.
-**Call it first.**
-
-**Parameters** `pin` a `Byte`, a pin number as in `pinio` (0..23, up to 47 on parts with ports D to F).
-
-**Returns** `Boolean`: False for a pin the part lacks.
-
-**Example**
-```basic
-Include "onewire"
-If OwInit(9) Then                ' the bus on RB1
-    OwSkip()
-End If
-```
-**See also** `OwReset`
-
-### OwReset
-
-**Syntax**
-```basic
-present = OwReset()
-```
-**Overview** Sends the reset pulse and listens for a presence pulse. Every transaction starts with it.
-
-**Returns** `Boolean`: True when a device answers. False when nothing answers, or when the line is already low before
-the pulse (no pull-up, a short).
-
-**Example**
-```basic
-If OwReset() Then
-    OwSkip()
-    OwWriteByte($44)             ' DS18B20: convert T
-End If
-```
-**See also** `OwSkip`, `OwSelect`
-
-### OwWriteBit
-
-**Syntax**
-```basic
-OwWriteBit(b)
-```
-**Overview** Sends one bit in one time slot (about 70 us, with the global interrupt enable held off for the slot).
-
-**Parameters** `b` a `Boolean`: True sends a 1.
-
-**Example**
-```basic
-OwWriteBit(True)
-```
-**See also** `OwReadBit`, `OwWriteByte`
-
-### OwReadBit
-
-**Syntax**
-```basic
-b = OwReadBit()
-```
-**Overview** Reads one bit in one time slot: the master pulls the line low briefly, lets go and samples it about 10 us
-after the falling edge.
-
-**Returns** `Boolean`: True for a 1.
-
-**Example**
-```basic
-Dim b As Boolean
-b = OwReadBit()
-```
-**See also** `OwWriteBit`, `OwReadByte`
-
-### OwWriteByte
-
-**Syntax**
-```basic
-OwWriteByte(b)
-```
-**Overview** Sends a byte, least significant bit first (eight `OwWriteBit` slots).
-
-**Parameters** `b` a `Byte`: a device command or data byte (`OwSkip`, `OwSelect` and the search send the ROM
-commands themselves).
-
-**Example**
-```basic
-OwWriteByte($BE)                  ' DS18B20: read scratchpad
-```
-**See also** `OwReadByte`
-
-### OwReadByte
-
-**Syntax**
-```basic
-b = OwReadByte()
-```
-**Overview** Reads a byte, least significant bit first (eight `OwReadBit` slots).
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-lo = OwReadByte()
-hi = OwReadByte()                 ' DS18B20: temperature = hi:lo / 16 degrees C
-```
-**See also** `OwWriteByte`, `OwCrc8`
-
-### OwCrc8
-
-**Syntax**
-```basic
-crc = OwCrc8(crc, b)
-```
-**Overview** Adds one byte to the 1-Wire CRC8 (x^8 + x^5 + x^4 + 1, shifted right). Start at 0 and add every byte: the
-8 bytes of a ROM code, or the 9 of a DS18B20 scratchpad, end at 0 when they are intact.
-
-**Parameters** `crc` the CRC so far (a `Byte`, 0 at the start); `b` the next byte.
-
-**Returns** `Byte`: the new CRC.
-
-**Example**
-```basic
-crc = 0
-For i = 0 To 8
-    crc = OwCrc8(crc, OwReadByte())
-Next
-If crc = 0 Then
-    ' the scratchpad arrived intact
-End If
-```
-**Notes** This is not the CRC of the `aht30` module (a different polynomial and start).
-
-### OwSearchFirst
-
-**Syntax**
-```basic
-found = OwSearchFirst()
-```
-**Overview** Starts a ROM search and finds the first device on the bus. Its 8-byte code is put in `OwRom(0..7)`
-(family code first, CRC last). Follow it with `OwSearchNext` to find the others.
-
-**Returns** `Boolean`: False when there is no device or the code read is damaged.
-
-**Example**
-```basic
-n = 0
-If OwSearchFirst() Then
-    Do
-        Inc(n)                    ' OwRom(0..7) holds a device's code
-    Loop While OwSearchNext()
-End If
-```
-**Notes** A device added or taken off the line during a search can make it miss or repeat one.
-
-**See also** `OwSearchNext`, `OwSelect`
-
-### OwSearchNext
-
-**Syntax**
-```basic
-found = OwSearchNext()
-```
-**Overview** Finds the next device of the search that `OwSearchFirst` started, and puts its code in `OwRom(0..7)`.
-
-**Returns** `Boolean`: False when there is no further device (the next call then starts a new search) or the code
-read is damaged.
-
-**Example**
-```basic
-While OwSearchNext()
-    Inc(n)
-Wend
-```
-**See also** `OwSearchFirst`
-
-### OwSelect
-
-**Syntax**
-```basic
-OwSelect()
-```
-**Overview** After `OwReset`: Match ROM with the code in `OwRom(0..7)`, so only that device listens to what follows.
-Fill `OwRom` from a search, or with a code you know.
-
-**Example**
-```basic
-If OwReset() Then
-    OwSelect()
-    OwWriteByte($44)
-End If
-```
-**See also** `OwSkip`, `OwSearchFirst`
-
-### OwSkip
-
-**Syntax**
-```basic
-OwSkip()
-```
-**Overview** After `OwReset`: Skip ROM, so every device on the bus listens to what follows. Use it when there is one
-device, or for a command all of them should obey (a DS18B20 convert).
-
-**Example**
-```basic
-If OwReset() Then
-    OwSkip()
-    OwWriteByte($44)
-End If
-```
-**See also** `OwSelect`
-
-## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
-
-`Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a
-crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
-below (for a signed number or a `Float`, convert in your own code).
-
-### SerialInit
-
-**Syntax**
-```basic
-SerialInit(baud)
-```
-**Overview** Routes EUSART1 through PPS (TX on RC6, RX on RC7), sets the pin directions and
-`BRG16 = BRGH = 1`, computes the baud divisor from `Clock` (one 32-bit divide at run time, rounded to
-the nearest value) and enables TX and RX.
-
-**Parameters** `baud` is a `LongWord`, for example 9600 or 115200.
-
-**Example**
-```basic
-SerialInit(115200)
-```
-
-### SerialWriteByte
-
-**Syntax**
-```basic
-SerialWriteByte(b)
-```
-**Overview** Sends one byte, waiting until the transmit register is free.
-
-**Example**
-```basic
-SerialWriteByte(65)               ' "A"
-```
-
-### SerialWrite
-
-**Syntax**
-```basic
-SerialWrite(text)
-```
-**Overview** Sends a string or literal, up to 80 characters.
-
-**Example**
-```basic
-SerialWrite("hello")
-```
-
-### SerialNewLine
-
-**Syntax**
-```basic
-SerialNewLine()
-```
-**Overview** Sends CR + LF.
-
-**Example**
-```basic
-SerialWrite("done")
-SerialNewLine()
-```
-
-### SerialWriteWord
-
-**Syntax**
-```basic
-SerialWriteWord(v)
-```
-**Overview** Sends a `Word` as unsigned decimal, without leading zeros.
-
-**Example**
-```basic
-SerialWriteWord(1234)
-```
-
-### SerialWriteHex
-
-**Syntax**
-```basic
-SerialWriteHex(v)
-```
-**Overview** Sends a `Byte` as two hexadecimal digits.
-
-**Example**
-```basic
-SerialWriteHex($A5)               ' "A5"
-```
-
-### SerialAvailable
-
-**Syntax**
-```basic
-flag = SerialAvailable()
-```
-**Overview** True when a received byte is waiting.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-Dim b As Byte
-If SerialAvailable() Then
-    b = SerialRead()
-EndIf
-```
-
-### SerialRead
-
-**Syntax**
-```basic
-b = SerialRead()
-```
-**Overview** Waits for a byte and returns it. An overrun stops the receiver until `CREN` is cycled; this
-routine cycles it.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-Dim b As Byte
-b = SerialRead()
-SerialWriteByte(b)                ' echo
-```
-
-### SerialReadTimeout
-
-**Syntax**
-```basic
-c = SerialReadTimeout(ms)
-```
-**Overview** Waits up to `ms` milliseconds for a byte. The wait polls every 50 us with interrupts allowed, so it is a
-little longer than `ms`; a byte already waiting is returned at once, and an `ms` of 0 looks once. An overrun is
-cleared as `SerialRead` does.
-
-**Parameters** `ms` a `Word`.
-
-**Returns** `Integer`: the byte (0..255), or -1 when none came.
-
-**Example**
-```basic
-Dim c As Integer
-c = SerialReadTimeout(100)
-If c >= 0 Then
-    SerialWriteByte(Byte(c))
-End If
-```
-**Notes** About 50 words on the PIC18F27Q10, with the polling loop that all four receive routines share.
-
-**See also** `SerialRead`, `SerialReadLine`
-
-### SerialReadLine
-
-**Syntax**
-```basic
-ok = SerialReadLine(ms)
-```
-**Overview** Collects characters into `SerialLine` (a `String(63)`) until a CR or LF. Empty lines are skipped, so CR LF
-is one end of line, and characters past 63 are dropped. `ms` is the longest wait for **one** character.
-
-**Parameters** `ms` a `Word`, in milliseconds.
-
-**Returns** `Boolean`: True when a CR or LF ended the line. On a timeout it returns False and `SerialLine` keeps what
-had arrived.
-
-**Example**
-```basic
-If SerialReadLine(1000) Then
-    SerialWrite(SerialLine)
-End If
-```
-**Notes** `SerialLine` is shared and overwritten by the next call. About 71 words on the PIC18F27Q10.
-
-**See also** `SerialReadTimeout`, `SerialWaitFor`
-
-### SerialWaitFor
-
-**Syntax**
-```basic
-ok = SerialWaitFor(text, ms)
-```
-**Overview** Discards bytes until `text` has come in. After a mismatch it starts again at the first character, so a
-text that repeats its own start (`aab` in `aaab`) can be missed.
-
-**Parameters** `text` a `String`, not empty, up to 80 characters; `ms` a `Word`, the longest wait for one byte in
-milliseconds.
-
-**Returns** `Boolean`: True when the text has arrived, False on a timeout.
-
-**Example**
-```basic
-SerialWrite("AT")
-SerialNewLine()
-If SerialWaitFor("OK", 200) Then
-    ' the modem answered
-End If
-```
-**Notes** About 86 words on the PIC18F27Q10.
-
-**See also** `SerialReadDec`, `SerialReadLine`
-
-### SerialReadDec
-
-**Syntax**
-```basic
-ok = SerialReadDec(ms)
-```
-**Overview** Reads a decimal number into `SerialNumber` (a `LongInt`). Characters before the first digit are skipped
-(a `-` right before it makes the number negative); then digits are read, and the first other character ends the
-number and is dropped. A timeout after at least one digit also ends it.
-
-**Parameters** `ms` a `Word`, the longest wait for one byte in milliseconds.
-
-**Returns** `Boolean`: False (and `SerialNumber` 0) when no digit came. A value past 32 bits wraps.
-
-**Example**
-```basic
-If SerialWaitFor("+CSQ: ", 500) Then
-    If SerialReadDec(500) Then
-        v = Integer(SerialNumber)         ' "+CSQ: 17,99" gives 17
-    End If
-End If
-```
-**Notes** `SerialNumber` is shared and overwritten by the next call. About 113 words on the PIC18F27Q10; using several
-of the receive routines adds only the difference.
-
-**See also** `SerialWaitFor`, `SerialReadTimeout`
-
-### SerialOnRx
-
-**Syntax**
-```basic
-SerialOnRx = Handler              ' Type TRxEvent = Event(ByVal c As Byte)
-```
-**Overview** An event variable holding the handler that `SerialRxService` calls with each received byte. Unassigned, the
-byte is read and dropped.
-
-**Example**
-```basic
-Dim last As Byte
-Event OnByte(ByVal c As Byte)
-    last = c
-End Event
-SerialInit(115200)
-SerialOnRx = OnByte
-While True
-    SerialRxService()
-Wend
-```
-**See also** `SerialRxService`, *Events* (section 1).
-
-### SerialRxService
-
-**Syntax**
-```basic
-SerialRxService()
-```
-**Overview** Clears an overrun (as `SerialRead` does) and, if a byte has arrived, reads it (which clears `RCIF`) and
-calls the `SerialOnRx` handler with it. Call it from the main loop, or from your own interrupt wrapped in
-`Save(0, SerialRxService)`.
-
-**Example**
-```basic
-While True
-    SerialRxService()
-Wend
-```
-**See also** `SerialOnRx`, `SerialAvailable`, `SerialRead`.
-
-### SerialFlush
-
-**Syntax**
-```basic
-SerialFlush()
-```
-**Overview** Waits until the last byte has left the shift register (`TRMT`).
-
-**Example**
-```basic
-SerialWrite("bye")
-SerialFlush()
-```
-
-## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
-
-The routines of `serial` with the prefix `Serial2`, on the second EUSART; each has its entry below.
-
-**Example**
-```basic
-Serial2Init(9600)
-Serial2Write("hi")
-Serial2NewLine()
-```
-**Notes** RB6/RB7 are the ICSP pins: disconnect the programmer while using them. Both serial modules can
-be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
-unproven.
-
-### Serial2Init
-
-**Syntax**
-```basic
-Serial2Init(baud)
-```
-**Overview** Sets up EUSART2 at `baud`, 8N1, and its two pins.
-
-**Parameters** `baud` a `LongWord`.
-
-**Example**
-```basic
-Serial2Init(9600)
-```
-**See also** `SerialInit`
-
-### Serial2WriteByte
-
-**Syntax**
-```basic
-Serial2WriteByte(b)
-```
-**Overview** Sends one byte (waits for room in the transmitter).
-
-**Parameters** `b` a `Byte`.
-
-**Example**
-```basic
-Serial2WriteByte(65)
-```
-**See also** `SerialWriteByte`
-
-### Serial2Write
-
-**Syntax**
-```basic
-Serial2Write(s)
-```
-**Overview** Sends a `String`, up to its `Null`.
-
-**Parameters** `s` a `String` or literal.
-
-**Example**
-```basic
-Serial2Write("hi")
-```
-**See also** `SerialWrite`
-
-### Serial2NewLine
-
-**Syntax**
-```basic
-Serial2NewLine()
-```
-**Overview** Sends CR LF.
-
-**Example**
-```basic
-Serial2NewLine()
-```
-**See also** `SerialNewLine`
-
-### Serial2WriteWord
-
-**Syntax**
-```basic
-Serial2WriteWord(v)
-```
-**Overview** Sends a `Word` as unsigned decimal, no leading zeros.
-
-**Parameters** `v` a `Word`.
-
-**Example**
-```basic
-Serial2WriteWord(1234)
-```
-**See also** `SerialWriteWord`
-
-### Serial2WriteHex
-
-**Syntax**
-```basic
-Serial2WriteHex(v)
-```
-**Overview** Sends a `Byte` as two hexadecimal digits.
-
-**Parameters** `v` a `Byte`.
-
-**Example**
-```basic
-Serial2WriteHex($3C)
-```
-**See also** `SerialWriteHex`
-
-### Serial2Available
-
-**Syntax**
-```basic
-b = Serial2Available()
-```
-**Overview** True when a received byte is waiting.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-If Serial2Available() Then
-    b = Serial2Read()
-End If
-```
-**See also** `SerialAvailable`
-
-### Serial2Read
-
-**Syntax**
-```basic
-b = Serial2Read()
-```
-**Overview** Waits for a byte and returns it; an overrun is cleared.
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-b = Serial2Read()
-```
-**See also** `SerialRead`
-
-### Serial2Flush
-
-**Syntax**
-```basic
-Serial2Flush()
-```
-**Overview** Waits until the last byte has left the shift register.
-
-**Example**
-```basic
-Serial2Write("bye")
-Serial2Flush()
-```
-**See also** `SerialFlush`
-
-### Serial2ReadTimeout
-
-**Syntax**
-```basic
-c = Serial2ReadTimeout(ms)
-```
-**Overview** Waits up to `ms` milliseconds for a byte, as `SerialReadTimeout`.
-
-**Parameters** `ms` a `Word`.
-
-**Returns** `Integer`: the byte, or -1 when none came.
-
-**Example**
-```basic
-c = Serial2ReadTimeout(100)
-```
-**See also** `SerialReadTimeout`
-
-### Serial2ReadLine
-
-**Syntax**
-```basic
-ok = Serial2ReadLine(ms)
-```
-**Overview** Collects a line into `Serial2Line` (a `String(63)`), as `SerialReadLine`.
-
-**Parameters** `ms` a `Word`, the longest wait for one character.
-
-**Returns** `Boolean`: True when a CR or LF ended the line.
-
-**Example**
-```basic
-If Serial2ReadLine(1000) Then
-    Serial2Write(Serial2Line)
-End If
-```
-**See also** `SerialReadLine`
-
-### Serial2WaitFor
-
-**Syntax**
-```basic
-ok = Serial2WaitFor(text, ms)
-```
-**Overview** Discards bytes until `text` has come in, as `SerialWaitFor`.
-
-**Parameters** `text` a `String` (1 to 80 characters); `ms` a `Word`.
-
-**Returns** `Boolean`.
-
-**Example**
-```basic
-ok = Serial2WaitFor("OK", 200)
-```
-**See also** `SerialWaitFor`
-
-### Serial2ReadDec
-
-**Syntax**
-```basic
-ok = Serial2ReadDec(ms)
-```
-**Overview** Reads a decimal number into `Serial2Number` (a `LongInt`), as `SerialReadDec`.
-
-**Parameters** `ms` a `Word`.
-
-**Returns** `Boolean`: False when no digit came.
-
-**Example**
-```basic
-If Serial2ReadDec(500) Then
-    v = Integer(Serial2Number)
-End If
-```
-**See also** `SerialReadDec`
-
-## shift  (`Include "shift"`, synchronous shift on any two pins)
-
-Bit-banged synchronous shift for shift registers (74HC595, 74HC165), DACs, ADCs and any device with a data line and a
-clock. Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). The clock idles low; data changes while the
-clock is low and is valid at its rising edge (SPI mode 0, which suits the 74HC595 and most chips). Each clock phase is
-about 1 us plus the instruction time, so the rate is below 250 kHz at 64 MHz. Each routine sets its pins (clock an
-output, data an output or input) and makes them digital. A pin the part lacks, the same pin twice, or a bit count out
-of range stops the routine at once: nothing is sent, and a read returns 0. Test: `tests/exec/lib_shift.bas` (set-up
-only; the simulator has no pin model).
-
-### ShiftOut
-
-**Syntax**
-```basic
-ShiftOut(data, dataPin, clkPin, lsbFirst, bits)
-```
-**Overview** Clocks out the low `bits` bits of `data`.
-
-**Parameters** `data` a `Byte`; `dataPin`, `clkPin` pin numbers; `lsbFirst` a `Boolean`: False sends the most
-significant of the bits first, True the least significant first; `bits` 1..8.
-
-**Example**
-```basic
-Include "shift"
-ShiftOut($A5, 8, 9, False, 8)     ' data on RB0, clock on RB1
-High(PORTB.2)                     ' pulse the latch pin (on RB2)
-Low(PORTB.2)
-```
-**See also** `ShiftOut16`, `ShiftIn`, `spi` module
-
-### ShiftOut16
-
-**Syntax**
-```basic
-ShiftOut16(data, dataPin, clkPin, lsbFirst, bits)
-```
-**Overview** `ShiftOut` for up to 16 bits.
-
-**Parameters** `data` a `Word`; `bits` 1..16; the rest as `ShiftOut`.
-
-**Example**
-```basic
-ShiftOut16($3FF0, 8, 9, False, 16)   ' a 16-bit DAC word
-```
-**See also** `ShiftOut`
-
-### ShiftIn
-
-**Syntax**
-```basic
-b = ShiftIn(dataPin, clkPin, lsbFirst, bits)
-```
-**Overview** Clocks in `bits` bits. The data pin is made an input and read while the clock is high, just before it
-goes low again.
-
-**Parameters** `dataPin`, `clkPin` pin numbers; `lsbFirst` False when the device sends the most significant bit
-first; `bits` 1..8.
-
-**Returns** `Byte`: the bits read, right-justified. 0 when the pins or the count are not valid.
-
-**Example**
-```basic
-Include "shift"
-Dim sw As Byte
-Low(PORTB.2)                      ' pulse the load pin (on RB2)
-High(PORTB.2)
-sw = ShiftIn(8, 9, False, 8)      ' data on RB0, clock on RB1
-```
-**See also** `ShiftIn16`, `ShiftOut`
-
-### ShiftIn16
-
-**Syntax**
-```basic
-w = ShiftIn16(dataPin, clkPin, lsbFirst, bits)
-```
-**Overview** `ShiftIn` for up to 16 bits.
-
-**Parameters** `bits` 1..16; the rest as `ShiftIn`.
-
-**Returns** `Word`: the bits read, right-justified.
-
-**Example**
-```basic
-w = ShiftIn16(8, 9, False, 12)    ' a 12-bit ADC reading
-```
-**See also** `ShiftIn`
-
-## softserial  (`Include "softserial"`, asynchronous serial on any two pins, 8N1)
-
-Serial on pins the EUSART cannot reach, on a part with one EUSART or none to spare, or on a line that idles low
-(RS-232 levels through a driver chip). Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). Bit
-times are counted in instruction cycles from `Clock`; no timer. A byte that arrives while the program is elsewhere is
-lost: `SoftReadByte` is a poll, not a buffer (for an always-listening, buffered UART use the hardware EUSART,
-`serial`). Interrupts are held off for the length of a byte (see `SoftHoldIrq`). The module shares the bound-pin state of `pinio` (as `pulse`
-and `shift` do), so it is not reentrant and its routines cannot be used from a handler.
-
-How accurate: a bit is a wait of whole passes of a counting loop (7 cycles a pass on the PIC18, 9 on the PIC16) plus a
-fixed number of cycles, so the bit time is within half a pass of the ideal one, and the start edge of a received byte
-is found to within one poll of the pin (about 30 cycles on the PIC18, 60 on the PIC16). Measured in the cycle-exact
-simulator (`scripts/test_softserial.py`): the transmitted edges are within 0.6 % of the ideal bit time up to 38400
-baud at 64 MHz on the PIC18 (2.1 % at 115200) and up to 9600 at 32 MHz on the PIC16 (1.1 % at 19200); above 19200 the
-9-cycle pass of the PIC16 is too coarse. The receiver takes a sender whose bit time is 3 % fast or 3 % slow on every part
-and rate in the table below, with a window of about -5 % to +6 %.
-
-| Part and clock | Rates tested (send and receive) |
-|---|---|
-| PIC18F27Q10, PIC18F16Q41, 64 MHz | 1200, 9600, 38400, 115200 (Q41: 9600, 115200) |
-| PIC16F17146, 32 MHz | 1200, 9600, 19200 |
-| PIC16F15244, PIC16F18056, 32 MHz | 9600 |
-
-The same cases are run for the unoptimised `-O0` build (the module reads `_opt` and uses the cycle counts of that
-build: a wait pass is 11 cycles on the PIC18 and 10 on the PIC16, and the PIC16 receiver's pass is 12), except
-115200 baud, where one 11-cycle pass is 8 % of a bit: that rate needs the optimised build. The exec test
-`lib_softserial_rx` runs on the PIC18F27Q10 only, because its stimulus is written for 64 MHz and 9600 baud.
-
-Sizes on the PIC18F27Q10 with the start-up and a `SoftInit` call counted in (76 words): `SoftWriteByte` +83, `SoftWrite`
-+99 (it contains `SoftWriteByte`), `SoftReadByte` +157, `SoftAvailable` +46, `SoftHoldIrq` +3. The interrupt hold is
-13 of the 83 and 20 of the 157; the stop-bit check about 6.
-
-Not done: parity or other than 8N1, an open-drain output for a shared line, a receive buffer. Tests: the simulator
-checks everything above (`scripts/test_softserial.py`: edge timing, the interrupt enable low for the whole frame and
-restored after it, the receive window; `tests/exec/lib_softserial_rx.bas`: bytes, a framing error, a timeout). **Nothing
-has run on a real part**: `tests/hw/softserial_echo.bas` is the bench program (a USB-serial adapter and a terminal; its
-header lists the checks, from 9600 to 115200 baud and a sender 3 % fast and slow).
-
-**Example**
-```basic
-Include "softserial"
-Include "format"
-Dim c As Integer
-If SoftInit(9, 10, 9600, False) Then       ' TX on RB1, RX on RB2
-    SoftWrite("ready")
-    SoftNewLine()
-    c = SoftReadByte(1000)                   ' up to 1 s
-    If c >= 0 Then
-        FmtHex(Byte(c), 2)
-        SoftWrite(FmtBuf)                    ' echo it as hexadecimal
-    End If
-End If
-```
-
-### SoftInit
-
-**Syntax**
-```basic
-ok = SoftInit(tx, rx, baud, inverted)
-```
-**Overview** Sets the two pins and the speed. **Call it first.**
-
-**Parameters** `tx`, `rx` pin numbers (a pin the part lacks is not used: give 255 for a send-only or
-receive-only line); `baud` a `LongWord`; `inverted` a `Boolean`, True for a line that idles low (RS-232 levels through
-a driver chip, or a transistor inverter).
-
-**Returns** `Boolean`: False, with both pins unused, when the baud rate is too high for the `Clock`, or so low that one
-bit is over 65535 cycles (below about 980 baud at 64 MHz).
-
-**Example**
-```basic
-Include "softserial"
-If SoftInit(9, 10, 9600, False) Then      ' TX on RB1, RX on RB2
-    SoftWrite("ready")
-End If
-```
-**Notes** About 76 words on the PIC18F27Q10 with the start-up.
-
-### SoftWriteByte
-
-**Syntax**
-```basic
-SoftWriteByte(b)
-```
-**Overview** Sends one byte (8N1) on the `tx` pin. With `SoftHoldIrq(True)` (the default) the global interrupt enable
-is held off for the frame and put back after it.
-
-**Parameters** `b` a `Byte`.
-
-**Example**
-```basic
-SoftWriteByte(65)                 ' "A"
-```
-**Notes** +83 words on the PIC18F27Q10.
-
-**See also** `SoftWrite`, `SoftNewLine`
-
-### SoftWrite
-
-**Syntax**
-```basic
-SoftWrite(text)
-```
-**Overview** Sends a `String`, a character at a time, up to its `Null`.
-
-**Parameters** `text` a `String` or a literal, up to 80 characters.
-
-**Example**
-```basic
-SoftWrite("temp ")
-FmtDec(t, 3, " ")
-SoftWrite(FmtBuf)
-```
-**Notes** +99 words on the PIC18F27Q10 (it contains `SoftWriteByte`).
-
-**See also** `SoftWriteByte`, `format` module
-
-### SoftNewLine
-
-**Syntax**
-```basic
-SoftNewLine()
-```
-**Overview** Sends CR LF.
-
-**Example**
-```basic
-SoftWrite("ok")
-SoftNewLine()
-```
-
-### SoftReadByte
-
-**Syntax**
-```basic
-c = SoftReadByte(ms)
-```
-**Overview** Waits up to `ms` milliseconds for a start bit on the `rx` pin, then receives the byte. It is a poll, not a
-buffer: a byte that arrives while the program is elsewhere is lost.
-
-**Parameters** `ms` a `Word`; 0 looks once.
-
-**Returns** `Integer`: the byte (0 to 255), **-1** when none came, or **-2** when the stop bit was not at the idle level
-(a framing error: wrong baud rate, noise or a break). After -2 it waits one more bit, so a line that stays low answers
--2 again at every call.
-
-**Example**
-```basic
-Dim c As Integer
-c = SoftReadByte(1000)            ' up to 1 s
-If c >= 0 Then
-    SoftWriteByte(Byte(c))        ' echo
-End If
-```
-**Notes** +157 words on the PIC18F27Q10.
-
-**See also** `SoftAvailable`, `SoftHoldIrq`
-
-### SoftAvailable
-
-**Syntax**
-```basic
-b = SoftAvailable()
-```
-**Overview** Looks at the `rx` pin once.
-
-**Returns** `Boolean`: True when the pin is at its start-bit level, so a `SoftReadByte` now returns the byte.
-
-**Example**
-```basic
-If SoftAvailable() Then
-    c = SoftReadByte(0)
-End If
-```
-**Notes** +46 words on the PIC18F27Q10.
-
-### SoftHoldIrq
-
-**Syntax**
-```basic
-SoftHoldIrq(on)
-```
-**Overview** Chooses whether a byte is sent, or received from its start edge on, with the global interrupt enable (bit
-7 of `INTCON`, `INTCON0` on the PIC18-Q41) cleared and put back as it was, so an interrupt cannot stretch a bit.
-
-**Parameters** `on` a `Boolean`. True (the default): a received byte stops other interrupts for 10 bit times (about
-1 ms at 9600 baud). False: nothing is touched, and an interrupt that runs during a byte distorts it, which a low baud
-rate and a short handler can live with.
-
-**Example**
-```basic
-SoftHoldIrq(False)                ' the timer interrupt must not wait a whole byte
-```
-**Notes** +3 words on the PIC18F27Q10.
-
-## spi  (`Include "spi"`, MSSP1 host)
-
-SPI host (master). On the PIC18F27Q10 SCK, SDO and SDI go to pins of ports B and C (8..23; the other parts: `docs/LIBRARY.md`, *spi*); SDO can be 255 for a
-receive-only host. The chip select is not part of the module: drive it with a port bit. `Clock` must be
-FOSC in MHz. The module owns MSSP1 (do not use `i2c` together) and does not use its interrupt.
-
-**Modes**: 0 = idle low, data changes on the falling edge; 1 = idle low, rising; 2 = idle high,
-falling; 3 = idle high, rising (CPOL/CPHA as `CKP`/`CKE`). **Status** (`SpiStatus`): 0 after the last
-transfer completed, 1 after a timeout, 4 when not initialised.
-
-### SpiInit
-
-**Syntax**
-```basic
-ok = SpiInit(hz, mode, sck, sdo, sdi)
-```
-**Overview** Sets up MSSP1 as an SPI host. The clock is FOSC/4 for `hz` of FOSC/4 or more, otherwise
-`FOSC / (4 * (SSPxADD + 1))`, rounded so the clock is at or below `hz`. The lowest is FOSC/1024.
-
-**Parameters** `hz` a `LongWord`, 1..16000000; `mode` 0..3; `sck`, `sdo`, `sdi` pins the part can route (8..23 on the PIC18F27Q10; `sdo` may
-be 255).
-
-**Returns** `Byte`: 1, or 0 for a bad pin, a pin used twice, a mode above 3, or a clock below FOSC/1024.
-
-**Example**
-```basic
-Dim ok As Byte
-ok = SpiInit(1000000, 0, 19, 20, 21)
-```
-**Notes** Use `SpiOff` before changing pins.
-
-### SpiOff
-
-**Syntax**
-```basic
-SpiOff(sck, sdo)
-```
-**Overview** Disables the MSSP and gives the pins back to their `LATxy` bits.
-
-**Parameters** The pins given to `SpiInit`.
-
-**Example**
-```basic
-SpiOff(19, 20)
-```
-
-### SpiStatus
-
-**Syntax**
-```basic
-s = SpiStatus()
-```
-**Overview** The status of the last SPI transfer.
-
-**Returns** `Byte`, the codes above: 0 after the last transfer completed, 1 after a timeout, 4 when not initialised.
-
-**Example**
-```basic
-Dim s As Byte
-s = SpiStatus()
-```
-
-### SpiTransfer
-
-**Syntax**
-```basic
-r = SpiTransfer(b)
-```
-**Overview** Sends one byte and returns the byte received at the same time. The wait is bounded.
-
-**Returns** `Byte`; 0 on an error (see `SpiStatus`).
-
-**Example**
-```basic
-Dim r As Byte
-r = SpiTransfer($9F)
-```
-
-### SpiWrite
-
-**Syntax**
-```basic
-SpiWrite(b)
-```
-**Overview** Sends one byte and ignores the byte received.
-
-**Example**
-```basic
-SpiWrite($06)
-```
-
-### SpiRead
-
-**Syntax**
-```basic
-r = SpiRead()
-```
-**Overview** Receives one byte (sends 255 on SDO).
-
-**Returns** `Byte`.
-
-**Example**
-```basic
-Dim r As Byte
-r = SpiRead()
-```
+Modules are grouped in categories, in alphabetical order, and the modules in each category are alphabetical: Analog and memory; Bits, maths and strings; Displays; Sensors, clocks and remote control; Serial and buses; System and clock; Timers and PWM.
 
 ---
 
@@ -6495,274 +3411,912 @@ ok = FlashEraseSector(FlashLastSector)
 
 ---
 
+## Category: Bits, maths and strings
+
+## bits  (`Include "bits"`, bit tests, rotates, decoding, integer square root, random numbers, binary-radian trigonometry)
+
+Counterparts of the classic `ClearBit`, `Dcd`, `Dig`, `GetBit`, `ISqr`, `LoadBit`, `Ncd`, `Random`,
+`Rol`, `Ror`, `Seed`, `SetBit` and `Swap` commands. Spelling differs where the original does not
+fit: the original changes its argument in place, basil's routines **return the new value**
+(`x = SetBit(x, 3)`), and `Swap` is split into `SwapNibbles` and `SwapBytes`. `Byte`, `Word` and
+`LongWord` forms are overloads of one name: the argument's type picks the form, so write
+`SetBit(Byte(0), 5)` when the argument is a bare constant. A bit number past the top of the type
+changes nothing and reads as 0.
+
+`BSin`, `BCos`, `BAtn` and `BHyp` are 8-bit integer trigonometry for small, fast jobs (a lookup table, a heading, a vector length). Angles are
+*binary radians*: one `Byte`, 256 steps to the turn. They are not the build-time `Sin` and `Cos`, which take radians and give a `Float`.
+
+### BAtn
+
+**Syntax**
+```basic
+a = BAtn(x, y)
+```
+**Overview** The angle of the vector from the origin to (`x`, `y`), in binary radians (see `BSin`): 0 along +x, 64 along +y, 128 along -x, 192 along -y.
+
+**Parameters** `x` and `y` are `ShortInt`s.
+
+**Returns** A `Byte`, within 2 steps (2.8 degrees) of the true angle; the axes come out within 1 step. The angle of (0, 0) is not defined.
+
+**Example**
+```basic
+a = BAtn(100, 100)        ' 33 (the true value is 32, 45 degrees)
+a = BAtn(0, 127)          ' 63
+```
+**Notes** Seven rotations by shifts and adds, no divide: 140 words on the PIC18F27Q10, 196 on the PIC16F18346.
+
+### BCos
+
+**Syntax**
+```basic
+c = BCos(angle)
+```
+**Overview** 127 times the cosine of `angle`, in binary radians (see `BSin`); `BSin(angle + 64)`.
+
+**Parameters** `angle` is a `Byte`.
+
+**Returns** A `ShortInt`, -127 to 127.
+
+**Example**
+```basic
+c = BCos(0)               ' 127
+c = BCos(128)             ' -127
+```
+**Notes** 62 words on the PIC18F27Q10 with the table of `BSin`, which both share.
+
+### BHyp
+
+**Syntax**
+```basic
+h = BHyp(x, y)
+```
+**Overview** The length of the vector (`x`, `y`): the square root of `x * x + y * y`, rounded down.
+
+**Parameters** `x` and `y` are `ShortInt`s.
+
+**Returns** A `Byte`, 0 to 181.
+
+**Example**
+```basic
+h = BHyp(3, 4)            ' 5
+h = BHyp(-128, -128)      ' 181
+```
+**Notes** Eight trial squares of a `Byte`: 71 words on the PIC18F27Q10 (which has the hardware multiply), 239 on the PIC16F18346 (software multiply).
+
+### BSin
+
+**Syntax**
+```basic
+s = BSin(angle)
+```
+**Overview** 127 times the sine of `angle`, with the angle in binary radians: 256 steps to the turn (one step is 1.40625 degrees, 64 is a quarter turn).
+
+**Parameters** `angle` is a `Byte`; it wraps round at 256, so any `Byte` is an angle.
+
+**Returns** A `ShortInt`, -127 to 127, within half a unit of 127 times the sine.
+
+**Example**
+```basic
+s = BSin(64)              ' 127
+s = BSin(192)             ' -127
+s = BSin(32)              ' 90 (45 degrees)
+```
+**Notes** A 65-byte table of a quarter wave and two folds: 60 words on the PIC18F27Q10, 94 on the PIC16F18346. The build-time `Sin` and `Cos` (floating point, radians) are unchanged.
+
+### ClearBit
+
+**Syntax**
+```basic
+v = ClearBit(v, n)
+```
+**Overview** Returns `v` with bit `n` set to 0.
+
+**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is a `Byte`, 0 for the least significant bit.
+
+**Returns** The new value, of the type of `v`.
+
+**Example**
+```basic
+Dim x As Byte
+x = $FF
+x = ClearBit(x, 7)        ' $7F
+```
+**See also** `SetBit`, `LoadBit`, `GetBit`.
+
+### Dcd
+
+**Syntax**
+```basic
+p = Dcd(n)
+```
+**Overview** Two to the power `n`: a single 1 bit at position `n`.
+
+**Parameters** `n` is a `Byte`. 32 or more gives 0.
+
+**Returns** A `LongWord`.
+
+**Example**
+```basic
+Dim m As Byte
+m = Byte(Dcd(3))          ' 8
+```
+**See also** `Ncd`.
+
+### Dig
+
+**Syntax**
+```basic
+d = Dig(v, n)
+```
+**Overview** Decimal digit `n` of `v`, counting 0 for the units digit.
+
+**Parameters** `v` is a `LongWord` (any integer type converts); `n` is a `Byte`.
+
+**Returns** A `Byte` 0..9; 0 for a digit beyond the top of `v`.
+
+**Example**
+```basic
+d = Dig(1234, 1)          ' 3
+```
+**Notes** Costs one 32-bit division by 10 for each digit counted, so it is for display code, not for
+tight loops.
+
+### GetBit
+
+**Syntax**
+```basic
+b = GetBit(v, n)
+```
+**Overview** Tests bit `n` of `v`.
+
+**Parameters** `v` is any integer type (read as `LongWord`); `n` is a `Byte`.
+
+**Returns** A `Boolean`: `True` when the bit is 1.
+
+**Example**
+```basic
+If GetBit(flags, 2) Then
+    Toggle(led)
+EndIf
+```
+**See also** `SetBit`, `ClearBit`.
+
+### ISqr
+
+**Syntax**
+```basic
+r = ISqr(v)
+```
+**Overview** The integer square root: the largest `r` with `r * r <= v`.
+
+**Parameters** `v` is a `LongWord` (any unsigned type converts).
+
+**Returns** A `Word`.
+
+**Example**
+```basic
+r = ISqr(1000000)         ' 1000
+```
+**Notes** About 16 shift-and-subtract rounds of 32-bit arithmetic. Use `Sqr` (floating point) only when a fraction is needed.
+
+### LoadBit
+
+**Syntax**
+```basic
+v = LoadBit(v, n, b)
+```
+**Overview** Returns `v` with bit `n` made equal to `b`.
+
+**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is the bit number; `b` is a `Byte`: 0 clears the
+bit, any other value sets it.
+
+**Example**
+```basic
+x = LoadBit(x, 4, flag)
+```
+**See also** `SetBit`, `ClearBit`.
+
+### Ncd
+
+**Syntax**
+```basic
+k = Ncd(v)
+```
+**Overview** The number of bits needed to hold `v`: the position of its highest 1 bit plus one.
+
+**Parameters** `v` is a `LongWord` (any unsigned type converts).
+
+**Returns** A `Byte`, 0 when `v` is 0: `Ncd(1)` = 1, `Ncd(%1000)` = 4, `Ncd($FFFF)` = 16.
+
+**Example**
+```basic
+Include "bits"
+Dim k As Byte
+k = Ncd(1000)                ' 10: 1000 needs ten bits
+```
+
+**See also** `Dcd`.
+
+### Random
+
+**Syntax**
+```basic
+r = Random()
+```
+**Overview** Returns the next number of a 16-bit xorshift sequence (period 65535, never 0).
+
+**Returns** `Word`.
+
+**Example**
+```basic
+dice = Byte(Random() Mod 6) + 1
+```
+**Notes** Without a `Seed` call the sequence is the same on every run. The generator state is one `Word` shared by the
+whole program; the routine is not reentrant.
+
+**See also** `Seed`
+
+### Rol
+
+**Syntax**
+```basic
+v = Rol(v)
+```
+**Overview** Rotates `v` left by one bit; the top bit comes back in at bit 0.
+
+**Parameters** `v` is a `Byte` or a `Word`.
+
+**Returns** The rotated value, of the type of `v`.
+
+**Example**
+```basic
+x = Rol(Byte(%10010000))  ' %00100001
+```
+**See also** `Ror`
+
+### Ror
+
+**Syntax**
+```basic
+v = Ror(v)
+```
+**Overview** Rotates `v` right by one bit; bit 0 comes back in at the top.
+
+**Parameters** `v` is a `Byte` or a `Word`.
+
+**Returns** The rotated value, of the type of `v`.
+
+**Example**
+```basic
+x = Ror(Byte(%10010000))  ' %01001000
+```
+**See also** `Rol`
+
+### Seed
+
+**Syntax**
+```basic
+Seed(s)
+```
+**Overview** Starts the `Random` sequence at `s`; a seed of 0 is replaced by 1.
+
+**Parameters** `s` is a `Word`.
+
+**Example**
+```basic
+Seed(AdcRead(0))          ' an unconnected analog input is a cheap noise source
+```
+**See also** `Random`
+
+### SetBit
+
+**Syntax**
+```basic
+v = SetBit(v, n)
+```
+**Overview** Returns `v` with bit `n` set to 1.
+
+**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is a `Byte`.
+
+**Example**
+```basic
+x = SetBit(x, 3)
+```
+**See also** `ClearBit`, `LoadBit`, `GetBit`.
+
+### SwapBytes
+
+**Syntax**
+```basic
+w = SwapBytes(w)
+```
+**Overview** Exchanges the two bytes of a `Word` (`$AB34` becomes `$34AB`).
+
+**Returns** `Word`.
+
+**Example**
+```basic
+w = SwapBytes(w)          ' big-endian from a sensor to little-endian
+```
+**See also** `SwapNibbles`
+
+### SwapNibbles
+
+**Syntax**
+```basic
+b = SwapNibbles(b)
+```
+**Overview** Exchanges the two nibbles of a `Byte` (`$3C` becomes `$C3`).
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+packed = SwapNibbles(packed)
+```
+**See also** `SwapBytes`
+Tests: `tests/exec/lib_bits.bas`.
+
+## floatlib  (automatic)
+
+Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong
+FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does when a program
+uses `Float`.
+
+## fmath  (`Include "fmath"`, run-time square root, logarithms, powers and trigonometry for `Float`)
+
+Run-time maths on `Float`, built on its `+ - * /`. The names start with `F` so that they do not clash with the
+build-time `Sqr`, `Sin`, `Cos`, `Pow` and `Log2`, which take constants only. Accuracy is a few units in the sixth digit.
+A result too big for a `Float` is infinity, one too small is zero. Like all `Float` arithmetic, these cannot be called
+from an interrupt handler (`E-ISR-CALL`). Tests: `tests/exec/lib_fmath.bas`, `fmath_sqrt3.bas`, `fmath_log_acc.bas`.
+
+### FCos
+
+**Syntax**
+```basic
+y = FCos(x)
+```
+**Overview** The cosine of `x` radians.
+
+**Parameters** `x` a `Float`; |x| under 200000 (a larger angle gives NaN), best under 1000.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+Include "fmath"
+Dim y As Float
+y = FCos(3.14159)             ' -1.0
+```
+**See also** `FSin`, `FTan`
+
+### FExp
+
+**Syntax**
+```basic
+y = FExp(x)
+```
+**Overview** e to the power `x`.
+
+**Returns** `Float`: infinity when the result is too big, zero when too small.
+
+**Example**
+```basic
+y = FExp(1.0)                 ' 2.71828
+```
+**See also** `FLog`, `FPow`
+
+### FLog
+
+**Syntax**
+```basic
+y = FLog(x)
+```
+**Overview** The natural logarithm of `x`.
+
+**Returns** `Float`: -infinity for 0, NaN for a negative `x`.
+
+**Example**
+```basic
+y = FLog(10.0)                ' 2.30259
+```
+**See also** `FLog10`, `FExp`
+
+### FLog10
+
+**Syntax**
+```basic
+y = FLog10(x)
+```
+**Overview** The base-10 logarithm of `x`.
+
+**Returns** `Float`: as `FLog` for 0 and negative numbers.
+
+**Example**
+```basic
+db = 20.0 * FLog10(v / vref)
+```
+**See also** `FLog`
+
+### FPow
+
+**Syntax**
+```basic
+y = FPow(x, p)
+```
+**Overview** `x` to the power `p`, as `FExp(p * FLog(x))`.
+
+**Parameters** `x` a `Float`, greater than 0; `p` a `Float`.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+y = FPow(2.0, 0.5)            ' 1.41421
+```
+**See also** `FExp`, `FSqr`
+
+### FSin
+
+**Syntax**
+```basic
+y = FSin(x)
+```
+**Overview** The sine of `x` radians. The angle is reduced by whole turns in `Integer` arithmetic.
+
+**Parameters** `x` a `Float`; |x| under 200000 (a larger angle gives NaN), best under 1000.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+y = FSin(1.5708)              ' 1.0
+```
+**See also** `FCos`, `BSin` (8-bit, binary radians)
+
+### FSqr
+
+**Syntax**
+```basic
+y = FSqr(x)
+```
+**Overview** The square root of `x`: three Newton steps from a guess made by halving the exponent.
+
+**Returns** `Float`: NaN for a negative `x`; 0 for 0; infinity for infinity.
+
+**Example**
+```basic
+y = FSqr(2.0)                 ' 1.41421
+```
+**See also** `ISqr` (integer), `FPow`
+
+### FTan
+
+**Syntax**
+```basic
+y = FTan(x)
+```
+**Overview** The tangent of `x` radians, `FSin(x) / FCos(x)`.
+
+**Parameters** as `FSin`.
+
+**Returns** `Float`.
+
+**Example**
+```basic
+y = FTan(0.7854)              ' 1.0
+```
+**See also** `FSin`, `FCos`
+
+## format  (`Include "format"`, numbers as text with a width, a fill and a radix)
+
+Fills the one shared `String` `FmtBuf` (32 characters and the `Null`), which you then pass to any routine that takes a
+`String`: `SerialWrite`, `LcdWrite`, `OledWrite`, `GlcdWrite`, an assignment, a comparison. The next call overwrites it, so
+use it before calling another `Fmt` routine, and not in a handler that interrupts a routine that is using it. One shared
+routine replaces the `Str` expansion at every call site, and the output modules need nothing new. The `Byte`, `Word` and
+`LongWord` forms (and the signed ones) are overloads of one name; a `Byte` pays for no 16-bit divide, and only the widths a
+program uses are compiled. A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and
+117 for a `LongWord` on the PIC18, start-up included.
+
+A width or digit count above the limit is taken as the limit. Portable (no device registers); `tests/exec/lib_format.bas`
+runs on the PIC18 and PIC16 parts.
+
+### FmtBin
+
+**Syntax**
+```basic
+FmtBin(n, digits)
+```
+**Overview** Writes the low `digits` binary digits of `n` into `FmtBuf`, with leading zeros. Uses shifts, no divide.
+
+**Parameters** `n` a `Byte`, `Word` or `LongWord`; `digits` 0 to 32.
+
+**Example**
+```basic
+FmtBin(b, 8)               ' b = 5:   00000101
+SerialWrite(FmtBuf)
+```
+**See also** `FmtHex`
+
+### FmtDec
+
+**Syntax**
+```basic
+FmtDec(n, width, fill)
+```
+**Overview** Writes `n` as an unsigned decimal number into `FmtBuf`, at least `width` characters, padded on the left
+with `fill`. A longer number is never cut.
+
+**Parameters** `n` a `Byte`, `Word` or `LongWord` (a `Byte` pays for no 16-bit divide); `width` 0 to 32; `fill` a
+`Char`, usually `"0"` or `" "`.
+
+**Example**
+```basic
+Include "format"
+Include "serial"
+FmtDec(w, 5, "0")          ' w = 42:  00042
+SerialWrite(FmtBuf)
+```
+**Notes** A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and 117 for a
+`LongWord` on the PIC18, start-up included.
+
+**See also** `FmtSDec`, `Str`
+
+### FmtHex
+
+**Syntax**
+```basic
+FmtHex(n, digits)
+```
+**Overview** Writes the low `digits` hexadecimal digits of `n` into `FmtBuf`, in capitals, with leading zeros. Uses
+shifts, no divide.
+
+**Parameters** `n` a `Byte`, `Word` or `LongWord`; `digits` 0 to 8.
+
+**Example**
+```basic
+FmtHex(b, 2)               ' b = 42:  2A
+LcdWrite(FmtBuf)
+```
+**See also** `FmtBin`, `SerialWriteHex`
+
+### FmtSDec
+
+**Syntax**
+```basic
+FmtSDec(n, width, fill)
+```
+**Overview** `FmtDec` for a signed number. The minus sign counts in the width; it comes before the zeros of a `"0"`
+fill and right before the digits of any other fill.
+
+**Parameters** `n` a `ShortInt`, `Integer` or `LongInt`; `width` 0 to 32; `fill` a `Char`.
+
+**Example**
+```basic
+FmtSDec(t, 6, " ")         ' t = -42: "   -42"
+FmtSDec(t, 6, "0")         ' t = -42: "-00042"
+```
+**See also** `FmtDec`
+
+## strings  (`Include "strings"`)
+
+String routines. `Left$`, `Mid$`, `Right$` and `Str$` are part of the language (see *Strings*, section 1).
+
+### Len
+
+**Syntax**
+```basic
+n = Len(s)
+```
+**Overview** The number of characters before the `Null`.
+
+**Parameters** `s` a `String` of any size, or a literal.
+
+**Returns** `Byte`: 0 for `Null` or an empty string, at most 255.
+
+**Example**
+```basic
+Include "strings"
+Dim name As String(20) = "basil"
+Dim n As Byte
+n = Len(name)        ' 5
+n = Len("abc")       ' 3
+```
+
+---
+
 ## Category: Displays
 
-## lcd  (`Include "lcd"`, HD44780 character LCD, 4-bit)
+## epaper  (`Include "epaper"`, WeAct 2.13" and 2.9" e-paper modules, SSD1680)
 
-Six port pins are used: RS, E and DB4..DB7 (pin numbers as in `pinio` (0..23, up to 47 on parts with ports D to F)). R/W is not used unless `LcdRwInit` is called: tie it
-to ground. Writes never read the busy flag; every instruction is followed by a fixed wait longer than its worst
-case. Reading the display (`LcdStatus`, `LcdRead`) needs the R/W pin. The pins
-are set by read-modify-write of `LATA/B/C`, so do not use the module from a handler and from the main
-program together, and do not change those `LATx` registers elsewhere while a routine runs.
+The WeAct 2.13" (122 x 250) and 2.9" (128 x 296) e-paper modules, black / white and black / white / red, all with the Solomon Systech SSD1680 driver on 4-wire SPI. Set up the bus first with `SpiInit` (mode 0 or 3, at most 20 MHz). The module owns D/C#, CS# (255 = tied low), RES# (255 = none) and BUSY (needed), pins as in `pinio` (0..23, up to 47 on parts with ports D to F); the 8-pin module is VCC (3.3 V), GND, SDA, SCL, CS, D/C, RES, BUSY. **Nothing has run on a real panel:** the test runs the module against a software model of the SSD1680 (`tests/exec_epaper`).
 
-A 2-line display has line 1 at DDRAM address 00H..27H and line 2 at 40H..67H; a 1-line display uses
-00H..4FH. Four-line displays are not described by the data sheet: address them with `LcdSetAddress`.
+There is **no frame buffer** (a plane is 4736 bytes on the 2.9", more than most parts have, and the SPI link cannot be read back), so the RAM is written directly in whole bytes of 8 pixels across: `x` and widths are multiples of 8, `y` and heights any pixel row. There is no single-pixel, line or circle call. Draw filled rectangles, text on an 8 x 8 cell grid, or stream your own bitmap bytes into a window. Nothing shows until `EpdUpdate`, which flashes the panel for a few seconds (longer with red); the RAM keeps its content. Fast and partial refresh are not provided (the vendor's versions need a waveform table or a temperature trick that the SSD1680 data sheet does not describe).
 
-### LcdInit
-
-**Syntax**
-```basic
-ok = LcdInit(rs, en, d4, d5, d6, d7, lines)
-```
-**Overview** Makes the six pins digital outputs, runs the 4-bit initialisation by instruction, turns the
-display on with no cursor, clears it and selects increment, no shift. Takes about 55 ms.
-
-**Parameters** `rs`, `en`, `d4`..`d7` pin numbers, all different; `lines` 1 or 2 (5 x 8 dot font).
-
-**Returns** `Byte`: 1, or 0 when `lines` is not 1 or 2, a pin the part lacks or a pin used twice.
-After a 0 the other `Lcd` routines do nothing until an `LcdInit` succeeds.
+`x` runs along the 122 / 128 side, `y` down the 250 / 296 side with the connector at the top. Colours: 0 white, 1 black, 2 red (drawn black on a black / white panel).
 
 **Example**
 ```basic
-Dim ok As Byte
-ok = LcdInit(16, 17, 18, 19, 20, 21, 2)   ' RS=RC0 E=RC1 D4..D7=RC2..RC5
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
+Include "spi"
+Include "epaper"
+Dim r As Byte
+' SCK = RB0, SDO = RB1; D/C = RA0, CS = RA1, RES = RA2, BUSY = RA3.
+r = Spi.SpiInit(4000000, 0, 8, 9, 255)
+r = Epaper.EpdInit(1, True, 0, 1, 2, 3)
+Epaper.EpdClear(0)
+Epaper.EpdFillRect(8, 8, 64, 32, 2)
+Epaper.EpdTextColour(1)
+Epaper.EpdTextAt(1, 6)
+Epaper.EpdWrite("Hello")
+r = Epaper.EpdUpdate()
+Epaper.EpdSleep()
 ```
 
-### LcdCommand
+Facts that come from the vendor's example code, not the SSD1680 data sheet, and are marked `[WeAct]` in `lib/epaper.bas`: the gate count and scan direction used for both sizes (296 lines, TB = 1, RAM Y = 295 - y, so the 250-line panel uses RAM Y 295..46), the border (3Ch = 05h) and source (21h = 00h 80h) settings, and writing the same bytes to both planes on a black / white panel. The data sheet does not say which plane wins when a pixel is marked in both, so a red pixel is written white in the black / white plane. A failed init turns the module off until the next successful one; after `EpdSleep` call `EpdWake` before drawing (the chip ignores RAM writes in deep sleep). The routines are not reentrant. Sources (git-ignored in `docs/`): `SSD1680_Datasheet.pdf` Rev 0.14, `WeAct-*-panel.pdf`, `WeAct-EpaperModule-2.13_2.9-SchDoc.pdf`.
+
+### EpdInit
 
 **Syntax**
 ```basic
-LcdCommand(c)
+ok = EpdInit(size, threeColour, dc, cs, res, busy)
 ```
-**Overview** Sends any instruction byte (see the data sheet's instruction table). Waits 2 ms after Clear
-display and Return home, 50 us after the rest.
+**Overview** Resets the controller and sends the start-up code. `SpiInit` must have been called (mode 0 or 3, at most 20 MHz).
+
+**Parameters** `size` 0 = 2.13" (122 x 250), 1 = 2.9" (128 x 296); `threeColour` True for the black / white / red panels; `dc`, `cs`, `res`, `busy` the D/C#, CS#, RES# and BUSY pins as in `pinio` (`cs` 255 = tied low, `res` 255 = none).
+
+**Returns** `Byte`: 1; 0 for a bad size, a pin the part lacks or a pin used twice; 2 when BUSY did not fall within about 40 s (nothing on BUSY, or no module).
 
 **Example**
 ```basic
-LcdCommand($01)                   ' clear display
+Include "spi"
+Dim r As Byte
+r = Spi.SpiInit(4000000, 0, 8, 9, 255)     ' SCK = RB0, SDO = RB1
+r = Epaper.EpdInit(1, True, 0, 1, 2, 3)    ' D/C = RA0, CS = RA1, RES = RA2, BUSY = RA3
 ```
+**See also** `EpdUpdate`
 
-### LcdClear
+### EpdWidth
 
 **Syntax**
 ```basic
-LcdClear()
+w = EpdWidth()
 ```
-**Overview** Clears the display and puts the cursor at the first character of the first line.
+**Overview** The width in pixels: 122 or 128.
+
+**Returns** `Word`.
 
 **Example**
 ```basic
-LcdClear()
-LcdWrite("Ready")
+w = EpdWidth()
 ```
-**See also** `LcdHome`, `LcdGoto`.
+**See also** `EpdHeight`
 
-### LcdHome
+### EpdHeight
 
 **Syntax**
 ```basic
-LcdHome()
+h = EpdHeight()
 ```
-**Overview** Puts the cursor at the first character of the first line and shifts the display back to its unshifted
-position; the text stays.
+**Overview** The height in pixels: 250 or 296.
+
+**Returns** `Word`.
 
 **Example**
 ```basic
-LcdHome()
+h = EpdHeight()
 ```
-**See also** `LcdClear`, `LcdShift`.
+**See also** `EpdWidth`
 
-### LcdDisplay
+### EpdClear
 
 **Syntax**
 ```basic
-LcdDisplay(on, cursor, blink)
+EpdClear(colour)
 ```
-**Overview** Display on/off control.
-
-**Parameters** Three `Boolean`s: display on, cursor shown, character at the cursor blinks.
+**Overview** Fills both planes of the whole RAM with a colour (0 white, 1 black, 2 red).
 
 **Example**
 ```basic
-LcdDisplay(True, True, False)
+EpdClear(0)
 ```
+**See also** `EpdFillRect`
 
-### LcdShift
+### EpdFillRect
 
 **Syntax**
 ```basic
-LcdShift(whole, right)
+EpdFillRect(x, y, w, h, colour)
 ```
-**Overview** Shifts the whole display (`whole` True) or only the cursor, one position right (`right`
-True) or left.
+**Overview** Fills a rectangle with a colour.
+
+**Parameters** `x` and `w` multiples of 8; `y`, `h` any pixel row; a rectangle outside the display is ignored.
 
 **Example**
 ```basic
-LcdShift(True, False)             ' whole display one place left
+EpdFillRect(8, 8, 64, 32, 2)
 ```
+**See also** `EpdClear`
 
-### LcdGoto
+### EpdTextColour
 
 **Syntax**
 ```basic
-LcdGoto(col, row)
+EpdTextColour(colour)
 ```
-**Overview** Moves the cursor.
-
-**Parameters** `col` 0..39 (0..79 on a one-line display); `row` 0 or 1. A position the display does not
-have is ignored.
+**Overview** The colour of the text that follows (1 black, 2 red); the cell background is white.
 
 **Example**
 ```basic
-LcdGoto(0, 1)                     ' start of line 2
+EpdTextColour(1)
 ```
+**See also** `EpdWrite`
 
-### LcdSetAddress
+### EpdTextAt
 
 **Syntax**
 ```basic
-LcdSetAddress(addr)
+EpdTextAt(col, row)
 ```
-**Overview** Sets the raw DDRAM address; the next character is written there.
+**Overview** Puts the next character in cell `col` of text row `row`. Cells are 8 x 8 pixels with a 5 x 7 font.
 
-**Parameters** `addr` 0..127.
+**Parameters** `col` 0..15 (0..14 on the 2.13"); `row` 0..height / 8 - 1.
 
 **Example**
 ```basic
-LcdSetAddress($14)                ' line 3 of a common four-line display
+EpdTextAt(1, 6)
 ```
+**See also** `EpdWriteChar`
 
-### LcdWriteChar
+### EpdWriteChar
 
 **Syntax**
 ```basic
-LcdWriteChar(ch)
+EpdWriteChar(ch)
 ```
-**Overview** Writes one character code at the cursor. Codes 32..126 are ASCII (A00 character ROM);
-0..7 are the user characters of `LcdCustomRow`.
+**Overview** One character (32..126; others draw nothing but still advance) at the text position, which then moves one cell right, wrapping to column 0 of the next row at the right edge.
+
+**Parameters** `ch` a `Byte`.
 
 **Example**
 ```basic
-LcdWriteChar(65)                  ' "A"
+EpdWriteChar(65)
 ```
+**See also** `EpdWrite`
 
-### LcdWrite
+### EpdWrite
 
 **Syntax**
 ```basic
-LcdWrite(text)
+EpdWrite(s)
 ```
-**Overview** Writes a string or literal (up to 80 characters) at the cursor.
+**Overview** Writes a string at the text position with `EpdWriteChar`.
+
+**Parameters** `s` a `String`, up to 80 characters.
 
 **Example**
 ```basic
-LcdWrite("Hello")
+EpdWrite("Hello")
 ```
+**See also** `EpdTextAt`
 
-### LcdWriteWord
+### EpdWindow
 
 **Syntax**
 ```basic
-LcdWriteWord(v)
+EpdWindow(x, y, w, h)
 ```
-**Overview** Writes a `Word` as unsigned decimal, without leading zeros.
+**Overview** Sets the RAM window for your own bitmap and puts the RAM pointer at its first byte. The bytes then sent fill it row by row, x fastest.
+
+**Parameters** `x` and `w` multiples of 8 (`w` at least 8); `y`, `h` pixel rows. A window outside the display is ignored.
 
 **Example**
 ```basic
-LcdWriteWord(2048)
+EpdWindow(0, 0, 16, 2)
+EpdBegin(0)
+EpdPut($FF)
+EpdPut($00)
+EpdPut($0F)
+EpdPut($F0)
+EpdEnd()
 ```
+**See also** `EpdBegin`
 
-### LcdWriteHex
+### EpdBegin
 
 **Syntax**
 ```basic
-LcdWriteHex(v)
+EpdBegin(plane)
 ```
-**Overview** Writes a `Byte` as two hexadecimal digits.
+**Overview** Opens a plane of the window for writing: follow with `EpdPut` for each byte, then `EpdEnd`.
+
+**Parameters** `plane` 0 black / white (a 1 bit is white), 1 red (a 1 bit is red).
 
 **Example**
 ```basic
-LcdWriteHex($3C)
+EpdBegin(0)
 ```
+**See also** `EpdPut`, `EpdEnd`
 
-### LcdCustomRow
+### EpdPut
 
 **Syntax**
 ```basic
-LcdCustomRow(slot, row, bits)
+EpdPut(b)
 ```
-**Overview** Sets one dot row of a user-defined character.
+**Overview** One byte of the open plane: 8 pixels across, bit 7 on the left.
 
-**Parameters** `slot` 0..7 (shown as character code 0..7); `row` 0..7; `bits` uses the low five bits
-(bit 4 = leftmost dot). Keep row 7 at 0 if the cursor is used.
+**Parameters** `b` a `Byte`.
 
 **Example**
 ```basic
-LcdCustomRow(0, 0, %00001110)
-LcdCustomRow(0, 1, %00010001)
-LcdGoto(0, 0)                     ' leave CGRAM before writing text
-LcdWriteChar(0)
+EpdPut($AA)
 ```
-**Notes** The write leaves the address counter in CGRAM: call `LcdGoto`, `LcdClear` or `LcdHome` before
-writing text.
+**See also** `EpdBegin`
 
-### LcdRwInit
+### EpdEnd
 
 **Syntax**
 ```basic
-ok = LcdRwInit(rw)
+EpdEnd()
 ```
-**Overview** Claims the display's R/W pin as a digital output, low (write), so that `LcdStatus` and `LcdRead` can
-read the display. Call it after a successful `LcdInit`; a second call moves the pin.
-
-**Parameters** `rw` a pin number, none of the six pins of `LcdInit`.
-
-**Returns** `Byte`: 1, or 0 when `LcdInit` has not succeeded, the pin is one the part lacks or it is one
-of the six pins. Calling `LcdInit` again forgets the R/W pin.
+**Overview** Closes the plane opened by `EpdBegin`.
 
 **Example**
 ```basic
-ok = LcdInit(16, 17, 18, 19, 20, 21, 2)
-ok = LcdRwInit(22)                ' R/W on RC6
+EpdEnd()
 ```
+**See also** `EpdBegin`
 
-### LcdStatus
+### EpdUpdate
 
 **Syntax**
 ```basic
-s = LcdStatus()
+ok = EpdUpdate()
 ```
-**Overview** Reads the busy flag and the address counter.
+**Overview** Refreshes the panel from the RAM and waits for BUSY to fall. The panel flashes for a few seconds (longer with red); the RAM keeps its content. Nothing drawn shows until this call.
 
-**Returns** `Byte`: bit 7 is the busy flag, bits 0..6 the address counter. 0 when `LcdRwInit` has not succeeded.
+**Returns** `Byte`: 1, or 0 when BUSY stayed high for about 40 s.
 
 **Example**
 ```basic
-While (LcdStatus() And 128) <> 0
-Wend
+r = EpdUpdate()
 ```
-**Notes** The data bus pins are inputs for the read and outputs again after it, so the display must be the only
-thing on them.
+**See also** `EpdSleep`
 
-### LcdRead
+### EpdSleep
 
 **Syntax**
 ```basic
-ch = LcdRead()
+EpdSleep()
 ```
-**Overview** Waits for the busy flag to clear (at most 255 reads, so a missing display cannot hang the program), then
-reads the byte at the address counter: DDRAM, or CGRAM after `LcdCommand(64 + address)`. The address then moves as the
-entry mode says.
-
-**Returns** `Byte`: 0 when `LcdRwInit` has not succeeded.
+**Overview** Deep sleep mode 1 (about 1 uA). The RAM is kept but cannot be written: call `EpdWake` before drawing.
 
 **Example**
 ```basic
-LcdGoto(3, 1)
-ch = LcdRead()                    ' the character at column 3 of line 2
+EpdSleep()
 ```
-**Notes** The byte is valid straight after `LcdGoto`, `LcdSetAddress` or a cursor shift. After writing characters the
-byte at the counter cannot be read: call one of those first (HD44780U, "Read data from CG or DDRAM").
+**See also** `EpdWake`
+
+### EpdWake
+
+**Syntax**
+```basic
+ok = EpdWake()
+```
+**Overview** Leaves deep sleep. Only a hardware reset ends it, so RES# must be wired; the start-up code is sent again.
+
+**Returns** `Byte`: 1; 0 when no init has succeeded or RES# is not wired (`res` 255); 2 when BUSY did not fall.
+
+**Example**
+```basic
+r = EpdWake()
+```
+**See also** `EpdSleep`
+
+---
 
 ## glcd  (`Include "glcd"`, graphic LCDs: KS0108, T6963C, ST7920)
 
@@ -7261,296 +4815,272 @@ GlcdWriteCode(128)
 
 ---
 
-## epaper  (`Include "epaper"`, WeAct 2.13" and 2.9" e-paper modules, SSD1680)
+## lcd  (`Include "lcd"`, HD44780 character LCD, 4-bit)
 
-The WeAct 2.13" (122 x 250) and 2.9" (128 x 296) e-paper modules, black / white and black / white / red, all with the Solomon Systech SSD1680 driver on 4-wire SPI. Set up the bus first with `SpiInit` (mode 0 or 3, at most 20 MHz). The module owns D/C#, CS# (255 = tied low), RES# (255 = none) and BUSY (needed), pins as in `pinio` (0..23, up to 47 on parts with ports D to F); the 8-pin module is VCC (3.3 V), GND, SDA, SCL, CS, D/C, RES, BUSY. **Nothing has run on a real panel:** the test runs the module against a software model of the SSD1680 (`tests/exec_epaper`).
+Six port pins are used: RS, E and DB4..DB7 (pin numbers as in `pinio` (0..23, up to 47 on parts with ports D to F)). R/W is not used unless `LcdRwInit` is called: tie it
+to ground. Writes never read the busy flag; every instruction is followed by a fixed wait longer than its worst
+case. Reading the display (`LcdStatus`, `LcdRead`) needs the R/W pin. The pins
+are set by read-modify-write of `LATA/B/C`, so do not use the module from a handler and from the main
+program together, and do not change those `LATx` registers elsewhere while a routine runs.
 
-There is **no frame buffer** (a plane is 4736 bytes on the 2.9", more than most parts have, and the SPI link cannot be read back), so the RAM is written directly in whole bytes of 8 pixels across: `x` and widths are multiples of 8, `y` and heights any pixel row. There is no single-pixel, line or circle call. Draw filled rectangles, text on an 8 x 8 cell grid, or stream your own bitmap bytes into a window. Nothing shows until `EpdUpdate`, which flashes the panel for a few seconds (longer with red); the RAM keeps its content. Fast and partial refresh are not provided (the vendor's versions need a waveform table or a temperature trick that the SSD1680 data sheet does not describe).
+A 2-line display has line 1 at DDRAM address 00H..27H and line 2 at 40H..67H; a 1-line display uses
+00H..4FH. Four-line displays are not described by the data sheet: address them with `LcdSetAddress`.
 
-`x` runs along the 122 / 128 side, `y` down the 250 / 296 side with the connector at the top. Colours: 0 white, 1 black, 2 red (drawn black on a black / white panel).
-
-**Example**
-```basic
-Device = 18F27Q10
-Clock = 64
-Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
-Include "spi"
-Include "epaper"
-Dim r As Byte
-' SCK = RB0, SDO = RB1; D/C = RA0, CS = RA1, RES = RA2, BUSY = RA3.
-r = Spi.SpiInit(4000000, 0, 8, 9, 255)
-r = Epaper.EpdInit(1, True, 0, 1, 2, 3)
-Epaper.EpdClear(0)
-Epaper.EpdFillRect(8, 8, 64, 32, 2)
-Epaper.EpdTextColour(1)
-Epaper.EpdTextAt(1, 6)
-Epaper.EpdWrite("Hello")
-r = Epaper.EpdUpdate()
-Epaper.EpdSleep()
-```
-
-Facts that come from the vendor's example code, not the SSD1680 data sheet, and are marked `[WeAct]` in `lib/epaper.bas`: the gate count and scan direction used for both sizes (296 lines, TB = 1, RAM Y = 295 - y, so the 250-line panel uses RAM Y 295..46), the border (3Ch = 05h) and source (21h = 00h 80h) settings, and writing the same bytes to both planes on a black / white panel. The data sheet does not say which plane wins when a pixel is marked in both, so a red pixel is written white in the black / white plane. A failed init turns the module off until the next successful one; after `EpdSleep` call `EpdWake` before drawing (the chip ignores RAM writes in deep sleep). The routines are not reentrant. Sources (git-ignored in `docs/`): `SSD1680_Datasheet.pdf` Rev 0.14, `WeAct-*-panel.pdf`, `WeAct-EpaperModule-2.13_2.9-SchDoc.pdf`.
-
-### EpdInit
+### LcdInit
 
 **Syntax**
 ```basic
-ok = EpdInit(size, threeColour, dc, cs, res, busy)
+ok = LcdInit(rs, en, d4, d5, d6, d7, lines)
 ```
-**Overview** Resets the controller and sends the start-up code. `SpiInit` must have been called (mode 0 or 3, at most 20 MHz).
+**Overview** Makes the six pins digital outputs, runs the 4-bit initialisation by instruction, turns the
+display on with no cursor, clears it and selects increment, no shift. Takes about 55 ms.
 
-**Parameters** `size` 0 = 2.13" (122 x 250), 1 = 2.9" (128 x 296); `threeColour` True for the black / white / red panels; `dc`, `cs`, `res`, `busy` the D/C#, CS#, RES# and BUSY pins as in `pinio` (`cs` 255 = tied low, `res` 255 = none).
+**Parameters** `rs`, `en`, `d4`..`d7` pin numbers, all different; `lines` 1 or 2 (5 x 8 dot font).
 
-**Returns** `Byte`: 1; 0 for a bad size, a pin the part lacks or a pin used twice; 2 when BUSY did not fall within about 40 s (nothing on BUSY, or no module).
+**Returns** `Byte`: 1, or 0 when `lines` is not 1 or 2, a pin the part lacks or a pin used twice.
+After a 0 the other `Lcd` routines do nothing until an `LcdInit` succeeds.
 
 **Example**
 ```basic
-Include "spi"
-Dim r As Byte
-r = Spi.SpiInit(4000000, 0, 8, 9, 255)     ' SCK = RB0, SDO = RB1
-r = Epaper.EpdInit(1, True, 0, 1, 2, 3)    ' D/C = RA0, CS = RA1, RES = RA2, BUSY = RA3
+Dim ok As Byte
+ok = LcdInit(16, 17, 18, 19, 20, 21, 2)   ' RS=RC0 E=RC1 D4..D7=RC2..RC5
 ```
-**See also** `EpdUpdate`
 
-### EpdWidth
+### LcdCommand
 
 **Syntax**
 ```basic
-w = EpdWidth()
+LcdCommand(c)
 ```
-**Overview** The width in pixels: 122 or 128.
-
-**Returns** `Word`.
+**Overview** Sends any instruction byte (see the data sheet's instruction table). Waits 2 ms after Clear
+display and Return home, 50 us after the rest.
 
 **Example**
 ```basic
-w = EpdWidth()
+LcdCommand($01)                   ' clear display
 ```
-**See also** `EpdHeight`
 
-### EpdHeight
+### LcdClear
 
 **Syntax**
 ```basic
-h = EpdHeight()
+LcdClear()
 ```
-**Overview** The height in pixels: 250 or 296.
-
-**Returns** `Word`.
+**Overview** Clears the display and puts the cursor at the first character of the first line.
 
 **Example**
 ```basic
-h = EpdHeight()
+LcdClear()
+LcdWrite("Ready")
 ```
-**See also** `EpdWidth`
+**See also** `LcdHome`, `LcdGoto`.
 
-### EpdClear
+### LcdHome
 
 **Syntax**
 ```basic
-EpdClear(colour)
+LcdHome()
 ```
-**Overview** Fills both planes of the whole RAM with a colour (0 white, 1 black, 2 red).
+**Overview** Puts the cursor at the first character of the first line and shifts the display back to its unshifted
+position; the text stays.
 
 **Example**
 ```basic
-EpdClear(0)
+LcdHome()
 ```
-**See also** `EpdFillRect`
+**See also** `LcdClear`, `LcdShift`.
 
-### EpdFillRect
+### LcdDisplay
 
 **Syntax**
 ```basic
-EpdFillRect(x, y, w, h, colour)
+LcdDisplay(on, cursor, blink)
 ```
-**Overview** Fills a rectangle with a colour.
+**Overview** Display on/off control.
 
-**Parameters** `x` and `w` multiples of 8; `y`, `h` any pixel row; a rectangle outside the display is ignored.
+**Parameters** Three `Boolean`s: display on, cursor shown, character at the cursor blinks.
 
 **Example**
 ```basic
-EpdFillRect(8, 8, 64, 32, 2)
+LcdDisplay(True, True, False)
 ```
-**See also** `EpdClear`
 
-### EpdTextColour
+### LcdShift
 
 **Syntax**
 ```basic
-EpdTextColour(colour)
+LcdShift(whole, right)
 ```
-**Overview** The colour of the text that follows (1 black, 2 red); the cell background is white.
+**Overview** Shifts the whole display (`whole` True) or only the cursor, one position right (`right`
+True) or left.
 
 **Example**
 ```basic
-EpdTextColour(1)
+LcdShift(True, False)             ' whole display one place left
 ```
-**See also** `EpdWrite`
 
-### EpdTextAt
+### LcdGoto
 
 **Syntax**
 ```basic
-EpdTextAt(col, row)
+LcdGoto(col, row)
 ```
-**Overview** Puts the next character in cell `col` of text row `row`. Cells are 8 x 8 pixels with a 5 x 7 font.
+**Overview** Moves the cursor.
 
-**Parameters** `col` 0..15 (0..14 on the 2.13"); `row` 0..height / 8 - 1.
+**Parameters** `col` 0..39 (0..79 on a one-line display); `row` 0 or 1. A position the display does not
+have is ignored.
 
 **Example**
 ```basic
-EpdTextAt(1, 6)
+LcdGoto(0, 1)                     ' start of line 2
 ```
-**See also** `EpdWriteChar`
 
-### EpdWriteChar
+### LcdSetAddress
 
 **Syntax**
 ```basic
-EpdWriteChar(ch)
+LcdSetAddress(addr)
 ```
-**Overview** One character (32..126; others draw nothing but still advance) at the text position, which then moves one cell right, wrapping to column 0 of the next row at the right edge.
+**Overview** Sets the raw DDRAM address; the next character is written there.
 
-**Parameters** `ch` a `Byte`.
+**Parameters** `addr` 0..127.
 
 **Example**
 ```basic
-EpdWriteChar(65)
+LcdSetAddress($14)                ' line 3 of a common four-line display
 ```
-**See also** `EpdWrite`
 
-### EpdWrite
+### LcdWriteChar
 
 **Syntax**
 ```basic
-EpdWrite(s)
+LcdWriteChar(ch)
 ```
-**Overview** Writes a string at the text position with `EpdWriteChar`.
-
-**Parameters** `s` a `String`, up to 80 characters.
+**Overview** Writes one character code at the cursor. Codes 32..126 are ASCII (A00 character ROM);
+0..7 are the user characters of `LcdCustomRow`.
 
 **Example**
 ```basic
-EpdWrite("Hello")
+LcdWriteChar(65)                  ' "A"
 ```
-**See also** `EpdTextAt`
 
-### EpdWindow
+### LcdWrite
 
 **Syntax**
 ```basic
-EpdWindow(x, y, w, h)
+LcdWrite(text)
 ```
-**Overview** Sets the RAM window for your own bitmap and puts the RAM pointer at its first byte. The bytes then sent fill it row by row, x fastest.
-
-**Parameters** `x` and `w` multiples of 8 (`w` at least 8); `y`, `h` pixel rows. A window outside the display is ignored.
+**Overview** Writes a string or literal (up to 80 characters) at the cursor.
 
 **Example**
 ```basic
-EpdWindow(0, 0, 16, 2)
-EpdBegin(0)
-EpdPut($FF)
-EpdPut($00)
-EpdPut($0F)
-EpdPut($F0)
-EpdEnd()
+LcdWrite("Hello")
 ```
-**See also** `EpdBegin`
 
-### EpdBegin
+### LcdWriteWord
 
 **Syntax**
 ```basic
-EpdBegin(plane)
+LcdWriteWord(v)
 ```
-**Overview** Opens a plane of the window for writing: follow with `EpdPut` for each byte, then `EpdEnd`.
-
-**Parameters** `plane` 0 black / white (a 1 bit is white), 1 red (a 1 bit is red).
+**Overview** Writes a `Word` as unsigned decimal, without leading zeros.
 
 **Example**
 ```basic
-EpdBegin(0)
+LcdWriteWord(2048)
 ```
-**See also** `EpdPut`, `EpdEnd`
 
-### EpdPut
+### LcdWriteHex
 
 **Syntax**
 ```basic
-EpdPut(b)
+LcdWriteHex(v)
 ```
-**Overview** One byte of the open plane: 8 pixels across, bit 7 on the left.
-
-**Parameters** `b` a `Byte`.
+**Overview** Writes a `Byte` as two hexadecimal digits.
 
 **Example**
 ```basic
-EpdPut($AA)
+LcdWriteHex($3C)
 ```
-**See also** `EpdBegin`
 
-### EpdEnd
+### LcdCustomRow
 
 **Syntax**
 ```basic
-EpdEnd()
+LcdCustomRow(slot, row, bits)
 ```
-**Overview** Closes the plane opened by `EpdBegin`.
+**Overview** Sets one dot row of a user-defined character.
+
+**Parameters** `slot` 0..7 (shown as character code 0..7); `row` 0..7; `bits` uses the low five bits
+(bit 4 = leftmost dot). Keep row 7 at 0 if the cursor is used.
 
 **Example**
 ```basic
-EpdEnd()
+LcdCustomRow(0, 0, %00001110)
+LcdCustomRow(0, 1, %00010001)
+LcdGoto(0, 0)                     ' leave CGRAM before writing text
+LcdWriteChar(0)
 ```
-**See also** `EpdBegin`
+**Notes** The write leaves the address counter in CGRAM: call `LcdGoto`, `LcdClear` or `LcdHome` before
+writing text.
 
-### EpdUpdate
+### LcdRwInit
 
 **Syntax**
 ```basic
-ok = EpdUpdate()
+ok = LcdRwInit(rw)
 ```
-**Overview** Refreshes the panel from the RAM and waits for BUSY to fall. The panel flashes for a few seconds (longer with red); the RAM keeps its content. Nothing drawn shows until this call.
+**Overview** Claims the display's R/W pin as a digital output, low (write), so that `LcdStatus` and `LcdRead` can
+read the display. Call it after a successful `LcdInit`; a second call moves the pin.
 
-**Returns** `Byte`: 1, or 0 when BUSY stayed high for about 40 s.
+**Parameters** `rw` a pin number, none of the six pins of `LcdInit`.
+
+**Returns** `Byte`: 1, or 0 when `LcdInit` has not succeeded, the pin is one the part lacks or it is one
+of the six pins. Calling `LcdInit` again forgets the R/W pin.
 
 **Example**
 ```basic
-r = EpdUpdate()
+ok = LcdInit(16, 17, 18, 19, 20, 21, 2)
+ok = LcdRwInit(22)                ' R/W on RC6
 ```
-**See also** `EpdSleep`
 
-### EpdSleep
+### LcdStatus
 
 **Syntax**
 ```basic
-EpdSleep()
+s = LcdStatus()
 ```
-**Overview** Deep sleep mode 1 (about 1 uA). The RAM is kept but cannot be written: call `EpdWake` before drawing.
+**Overview** Reads the busy flag and the address counter.
+
+**Returns** `Byte`: bit 7 is the busy flag, bits 0..6 the address counter. 0 when `LcdRwInit` has not succeeded.
 
 **Example**
 ```basic
-EpdSleep()
+While (LcdStatus() And 128) <> 0
+Wend
 ```
-**See also** `EpdWake`
+**Notes** The data bus pins are inputs for the read and outputs again after it, so the display must be the only
+thing on them.
 
-### EpdWake
+### LcdRead
 
 **Syntax**
 ```basic
-ok = EpdWake()
+ch = LcdRead()
 ```
-**Overview** Leaves deep sleep. Only a hardware reset ends it, so RES# must be wired; the start-up code is sent again.
+**Overview** Waits for the busy flag to clear (at most 255 reads, so a missing display cannot hang the program), then
+reads the byte at the address counter: DDRAM, or CGRAM after `LcdCommand(64 + address)`. The address then moves as the
+entry mode says.
 
-**Returns** `Byte`: 1; 0 when no init has succeeded or RES# is not wired (`res` 255); 2 when BUSY did not fall.
+**Returns** `Byte`: 0 when `LcdRwInit` has not succeeded.
 
 **Example**
 ```basic
-r = EpdWake()
+LcdGoto(3, 1)
+ch = LcdRead()                    ' the character at column 3 of line 2
 ```
-**See also** `EpdSleep`
-
----
+**Notes** The byte is valid straight after `LcdGoto`, `LcdSetAddress` or a cursor shift. After writing characters the
+byte at the counter cannot be read: call one of those first (HD44780U, "Read data from CG or DDRAM").
 
 ## oled  (`Include "oled"`, SSD1309, 128 x 64, I2C or 4-wire SPI)
 
@@ -9993,618 +7523,3087 @@ st = RtccspiEventFlags(lo, hi, True)
 
 ---
 
-## Category: Bits, maths and strings
+## Category: Serial and buses
 
-## bits  (`Include "bits"`, bit tests, rotates, decoding, integer square root, random numbers, binary-radian trigonometry)
+## i2c  (`Include "i2c"`, MSSP1 host)
 
-Counterparts of the classic `ClearBit`, `Dcd`, `Dig`, `GetBit`, `ISqr`, `LoadBit`, `Ncd`, `Random`,
-`Rol`, `Ror`, `Seed`, `SetBit` and `Swap` commands. Spelling differs where the original does not
-fit: the original changes its argument in place, basil's routines **return the new value**
-(`x = SetBit(x, 3)`), and `Swap` is split into `SwapNibbles` and `SwapBytes`. `Byte`, `Word` and
-`LongWord` forms are overloads of one name: the argument's type picks the form, so write
-`SetBit(Byte(0), 5)` when the argument is a bare constant. A bit number past the top of the type
-changes nothing and reads as 0.
+I2C host (master). On the PIC18F27Q10 SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
+(19) and SDA = RC4 (20). The pins the other parts can route are in `docs/LIBRARY.md` (*i2c*). The module is the only host on the bus (no multi-master): a collision is an
+error. The bus needs external pull-ups. `Clock` must be FOSC in MHz. Every step is done by the hardware
+one at a time and each wait is bounded, so a stuck bus returns an error instead of hanging.
 
-`BSin`, `BCos`, `BAtn` and `BHyp` are 8-bit integer trigonometry for small, fast jobs (a lookup table, a heading, a vector length). Angles are
-*binary radians*: one `Byte`, 256 steps to the turn. They are not the build-time `Sin` and `Cos`, which take radians and give a `Float`.
+**Status codes** (`I2cStatus`, and the return of Start, Restart, Stop and Send): 0 ok, 1 timeout (a bus
+line held low or no pull-up), 2 bus collision, 3 no acknowledge, 4 module not initialised, 5 a byte count outside
+1..8 (the block routines; nothing is sent).
 
-### BAtn
+**PIC18-Q41.** The default is a software host on two ordinary pins (any of 0..23 as the part has them). With
+`#option I2c = Hardware` in the main program (next to `Device` and `Clock`) the module drives the I2C1 peripheral
+instead: exact bus clock (`FOSC / (20 * (BAUD + 1))`, at most the `hz` asked for, `hz` 1..400000), generated by the
+module, so an interrupt cannot stretch a bit or skew the clock, and a late CPU or a stretching client only stretches SCL
+(the calls still wait for the transfer). It does not make the program smaller by much. The peripheral
+counts the bytes of a transfer in hardware, so in this mode only the block routines `I2cReadRegs`, `I2cWriteRegs`
+and `I2cProbe` (and `I2cPing`, `I2cWriteReg`, `I2cReadReg`, `I2cStatus`, `I2cInit`, `I2cOff`) exist; `I2cStart`,
+`I2cRestart`, `I2cStop`, `I2cSend` and `I2cReceive` do not; `aht30`, which uses only them, stops with `#error`, and
+`oled` leaves out its I2C connection (`OledInitI2c` does not exist; the SPI connection works). `I2cOff` ignores its
+arguments in this mode (the module remembers its pins). The block routines also exist with the software host and the MSSP, so a program written with them builds
+either way. Wiring and pull-ups as for the software host; any pin works, the I2C-level input thresholds exist on
+RB4 (SDA1) and RB6 (SCL1) of the 20-pin parts only. `rtcc` uses the block routines in this mode.
+
+The module polls and clears `SSP1IF` itself; keep the MSSP1 interrupt disabled. It owns MSSP1: do not
+use `spi` at the same time.
+
+### I2cInit
 
 **Syntax**
 ```basic
-a = BAtn(x, y)
+ok = I2cInit(hz, scl, sda)
 ```
-**Overview** The angle of the vector from the origin to (`x`, `y`), in binary radians (see `BSin`): 0 along +x, 64 along +y, 128 along -x, 192 along -y.
+**Overview** Sets up MSSP1 as an I2C host at about `hz`. The clock is `FOSC / (4 * (SSPxADD + 1))`; the
+divider is rounded up so the clock is at or below `hz`. The highest clock is FOSC/16 and the lowest
+FOSC/1024. Slew rate control is disabled for 100 kHz or less and for 1 MHz and above, enabled in between.
 
-**Parameters** `x` and `y` are `ShortInt`s.
+**Parameters** `hz` a `LongWord`, 1..1000000; `scl` and `sda` pin numbers the part can route (8..23 on the PIC18F27Q10), different.
 
-**Returns** A `Byte`, within 2 steps (2.8 degrees) of the true angle; the axes come out within 1 step. The angle of (0, 0) is not defined.
+**Returns** `Byte`: 1 when set up, 0 when a pin is not allowed or no divider of 3..255 reaches `hz`.
 
 **Example**
 ```basic
-a = BAtn(100, 100)        ' 33 (the true value is 32, 45 degrees)
-a = BAtn(0, 127)          ' 63
+Dim ok As Byte
+ok = I2cInit(100000, 19, 20)
 ```
-**Notes** Seven rotations by shifts and adds, no divide: 140 words on the PIC18F27Q10, 196 on the PIC16F18346.
 
-### BCos
+### I2cOff
 
 **Syntax**
 ```basic
-c = BCos(angle)
+I2cOff(scl, sda)
 ```
-**Overview** 127 times the cosine of `angle`, in binary radians (see `BSin`); `BSin(angle + 64)`.
+**Overview** Disables the MSSP and gives both pins back to their `LATxy` bits.
 
-**Parameters** `angle` is a `Byte`.
-
-**Returns** A `ShortInt`, -127 to 127.
+**Parameters** The same pins given to `I2cInit`.
 
 **Example**
 ```basic
-c = BCos(0)               ' 127
-c = BCos(128)             ' -127
+I2cOff(19, 20)
 ```
-**Notes** 62 words on the PIC18F27Q10 with the table of `BSin`, which both share.
 
-### BHyp
+### I2cStatus
 
 **Syntax**
 ```basic
-h = BHyp(x, y)
+s = I2cStatus()
 ```
-**Overview** The length of the vector (`x`, `y`): the square root of `x * x + y * y`, rounded down.
+**Overview** The status of the last Start, Restart, Stop, byte or register routine.
 
-**Parameters** `x` and `y` are `ShortInt`s.
-
-**Returns** A `Byte`, 0 to 181.
+**Returns** `Byte`, the codes above.
 
 **Example**
 ```basic
-h = BHyp(3, 4)            ' 5
-h = BHyp(-128, -128)      ' 181
+Dim s As Byte
+s = I2cStatus()
 ```
-**Notes** Eight trial squares of a `Byte`: 71 words on the PIC18F27Q10 (which has the hardware multiply), 239 on the PIC16F18346 (software multiply).
 
-### BSin
+### I2cStart
 
 **Syntax**
 ```basic
-s = BSin(angle)
+s = I2cStart()
 ```
-**Overview** 127 times the sine of `angle`, with the angle in binary radians: 256 steps to the turn (one step is 1.40625 degrees, 64 is a quarter turn).
+**Overview** Generates a start condition: the host takes the bus.
 
-**Parameters** `angle` is a `Byte`; it wraps round at 256, so any `Byte` is an angle.
-
-**Returns** A `ShortInt`, -127 to 127, within half a unit of 127 times the sine.
+**Returns** `Byte`, the status code.
 
 **Example**
 ```basic
-s = BSin(64)              ' 127
-s = BSin(192)             ' -127
-s = BSin(32)              ' 90 (45 degrees)
+Dim s As Byte
+s = I2cStart()
+s = I2cSend($A0)                  ' address 0x50 + write
+s = I2cStop()
 ```
-**Notes** A 65-byte table of a quarter wave and two folds: 60 words on the PIC18F27Q10, 94 on the PIC16F18346. The build-time `Sin` and `Cos` (floating point, radians) are unchanged.
+**See also** `I2cRestart`, `I2cStop`, `I2cSend`.
 
-### ClearBit
+### I2cRestart
 
 **Syntax**
 ```basic
-v = ClearBit(v, n)
+s = I2cRestart()
 ```
-**Overview** Returns `v` with bit `n` set to 0.
+**Overview** Generates a repeated start: a new transfer (usually a read after writing a register address) without
+letting go of the bus.
 
-**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is a `Byte`, 0 for the least significant bit.
-
-**Returns** The new value, of the type of `v`.
+**Returns** `Byte`, the status code.
 
 **Example**
 ```basic
-Dim x As Byte
-x = $FF
-x = ClearBit(x, 7)        ' $7F
+s = I2cStart()
+s = I2cSend($A0)                  ' write: register address
+s = I2cSend(0)
+s = I2cRestart()
+s = I2cSend($A1)                  ' read
 ```
-**See also** `SetBit`, `LoadBit`, `GetBit`.
+**See also** `I2cStart`, `I2cReceive`.
 
-### Dcd
+### I2cStop
 
 **Syntax**
 ```basic
-p = Dcd(n)
+s = I2cStop()
 ```
-**Overview** Two to the power `n`: a single 1 bit at position `n`.
+**Overview** Generates a stop condition: SDA rises while SCL is high, and the bus is free.
 
-**Parameters** `n` is a `Byte`. 32 or more gives 0.
-
-**Returns** A `LongWord`.
+**Returns** `Byte`, the status code.
 
 **Example**
 ```basic
-Dim m As Byte
-m = Byte(Dcd(3))          ' 8
+s = I2cStop()
 ```
-**See also** `Ncd`.
+**See also** `I2cStart`.
 
-### Dig
+### I2cSend
 
 **Syntax**
 ```basic
-d = Dig(v, n)
+s = I2cSend(b)
 ```
-**Overview** Decimal digit `n` of `v`, counting 0 for the units digit.
+**Overview** Sends one byte (an address with its R/W bit, or data).
 
-**Parameters** `v` is a `LongWord` (any integer type converts); `n` is a `Byte`.
+**Parameters** `b` a `Byte`.
 
-**Returns** A `Byte` 0..9; 0 for a digit beyond the top of `v`.
+**Returns** `Byte`: 0 when the client acknowledged, 3 when it did not.
 
 **Example**
 ```basic
-d = Dig(1234, 1)          ' 3
+Dim s As Byte
+s = I2cStart()
+s = I2cSend($A0)
+s = I2cSend(0)
+s = I2cStop()
 ```
-**Notes** Costs one 32-bit division by 10 for each digit counted, so it is for display code, not for
-tight loops.
 
-### GetBit
+### I2cReceive
 
 **Syntax**
 ```basic
-b = GetBit(v, n)
+b = I2cReceive(ack)
 ```
-**Overview** Tests bit `n` of `v`.
+**Overview** Receives a byte, then sends an acknowledge or not-acknowledge.
 
-**Parameters** `v` is any integer type (read as `LongWord`); `n` is a `Byte`.
+**Parameters** `ack` True when more bytes follow, False for the last byte.
 
-**Returns** A `Boolean`: `True` when the bit is 1.
+**Returns** `Byte`. On an error it returns 0 and `I2cStatus` is not 0.
 
 **Example**
 ```basic
-If GetBit(flags, 2) Then
-    Toggle(led)
-EndIf
+Dim b As Byte
+Dim s As Byte
+s = I2cStart()
+s = I2cSend($A1)                  ' address 0x50 + read
+b = I2cReceive(False)
+s = I2cStop()
 ```
-**See also** `SetBit`, `ClearBit`.
 
-### ISqr
+### I2cPing
 
 **Syntax**
 ```basic
-r = ISqr(v)
+found = I2cPing(addr)
 ```
-**Overview** The integer square root: the largest `r` with `r * r <= v`.
+**Overview** Tests whether a client acknowledges its address for writing.
 
-**Parameters** `v` is a `LongWord` (any unsigned type converts).
+**Parameters** `addr` the 7-bit address, 0..127.
 
-**Returns** A `Word`.
+**Returns** `Boolean`.
 
 **Example**
 ```basic
-r = ISqr(1000000)         ' 1000
+Dim here As Boolean
+here = I2cPing($50)
 ```
-**Notes** About 16 shift-and-subtract rounds of 32-bit arithmetic. Use `Sqr` (floating point) only when a fraction is needed.
 
-### LoadBit
+### I2cWriteReg
 
 **Syntax**
 ```basic
-v = LoadBit(v, n, b)
+s = I2cWriteReg(addr, reg, value)
 ```
-**Overview** Returns `v` with bit `n` made equal to `b`.
+**Overview** Start, address + W, `reg`, `value`, Stop.
 
-**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is the bit number; `b` is a `Byte`: 0 clears the
-bit, any other value sets it.
+**Parameters** `addr` 7-bit address; `reg` and `value` are `Byte`s.
+
+**Returns** `Byte`: the first status code that was not 0 (the Stop is always attempted).
 
 **Example**
 ```basic
-x = LoadBit(x, 4, flag)
+Dim s As Byte
+s = I2cWriteReg($68, $6B, 0)
 ```
-**See also** `SetBit`, `ClearBit`.
 
-### Ncd
+### I2cReadReg
 
 **Syntax**
 ```basic
-k = Ncd(v)
+v = I2cReadReg(addr, reg)
 ```
-**Overview** The number of bits needed to hold `v`: the position of its highest 1 bit plus one.
+**Overview** Start, address + W, `reg`, Restart, address + R, one byte with not-acknowledge, Stop.
 
-**Parameters** `v` is a `LongWord` (any unsigned type converts).
-
-**Returns** A `Byte`, 0 when `v` is 0: `Ncd(1)` = 1, `Ncd(%1000)` = 4, `Ncd($FFFF)` = 16.
+**Returns** `Byte`. On an error it returns 0 and `I2cStatus` is not 0.
 
 **Example**
 ```basic
-Include "bits"
-Dim k As Byte
-k = Ncd(1000)                ' 10: 1000 needs ten bits
+Dim v As Byte
+v = I2cReadReg($68, $75)
 ```
 
-**See also** `Dcd`.
-
-### Random
+### I2cReadRegs
 
 **Syntax**
 ```basic
-r = Random()
+s = I2cReadRegs(addr, reg, n)
 ```
-**Overview** Returns the next number of a 16-bit xorshift sequence (period 65535, never 0).
+**Overview** Start, address + W, `reg`, Restart, address + R, `n` bytes, the last one not acknowledged, Stop. The bytes
+are in `I2cBuf(0)` .. `I2cBuf(n - 1)`. With the software host and the MSSP it is built from the step routines; with
+`#option I2c = Hardware` on the PIC18-Q41 it is one transfer of the I2C1 peripheral.
 
-**Returns** `Word`.
+**Parameters** `addr` the 7-bit address; `reg` the first register; `n` 1..8.
+
+**Returns** `Byte`: the first status code that was not 0 (the Stop is always attempted); 5 when `n` is not 1..8.
 
 **Example**
 ```basic
-dice = Byte(Random() Mod 6) + 1
+Dim s As Byte
+s = I2cReadRegs($6F, 0, 7)           ' seven timekeeping registers of an MCP7940N
 ```
-**Notes** Without a `Seed` call the sequence is the same on every run. The generator state is one `Word` shared by the
-whole program; the routine is not reentrant.
 
-**See also** `Seed`
-
-### Rol
+### I2cWriteRegs
 
 **Syntax**
 ```basic
-v = Rol(v)
+s = I2cWriteRegs(addr, reg, n)
 ```
-**Overview** Rotates `v` left by one bit; the top bit comes back in at bit 0.
+**Overview** Start, address + W, `reg`, `I2cBuf(0)` .. `I2cBuf(n - 1)`, Stop.
 
-**Parameters** `v` is a `Byte` or a `Word`.
+**Parameters** `addr` the 7-bit address; `reg` the first register; `n` 1..8.
 
-**Returns** The rotated value, of the type of `v`.
+**Returns** `Byte`: the first status code that was not 0; 5 when `n` is not 1..8.
 
 **Example**
 ```basic
-x = Rol(Byte(%10010000))  ' %00100001
+Dim s As Byte
+I2cBuf(0) = $26
+I2cBuf(1) = $10
+s = I2cWriteRegs($6F, 5, 2)          ' month and year
 ```
-**See also** `Ror`
 
-### Ror
+### I2cProbe
 
 **Syntax**
 ```basic
-v = Ror(v)
+s = I2cProbe(addr)
 ```
-**Overview** Rotates `v` right by one bit; bit 0 comes back in at the top.
+**Overview** Start, address + W, Stop: the status of the address byte.
 
-**Parameters** `v` is a `Byte` or a `Word`.
+**Parameters** `addr` the 7-bit address.
 
-**Returns** The rotated value, of the type of `v`.
+**Returns** `Byte`: 0 acknowledged, 3 not acknowledged, 1 timeout, 2 bus collision, 4 not initialised.
 
 **Example**
 ```basic
-x = Ror(Byte(%10010000))  ' %01001000
+Dim ok As Byte
+Dim s As Byte
+ok = I2cInit(100000, 19, 20)
+s = I2cProbe($68)
+If s = 0 Then
+    High(PORTB.0)           ' a device answers at $68
+End If
 ```
-**See also** `Rol`
 
-### Seed
+### I2cBuf
 
 **Syntax**
 ```basic
-Seed(s)
+I2cBuf(i)
 ```
-**Overview** Starts the `Random` sequence at `s`; a seed of 0 is replaced by 1.
+**Overview** An exported `Byte` array of 8 that holds the data of `I2cReadRegs` and `I2cWriteRegs`: `I2cReadRegs` leaves the bytes it read in `I2cBuf(0)` .. `I2cBuf(n - 1)` and `I2cWriteRegs` sends `I2cBuf(0)` .. `I2cBuf(n - 1)`.
 
-**Parameters** `s` is a `Word`.
+**Parameters** `i` the index, 0..7.
 
 **Example**
 ```basic
-Seed(AdcRead(0))          ' an unconnected analog input is a cheap noise source
+Dim s As Byte
+Dim sec As Byte
+s = I2cReadRegs($6F, 0, 3)           ' seconds, minutes, hours of an MCP7940N
+sec = I2cBuf(0)
+I2cBuf(0) = sec
+s = I2cWriteRegs($6F, 0, 1)          ' write the seconds back
 ```
-**See also** `Random`
+**Notes** Not reentrant: the next `I2cReadRegs` or `I2cWriteRegs` overwrites or reuses the array.
 
-### SetBit
+## onewire  (`Include "onewire"`, 1-Wire master on any one pin)
+
+A 1-Wire master at standard speed for the temperature sensors, serial numbers and switches of that bus (DS18B20, DS2401,
+DS2413 and the like). Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). The line is open drain: the pin is pulled low as an output
+and let go as an input, never driven high, so the bus needs an external pull-up (4.7 k to 5 k) and several devices share
+it. Slots are timed in microseconds from `Clock`. Each bit slot (70 us) runs with the global interrupt enable cleared and
+puts it back as it was, so an interrupt cannot stretch a low time past what a device accepts; between slots interrupts
+run. The module shares the bound-pin state of `pinio`, so it is not reentrant and cannot be used from a handler. It needs a
+`Clock` of at least 16 MHz on a PIC18 and 32 MHz on a PIC16 (the build stops with a message below that).
+
+Measured in the cycle-exact simulator (`scripts/test_onewire.py`) on PIC18F27Q10 and PIC18F16Q41 at 64 MHz and
+PIC16F17146 and PIC16F15244 at 32 MHz: reset low 489 to 490 us, write 1 low 2.6 to 2.8 us, write 0 low 61.8 to 61.9 us,
+read pulse 2.6 to 2.8 us with the line sampled about 10 us after the falling edge, slots of 75 to 79 us, 15 to 17 us of
+recovery between slots; the global interrupt enable is low inside every slot and set again after it; a simulated slave's
+presence pulse is seen, and a bit it holds low for 14 us reads 0 while one held for 6 us reads 1. The ROM search
+against three simulated slaves is checked by `scripts/test_onewire.py --search` (slow). **Nothing has run on a real part**,
+and the timings are the usual standard-speed values for the bus, not checked here against a device's data sheet.
+
+Example (one DS18B20 on RB1):
+```basic
+Include "onewire"
+Dim lo As Byte
+Dim hi As Byte
+If OwInit(9) Then
+    If OwReset() Then
+        OwSkip()
+        OwWriteByte($44)               ' convert T
+        DelayMs(750)
+        OwReset()
+        OwSkip()
+        OwWriteByte($BE)               ' read scratchpad
+        lo = OwReadByte()
+        hi = OwReadByte()              ' temperature = hi:lo / 16 degrees C
+    End If
+End If
+```
+
+### OwInit
 
 **Syntax**
 ```basic
-v = SetBit(v, n)
+ok = OwInit(pin)
 ```
-**Overview** Returns `v` with bit `n` set to 1.
+**Overview** Sets up the bus pin: released (an input, so the pull-up holds the line high), digital, with its latch low.
+**Call it first.**
 
-**Parameters** `v` is a `Byte`, `Word` or `LongWord`; `n` is a `Byte`.
+**Parameters** `pin` a `Byte`, a pin number as in `pinio` (0..23, up to 47 on parts with ports D to F).
+
+**Returns** `Boolean`: False for a pin the part lacks.
 
 **Example**
 ```basic
-x = SetBit(x, 3)
+Include "onewire"
+If OwInit(9) Then                ' the bus on RB1
+    OwSkip()
+End If
 ```
-**See also** `ClearBit`, `LoadBit`, `GetBit`.
+**See also** `OwReset`
 
-### SwapBytes
+### OwReset
 
 **Syntax**
 ```basic
-w = SwapBytes(w)
+present = OwReset()
 ```
-**Overview** Exchanges the two bytes of a `Word` (`$AB34` becomes `$34AB`).
+**Overview** Sends the reset pulse and listens for a presence pulse. Every transaction starts with it.
 
-**Returns** `Word`.
+**Returns** `Boolean`: True when a device answers. False when nothing answers, or when the line is already low before
+the pulse (no pull-up, a short).
 
 **Example**
 ```basic
-w = SwapBytes(w)          ' big-endian from a sensor to little-endian
+If OwReset() Then
+    OwSkip()
+    OwWriteByte($44)             ' DS18B20: convert T
+End If
 ```
-**See also** `SwapNibbles`
+**See also** `OwSkip`, `OwSelect`
 
-### SwapNibbles
+### OwWriteBit
 
 **Syntax**
 ```basic
-b = SwapNibbles(b)
+OwWriteBit(b)
 ```
-**Overview** Exchanges the two nibbles of a `Byte` (`$3C` becomes `$C3`).
+**Overview** Sends one bit in one time slot (about 70 us, with the global interrupt enable held off for the slot).
+
+**Parameters** `b` a `Boolean`: True sends a 1.
+
+**Example**
+```basic
+OwWriteBit(True)
+```
+**See also** `OwReadBit`, `OwWriteByte`
+
+### OwReadBit
+
+**Syntax**
+```basic
+b = OwReadBit()
+```
+**Overview** Reads one bit in one time slot: the master pulls the line low briefly, lets go and samples it about 10 us
+after the falling edge.
+
+**Returns** `Boolean`: True for a 1.
+
+**Example**
+```basic
+Dim b As Boolean
+b = OwReadBit()
+```
+**See also** `OwWriteBit`, `OwReadByte`
+
+### OwWriteByte
+
+**Syntax**
+```basic
+OwWriteByte(b)
+```
+**Overview** Sends a byte, least significant bit first (eight `OwWriteBit` slots).
+
+**Parameters** `b` a `Byte`: a device command or data byte (`OwSkip`, `OwSelect` and the search send the ROM
+commands themselves).
+
+**Example**
+```basic
+OwWriteByte($BE)                  ' DS18B20: read scratchpad
+```
+**See also** `OwReadByte`
+
+### OwReadByte
+
+**Syntax**
+```basic
+b = OwReadByte()
+```
+**Overview** Reads a byte, least significant bit first (eight `OwReadBit` slots).
 
 **Returns** `Byte`.
 
 **Example**
 ```basic
-packed = SwapNibbles(packed)
+lo = OwReadByte()
+hi = OwReadByte()                 ' DS18B20: temperature = hi:lo / 16 degrees C
 ```
-**See also** `SwapBytes`
-Tests: `tests/exec/lib_bits.bas`.
+**See also** `OwWriteByte`, `OwCrc8`
 
-## floatlib  (automatic)
-
-Not included by hand. Routines `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong
-FToLong` operate on `LongWord` bit patterns. You do not call them; the compiler does when a program
-uses `Float`.
-
-## fmath  (`Include "fmath"`, run-time square root, logarithms, powers and trigonometry for `Float`)
-
-Run-time maths on `Float`, built on its `+ - * /`. The names start with `F` so that they do not clash with the
-build-time `Sqr`, `Sin`, `Cos`, `Pow` and `Log2`, which take constants only. Accuracy is a few units in the sixth digit.
-A result too big for a `Float` is infinity, one too small is zero. Like all `Float` arithmetic, these cannot be called
-from an interrupt handler (`E-ISR-CALL`). Tests: `tests/exec/lib_fmath.bas`, `fmath_sqrt3.bas`, `fmath_log_acc.bas`.
-
-### FCos
+### OwCrc8
 
 **Syntax**
 ```basic
-y = FCos(x)
+crc = OwCrc8(crc, b)
 ```
-**Overview** The cosine of `x` radians.
+**Overview** Adds one byte to the 1-Wire CRC8 (x^8 + x^5 + x^4 + 1, shifted right). Start at 0 and add every byte: the
+8 bytes of a ROM code, or the 9 of a DS18B20 scratchpad, end at 0 when they are intact.
 
-**Parameters** `x` a `Float`; |x| under 200000 (a larger angle gives NaN), best under 1000.
+**Parameters** `crc` the CRC so far (a `Byte`, 0 at the start); `b` the next byte.
 
-**Returns** `Float`.
+**Returns** `Byte`: the new CRC.
 
 **Example**
 ```basic
-Include "fmath"
-Dim y As Float
-y = FCos(3.14159)             ' -1.0
+crc = 0
+For i = 0 To 8
+    crc = OwCrc8(crc, OwReadByte())
+Next
+If crc = 0 Then
+    ' the scratchpad arrived intact
+End If
 ```
-**See also** `FSin`, `FTan`
+**Notes** This is not the CRC of the `aht30` module (a different polynomial and start).
 
-### FExp
+### OwSearchFirst
 
 **Syntax**
 ```basic
-y = FExp(x)
+found = OwSearchFirst()
 ```
-**Overview** e to the power `x`.
+**Overview** Starts a ROM search and finds the first device on the bus. Its 8-byte code is put in `OwRom(0..7)`
+(family code first, CRC last). Follow it with `OwSearchNext` to find the others.
 
-**Returns** `Float`: infinity when the result is too big, zero when too small.
+**Returns** `Boolean`: False when there is no device or the code read is damaged.
 
 **Example**
 ```basic
-y = FExp(1.0)                 ' 2.71828
+n = 0
+If OwSearchFirst() Then
+    Do
+        Inc(n)                    ' OwRom(0..7) holds a device's code
+    Loop While OwSearchNext()
+End If
 ```
-**See also** `FLog`, `FPow`
+**Notes** A device added or taken off the line during a search can make it miss or repeat one.
 
-### FLog
+**See also** `OwSearchNext`, `OwSelect`
+
+### OwSearchNext
 
 **Syntax**
 ```basic
-y = FLog(x)
+found = OwSearchNext()
 ```
-**Overview** The natural logarithm of `x`.
+**Overview** Finds the next device of the search that `OwSearchFirst` started, and puts its code in `OwRom(0..7)`.
 
-**Returns** `Float`: -infinity for 0, NaN for a negative `x`.
+**Returns** `Boolean`: False when there is no further device (the next call then starts a new search) or the code
+read is damaged.
 
 **Example**
 ```basic
-y = FLog(10.0)                ' 2.30259
+While OwSearchNext()
+    Inc(n)
+Wend
 ```
-**See also** `FLog10`, `FExp`
+**See also** `OwSearchFirst`
 
-### FLog10
+### OwSelect
 
 **Syntax**
 ```basic
-y = FLog10(x)
+OwSelect()
 ```
-**Overview** The base-10 logarithm of `x`.
-
-**Returns** `Float`: as `FLog` for 0 and negative numbers.
+**Overview** After `OwReset`: Match ROM with the code in `OwRom(0..7)`, so only that device listens to what follows.
+Fill `OwRom` from a search, or with a code you know.
 
 **Example**
 ```basic
-db = 20.0 * FLog10(v / vref)
+If OwReset() Then
+    OwSelect()
+    OwWriteByte($44)
+End If
 ```
-**See also** `FLog`
+**See also** `OwSkip`, `OwSearchFirst`
 
-### FPow
+### OwSkip
 
 **Syntax**
 ```basic
-y = FPow(x, p)
+OwSkip()
 ```
-**Overview** `x` to the power `p`, as `FExp(p * FLog(x))`.
-
-**Parameters** `x` a `Float`, greater than 0; `p` a `Float`.
-
-**Returns** `Float`.
+**Overview** After `OwReset`: Skip ROM, so every device on the bus listens to what follows. Use it when there is one
+device, or for a command all of them should obey (a DS18B20 convert).
 
 **Example**
 ```basic
-y = FPow(2.0, 0.5)            ' 1.41421
+If OwReset() Then
+    OwSkip()
+    OwWriteByte($44)
+End If
 ```
-**See also** `FExp`, `FSqr`
+**See also** `OwSelect`
 
-### FSin
+## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
+
+`Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a
+crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
+below (for a signed number or a `Float`, convert in your own code).
+
+### SerialInit
 
 **Syntax**
 ```basic
-y = FSin(x)
+SerialInit(baud)
 ```
-**Overview** The sine of `x` radians. The angle is reduced by whole turns in `Integer` arithmetic.
+**Overview** Routes EUSART1 through PPS (TX on RC6, RX on RC7), sets the pin directions and
+`BRG16 = BRGH = 1`, computes the baud divisor from `Clock` (one 32-bit divide at run time, rounded to
+the nearest value) and enables TX and RX.
 
-**Parameters** `x` a `Float`; |x| under 200000 (a larger angle gives NaN), best under 1000.
-
-**Returns** `Float`.
+**Parameters** `baud` is a `LongWord`, for example 9600 or 115200.
 
 **Example**
 ```basic
-y = FSin(1.5708)              ' 1.0
+SerialInit(115200)
 ```
-**See also** `FCos`, `BSin` (8-bit, binary radians)
 
-### FSqr
+### SerialWriteByte
 
 **Syntax**
 ```basic
-y = FSqr(x)
+SerialWriteByte(b)
 ```
-**Overview** The square root of `x`: three Newton steps from a guess made by halving the exponent.
-
-**Returns** `Float`: NaN for a negative `x`; 0 for 0; infinity for infinity.
+**Overview** Sends one byte, waiting until the transmit register is free.
 
 **Example**
 ```basic
-y = FSqr(2.0)                 ' 1.41421
+SerialWriteByte(65)               ' "A"
 ```
-**See also** `ISqr` (integer), `FPow`
 
-### FTan
+### SerialWrite
 
 **Syntax**
 ```basic
-y = FTan(x)
+SerialWrite(text)
 ```
-**Overview** The tangent of `x` radians, `FSin(x) / FCos(x)`.
-
-**Parameters** as `FSin`.
-
-**Returns** `Float`.
+**Overview** Sends a string or literal, up to 80 characters.
 
 **Example**
 ```basic
-y = FTan(0.7854)              ' 1.0
+SerialWrite("hello")
 ```
-**See also** `FSin`, `FCos`
 
-## format  (`Include "format"`, numbers as text with a width, a fill and a radix)
-
-Fills the one shared `String` `FmtBuf` (32 characters and the `Null`), which you then pass to any routine that takes a
-`String`: `SerialWrite`, `LcdWrite`, `OledWrite`, `GlcdWrite`, an assignment, a comparison. The next call overwrites it, so
-use it before calling another `Fmt` routine, and not in a handler that interrupts a routine that is using it. One shared
-routine replaces the `Str` expansion at every call site, and the output modules need nothing new. The `Byte`, `Word` and
-`LongWord` forms (and the signed ones) are overloads of one name; a `Byte` pays for no 16-bit divide, and only the widths a
-program uses are compiled. A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and
-117 for a `LongWord` on the PIC18, start-up included.
-
-A width or digit count above the limit is taken as the limit. Portable (no device registers); `tests/exec/lib_format.bas`
-runs on the PIC18 and PIC16 parts.
-
-### FmtBin
+### SerialNewLine
 
 **Syntax**
 ```basic
-FmtBin(n, digits)
+SerialNewLine()
 ```
-**Overview** Writes the low `digits` binary digits of `n` into `FmtBuf`, with leading zeros. Uses shifts, no divide.
-
-**Parameters** `n` a `Byte`, `Word` or `LongWord`; `digits` 0 to 32.
+**Overview** Sends CR + LF.
 
 **Example**
 ```basic
-FmtBin(b, 8)               ' b = 5:   00000101
-SerialWrite(FmtBuf)
+SerialWrite("done")
+SerialNewLine()
 ```
-**See also** `FmtHex`
 
-### FmtDec
+### SerialWriteWord
 
 **Syntax**
 ```basic
-FmtDec(n, width, fill)
+SerialWriteWord(v)
 ```
-**Overview** Writes `n` as an unsigned decimal number into `FmtBuf`, at least `width` characters, padded on the left
-with `fill`. A longer number is never cut.
-
-**Parameters** `n` a `Byte`, `Word` or `LongWord` (a `Byte` pays for no 16-bit divide); `width` 0 to 32; `fill` a
-`Char`, usually `"0"` or `" "`.
+**Overview** Sends a `Word` as unsigned decimal, without leading zeros.
 
 **Example**
 ```basic
+SerialWriteWord(1234)
+```
+
+### SerialWriteHex
+
+**Syntax**
+```basic
+SerialWriteHex(v)
+```
+**Overview** Sends a `Byte` as two hexadecimal digits.
+
+**Example**
+```basic
+SerialWriteHex($A5)               ' "A5"
+```
+
+### SerialAvailable
+
+**Syntax**
+```basic
+flag = SerialAvailable()
+```
+**Overview** True when a received byte is waiting.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim b As Byte
+If SerialAvailable() Then
+    b = SerialRead()
+EndIf
+```
+
+### SerialRead
+
+**Syntax**
+```basic
+b = SerialRead()
+```
+**Overview** Waits for a byte and returns it. An overrun stops the receiver until `CREN` is cycled; this
+routine cycles it.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim b As Byte
+b = SerialRead()
+SerialWriteByte(b)                ' echo
+```
+
+### SerialReadTimeout
+
+**Syntax**
+```basic
+c = SerialReadTimeout(ms)
+```
+**Overview** Waits up to `ms` milliseconds for a byte. The wait polls every 50 us with interrupts allowed, so it is a
+little longer than `ms`; a byte already waiting is returned at once, and an `ms` of 0 looks once. An overrun is
+cleared as `SerialRead` does.
+
+**Parameters** `ms` a `Word`.
+
+**Returns** `Integer`: the byte (0..255), or -1 when none came.
+
+**Example**
+```basic
+Dim c As Integer
+c = SerialReadTimeout(100)
+If c >= 0 Then
+    SerialWriteByte(Byte(c))
+End If
+```
+**Notes** About 50 words on the PIC18F27Q10, with the polling loop that all four receive routines share.
+
+**See also** `SerialRead`, `SerialReadLine`
+
+### SerialReadLine
+
+**Syntax**
+```basic
+ok = SerialReadLine(ms)
+```
+**Overview** Collects characters into `SerialLine` (a `String(63)`) until a CR or LF. Empty lines are skipped, so CR LF
+is one end of line, and characters past 63 are dropped. `ms` is the longest wait for **one** character.
+
+**Parameters** `ms` a `Word`, in milliseconds.
+
+**Returns** `Boolean`: True when a CR or LF ended the line. On a timeout it returns False and `SerialLine` keeps what
+had arrived.
+
+**Example**
+```basic
+If SerialReadLine(1000) Then
+    SerialWrite(SerialLine)
+End If
+```
+**Notes** `SerialLine` is shared and overwritten by the next call. About 71 words on the PIC18F27Q10.
+
+**See also** `SerialReadTimeout`, `SerialWaitFor`
+
+### SerialWaitFor
+
+**Syntax**
+```basic
+ok = SerialWaitFor(text, ms)
+```
+**Overview** Discards bytes until `text` has come in. After a mismatch it starts again at the first character, so a
+text that repeats its own start (`aab` in `aaab`) can be missed.
+
+**Parameters** `text` a `String`, not empty, up to 80 characters; `ms` a `Word`, the longest wait for one byte in
+milliseconds.
+
+**Returns** `Boolean`: True when the text has arrived, False on a timeout.
+
+**Example**
+```basic
+SerialWrite("AT")
+SerialNewLine()
+If SerialWaitFor("OK", 200) Then
+    ' the modem answered
+End If
+```
+**Notes** About 86 words on the PIC18F27Q10.
+
+**See also** `SerialReadDec`, `SerialReadLine`
+
+### SerialReadDec
+
+**Syntax**
+```basic
+ok = SerialReadDec(ms)
+```
+**Overview** Reads a decimal number into `SerialNumber` (a `LongInt`). Characters before the first digit are skipped
+(a `-` right before it makes the number negative); then digits are read, and the first other character ends the
+number and is dropped. A timeout after at least one digit also ends it.
+
+**Parameters** `ms` a `Word`, the longest wait for one byte in milliseconds.
+
+**Returns** `Boolean`: False (and `SerialNumber` 0) when no digit came. A value past 32 bits wraps.
+
+**Example**
+```basic
+If SerialWaitFor("+CSQ: ", 500) Then
+    If SerialReadDec(500) Then
+        v = Integer(SerialNumber)         ' "+CSQ: 17,99" gives 17
+    End If
+End If
+```
+**Notes** `SerialNumber` is shared and overwritten by the next call. About 113 words on the PIC18F27Q10; using several
+of the receive routines adds only the difference.
+
+**See also** `SerialWaitFor`, `SerialReadTimeout`
+
+### SerialOnRx
+
+**Syntax**
+```basic
+SerialOnRx = Handler              ' Type TRxEvent = Event(ByVal c As Byte)
+```
+**Overview** An event variable holding the handler that `SerialRxService` calls with each received byte. Unassigned, the
+byte is read and dropped.
+
+**Example**
+```basic
+Dim last As Byte
+Event OnByte(ByVal c As Byte)
+    last = c
+End Event
+SerialInit(115200)
+SerialOnRx = OnByte
+While True
+    SerialRxService()
+Wend
+```
+**See also** `SerialRxService`, *Events* (section 1).
+
+### SerialRxService
+
+**Syntax**
+```basic
+SerialRxService()
+```
+**Overview** Clears an overrun (as `SerialRead` does) and, if a byte has arrived, reads it (which clears `RCIF`) and
+calls the `SerialOnRx` handler with it. Call it from the main loop, or from your own interrupt wrapped in
+`Save(0, SerialRxService)`.
+
+**Example**
+```basic
+While True
+    SerialRxService()
+Wend
+```
+**See also** `SerialOnRx`, `SerialAvailable`, `SerialRead`.
+
+### SerialFlush
+
+**Syntax**
+```basic
+SerialFlush()
+```
+**Overview** Waits until the last byte has left the shift register (`TRMT`).
+
+**Example**
+```basic
+SerialWrite("bye")
+SerialFlush()
+```
+
+## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
+
+The routines of `serial` with the prefix `Serial2`, on the second EUSART; each has its entry below.
+
+**Example**
+```basic
+Serial2Init(9600)
+Serial2Write("hi")
+Serial2NewLine()
+```
+**Notes** RB6/RB7 are the ICSP pins: disconnect the programmer while using them. Both serial modules can
+be used together. **Set-up verified only**: the simulator does not set `TX2IF`, so a real transmit is
+unproven.
+
+### Serial2Init
+
+**Syntax**
+```basic
+Serial2Init(baud)
+```
+**Overview** Sets up EUSART2 at `baud`, 8N1, and its two pins.
+
+**Parameters** `baud` a `LongWord`.
+
+**Example**
+```basic
+Serial2Init(9600)
+```
+**See also** `SerialInit`
+
+### Serial2WriteByte
+
+**Syntax**
+```basic
+Serial2WriteByte(b)
+```
+**Overview** Sends one byte (waits for room in the transmitter).
+
+**Parameters** `b` a `Byte`.
+
+**Example**
+```basic
+Serial2WriteByte(65)
+```
+**See also** `SerialWriteByte`
+
+### Serial2Write
+
+**Syntax**
+```basic
+Serial2Write(s)
+```
+**Overview** Sends a `String`, up to its `Null`.
+
+**Parameters** `s` a `String` or literal.
+
+**Example**
+```basic
+Serial2Write("hi")
+```
+**See also** `SerialWrite`
+
+### Serial2NewLine
+
+**Syntax**
+```basic
+Serial2NewLine()
+```
+**Overview** Sends CR LF.
+
+**Example**
+```basic
+Serial2NewLine()
+```
+**See also** `SerialNewLine`
+
+### Serial2WriteWord
+
+**Syntax**
+```basic
+Serial2WriteWord(v)
+```
+**Overview** Sends a `Word` as unsigned decimal, no leading zeros.
+
+**Parameters** `v` a `Word`.
+
+**Example**
+```basic
+Serial2WriteWord(1234)
+```
+**See also** `SerialWriteWord`
+
+### Serial2WriteHex
+
+**Syntax**
+```basic
+Serial2WriteHex(v)
+```
+**Overview** Sends a `Byte` as two hexadecimal digits.
+
+**Parameters** `v` a `Byte`.
+
+**Example**
+```basic
+Serial2WriteHex($3C)
+```
+**See also** `SerialWriteHex`
+
+### Serial2Available
+
+**Syntax**
+```basic
+b = Serial2Available()
+```
+**Overview** True when a received byte is waiting.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+If Serial2Available() Then
+    b = Serial2Read()
+End If
+```
+**See also** `SerialAvailable`
+
+### Serial2Read
+
+**Syntax**
+```basic
+b = Serial2Read()
+```
+**Overview** Waits for a byte and returns it; an overrun is cleared.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+b = Serial2Read()
+```
+**See also** `SerialRead`
+
+### Serial2Flush
+
+**Syntax**
+```basic
+Serial2Flush()
+```
+**Overview** Waits until the last byte has left the shift register.
+
+**Example**
+```basic
+Serial2Write("bye")
+Serial2Flush()
+```
+**See also** `SerialFlush`
+
+### Serial2ReadTimeout
+
+**Syntax**
+```basic
+c = Serial2ReadTimeout(ms)
+```
+**Overview** Waits up to `ms` milliseconds for a byte, as `SerialReadTimeout`.
+
+**Parameters** `ms` a `Word`.
+
+**Returns** `Integer`: the byte, or -1 when none came.
+
+**Example**
+```basic
+c = Serial2ReadTimeout(100)
+```
+**See also** `SerialReadTimeout`
+
+### Serial2ReadLine
+
+**Syntax**
+```basic
+ok = Serial2ReadLine(ms)
+```
+**Overview** Collects a line into `Serial2Line` (a `String(63)`), as `SerialReadLine`.
+
+**Parameters** `ms` a `Word`, the longest wait for one character.
+
+**Returns** `Boolean`: True when a CR or LF ended the line.
+
+**Example**
+```basic
+If Serial2ReadLine(1000) Then
+    Serial2Write(Serial2Line)
+End If
+```
+**See also** `SerialReadLine`
+
+### Serial2WaitFor
+
+**Syntax**
+```basic
+ok = Serial2WaitFor(text, ms)
+```
+**Overview** Discards bytes until `text` has come in, as `SerialWaitFor`.
+
+**Parameters** `text` a `String` (1 to 80 characters); `ms` a `Word`.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+ok = Serial2WaitFor("OK", 200)
+```
+**See also** `SerialWaitFor`
+
+### Serial2ReadDec
+
+**Syntax**
+```basic
+ok = Serial2ReadDec(ms)
+```
+**Overview** Reads a decimal number into `Serial2Number` (a `LongInt`), as `SerialReadDec`.
+
+**Parameters** `ms` a `Word`.
+
+**Returns** `Boolean`: False when no digit came.
+
+**Example**
+```basic
+If Serial2ReadDec(500) Then
+    v = Integer(Serial2Number)
+End If
+```
+**See also** `SerialReadDec`
+
+## shift  (`Include "shift"`, synchronous shift on any two pins)
+
+Bit-banged synchronous shift for shift registers (74HC595, 74HC165), DACs, ADCs and any device with a data line and a
+clock. Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). The clock idles low; data changes while the
+clock is low and is valid at its rising edge (SPI mode 0, which suits the 74HC595 and most chips). Each clock phase is
+about 1 us plus the instruction time, so the rate is below 250 kHz at 64 MHz. Each routine sets its pins (clock an
+output, data an output or input) and makes them digital. A pin the part lacks, the same pin twice, or a bit count out
+of range stops the routine at once: nothing is sent, and a read returns 0. Test: `tests/exec/lib_shift.bas` (set-up
+only; the simulator has no pin model).
+
+### ShiftOut
+
+**Syntax**
+```basic
+ShiftOut(data, dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** Clocks out the low `bits` bits of `data`.
+
+**Parameters** `data` a `Byte`; `dataPin`, `clkPin` pin numbers; `lsbFirst` a `Boolean`: False sends the most
+significant of the bits first, True the least significant first; `bits` 1..8.
+
+**Example**
+```basic
+Include "shift"
+ShiftOut($A5, 8, 9, False, 8)     ' data on RB0, clock on RB1
+High(PORTB.2)                     ' pulse the latch pin (on RB2)
+Low(PORTB.2)
+```
+**See also** `ShiftOut16`, `ShiftIn`, `spi` module
+
+### ShiftOut16
+
+**Syntax**
+```basic
+ShiftOut16(data, dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** `ShiftOut` for up to 16 bits.
+
+**Parameters** `data` a `Word`; `bits` 1..16; the rest as `ShiftOut`.
+
+**Example**
+```basic
+ShiftOut16($3FF0, 8, 9, False, 16)   ' a 16-bit DAC word
+```
+**See also** `ShiftOut`
+
+### ShiftIn
+
+**Syntax**
+```basic
+b = ShiftIn(dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** Clocks in `bits` bits. The data pin is made an input and read while the clock is high, just before it
+goes low again.
+
+**Parameters** `dataPin`, `clkPin` pin numbers; `lsbFirst` False when the device sends the most significant bit
+first; `bits` 1..8.
+
+**Returns** `Byte`: the bits read, right-justified. 0 when the pins or the count are not valid.
+
+**Example**
+```basic
+Include "shift"
+Dim sw As Byte
+Low(PORTB.2)                      ' pulse the load pin (on RB2)
+High(PORTB.2)
+sw = ShiftIn(8, 9, False, 8)      ' data on RB0, clock on RB1
+```
+**See also** `ShiftIn16`, `ShiftOut`
+
+### ShiftIn16
+
+**Syntax**
+```basic
+w = ShiftIn16(dataPin, clkPin, lsbFirst, bits)
+```
+**Overview** `ShiftIn` for up to 16 bits.
+
+**Parameters** `bits` 1..16; the rest as `ShiftIn`.
+
+**Returns** `Word`: the bits read, right-justified.
+
+**Example**
+```basic
+w = ShiftIn16(8, 9, False, 12)    ' a 12-bit ADC reading
+```
+**See also** `ShiftIn`
+
+## softserial  (`Include "softserial"`, asynchronous serial on any two pins, 8N1)
+
+Serial on pins the EUSART cannot reach, on a part with one EUSART or none to spare, or on a line that idles low
+(RS-232 levels through a driver chip). Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). Bit
+times are counted in instruction cycles from `Clock`; no timer. A byte that arrives while the program is elsewhere is
+lost: `SoftReadByte` is a poll, not a buffer (for an always-listening, buffered UART use the hardware EUSART,
+`serial`). Interrupts are held off for the length of a byte (see `SoftHoldIrq`). The module shares the bound-pin state of `pinio` (as `pulse`
+and `shift` do), so it is not reentrant and its routines cannot be used from a handler.
+
+How accurate: a bit is a wait of whole passes of a counting loop (7 cycles a pass on the PIC18, 9 on the PIC16) plus a
+fixed number of cycles, so the bit time is within half a pass of the ideal one, and the start edge of a received byte
+is found to within one poll of the pin (about 30 cycles on the PIC18, 60 on the PIC16). Measured in the cycle-exact
+simulator (`scripts/test_softserial.py`): the transmitted edges are within 0.6 % of the ideal bit time up to 38400
+baud at 64 MHz on the PIC18 (2.1 % at 115200) and up to 9600 at 32 MHz on the PIC16 (1.1 % at 19200); above 19200 the
+9-cycle pass of the PIC16 is too coarse. The receiver takes a sender whose bit time is 3 % fast or 3 % slow on every part
+and rate in the table below, with a window of about -5 % to +6 %.
+
+| Part and clock | Rates tested (send and receive) |
+|---|---|
+| PIC18F27Q10, PIC18F16Q41, 64 MHz | 1200, 9600, 38400, 115200 (Q41: 9600, 115200) |
+| PIC16F17146, 32 MHz | 1200, 9600, 19200 |
+| PIC16F15244, PIC16F18056, 32 MHz | 9600 |
+
+The same cases are run for the unoptimised `-O0` build (the module reads `_opt` and uses the cycle counts of that
+build: a wait pass is 11 cycles on the PIC18 and 10 on the PIC16, and the PIC16 receiver's pass is 12), except
+115200 baud, where one 11-cycle pass is 8 % of a bit: that rate needs the optimised build. The exec test
+`lib_softserial_rx` runs on the PIC18F27Q10 only, because its stimulus is written for 64 MHz and 9600 baud.
+
+Sizes on the PIC18F27Q10 with the start-up and a `SoftInit` call counted in (76 words): `SoftWriteByte` +83, `SoftWrite`
++99 (it contains `SoftWriteByte`), `SoftReadByte` +157, `SoftAvailable` +46, `SoftHoldIrq` +3. The interrupt hold is
+13 of the 83 and 20 of the 157; the stop-bit check about 6.
+
+Not done: parity or other than 8N1, an open-drain output for a shared line, a receive buffer. Tests: the simulator
+checks everything above (`scripts/test_softserial.py`: edge timing, the interrupt enable low for the whole frame and
+restored after it, the receive window; `tests/exec/lib_softserial_rx.bas`: bytes, a framing error, a timeout). **Nothing
+has run on a real part**: `tests/hw/softserial_echo.bas` is the bench program (a USB-serial adapter and a terminal; its
+header lists the checks, from 9600 to 115200 baud and a sender 3 % fast and slow).
+
+**Example**
+```basic
+Include "softserial"
 Include "format"
-Include "serial"
-FmtDec(w, 5, "0")          ' w = 42:  00042
-SerialWrite(FmtBuf)
+Dim c As Integer
+If SoftInit(9, 10, 9600, False) Then       ' TX on RB1, RX on RB2
+    SoftWrite("ready")
+    SoftNewLine()
+    c = SoftReadByte(1000)                   ' up to 1 s
+    If c >= 0 Then
+        FmtHex(Byte(c), 2)
+        SoftWrite(FmtBuf)                    ' echo it as hexadecimal
+    End If
+End If
 ```
-**Notes** A program with one `FmtDec` call and no other code is 76 words for a `Byte`, 97 for a `Word` and 117 for a
-`LongWord` on the PIC18, start-up included.
 
-**See also** `FmtSDec`, `Str`
-
-### FmtHex
+### SoftInit
 
 **Syntax**
 ```basic
-FmtHex(n, digits)
+ok = SoftInit(tx, rx, baud, inverted)
 ```
-**Overview** Writes the low `digits` hexadecimal digits of `n` into `FmtBuf`, in capitals, with leading zeros. Uses
-shifts, no divide.
+**Overview** Sets the two pins and the speed. **Call it first.**
 
-**Parameters** `n` a `Byte`, `Word` or `LongWord`; `digits` 0 to 8.
+**Parameters** `tx`, `rx` pin numbers (a pin the part lacks is not used: give 255 for a send-only or
+receive-only line); `baud` a `LongWord`; `inverted` a `Boolean`, True for a line that idles low (RS-232 levels through
+a driver chip, or a transistor inverter).
+
+**Returns** `Boolean`: False, with both pins unused, when the baud rate is too high for the `Clock`, or so low that one
+bit is over 65535 cycles (below about 980 baud at 64 MHz).
 
 **Example**
 ```basic
-FmtHex(b, 2)               ' b = 42:  2A
-LcdWrite(FmtBuf)
+Include "softserial"
+If SoftInit(9, 10, 9600, False) Then      ' TX on RB1, RX on RB2
+    SoftWrite("ready")
+End If
 ```
-**See also** `FmtBin`, `SerialWriteHex`
+**Notes** About 76 words on the PIC18F27Q10 with the start-up.
 
-### FmtSDec
+### SoftWriteByte
 
 **Syntax**
 ```basic
-FmtSDec(n, width, fill)
+SoftWriteByte(b)
 ```
-**Overview** `FmtDec` for a signed number. The minus sign counts in the width; it comes before the zeros of a `"0"`
-fill and right before the digits of any other fill.
+**Overview** Sends one byte (8N1) on the `tx` pin. With `SoftHoldIrq(True)` (the default) the global interrupt enable
+is held off for the frame and put back after it.
 
-**Parameters** `n` a `ShortInt`, `Integer` or `LongInt`; `width` 0 to 32; `fill` a `Char`.
+**Parameters** `b` a `Byte`.
 
 **Example**
 ```basic
-FmtSDec(t, 6, " ")         ' t = -42: "   -42"
-FmtSDec(t, 6, "0")         ' t = -42: "-00042"
+SoftWriteByte(65)                 ' "A"
 ```
-**See also** `FmtDec`
+**Notes** +83 words on the PIC18F27Q10.
 
+**See also** `SoftWrite`, `SoftNewLine`
 
-## strings  (`Include "strings"`)
-
-String routines. `Left$`, `Mid$`, `Right$` and `Str$` are part of the language (see *Strings*, section 1).
-
-### Len
+### SoftWrite
 
 **Syntax**
 ```basic
-n = Len(s)
+SoftWrite(text)
 ```
-**Overview** The number of characters before the `Null`.
+**Overview** Sends a `String`, a character at a time, up to its `Null`.
 
-**Parameters** `s` a `String` of any size, or a literal.
-
-**Returns** `Byte`: 0 for `Null` or an empty string, at most 255.
+**Parameters** `text` a `String` or a literal, up to 80 characters.
 
 **Example**
 ```basic
-Include "strings"
-Dim name As String(20) = "basil"
-Dim n As Byte
-n = Len(name)        ' 5
-n = Len("abc")       ' 3
+SoftWrite("temp ")
+FmtDec(t, 3, " ")
+SoftWrite(FmtBuf)
 ```
+**Notes** +99 words on the PIC18F27Q10 (it contains `SoftWriteByte`).
+
+**See also** `SoftWriteByte`, `format` module
+
+### SoftNewLine
+
+**Syntax**
+```basic
+SoftNewLine()
+```
+**Overview** Sends CR LF.
+
+**Example**
+```basic
+SoftWrite("ok")
+SoftNewLine()
+```
+
+### SoftReadByte
+
+**Syntax**
+```basic
+c = SoftReadByte(ms)
+```
+**Overview** Waits up to `ms` milliseconds for a start bit on the `rx` pin, then receives the byte. It is a poll, not a
+buffer: a byte that arrives while the program is elsewhere is lost.
+
+**Parameters** `ms` a `Word`; 0 looks once.
+
+**Returns** `Integer`: the byte (0 to 255), **-1** when none came, or **-2** when the stop bit was not at the idle level
+(a framing error: wrong baud rate, noise or a break). After -2 it waits one more bit, so a line that stays low answers
+-2 again at every call.
+
+**Example**
+```basic
+Dim c As Integer
+c = SoftReadByte(1000)            ' up to 1 s
+If c >= 0 Then
+    SoftWriteByte(Byte(c))        ' echo
+End If
+```
+**Notes** +157 words on the PIC18F27Q10.
+
+**See also** `SoftAvailable`, `SoftHoldIrq`
+
+### SoftAvailable
+
+**Syntax**
+```basic
+b = SoftAvailable()
+```
+**Overview** Looks at the `rx` pin once.
+
+**Returns** `Boolean`: True when the pin is at its start-bit level, so a `SoftReadByte` now returns the byte.
+
+**Example**
+```basic
+If SoftAvailable() Then
+    c = SoftReadByte(0)
+End If
+```
+**Notes** +46 words on the PIC18F27Q10.
+
+### SoftHoldIrq
+
+**Syntax**
+```basic
+SoftHoldIrq(on)
+```
+**Overview** Chooses whether a byte is sent, or received from its start edge on, with the global interrupt enable (bit
+7 of `INTCON`, `INTCON0` on the PIC18-Q41) cleared and put back as it was, so an interrupt cannot stretch a bit.
+
+**Parameters** `on` a `Boolean`. True (the default): a received byte stops other interrupts for 10 bit times (about
+1 ms at 9600 baud). False: nothing is touched, and an interrupt that runs during a byte distorts it, which a low baud
+rate and a short handler can live with.
+
+**Example**
+```basic
+SoftHoldIrq(False)                ' the timer interrupt must not wait a whole byte
+```
+**Notes** +3 words on the PIC18F27Q10.
+
+## spi  (`Include "spi"`, MSSP1 host)
+
+SPI host (master). On the PIC18F27Q10 SCK, SDO and SDI go to pins of ports B and C (8..23; the other parts: `docs/LIBRARY.md`, *spi*); SDO can be 255 for a
+receive-only host. The chip select is not part of the module: drive it with a port bit. `Clock` must be
+FOSC in MHz. The module owns MSSP1 (do not use `i2c` together) and does not use its interrupt.
+
+**Modes**: 0 = idle low, data changes on the falling edge; 1 = idle low, rising; 2 = idle high,
+falling; 3 = idle high, rising (CPOL/CPHA as `CKP`/`CKE`). **Status** (`SpiStatus`): 0 after the last
+transfer completed, 1 after a timeout, 4 when not initialised.
+
+### SpiInit
+
+**Syntax**
+```basic
+ok = SpiInit(hz, mode, sck, sdo, sdi)
+```
+**Overview** Sets up MSSP1 as an SPI host. The clock is FOSC/4 for `hz` of FOSC/4 or more, otherwise
+`FOSC / (4 * (SSPxADD + 1))`, rounded so the clock is at or below `hz`. The lowest is FOSC/1024.
+
+**Parameters** `hz` a `LongWord`, 1..16000000; `mode` 0..3; `sck`, `sdo`, `sdi` pins the part can route (8..23 on the PIC18F27Q10; `sdo` may
+be 255).
+
+**Returns** `Byte`: 1, or 0 for a bad pin, a pin used twice, a mode above 3, or a clock below FOSC/1024.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = SpiInit(1000000, 0, 19, 20, 21)
+```
+**Notes** Use `SpiOff` before changing pins.
+
+### SpiOff
+
+**Syntax**
+```basic
+SpiOff(sck, sdo)
+```
+**Overview** Disables the MSSP and gives the pins back to their `LATxy` bits.
+
+**Parameters** The pins given to `SpiInit`.
+
+**Example**
+```basic
+SpiOff(19, 20)
+```
+
+### SpiStatus
+
+**Syntax**
+```basic
+s = SpiStatus()
+```
+**Overview** The status of the last SPI transfer.
+
+**Returns** `Byte`, the codes above: 0 after the last transfer completed, 1 after a timeout, 4 when not initialised.
+
+**Example**
+```basic
+Dim s As Byte
+s = SpiStatus()
+```
+
+### SpiTransfer
+
+**Syntax**
+```basic
+r = SpiTransfer(b)
+```
+**Overview** Sends one byte and returns the byte received at the same time. The wait is bounded.
+
+**Returns** `Byte`; 0 on an error (see `SpiStatus`).
+
+**Example**
+```basic
+Dim r As Byte
+r = SpiTransfer($9F)
+```
+
+### SpiWrite
+
+**Syntax**
+```basic
+SpiWrite(b)
+```
+**Overview** Sends one byte and ignores the byte received.
+
+**Example**
+```basic
+SpiWrite($06)
+```
+
+### SpiRead
+
+**Syntax**
+```basic
+r = SpiRead()
+```
+**Overview** Receives one byte (sends 255 on SDO).
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim r As Byte
+r = SpiRead()
+```
+
+---
+
+## Category: System and clock
+
+## delay  (`Include "delay"`)
+
+`DelayMS` and `DelayUS` are language commands (section 2). The module adds:
+
+### DelaySeconds
+
+**Syntax**
+```basic
+DelaySeconds(s)
+```
+**Overview** Waits `s` seconds, as `s` calls of `DelayMS(1000)`.
+
+**Parameters** `s` is a `Byte` (0..255).
+
+**Example**
+```basic
+DelaySeconds(5)
+```
+**Notes** Interrupts lengthen the delay.
+
+### DelayNop
+
+**Syntax**
+```basic
+DelayNop()
+```
+**Overview** A short fixed pause of 5 instruction cycles: the call, one `nop` and the return.
+Where exactly one cycle is wanted, write `Asm nop End Asm` in place.
+
+**Example**
+```basic
+Dim p As PORTB.0
+Output(p)
+High(p) : DelayNop() : Low(p)
+```
+
+## gpio  (`Include "gpio"`)
+
+Port-level helpers for ports A, B and C. Single pins need no library: `Input`, `Output`, `High`,
+`Low`, `Toggle` are language commands and `Dim led As PORTB.0` names a pin.
+
+### GpioAllDigital
+
+**Syntax**
+```basic
+GpioAllDigital()
+```
+**Overview** Makes every pin of ports A, B and C a digital pin (`ANSELA/B/C = 0`). `ANSELx` resets to
+1 (analog, input buffer off), so a pin read as digital stays 0 until this runs [DS40002043F p.247].
+
+**Example**
+```basic
+Dim led As PORTB.0
+GpioAllDigital()
+Output(led)
+High(led)
+```
+**Notes** Call it before `AdcPin` if the same program also uses analog inputs, then re-select those
+pins with `AdcPin`.
+
+### GpioPullUps
+
+**Syntax**
+```basic
+GpioPullUps(maskA, maskB, maskC)
+```
+**Overview** Writes `WPUA/B/C`. A 1 bit enables the weak pull-up of that pin [p.251].
+
+**Parameters** `maskA`, `maskB`, `maskC` are `Byte` constants or variables, bit n = pin Rx*n*.
+
+**Example**
+```basic
+GpioAllDigital()
+GpioPullUps(0, 0, %00000001)      ' pull-up on RC0
+```
+**Notes** The mask replaces the whole register: pins not set in the mask lose their pull-up.
+
+### GpioOpenDrain
+
+**Syntax**
+```basic
+GpioOpenDrain(maskA, maskB, maskC)
+```
+**Overview** Writes `ODCONA/B/C`. A 1 bit makes the pin drive low only (open drain) [p.256].
+
+**Parameters** As `GpioPullUps`.
+
+**Example**
+```basic
+GpioOpenDrain(0, %00000010, 0)    ' RB1 open drain
+```
+
+## intosc  (`Include "intosc"`, internal oscillator set-up)
+
+`Clock` only tells the compiler what speed to expect; it does not touch the hardware. Including
+`intosc` makes the hardware match it. Its start-up code (run before the main program) writes
+`OSCFRQ` and `OSCCON1` and waits, each wait bounded, for `OSCCON3.ORDY` and `OSCSTAT.HFOR`. Include
+it **first**: module start-up code runs in include order. For `Clock` of 1 MHz or more the divider is
+never raised, so start-up writes `OSCFRQ` then `OSCCON1` without reading `OSCCON2`; below 1 MHz it
+reads `OSCCON2` to pick the order.
+
+Accepted `Clock` values (anything else is a compile error): 64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and
+0.5, 0.25, 0.125, 0.0625, 0.03125 MHz (1 MHz divided by 2 to 32). `Config` needs `CSWEN = ON` unless
+`Clock` already equals the `RSTOSC` speed. If a write is ignored, `SysClockOk()` is False.
+
+```basic
+Program Blink
+Device = 18F27Q10
+Clock = 16
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, CSWEN = ON, WDTE = OFF, LVP = ON
+Include "intosc"
+```
+
+### SetClock
+
+**Syntax**
+```basic
+ok = SetClock(mhz)
+```
+**Overview** Runs HFINTOSC at `mhz` with no divider, at run time.
+
+**Parameters** `mhz` is a `Byte`: 1, 2, 4, 8, 12, 16, 32, 48 or 64.
+
+**Returns** `Boolean`: True when the switch completed and read back; False (nothing written) for
+another value, or when the clock did not switch.
+
+**Example**
+```basic
+Dim ok As Boolean
+ok = SetClock(4)
+```
+**Notes** `DelayMS`, `DelayUS` and the serial, I2C, SPI and PWM modules keep timing for the
+compile-time `Clock`, so they are wrong until the clock is back at `Clock`.
+
+### SetClockDiv
+
+**Syntax**
+```basic
+ok = SetClockDiv(mhz, shift)
+```
+**Overview** As `SetClock`, with the clock divided by 2^`shift`.
+
+**Parameters** `mhz` as `SetClock`; `shift` is 0..9 (1:1 to 1:512).
+
+**Returns** `Boolean`, as `SetClock`.
+
+**Example**
+```basic
+Dim ok As Boolean
+ok = SetClockDiv(16, 2)           ' 16 MHz / 4 = 4 MHz
+```
+
+## pinio  (`Include "pinio"`, pin access by number)
+
+Run-time access to a pin by its number (`RA0` = 0, `RB0` = 8, `RC0` = 16, and on the parts with more ports `RD0` = 24,
+`RE0` = 32, `RF0` = 40), for code that picks its pins at run time. The bit-banged modules (`pulse`, `buttons`, `shift`,
+`softserial`, `onewire`, `irremote`, `x10`, `lcd`, `glcd`, `oled`, `epaper`) are built on it. A pin the part lacks is
+refused by `PinOk` and ignored by every routine. `PinOutput` and `PinInput` also clear the pin's `ANSELx` bit, so the pin is
+digital. The routines change `LATx` and `TRISx` by read-modify-write and are not reentrant: do not use them from an interrupt
+handler and the main program on the same port. Call them as `Pinio.Name(...)` (the bare `PinSet` is the language command).
+
+### PinCount
+
+**Syntax**
+```basic
+n = Pinio.PinCount
+```
+**Overview** A constant: one more than the highest pin number the part can have: 24 (ports A to C), 32 (with port D), 40 (with port E) or 48 (with port F).
+
+**Example**
+```basic
+Include "pinio"
+Dim p As Byte
+For p = 0 To Pinio.PinCount - 1
+    If Pinio.PinOk(p) Then
+        Pinio.PinOutput(p)
+    End If
+Next
+```
+**See also** `PinOk`
+
+### PinOk
+
+**Syntax**
+```basic
+ok = Pinio.PinOk(pin)
+```
+**Overview** True for a pin number the part has (a part without port B, for one, refuses 8..15).
+
+**Parameters** `pin` a `Byte`.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+If Pinio.PinOk(9) Then
+    Pinio.PinOutput(9)
+End If
+```
+**See also** `PinCount`
+
+### Pinio.PinSet
+
+**Syntax**
+```basic
+Pinio.PinSet(pin, level)
+```
+**Overview** Writes the pin's output latch (`LATx`): True = high. The direction is not changed.
+
+**Parameters** `pin` a pin number; `level` a `Boolean`.
+
+**Example**
+```basic
+Pinio.PinSet(9, True)
+```
+**Notes** The language command `PinSet(pin)` (no level) is a different thing: see *PinSet* in chapter 2.
+
+**See also** `PinGet`, `PinOutput`
+
+### PinGet
+
+**Syntax**
+```basic
+b = Pinio.PinGet(pin)
+```
+**Overview** Reads the pin's level (`PORTx`).
+
+**Parameters** `pin` a pin number.
+
+**Returns** `Boolean`: True = high; False for a pin that is not OK.
+
+**Example**
+```basic
+If Pinio.PinGet(10) Then
+    Pinio.PinSet(9, True)
+End If
+```
+**See also** `PinInput`
+
+### PinOutput
+
+**Syntax**
+```basic
+Pinio.PinOutput(pin)
+```
+**Overview** Makes the pin a digital output (clears its `ANSELx` and `TRISx` bits).
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.PinSet(9, False)
+Pinio.PinOutput(9)
+```
+**See also** `PinInput`
+
+### PinInput
+
+**Syntax**
+```basic
+Pinio.PinInput(pin)
+```
+**Overview** Makes the pin a digital input (clears `ANSELx`, sets `TRISx`).
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.PinInput(10)
+```
+**See also** `PinOutput`, `PinGet`
+
+### PinDriveLow
+
+**Syntax**
+```basic
+Pinio.PinDriveLow(pin)
+```
+**Overview** Open-drain use: clears the pin's latch and makes it an output, so the line is pulled low.
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.PinDriveLow(9)      ' pull the shared line low
+DelayUS(10)
+Pinio.PinRelease(9)       ' let the pull-up take it high
+```
+**See also** `PinRelease`
+
+### PinRelease
+
+**Syntax**
+```basic
+Pinio.PinRelease(pin)
+```
+**Overview** Open-drain use: makes the pin an input, so an external pull-up takes the line high.
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.PinRelease(9)
+```
+**See also** `PinDriveLow`
+
+### BindData
+
+**Syntax**
+```basic
+Pinio.BindData(pin)
+```
+**Overview** Picks the *data* pin that `DataPut` and `DataRead` then use with no pin argument, so a bit loop costs a few instructions per bit. There is one bound data pin and one bound clock pin for the whole program, shared by `shift`, `pulse`, `softserial` and the other bit-banged modules: bind again after calling one of them.
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.BindData(8)
+Pinio.PinOutput(8)
+Pinio.DataPut(True)
+```
+**See also** `DataPut`, `DataRead`, `BindClk`
+
+### BindClk
+
+**Syntax**
+```basic
+Pinio.BindClk(pin)
+```
+**Overview** Picks the *clock* pin that `ClkPut` then uses, as `BindData` does for the data pin.
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.BindClk(9)
+Pinio.PinOutput(9)
+Pinio.ClkPut(False)
+```
+**See also** `ClkPut`
+
+### DataPut
+
+**Syntax**
+```basic
+Pinio.DataPut(level)
+```
+**Overview** Writes the latch of the pin bound by `BindData`.
+
+**Parameters** `level` a `Boolean`.
+
+**Example**
+```basic
+Pinio.DataPut(False)
+```
+**See also** `BindData`
+
+### ClkPut
+
+**Syntax**
+```basic
+Pinio.ClkPut(level)
+```
+**Overview** Writes the latch of the pin bound by `BindClk`.
+
+**Parameters** `level` a `Boolean`.
+
+**Example**
+```basic
+Pinio.ClkPut(True)
+DelayUS(1)
+Pinio.ClkPut(False)
+```
+**See also** `BindClk`
+
+### DataRead
+
+**Syntax**
+```basic
+b = Pinio.DataRead()
+```
+**Overview** Reads the level of the pin bound by `BindData`.
+
+**Returns** `Boolean`: True = high.
+
+**Example**
+```basic
+Pinio.BindData(10)
+Pinio.PinInput(10)
+b = Pinio.DataRead()
+```
+**See also** `BindData`
+
+### BindOd
+
+**Syntax**
+```basic
+Pinio.BindOd(pin)
+```
+**Overview** Picks the open-drain pin that `OdLow`, `OdRelease` and `OdRead` use (`onewire` uses it). Before the first use the pin's latch must be 0 (`Pinio.PinSet(pin, False)` once) and the pin digital (`PinInput` once). On the PIC18 it is the same bound pin as `BindData`.
+
+**Parameters** `pin` a pin number.
+
+**Example**
+```basic
+Pinio.PinSet(9, False)
+Pinio.PinInput(9)
+Pinio.BindOd(9)
+```
+**See also** `OdLow`, `OdRelease`, `OdRead`
+
+### OdLow
+
+**Syntax**
+```basic
+Pinio.OdLow()
+```
+**Overview** Makes the bound open-drain pin an output, so the line is pulled low (a few instructions: only `TRISx` changes).
+
+**Example**
+```basic
+Pinio.OdLow()
+DelayUS(480)
+Pinio.OdRelease()
+```
+**See also** `OdRelease`, `BindOd`
+
+### OdRelease
+
+**Syntax**
+```basic
+Pinio.OdRelease()
+```
+**Overview** Makes the bound open-drain pin an input, so the pull-up takes the line high.
+
+**Example**
+```basic
+Pinio.OdRelease()
+```
+**See also** `OdLow`
+
+### OdRead
+
+**Syntax**
+```basic
+b = Pinio.OdRead()
+```
+**Overview** Reads the level of the bound open-drain line.
+
+**Returns** `Boolean`: True = high.
+
+**Example**
+```basic
+Pinio.OdRelease()
+b = Pinio.OdRead()
+```
+**See also** `BindOd`
+
+### PortDigital
+
+**Syntax**
+```basic
+Pinio.PortDigital(base)
+```
+**Overview** Makes the eight pins of a port digital (clears `ANSELx`).
+
+**Parameters** `base` the number of the port's first pin: 0 = port A, 8 = B, 16 = C, 24 = D, 32 = E, 40 = F.
+
+**Example**
+```basic
+Pinio.PortDigital(16)
+```
+**See also** `PortDirection`
+
+### PortDirection
+
+**Syntax**
+```basic
+Pinio.PortDirection(base, isInput)
+```
+**Overview** Makes the eight pins of a port inputs (`isInput` True) or outputs. Make them digital first (`PortDigital`).
+
+**Parameters** `base` as `PortDigital`; `isInput` a `Boolean`.
+
+**Example**
+```basic
+Pinio.PortDigital(16)
+Pinio.PortDirection(16, False)
+```
+**See also** `PortWrite`, `PortRead`
+
+### PortWrite
+
+**Syntax**
+```basic
+Pinio.PortWrite(base, v)
+```
+**Overview** Writes `v` to the port's latch.
+
+**Parameters** `base` as `PortDigital`; `v` a `Byte`.
+
+**Example**
+```basic
+Pinio.PortWrite(16, $55)
+```
+**See also** `PortRead`
+
+### PortRead
+
+**Syntax**
+```basic
+v = Pinio.PortRead(base)
+```
+**Overview** Reads the port's eight pins.
+
+**Parameters** `base` as `PortDigital`.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+v = Pinio.PortRead(8)
+```
+**See also** `PortWrite`
+
+### PortDigitalHigh
+
+**Syntax**
+```basic
+Pinio.PortDigitalHigh(base)
+```
+**Overview** Makes the upper four pins of a port digital; the lower four are not changed.
+
+**Parameters** `base` as `PortDigital`.
+
+**Example**
+```basic
+Pinio.PortDigitalHigh(16)
+```
+**See also** `PortDirectionHigh`
+
+### PortDirectionHigh
+
+**Syntax**
+```basic
+Pinio.PortDirectionHigh(base, isInput)
+```
+**Overview** Makes the upper four pins of a port inputs or outputs; the lower four stay as they are.
+
+**Parameters** `base` as `PortDigital`; `isInput` a `Boolean`.
+
+**Example**
+```basic
+Pinio.PortDirectionHigh(16, False)
+```
+**See also** `PortWriteHigh`
+
+### PortWriteHigh
+
+**Syntax**
+```basic
+Pinio.PortWriteHigh(base, v)
+```
+**Overview** Writes bits 7..4 of `v` to the upper four pins of the port's latch; the lower four are not changed (a 4-bit bus next to other pins).
+
+**Parameters** `base` as `PortDigital`; `v` a `Byte`.
+
+**Example**
+```basic
+Pinio.PortWriteHigh(16, $A0)
+```
+**See also** `PortReadHigh`
+
+### PortReadHigh
+
+**Syntax**
+```basic
+v = Pinio.PortReadHigh(base)
+```
+**Overview** Reads the upper four pins of the port into bits 7..4 (the lower four read as 0).
+
+**Parameters** `base` as `PortDigital`.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+v = Pinio.PortReadHigh(16) >> 4
+```
+**See also** `PortWriteHigh`
+
+---
+
+## system  (`Include "system"`, reset cause, wake-up cause and clock check)
+
+### SysResetCause
+
+**Syntax**
+```basic
+cause = SysResetCause()
+```
+**Overview** Reports the cause of the latest Reset whose `PCON0` flags are not yet cleared.
+
+**Returns** `Byte`: 1 power-on, 2 brown-out, 3 MCLR pin, 4 watchdog time-out, 5 watchdog window
+violation, 6 `RESET` instruction, 7 stack overflow, 8 stack underflow, 0 none. Tested in the order
+1, 2, 7, 8, 5, 4, 3, 6.
+
+**Example**
+```basic
+Dim c As Byte
+c = SysResetCause()
+SysClearResetFlags()
+```
+**Notes** Hardware never clears the flags, so read the cause at start and then call
+`SysClearResetFlags`; otherwise an old cause is reported again.
+
+### SysResetFlags
+
+**Syntax**
+```basic
+raw = SysResetFlags()
+```
+**Overview** Returns the raw `PCON0` value.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim f As Byte
+f = SysResetFlags()
+```
+
+### SysClearResetFlags
+
+**Syntax**
+```basic
+SysClearResetFlags()
+```
+**Overview** Puts every `PCON0` flag to its inactive state so the next Reset shows only its own cause.
+
+**Example**
+```basic
+SysClearResetFlags()
+```
+
+### SysWakeCause
+
+**Syntax**
+```basic
+cause = SysWakeCause()
+```
+**Overview** Reports why the part woke from Sleep or whether the watchdog timed out, from the `TO` and `PD` flags in `STATUS` (the flags older PIC18 data sheets list in `RCON`). Works on every supported part.
+
+**Returns** `Byte`: 0 none (power-up, or the flags cleared), 1 woke from Sleep by an interrupt or other non-watchdog event, 2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
+
+**Example**
+```basic
+Dim w As Byte
+Sleep()
+w = SysWakeCause()
+SysClearWakeFlags()
+```
+**Notes** `TO` and `PD` are read-only and keep their values until `clrwdt` or the next power-up, so call `SysClearWakeFlags` after reading. `SysWakeFrom(st)` gives the same result for a given `STATUS` value `st`.
+
+### SysWakeFrom
+
+**Syntax**
+```basic
+cause = SysWakeFrom(st)
+```
+**Overview** The wake-up or power-down cause for a saved `STATUS` value, decoded as `SysWakeCause` decodes the live one (only the TO and PD bits are looked at). Use it on a copy of `STATUS` taken early in the program, before anything clears the flags.
+
+**Parameters** `st` a `Byte`, a copy of `STATUS`.
+
+**Returns** `Byte`: 0 none (power-up, or cleared), 1 woke from Sleep by an interrupt or another event that is not the watchdog, 2 woke from Sleep by a watchdog time-out, 3 the watchdog timed out while the part was running.
+
+**Example**
+```basic
+Dim saved As Byte
+Dim cause As Byte
+saved = STATUS
+cause = SysWakeFrom(saved)
+```
+**See also** `SysWakeCause`, `SysClearWakeFlags`
+
+### SysClearWakeFlags
+
+**Syntax**
+```basic
+SysClearWakeFlags()
+```
+**Overview** Sets `TO` and `PD` back to 1 with `clrwdt`, which also restarts the watchdog count.
+
+**Example**
+```basic
+SysClearWakeFlags()
+```
+
+### SysClockHz
+
+**Syntax**
+```basic
+hz = SysClockHz()
+```
+**Overview** The system clock in Hz as the oscillator is set now (from `OSCCON2` and `OSCFRQ`).
+
+**Returns** `LongWord`; 0 when the source is not HFINTOSC (external and low-frequency sources have no
+frequency the module knows). The nominal HFINTOSC frequency is used; `OSCTUNE` is not applied.
+
+**Example**
+```basic
+Dim hz As LongWord
+hz = SysClockHz()
+```
+
+### SysClockFrom
+
+**Syntax**
+```basic
+hz = SysClockFrom(cosc, cdiv, hffrq)
+```
+**Overview** The same conversion from given field values.
+
+**Parameters** `cosc` is `OSCCON2` bits 6:4 (6 = HFINTOSC); `cdiv` is `OSCCON2` bits 3:0 (divider
+code 0..9); `hffrq` is `OSCFRQ` bits 3:0 (codes 0..8 = 1, 2, 4, 8, 12, 16, 32, 48, 64 MHz).
+
+**Returns** `LongWord`; 0 for any other source or a reserved code.
+
+**Example**
+```basic
+Dim hz As LongWord
+hz = SysClockFrom(6, 0, 5)        ' HFINTOSC, 1:1, 16 MHz
+```
+
+### SysClockOk
+
+**Syntax**
+```basic
+ok = SysClockOk()
+```
+**Overview** True when the oscillator runs at the frequency the program was compiled for (`Clock`).
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+If SysClockOk() = False Then
+    Terminate()
+EndIf
+```
+
+### Sleep
+
+**Syntax**
+```basic
+System.Sleep()
+```
+**Overview** Puts the part to sleep with the `sleep` instruction (followed by two NOPs, which the PIC16F13xxx needs after a wake-up). It returns when an interrupt
+wakes the part, or the watchdog if the `Config` enables it; with interrupts enabled the handler runs first. This is the plain instruction; for timed sleeps see `Snooze` and `Sleep(seconds)` below. Set up the wake-up source before the call.
+
+**Example**
+```basic
+Device = 18F27Q10
+Clock = 64
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = ON, LVP = ON   ' the watchdog is on and wakes the part
+Include "system"
+Do
+    Toggle(PORTB.0)
+    System.Sleep()          ' asleep until the watchdog time-out (a wake-up, not a reset, as the part was asleep)
+Loop
+```
+
+### Snooze
+
+**Syntax**
+```basic
+System.Snooze(period)
+```
+**Overview** Sleeps for a short time, timed by the watchdog (so independent of the oscillator). `period` 0..7 gives about 2^period x 16 ms (16, 32, 64, 128, 256, 512 ms, 1 s, 2 s); a larger value counts as 7. The unit here is the nearest watchdog period (16 ms nominal). The time is approximate (the 31 kHz LFINTOSC varies with temperature and voltage), and an interrupt that wakes the part sooner ends the snooze sooner. The watchdog register is saved and restored, and it works the same on every supported family (WDTCON or WDTCON0, period in bits 5:1, enable in bit 0).
+
+**Requirements** The `Config` needs `WDTE = SWDTEN` (the call turns the watchdog on for the sleep and off again) or `WDTE = ON`. With `WDTE` off, or on-except-in-Sleep, nothing wakes the part but an interrupt. On the PIC16F13xxx, PIC16F171xx and PIC18 Q10/Q41 parts the period bits are read-only unless the `Config` has `WDTCPS = 11111`; the snooze then uses the `Config` period.
+
+**Example**
+```basic
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = SWDTEN, LVP = ON
+Include "system"
+Do
+    Toggle(PORTB.0)
+    System.Snooze(6)        ' about 1 second asleep
+Loop
+```
+
+### Sleep (timed)
+
+**Syntax**
+```basic
+System.Sleep(seconds)
+```
+**Overview** Sleeps for about `seconds` seconds (a Word; 0 returns at once), one watchdog second (period code 10) at a time. Same requirements and accuracy as `Snooze`; an interrupt that wakes the part ends only the second it arrived in.
+
+**Example**
+```basic
+Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = SWDTEN, LVP = ON
+Include "system"
+Do
+    Toggle(PORTB.0)
+    System.Sleep(10)        ' about ten seconds asleep
+Loop
+```
+**See also** `Snooze`
+
+---
+
+## Category: Timers and PWM
+
+## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
+
+Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
+Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a channel
+runs, so do not use `Timer2` routines at the same time. On the PIC18F27Q10 CCP1/CCP2 can output on ports B and C
+(pins 8..23) and PWM3/PWM4 on ports A and C; the routing of the other parts is in `docs/LIBRARY.md` (*pwm*). The duty is a number of steps out of `PwmSteps()`.
+
+### PwmInit
+
+**Syntax**
+```basic
+ok = PwmInit(hz)
+```
+**Overview** Chooses the Timer2 prescale (1..128) and period for `hz`. Timer2 is started by `PwmStart`.
+
+**Parameters** `hz` is a `LongWord`, 1..1000000.
+
+**Returns** `Byte`: 1, or 0 when no prescale reaches `hz` or a channel is running (the period is shared).
+
+**Example**
+```basic
+Dim ok As Byte
+ok = PwmInit(1000)
+```
+
+### PwmFrequency
+
+**Syntax**
+```basic
+hz = PwmFrequency()
+```
+**Overview** The achieved frequency.
+
+**Returns** `LongWord`; 0 before a successful `PwmInit`.
+
+**Example**
+```basic
+Dim f As LongWord
+PwmInit(1000)
+f = PwmFrequency()
+```
+
+### PwmSteps
+
+**Syntax**
+```basic
+n = PwmSteps()
+```
+**Overview** Number of duty steps in one period: `4 * (T2PR + 1)`, at most 1024. The 10-bit resolution is
+reached only when `T2PR` = 255; a higher frequency gives fewer steps.
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim n As Word
+PwmInit(1000)
+n = PwmSteps()
+```
+
+### PwmStart
+
+**Syntax**
+```basic
+ok = PwmStart(ch, pin, duty)
+```
+**Overview** Starts a channel on a pin, following the data sheet set-up order (driver off, routing,
+duty, Timer2 on, wait for its first overflow, then driver on) so the first period is complete.
+
+**Parameters** `ch` 1..4; `pin` a pin number (see the heading for the pins each channel can reach); `duty` in steps, 0..`PwmSteps()`.
+
+**Returns** `Byte`: 0 (and nothing done) without a successful `PwmInit`, for a channel or pin that cannot
+be used, or for a pin another running channel uses. A running channel is restarted.
+
+**Example**
+```basic
+Dim ok As Byte
+PwmInit(1000)
+ok = PwmStart(1, 18, 512)         ' CCP1 on RC2, half duty at 1024 steps
+```
+
+### PwmDuty
+
+**Syntax**
+```basic
+PwmDuty(ch, duty)
+```
+**Overview** Sets the duty in steps. No effect on a stopped channel.
+
+**Parameters** `ch` 1..4; `duty` 0..`PwmSteps()` (at most 1023 is representable).
+
+**Example**
+```basic
+PwmDuty(1, 256)
+```
+**Notes** Duty registers are double buffered and copied at the period match; if the match falls between
+the two byte writes, one period can use a mixed value.
+
+### PwmPercent
+
+**Syntax**
+```basic
+PwmPercent(ch, pct)
+```
+**Overview** Sets the duty as a percentage, rounded down to a step.
+
+**Parameters** `ch` 1..4; `pct` 0..100. 100 gives the highest representable duty, which with 1024
+steps is 1023/1024: the output cannot reach a true 100 %.
+
+**Example**
+```basic
+PwmPercent(1, 25)
+```
+
+### PwmInvert
+
+**Syntax**
+```basic
+ok = PwmInvert(ch, inverted)
+```
+**Overview** Sets the output polarity of PWM3 or PWM4 (`PWMxCON.POL`); on a running channel it applies at
+once.
+
+**Parameters** `ch` 3 or 4; `inverted` a `Boolean`.
+
+**Returns** `Byte`: 0 for channels 1 and 2, which have no polarity bit.
+
+**Example**
+```basic
+Dim ok As Byte
+ok = PwmInvert(3, True)
+```
+
+### PwmStop
+
+**Syntax**
+```basic
+PwmStop(ch)
+```
+**Overview** Stops a channel: the pin becomes an input again and returns to its `LATxy` bit and the module
+is disabled. Timer2 is stopped when the last channel stops.
+
+**Parameters** `ch` 1..4.
+
+**Example**
+```basic
+PwmStop(1)
+```
+
+## timer  (`Include "timer"`, Timer0, Timer1, Timer2)
+
+The module configures a timer and reads its flag. It declares no interrupt handler: to be
+interrupted, call `TimerNEnableInterrupt`, write your own `Interrupt`, and call `TimerNAck` in it
+(flags are not cleared by hardware). All timers count FOSC/4 unless a Timer1 source says otherwise.
+`prescale` ranges are per timer. External pins (T1CKI, T1G, T2IN) must be digital inputs; the
+module does not set them up.
+
+### Timer0Start
+
+**Syntax**
+```basic
+Timer0Start(prescale, period)
+```
+**Overview** Starts Timer0 as an 8-bit periodic timer counting 0..`period`. One overflow takes
+`(period + 1) * 2^prescale` instruction cycles.
+
+**Parameters** `prescale` 0..15 (1:1 to 1:32768); `period` 0..255.
+
+**Example**
+```basic
+Timer0Start(7, 124)               ' 16 MHz: 125 * 128 cycles = 4 ms
+```
+
+### Timer0Start16
+
+**Syntax**
+```basic
+Timer0Start16(prescale)
+```
+**Overview** Starts Timer0 as a 16-bit free-running timer, read with `Timer0Read`.
+
+**Parameters** `prescale` 0..15.
+
+**Example**
+```basic
+Timer0Start16(4)
+```
+
+### Timer0Read
+
+**Syntax**
+```basic
+count = Timer0Read()
+```
+**Overview** Reads the 16-bit count (`TMR0L` first, which latches `TMR0H`).
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim t As Word
+Timer0Start16(4)
+t = Timer0Read()
+```
+
+### Timer0Expired
+
+**Syntax**
+```basic
+flag = Timer0Expired()
+```
+**Overview** True once per overflow; clears the flag when it reports it.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim led As PORTB.0
+ANSELB = 0
+Output(led)
+Timer0Start(15, 244)
+While True
+    If Timer0Expired() Then
+        Toggle(led)
+    EndIf
+Wend
+```
+
+### Timer0Ack
+
+**Syntax**
+```basic
+Timer0Ack()
+```
+**Overview** Clears the Timer0 flag. Call it from your own interrupt handler, wrapped in `Save`
+(a call from a handler is otherwise `E-ISR-CALL`).
+
+**Example**
+```basic
+Interrupt Tick()
+    Save(0, Timer0Ack)
+        Timer0Ack()
+    Restore
+End Interrupt
+Timer0Start(15, 244)
+Timer0EnableInterrupt()
+Enable(Tick)
+```
+
+### Timer0EnableInterrupt
+
+**Syntax**
+```basic
+Timer0EnableInterrupt()
+```
+**Overview** Clears the Timer0 flag and sets its interrupt enable (`PIE0.TMR0IE` on the PIC18F27Q10). Global interrupts
+are enabled separately with `Enable`.
+
+**Example**
+```basic
+Timer0Start(15, 244)
+Timer0EnableInterrupt()
+```
+**See also** `Timer0DisableInterrupt`, `Timer0Ack`, `Enable`.
+
+### Timer0DisableInterrupt
+
+**Syntax**
+```basic
+Timer0DisableInterrupt()
+```
+**Overview** Clears the Timer0 interrupt enable; the timer keeps running and its flag still sets.
+
+**Example**
+```basic
+Timer0DisableInterrupt()
+```
+**See also** `Timer0EnableInterrupt`.
+
+### Timer0OnExpire
+
+**Syntax**
+```basic
+Timer0OnExpire = Handler          ' Type TTimerEvent = Event()
+```
+**Overview** An event variable (type `TTimerEvent`, declared by the module) holding the handler that `Timer0Service`
+calls once for each overflow. Unassigned, nothing is called. The module declares no `Interrupt`, so it never claims a
+vector.
+
+**Example**
+```basic
+Dim ticks As Byte
+Event Tick()
+    Inc(ticks)
+End Event
+Timer0OnExpire = Tick
+Timer0Start(15, 255)
+While ticks < 10
+    Timer0Service()
+Wend
+```
+**See also** `Timer0Service`, *Events* (section 1).
+
+### Timer0Service
+
+**Syntax**
+```basic
+Timer0Service()
+```
+**Overview** Checks the Timer0 flag; if the timer has overflowed it clears the flag and calls the `Timer0OnExpire`
+handler once. With no handler assigned the flag is still cleared. Call it from the main loop, or from your own interrupt
+(wrap it in `Save(0, Timer0Service)`).
+
+**Example**
+```basic
+While True
+    Timer0Service()
+Wend
+```
+**See also** `Timer0OnExpire`, `Timer0Expired`, `Timer0EnableInterrupt`.
+
+### Timer0Stop
+
+**Syntax**
+```basic
+Timer0Stop()
+```
+**Overview** Stops Timer0.
+
+**Example**
+```basic
+Timer0Stop()
+```
+
+### Timer1Start
+
+**Syntax**
+```basic
+Timer1Start(prescale)
+```
+**Overview** Starts Timer1 as a 16-bit timer on FOSC/4, ungated. It overflows every
+`65536 * 2^prescale` cycles.
+
+**Parameters** `prescale` 0..3 (1:1 to 1:8).
+
+**Example**
+```basic
+Timer1Start(3)                    ' 16 MHz / 4 / 8 = 500 kHz
+While Timer1Expired() = False
+Wend
+```
+
+### Timer1StartSource
+
+**Syntax**
+```basic
+Timer1StartSource(clk, prescale)
+```
+**Overview** Timer1 from any clock source, free-running and ungated. External sources are
+synchronised to the system clock (`SYNC = 0`), so pulses must be longer than a system clock cycle;
+asynchronous operation is not offered.
+
+**Parameters** `clk` is one of `T1ClkPin` (T1CKI pin, rising edges, default RC0), `T1ClkFosc4`,
+`T1ClkFosc`, `T1ClkHfIntOsc`, `T1ClkLfIntOsc`, `T1ClkMfIntOsc`, `T1ClkSosc`, `T1ClkTmr0` (the PIC16F13145 family has no secondary oscillator, so no `T1ClkSosc`; it has `T1ClkMfIntOsc32` and `T1ClkExtOsc`; the PIC16F152xx has no secondary oscillator either, and has `T1ClkSfIntOsc` and `T1ClkMfIntOsc32` with the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GatePwm3` and `T1GatePwm4`; the PIC16F183xx has only `T1ClkFosc4`, `T1ClkFosc`, `T1ClkPin` and `T1ClkLfIntOsc`, with the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateCmp1` and `T1GateCmp2`; the PIC16F153xx has no secondary oscillator either, and has `T1ClkMfIntOsc32` and `T1ClkClkr` with the gate sources `T1GatePin`, `T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GatePwm3` .. `T1GatePwm6`, `T1GateNco1`, `T1GateCmp1` and `T1GateCmp2`).
+`prescale` 0..3.
+
+**Example**
+```basic
+Timer1StartSource(T1ClkFosc, 0)
+```
+**Notes** `T1ClkSosc` needs `OSCEN.SOSCEN` set and time to stabilise. In counter mode a falling edge
+must be seen before the first rising edge counts, so the first pulse after a start may be missed
+(data sheet 20.2.2).
+
+### Timer1StartCounter
+
+**Syntax**
+```basic
+Timer1StartCounter(prescale)
+```
+**Overview** Counts rising edges on the T1CKI pin; the same as `Timer1StartSource(T1ClkPin, prescale)`.
+
+**Example**
+```basic
+Dim n As Word
+Dim t1cki As PORTC.0
+GpioAllDigital()
+Input(t1cki)
+Timer1StartCounter(0)
+n = Timer1Read()
+```
+
+### Timer1StartGated
+
+**Syntax**
+```basic
+Timer1StartGated(clk, prescale, source, activeHigh)
+```
+**Overview** Counts only while the gate source is at the given level. The gate is set up before the
+timer is switched on, so no count is taken ungated.
+
+**Parameters** `clk` and `prescale` as `Timer1StartSource`. `source` is `T1GatePin` (T1G, RB5),
+`T1GateTmr0`, `T1GateTmr2`, `T1GateCcp1`, `T1GateCcp2`, `T1GateCmp1` or `T1GateCmp2`. `activeHigh`
+is True to count while the gate is high, False while low.
+
+**Example**
+```basic
+Timer1StartGated(T1ClkFosc4, 0, T1GatePin, True)
+```
+
+### Timer1StartPulse
+
+**Syntax**
+```basic
+Timer1StartPulse(clk, prescale, source, activeHigh, fullCycle)
+```
+**Overview** Times the first pulse of the gate source after the call, then holds. Poll
+`Timer1PulseDone`, then read `Timer1Read` for the length in clock counts.
+
+**Parameters** As `Timer1StartGated`, plus `fullCycle`: True toggles the gate on every rising edge, so
+the measured time is a whole period of the source instead of its high (or low) time.
+
+**Example**
+```basic
+Dim w As Word
+Timer1StartPulse(T1ClkFosc4, 0, T1GatePin, True, False)
+While Timer1PulseDone() = False
+Wend
+w = Timer1Read()
+```
+
+### Timer1PulseDone
+
+**Syntax**
+```basic
+flag = Timer1PulseDone()
+```
+**Overview** True once the pulse started by `Timer1StartPulse` has ended.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+While Timer1PulseDone() = False
+Wend
+```
+
+### Timer1GateState
+
+**Syntax**
+```basic
+level = Timer1GateState()
+```
+**Overview** The live state of the gate (`T1GCON.GVAL`); it is not affected by the gate enable.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim g As Boolean
+g = Timer1GateState()
+```
+
+### FreqCount
+
+**Syntax**
+```basic
+n = Timer.FreqCount(pin, ms)
+```
+**Overview** Counts the rising edges on `pin` (numbered `RA0` = 0, `RB0` = 8, `RC0` = 16) in `ms` milliseconds with Timer1, so no edge is missed up to about a quarter of the system clock
+(`Buttons.Counter` polls and loses the fast ones). The pin is made a digital input, routed to Timer1 with `T1CKIPPS`, and left routed. It takes Timer1 over (a running Timer1 is reset, and left stopped) so do not call it while Timer1 is in use. Timer1 is read every
+millisecond and the differences are added, so the count is not limited to 65535 (up to 65535 edges in each millisecond). The window is `ms` times `DelayMS(1)` plus the read loop, within
+0.1 per cent at 16 MHz and above; the first pulse after the start may be missed (see `Timer1StartSource`), and interrupts lengthen the window. A pin the part lacks, or `ms` = 0, returns 0.
+The frequency in Hz is the count * 1000 / `ms`. **Returns** `LongWord`.
+
+**Example**
+```basic
+Include "timer"
+Dim hz As LongWord
+hz = Timer.FreqCount(17, 100) * 10     ' RC1, 100 ms window
+```
+Test: `tests/exec/lib_freqcount.bas` (basil-sim with a stimulus file, on 5 parts). Not run on hardware.
+
+**See also** `Timer1StartCounter`, `Counter`
+
+### Timer1Read
+
+**Syntax**
+```basic
+count = Timer1Read()
+```
+**Overview** Reads the Timer1 count. With `RD16` set, reading `TMR1L` latches `TMR1H`, so the 16 bits are consistent.
+
+**Returns** `Word`.
+
+**Example**
+```basic
+Dim t As Word
+Timer1Start(0)
+t = Timer1Read()
+```
+
+### Timer1Expired
+
+**Syntax**
+```basic
+flag = Timer1Expired()
+```
+**Overview** True once per overflow (`PIR4.TMR1IF` on the PIC18F27Q10); clears the flag when it reports it.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Timer1Start(0)
+While Not Timer1Expired()
+Wend
+```
+
+### Timer1Ack
+
+**Syntax**
+```basic
+Timer1Ack()
+```
+**Overview** Clears the Timer1 flag. Call it from your own interrupt handler, wrapped in `Save` (a call from a handler is
+otherwise `E-ISR-CALL`).
+
+**Example**
+```basic
+Timer1Ack()
+```
+
+### Timer1Stop
+
+**Syntax**
+```basic
+Timer1Stop()
+```
+**Overview** Stops Timer1.
+
+**Example**
+```basic
+Timer1Stop()
+```
+
+### Timer1EnableInterrupt
+
+**Syntax**
+```basic
+Timer1EnableInterrupt()
+```
+**Overview** Clears the Timer1 flag and sets its interrupt enable (`PIE4.TMR1IE` on the PIC18F27Q10). Global interrupts are
+enabled separately with `Enable`.
+
+**Example**
+```basic
+Timer1EnableInterrupt()
+```
+
+### Timer1DisableInterrupt
+
+**Syntax**
+```basic
+Timer1DisableInterrupt()
+```
+**Overview** Clears the Timer1 interrupt enable.
+
+**Example**
+```basic
+Timer1DisableInterrupt()
+```
+
+### Timer1OnExpire
+
+**Syntax**
+```basic
+Timer1OnExpire = Handler        ' Type TTimerEvent = Event()
+```
+**Overview** As `Timer0OnExpire`, for Timer1: the handler `Timer1Service` calls once for each overflow.
+
+**Example**
+```basic
+Dim ticks As Byte
+Event Tick()
+    Inc(ticks)
+End Event
+Timer1OnExpire = Tick
+```
+
+### Timer1Service
+
+**Syntax**
+```basic
+Timer1Service()
+```
+**Overview** As `Timer0Service`, for Timer1: if Timer1 has overflowed, clears the flag and calls the `Timer1OnExpire`
+handler once. Call it from the main loop, or from your own interrupt inside `Save(0, Timer1Service)`.
+
+**Example**
+```basic
+While True
+    Timer1Service()
+Wend
+```
+
+### Timer2Start
+
+**Syntax**
+```basic
+Timer2Start(prescale, postscale, period)
+```
+**Overview** Starts Timer2 as a free-running 8-bit timer on FOSC/4, counting 0..`period`. The flag
+is set every `(period + 1) * 2^prescale * (postscale + 1)` cycles.
+
+**Parameters** `prescale` 0..7 (1:1 to 1:128); `postscale` 0..15 (1:1 to 1:16); `period` 0..255.
+
+**Example**
+```basic
+Timer2Start(7, 0, 249)            ' 16 MHz: 250 * 128 cycles = 8 ms
+```
+**Notes** `T2TMR` is not cleared by a `T2CON` write. The `pwm` module owns Timer2 while a channel runs.
+
+### Timer2StartLimit
+
+**Syntax**
+```basic
+Timer2StartLimit(prescale, postscale, period, mode, source)
+```
+**Overview** Timer2 with a hardware-limit mode. Writing `ON` arms the timer: in the edge and level
+modes it waits for the reset source; in the one-shot modes it runs once and clears `ON`.
+
+**Parameters** `prescale`, `postscale`, `period` as `Timer2Start`. `mode` is one of `T2ModeSoftware`,
+`T2ModeGateHigh`, `T2ModeGateLow`, `T2ModeResetAnyEdge`, `T2ModeResetRising`, `T2ModeResetFalling`,
+`T2ModeResetLow`, `T2ModeResetHigh`, `T2ModeOneShot`, `T2ModeOneShotRising`, `T2ModeOneShotFalling`,
+`T2ModeOneShotAnyEdge`, `T2ModeOneShotRisingReset`, `T2ModeOneShotFallingReset`,
+`T2ModeOneShotRisingLow`, `T2ModeOneShotFallingHigh`, `T2ModeMonoRising`, `T2ModeMonoFalling`,
+`T2ModeMonoAnyEdge`, `T2ModeOneShotLevelHigh`, `T2ModeOneShotLevelLow`. `source` is `T2RstPin` (T2IN,
+default RC3), `T2RstTmr4`, `T2RstTmr6`, `T2RstCcp1`, `T2RstCcp2`, `T2RstPwm3`, `T2RstPwm4`,
+`T2RstCmp1`, `T2RstCmp2`.
+
+**Example**
+```basic
+Timer2StartLimit(7, 0, 249, T2ModeOneShot, T2RstPin)
+While Timer2Running()
+Wend
+```
+**Notes** Edge-triggered modes need six timer clocks between triggers, level modes a level of at least
+three (data sheet 21.5).
+
+### Timer2Running
+
+**Syntax**
+```basic
+flag = Timer2Running()
+```
+**Overview** True while the timer is on (`T2CON.ON`). Use this, not the flag, to detect the end of a
+one-shot: the data sheet does not say `TMR2IF` is set when `ON` clears.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Dim r As Boolean
+r = Timer2Running()
+```
+
+### Timer2Read
+
+**Syntax**
+```basic
+count = Timer2Read()
+```
+**Overview** Reads the Timer2 count.
+
+**Returns** `Byte`.
+
+**Example**
+```basic
+Dim t As Byte
+Timer2Start(0, 0, 255)
+t = Timer2Read()
+```
+
+### Timer2Expired
+
+**Syntax**
+```basic
+flag = Timer2Expired()
+```
+**Overview** True once per overflow (`PIR4.TMR2IF` on the PIC18F27Q10); clears the flag when it reports it.
+
+**Returns** `Boolean`.
+
+**Example**
+```basic
+Timer2Start(0, 0, 255)
+While Not Timer2Expired()
+Wend
+```
+
+### Timer2Ack
+
+**Syntax**
+```basic
+Timer2Ack()
+```
+**Overview** Clears the Timer2 flag. Call it from your own interrupt handler, wrapped in `Save` (a call from a handler is
+otherwise `E-ISR-CALL`).
+
+**Example**
+```basic
+Timer2Ack()
+```
+
+### Timer2Stop
+
+**Syntax**
+```basic
+Timer2Stop()
+```
+**Overview** Stops Timer2. Stopping the timer also resets its counters.
+
+**Example**
+```basic
+Timer2Stop()
+```
+
+### Timer2EnableInterrupt
+
+**Syntax**
+```basic
+Timer2EnableInterrupt()
+```
+**Overview** Clears the Timer2 flag and sets its interrupt enable (`PIE4.TMR2IE` on the PIC18F27Q10). Global interrupts are
+enabled separately with `Enable`.
+
+**Example**
+```basic
+Timer2EnableInterrupt()
+```
+
+### Timer2DisableInterrupt
+
+**Syntax**
+```basic
+Timer2DisableInterrupt()
+```
+**Overview** Clears the Timer2 interrupt enable.
+
+**Example**
+```basic
+Timer2DisableInterrupt()
+```
+
+### Timer2OnExpire
+
+**Syntax**
+```basic
+Timer2OnExpire = Handler        ' Type TTimerEvent = Event()
+```
+**Overview** As `Timer0OnExpire`, for Timer2: the handler `Timer2Service` calls once for each overflow.
+
+**Example**
+```basic
+Dim ticks As Byte
+Event Tick()
+    Inc(ticks)
+End Event
+Timer2OnExpire = Tick
+```
+
+### Timer2Service
+
+**Syntax**
+```basic
+Timer2Service()
+```
+**Overview** As `Timer0Service`, for Timer2: if Timer2 has overflowed, clears the flag and calls the `Timer2OnExpire`
+handler once. Call it from the main loop, or from your own interrupt inside `Save(0, Timer2Service)`.
+
+**Example**
+```basic
+While True
+    Timer2Service()
+Wend
+```
+
+**Hardware untested** for external clock, gate and pulse use.
 
 ---
 
