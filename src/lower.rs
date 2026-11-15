@@ -1607,7 +1607,14 @@ impl<'a> Lowerer<'a> {
                     let dims = md.unwrap_or_else(|| vec![n]);
                     for (k, arg) in args.iter().enumerate() {
                         let step = size * dims[k + 1..].iter().product::<u32>();
-                        if let Some(CVal::Int(c)) = self.a.consts.get(&arg.id) {
+                        // A `ByRef` array parameter has no length in its type: it travels with the address.
+                        let len_of = match place.base {
+                            Base::Ptr(v) if dims[k] == 0 && args.len() == 1 && place.off == 0 && place.idx.is_none() => Some(v),
+                            _ => None,
+                        };
+                        // A constant index into one is only known at run time to be inside, so it is clamped like a variable.
+                        let konst = self.a.consts.get(&arg.id).cloned().filter(|_| !(self.a.options.bounds_check && len_of.is_some()));
+                        if let Some(CVal::Int(c)) = konst.as_ref() {
                             if *c < 0 || (dims[k] > 0 && *c >= dims[k] as i128) {
                                 self.err("E-BOUNDS", arg.span, format!("index {c} is outside the array (0 to {})", dims[k].saturating_sub(1)));
                                 return None;
@@ -1615,7 +1622,7 @@ impl<'a> Lowerer<'a> {
                             place.off += *c as u32 * step;
                         } else {
                             let ix = self.expr(arg)?;
-                            let ix = conv(ix, 16, false);
+                            let ix = self.bounds_clamp(ix, dims[k], len_of);
                             let off = match step {
                                 1 => ix,
                                 s if s.is_power_of_two() => Ex::new(ExK::Bin(BinKind::Shl, Box::new(ix), Box::new(Ex::konst(s.trailing_zeros(), 8, false))), 16, false),
@@ -2144,6 +2151,68 @@ impl<'a> Lowerer<'a> {
         Some(Ex::new(ExK::Load(place), w, s))
     }
 
+    /// The statements of `If` / `ElseIf` arms. An `ElseIf` condition that needs statements first (a String function
+    /// result) cannot have them run before the first test: that
+    /// arm and the ones after it become an `If` inside the `Else`, behind those statements. With `first_in_pre` the
+    /// statements of the first condition stay in `pre`, which the caller puts in front.
+    fn if_chain(&mut self, arms: &'a [(Expr, Vec<Stmt>)], otherwise: Option<&'a [Stmt]>, ui: usize, span: Span, first_in_pre: bool) -> Option<Vec<S>> {
+        let mut a = Vec::new();
+        for (i, (c, b)) in arms.iter().enumerate() {
+            let before = self.pre.len();
+            let cv = self.expr(c)?;
+            if self.pre.len() > before && (i > 0 || !first_in_pre) {
+                let mut nested = self.pre.split_off(before);
+                let body = self.block(b, ui);
+                let rest = self.if_chain(&arms[i + 1..], otherwise, ui, span, false)?;
+                Self::push(&mut nested, St::If(vec![(cv, body)], rest), span);
+                if a.is_empty() {
+                    return Some(nested);
+                }
+                return Some(vec![S { st: St::If(a, nested), span }]);
+            }
+            a.push((cv, self.block(b, ui)));
+        }
+        let o = otherwise.map(|b| self.block(b, ui)).unwrap_or_default();
+        if a.is_empty() {
+            return Some(o);
+        }
+        Some(vec![S { st: St::If(a, o), span }])
+    }
+
+    /// A run-time index as the unsigned 16-bit element number. Under `#option BoundsCheck` it is first clamped to
+    /// `0..n-1` (`n` elements): `Min(ix, n - 1)` at the index's own width, unsigned, so a negative index reads as a
+    /// huge one and clamps to the top. With `n` 0 the top is the run-time one of the `ByRef` array parameter `len_of`
+    /// ([`Self::byref_upper`]), compared at 16 bits or more; with neither there is no check. An index whose type
+    /// cannot exceed the top is left alone. The back ends read the index once when that matters (a call, a register,
+    /// a `Volatile` variable), so it is evaluated where it stands, in the order written.
+    fn bounds_clamp(&mut self, ix: Ex, n: u32, len_of: Option<VarId>) -> Ex {
+        if !self.a.options.bounds_check || (n == 0 && len_of.is_none()) {
+            return conv(ix, 16, false);
+        }
+        let w: u8 = match ix.w {
+            8 if n > 0 => 8,
+            8 | 16 => 16,
+            _ => 32,
+        };
+        if n > 0 && w < 32 && (1u64 << w) <= u64::from(n) {
+            return conv(ix, 16, false);
+        }
+        let x = conv(ix, w, false);
+        let top = match len_of {
+            Some(v) if n == 0 => conv(self.byref_upper(v), w, false),
+            _ => Ex::konst(n - 1, w, false),
+        };
+        conv(Ex::new(ExK::Bin(BinKind::Min, Box::new(x), Box::new(top)), w, false), 16, false)
+    }
+
+    /// The highest index of the `ByRef` array parameter `v` (`Bound`): its length travels with the address, in the
+    /// two bytes after it.
+    fn byref_upper(&mut self, v: VarId) -> Ex {
+        self.len_used.insert(v);
+        let len = Ex::new(ExK::Load(Place { base: Base::Var(v), off: 2, bit: None, idx: None, dbit: None, ty: WORD }), 16, false);
+        Ex::new(ExK::Bin(BinKind::Sub, Box::new(len), Box::new(Ex::konst(1, 16, false))), 16, false)
+    }
+
     /// Element `ix` of a packed bit array: bit `ix % 8` of byte `ix / 8`. A constant index is
     /// folded into the place; otherwise the byte comes from `idx` and the bit from `dbit`.
     fn packed_element(&mut self, mut place: Place, elem: &Ty, n: u32, ix: &'a Expr) -> Option<Place> {
@@ -2156,7 +2225,7 @@ impl<'a> Lowerer<'a> {
             place.bit = Some((*c % 8) as u8);
         } else {
             let e = self.expr(ix)?;
-            let e16 = conv(e, 16, false);
+            let e16 = self.bounds_clamp(e, n, None);
             let byte = Ex::new(ExK::Bin(BinKind::Shr, Box::new(e16.clone()), Box::new(Ex::konst(3, 8, false))), 16, false);
             let e8 = conv(e16, 8, false);
             let bit = Ex::new(ExK::Bin(BinKind::And, Box::new(e8), Box::new(Ex::konst(7, 8, false))), 8, false);
@@ -2412,9 +2481,7 @@ impl<'a> Lowerer<'a> {
                     self.unsupported(e.span, "`Bound` of this");
                     return None;
                 }
-                self.len_used.insert(v);
-                let len = Ex::new(ExK::Load(Place { base: Base::Var(v), off: 2, bit: None, idx: None, dbit: None, ty: WORD }), 16, false);
-                Some(Ex::new(ExK::Bin(BinKind::Sub, Box::new(len), Box::new(Ex::konst(1, 16, false))), 16, false))
+                Some(self.byref_upper(v))
             }
             // Clear the sign bit.
             "abs" if matches!(self.a.types.get(&args[0].id), Some(Ty::Float)) => {
@@ -2434,7 +2501,8 @@ impl<'a> Lowerer<'a> {
                 }
                 Some(Ex::new(ExK::Abs(Box::new(x)), w, true))
             }
-            // Codegen picks with skip instructions (unsigned Byte) or a compare and a conditional copy; `-O0` expands to the mask form.
+            // Codegen picks with skip instructions (unsigned Byte) or a compare and a conditional copy; PIC18 `-O0` and signed
+            // PIC16 ones use the mask form when each operand may be read twice.
             "min" | "max" => {
                 let (w, s) = nat(&ty)?;
                 let a = conv(self.expr(&args[0])?, w, s);
@@ -3112,18 +3180,9 @@ impl<'a> Lowerer<'a> {
             }
             StmtKind::Call(d) => self.call_stmt(d, span, out),
             StmtKind::If { arms, otherwise } => {
-                let mut a = Vec::new();
-                for (i, (c, b)) in arms.iter().enumerate() {
-                    let before = self.pre.len();
-                    let Some(cv) = self.expr(c) else { return };
-                    if i > 0 && self.pre.len() > before {
-                        self.unsupported(c.span, "a String or structure function result, Str or Val in an ElseIf condition");
-                        return;
-                    }
-                    a.push((cv, self.block(b, ui)));
+                if let Some(sts) = self.if_chain(arms, otherwise.as_deref(), ui, span, true) {
+                    out.extend(sts);
                 }
-                let o = otherwise.as_ref().map(|b| self.block(b, ui)).unwrap_or_default();
-                Self::push(out, St::If(a, o), span);
             }
             StmtKind::IfGoto { cond, label } => {
                 let Some(cv) = self.expr(cond) else { return };

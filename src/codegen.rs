@@ -2383,7 +2383,8 @@ impl<'p> Gen<'p> {
 
     /// Unsigned Byte `Min` / `Max`: W takes `b`, then `cpfsgt` / `cpfslt` skips the load of `a` when `b` wins.
     fn gen_minmax(&mut self, max: bool, a: &Ex, b: &Ex) {
-        if !self.tgt.opt {
+        // The mask form reads each operand twice: only when that is harmless.
+        if !self.tgt.opt && crate::ir::reread_safe(&self.p.vars, a) && crate::ir::reread_safe(&self.p.vars, b) {
             self.gen_val(&crate::lower::minmax_expand(max, a.clone(), b.clone()));
             return;
         }
@@ -2391,8 +2392,9 @@ impl<'p> Gen<'p> {
             self.minmax_wide(max, a, b);
             return;
         }
-        let volatile = |m: &Mem| m.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile);
-        // The compare reads `a` from memory, and the load reads it again: a volatile variable is read once, by a spill.
+        let volatile = |m: &Mem| m.reg || m.obj.is_some_and(|o| o < self.p.vars.len() && self.p.vars[o].volatile);
+        // The compare reads `a` from memory, and the load reads it again: a volatile variable or a device register is
+        // read once, by a spill.
         let a_mem = |s: &Self, e: &Ex| match s.simple(e) {
             Some(Src::Mem(m, _)) if !volatile(&m) => Some(m),
             _ => None,
@@ -2421,7 +2423,7 @@ impl<'p> Gen<'p> {
     fn minmax_wide(&mut self, max: bool, a: &Ex, b: &Ex) {
         let n = Self::nb(a);
         let signed = a.signed;
-        let volatile = |g: &Self, m: &Mem| m.obj.is_some_and(|o| o < g.p.vars.len() && g.p.vars[o].volatile);
+        let volatile = |g: &Self, m: &Mem| m.reg || m.obj.is_some_and(|o| o < g.p.vars.len() && g.p.vars[o].volatile);
         let plain = |g: &Self, e: &Ex| match g.simple(e) {
             Some(Src::Mem(m, _)) if volatile(g, &m) => None,
             s => s,

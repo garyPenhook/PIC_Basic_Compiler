@@ -582,7 +582,7 @@ Const Tbl(4) As Byte = (10, 20, 30, 40)  ' lives in program memory
   `s = names(i)`, `names(i)(0)`. It can have an initialiser, `Dim names(3) As String(6) = ("one", "two", "")`, one string for each element. In a string assignment the index may read
   an array element or call a routine; in a comparison (`names(ix(j)) = s`) it must not (`E-BACKEND`).
 * A constant index outside the array is a compile error (`E-BOUNDS`). A run-time index is not
-  checked.
+  checked unless the program has `#option BoundsCheck = true` (see [Options](#options)).
 * `Const` arrays are read-only (reading by index works; assigning a `Const` array to a same-sized RAM
   array copies it).
 * `Bit` and `Boolean` arrays that are only indexed are packed eight to a byte. Writing one through a
@@ -795,10 +795,7 @@ Highest precedence first:
   or `MULLW` steps. A Byte, and under `Optimize = Speed` a Word, divided by a constant uses a reciprocal
   multiply; an unsigned `LongWord` divided by a constant from 3 to 255 uses a short byte-divisor routine. A `/`
   and a `Mod` of the same operands in consecutive statements make one call to the divide routine.
-* **`#option Optimize`.** `Size` and `Balanced` (the default) pick the smallest code. `Speed` trades flash for
-  time in a few places: a Word divided by a constant uses the reciprocal multiply, the multiply and divide
-  routines take their early exits, and equal ends of two branches of one routine are each kept instead of
-  being shared (sharing costs a jump on one of the paths). Results are the same under every setting.
+* **`#option Optimize`** chooses between smaller code and faster code (see [Options](#options)).
 * **Shifts.** The count must be a constant or a `Byte`. Shifting by the width or more gives 0 (or the
   sign for a signed right shift). `>>` is arithmetic for signed types.
 * Functions may be used in expressions; subroutines may not. Parentheses are needed when calling
@@ -1415,7 +1412,7 @@ also be called from Basic as usual.
 | `#ifdef`, `#ifndef`, `#else`, `#endif` | |
 | `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `#constant` / `#define` names, arithmetic (`+ - * / mod << >>`), `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; `_ram` and `_eeprom` are the part's usable data RAM and data EEPROM in bytes (`_eeprom` is 0 on the PIC16F13145 family); the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=` (also `==`, `!=`), `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
 | `#error "text"`, `#warning "text"` | |
-| `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `FetchNop = true\|false` (PIC16F13145 family above 16 MHz: a NOP at 0000h and at the start of the handler for erratum 1.3.1, default true), `Warn.<id> = true\|false` | |
+| `#option Name = value` | a compiler setting for the whole program; the names and values are listed under [Options](#options) below |
 
 `#variable Name = expression` (0.1.134) is `#constant` that may be assigned again (`#variable N = N + 1`) and writes no
 `Const` line: it exists for `#if`. More predefined names, derived from the device description: `_core` (`"pic18"`, `"pic16e"`),
@@ -1424,6 +1421,103 @@ also be called from Basic as usual.
 `_flash_write` (true with `NVMCON1`), `_usb` (1 with a `UCON`), `_eccp` (`ECCPnCON`), `_adres` (ADC result bits: 10 on the Q10, 12 on the Q41; undefined for other devices), `_opt` (0 for an `-O0` build, 1 otherwise; the `softserial` module uses it because its bit times count instruction cycles). `Declare Name = value` (any name but `Xtal`; a
 number, text or True/False expression) is a `Const`, as `#constant`; any other value is `E-UNSUPPORTED`.
 Directives inside `(* *)` or `{ }` comments are ignored.
+
+### Options
+
+`#option Name = value` sets something for the whole program, wherever the line is. Names and values ignore
+letter case. A yes/no value can be written `true`/`false`, `on`/`off`, `yes`/`no` or `1`/`0`. An unknown name or
+a bad value is the error `E-OPTION`.
+
+| Option | Values (default first) | What it does |
+|---|---|---|
+| `Optimize` | `Balanced`, `Size`, `Speed` | Smaller code or faster code; see below. The result of the program is the same under every setting |
+| `Strict` | `false`, `true` | `true` makes a narrowing assignment (a wider value stored in a narrower variable) the error `E-NARROW` instead of the warning `W-NARROW` |
+| `BoundsCheck` | `false`, `true` | `true` keeps every run-time array and string index inside its array: an index above the top (or a negative one) is replaced by the top index, `Bound(a)`, so a read gets the last element and a write lands on it. Memory outside the array is never touched. See below |
+| `Warn.<id>` | `true`, `false` | `false` turns one warning off for the whole program; `<id>` is the code without `W-`: `#option Warn.Narrow = false` silences `W-NARROW` |
+| `ISR_SHADOW` | `true`, `false` | `false` makes interrupt handlers save `STATUS`, `WREG` and `BSR` in software instead of in the hardware shadow registers (see [Context saving](#context-saving)) |
+| `I2c` | `Software`, `Hardware` | PIC18-Q41: `Hardware` makes the `i2c` module drive the I2C1 peripheral instead of two ordinary pins. Put it in the main program next to `Device` and `Clock`: it is read before any module is loaded. On a part without I2C1 it changes nothing |
+| `FetchNop` | `true`, `false` | PIC16F13145 family with `Clock` above 16: a NOP at 0000h and at the start of the interrupt handler, the work-around for erratum 1.3.1 (silicon revisions A2 and A3). `false` removes them for revision A4. No effect on other parts or at 16 MHz and below |
+
+**`BoundsCheck`.** Each index chosen at run time (`a(i)`, `s(i)`, `m(r, c)` per dimension, a packed `Bit` array) is
+clamped before use, as if written `a(Min(i, Bound(a)))`. A negative index of a signed type counts as a very large one, so
+it clamps to the top too. A `ByRef` array parameter is checked against the length of the array the caller passed (the
+value `Bound` reads). An index whose type cannot go past the end is left alone (a `Byte` index into an array of 256
+or more elements), and so is a constant index into a fixed array, which is already checked when compiling (a constant
+index into a `ByRef` array parameter is clamped at run time). An out-of-range index is not
+reported; the program goes on with the last element.
+
+The cost is a compare and a load or two per access. A `Byte` index into a fixed array costs 2 words on the PIC18 and 6 on the PIC16F1; a `Word` or
+`LongWord` index, or a `ByRef` parameter, costs more. In the test program for this
+option (about 20 checked accesses of every kind) the checks add 102 words on the PIC18F27Q10 and 135 on the PIC16F17146.
+
+An index is evaluated where it is written, in the usual order, and read once: an index that calls a function runs
+it once, and one that reads a device register or a `Volatile` variable checks the value it uses. An index variable that an
+interrupt handler changes must be `Volatile` (as any variable shared with a handler must be): an ordinary one may be read
+twice, by the check and by the access, and a change between the two reads would not be checked.
+
+```basic
+#option BoundsCheck = true
+Dim samples(8) As Word
+Dim n As Byte
+
+n = 12
+samples(n) = 500      ' n is above 7: stores into samples(7)
+```
+
+**`Optimize`.** `Balanced` and `Size` produce the same code today, the smallest the compiler can make; `Size` is
+accepted so a program can say what it wants. `Speed` lets the compiler spend some flash to save cycles. Only these
+places change:
+
+| Code | `Balanced` / `Size` | `Speed` | Parts |
+|---|---|---|---|
+| `Select`, `On n GoTo`, and `If`/`ElseIf` chains of `x = k` tests | a jump table only when it is smaller than the chain of tests | a jump table also when it costs up to one more word per case value; its time is the same for every value | all |
+| Two branches of a routine that end with the same instructions | the shared end is kept once, and one branch jumps to it (2 extra cycles on that path) | both copies are kept | all |
+| A `Word` divided by a constant | the divide routine (a constant 3 to 255 uses a shorter byte-divisor routine) | a multiply by the reciprocal, inline, no loop. Not in a `-O0` build | PIC18 |
+| A `Word` or `LongWord` divided by a variable | the divide routine runs its full loop | the routine first checks whether both operands fit in half the width and, if so, runs a loop half as long | PIC18 |
+| A `LongWord` divided by a constant 3 to 255 | the short byte-divisor routine | the general divide routine with its half-width fast path | PIC18 |
+| A 24- or 32-bit multiply | the loop runs once per bit | the loop stops when no bits of the multiplier are left, so a small multiplier finishes in a few passes | PIC16F1 (the PIC18 multiplies with `MULWF`) |
+
+Everything else is the same under all three settings. Use `--report` to compare the size of two builds.
+
+**Example.** The options go at the top of the main program, after the header:
+
+```basic
+#option Optimize = Speed      ' faster code, more flash
+#option Strict = true         ' a narrowing assignment is an error...
+#option Warn.Clock = false    ' ...and W-CLOCK is not shown
+
+Dim total As Word
+Dim avg As Word
+Dim mode As Byte
+Dim rate As Byte
+
+total = PORTB * 100
+avg = total / 10              ' Word / constant: reciprocal multiply under Speed
+Select mode                   ' five packed values: a jump table under Speed
+    Case 0
+        rate = 10
+    Case 1
+        rate = 20
+    Case 2
+        rate = 40
+    Case 3
+        rate = 80
+    Case 4
+        rate = 160
+End Select
+LATC = rate
+LATA = Byte(avg)
+```
+
+Built for the PIC18F27Q10 and run in the simulator from reset to the end of the program:
+
+| `Optimize` | Program size | Cycles |
+|---|---|---|
+| `Balanced` or `Size` (identical output) | 68 words: the body and the `__divk2` divide routine | 253 |
+| `Speed` | 91 words: no divide routine; the divide and the `Select` are inline | 110 |
+
+`Speed` costs 23 words here and saves 143 cycles. Most of the saving comes from the divide; the jump table's time
+does not depend on `mode`, while the chain of tests is slower for the later cases.
 
 ---
 

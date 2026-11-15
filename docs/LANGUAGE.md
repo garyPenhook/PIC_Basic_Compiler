@@ -96,7 +96,9 @@ assigned a number. A `Bit` is a numeric 0/1. Converting between them is explicit
   `Bound(a)` is the highest valid index (4), so `For i = 0 To Bound(a)` visits every element.
   (SF; the reference manual's own example shows a 5-element array iterated 0 to 4.) The size
   must be a constant expression. A constant index outside the array is a compile error; a
-  variable index is not checked at run time unless `#option BoundsCheck = true` (NEW, costs code).
+  variable index is not checked at run time unless `#option BoundsCheck = true` (NEW, 0.1.240, costs code): the
+  index is then clamped to `0..Bound(a)` (a negative one to `Bound(a)`; a `ByRef` array against the length passed with it),
+  so no access leaves the array.
 * `Const` arrays live in program memory: `Const T(3) As Byte = (1, 2, 3)` (the size, like `Dim`, is the element count, and must match the list). They can be read by
   index and assigned wholesale to a same-sized RAM array. (SF)
 * **Generated tables** (NEW, 0.1.108): `Const T(n) As Type = Table(i, expression)` has element `i` (0 to n-1) equal to the
@@ -445,8 +447,8 @@ test them), names given a value by `#define NAME value` or `#constant NAME = exp
 `_usart`, `_usb`, `_mssp`, `_ccp`, `_eccp`, `_comparator`, `_flash_write`, and more as devices
 need them. (SF; names follow the reference language; values come from our device files.)
 
-Options (`#option`): `Optimize = Size|Speed|Balanced`, `Strict = true|false`, `ISR_SHADOW`, `I2c = Hardware|Software`,
-`Warn.<id> = true|false`. (NEW/SF) `#option I2c = Hardware` is also read before any module is loaded, from the main program's text like `Clock` and
+Options (`#option`): `Optimize = Size|Speed|Balanced`, `Strict = true|false`, `BoundsCheck = true|false`, `ISR_SHADOW`,
+`FetchNop = true|false`, `I2c = Hardware|Software`, `Warn.<id> = true|false`. (NEW/SF) `#option I2c = Hardware` is also read before any module is loaded, from the main program's text like `Clock` and
 `Device` (so it must be a plain line of the main program, not inside an `#if` block), and is visible to the modules as the predefined boolean
 `_i2chw` (`#if _i2chw`): true when the program asked for it **and** the part has the I2C1 peripheral (`I2C1CON0`), so on a part with an MSSP the option
 changes nothing. `#define` names are file-scoped, so a module could not see an option of the program any other way. The `i2c` module uses it to

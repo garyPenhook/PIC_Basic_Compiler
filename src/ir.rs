@@ -118,7 +118,8 @@ pub enum BinKind {
     Xor,
     Shl,
     Shr,
-    /// `Min` / `Max` of any width and signedness (`-O0` and the PIC16 back end expand them by `lower::minmax_expand`).
+    /// `Min` / `Max` of any width and signedness. The back ends read each operand once when it matters
+    /// ([`reread_safe`]); otherwise PIC18 `-O0` and signed PIC16 ones use the mask form of `lower::minmax_expand`.
     Min,
     Max,
 }
@@ -1031,4 +1032,26 @@ fn rbw_block(body: &[S], var: VarId, bytes: u32, after_exit: bool, set: &mut boo
         }
     }
     false
+}
+
+/// True when reading `e` twice gives the same value and does nothing else: no call, no `Volatile` variable, no
+/// device register, no table read that advances TBLPTR. An operand that is not must be read once (the mask form of
+/// `Min` / `Max` reads each operand twice).
+pub fn reread_safe(vars: &[Var], e: &Ex) -> bool {
+    let place_ok = |p: &Place| {
+        let base = match &p.base {
+            Base::Var(v) | Base::Ptr(v) => !vars[*v].volatile,
+            Base::Flash(_) => true,
+            Base::Abs { .. } | Base::FlashNext(_) => false,
+        };
+        base && p.idx.as_ref().is_none_or(|i| reread_safe(vars, i)) && p.dbit.as_ref().is_none_or(|i| reread_safe(vars, i))
+    };
+    match &e.k {
+        ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => true,
+        ExK::Call(..) | ExK::StrEq(..) => false,
+        ExK::Load(p) => place_ok(p),
+        ExK::Addr(p) => p.idx.as_ref().is_none_or(|i| reread_safe(vars, i)),
+        ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => reread_safe(vars, x),
+        ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => reread_safe(vars, a) && reread_safe(vars, b),
+    }
 }

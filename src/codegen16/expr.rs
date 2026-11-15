@@ -605,7 +605,100 @@ impl<'p> G<'p> {
             BinKind::Add | BinKind::Sub | BinKind::And | BinKind::Or | BinKind::Xor => self.alu(k, a, b, e),
             BinKind::Shl | BinKind::Shr => self.shift(k, a, b, e),
             BinKind::Mul | BinKind::Div | BinKind::Mod => self.muldiv(k, a, b, e),
-            BinKind::Min | BinKind::Max => self.ev(&crate::lower::minmax_expand(k == BinKind::Max, a.clone(), b.clone())),
+            BinKind::Min | BinKind::Max => self.minmax(k == BinKind::Max, a, b, e),
+        }
+    }
+
+    /// Unsigned `Min` / `Max`: the compare sets C, then `b` replaces `a` when it wins. A Byte against a constant is a
+    /// skip: `movlw k; subwf a,w; movf a,w; btfsc/btfss C; movlw k` for a plain variable (five words), and for any
+    /// other `a` (evaluated once into W) `movwf A0; sublw k; movf A0,w; btfss/btfsc C; movlw k`. Wider or non-constant
+    /// ones branch over the copy of `b`. Each operand is read once unless reading it twice is harmless ([`reread_safe`]:
+    /// not a register, a `Volatile` variable or a call). Signed values use the mask form when that is harmless too.
+    ///
+    /// [`reread_safe`]: crate::ir::reread_safe
+    fn minmax(&mut self, max: bool, a: &Ex, b: &Ex, e: &Ex) {
+        let twice_ok = |g: &Self, x: &Ex| crate::ir::reread_safe(&g.p.vars, x);
+        if a.signed || b.signed {
+            if twice_ok(self, a) && twice_ok(self, b) {
+                self.ev(&crate::lower::minmax_expand(max, a.clone(), b.clone()));
+                return;
+            }
+            // Flip the sign bits: the unsigned order of the flipped values is the signed order of the values.
+            let n = (e.w / 8) as u32;
+            let flip = Ex::konst(0x80u32 << (8 * (n - 1)), e.w, false);
+            let fa = Ex::new(ExK::Bin(BinKind::Xor, Box::new(Ex { signed: false, ..a.clone() }), Box::new(flip.clone())), e.w, false);
+            let fb = Ex::new(ExK::Bin(BinKind::Xor, Box::new(Ex { signed: false, ..b.clone() }), Box::new(flip.clone())), e.w, false);
+            let ue = Ex { signed: false, ..e.clone() };
+            self.minmax(max, &fa, &fb, &ue);
+            let top = if n == 1 { None } else { Some(self.a(n - 1)) };
+            match top {
+                None => self.ins("xorlw 0x80"),
+                Some(t) => {
+                    self.ins("movlw 0x80");
+                    self.fop("xorwf", &t, "f");
+                }
+            }
+            return;
+        }
+        let n = (e.w / 8) as u32;
+        if n == 1
+            && let Some(k) = b.as_const()
+        {
+            let k = k & 0xFF;
+            if let ExK::Load(p) = &a.k
+                && self.simple(a)
+                && twice_ok(self, a)
+            {
+                let am = self.place_mem(p).expect("simple place");
+                self.ins(format!("movlw 0x{k:02X}"));
+                self.fop("subwf", &am, "w");
+                self.fop("movf", &am, "w");
+                self.ins(if max { "btfss STATUS, 0" } else { "btfsc STATUS, 0" });
+                self.ins(format!("movlw 0x{k:02X}"));
+                return;
+            }
+            self.ev(a);
+            let a0 = self.a(0);
+            self.fo("movwf", &a0);
+            self.ins(format!("sublw 0x{k:02X}"));
+            self.fop("movf", &a0, "w");
+            // C is set when k >= a: Min keeps a then, Max takes k.
+            self.ins(if max { "btfsc STATUS, 0" } else { "btfss STATUS, 0" });
+            self.ins(format!("movlw 0x{k:02X}"));
+            return;
+        }
+        // `b` is read by the compare and again by the copy: anything that must be read once goes to a temporary first.
+        let bo = if self.simple(b) && !twice_ok(self, b) {
+            self.ev(b);
+            let t = self.temp(n);
+            self.spill(&t, n, n == 1);
+            Opd::M(t)
+        } else {
+            self.operand(b)
+        };
+        self.ev(a);
+        if n == 1 {
+            let a0 = self.a(0);
+            self.fo("movwf", &a0);
+        }
+        for i in 0..n {
+            let s = self.opd_byte(&bo, i);
+            self.ld_w(&s);
+            let am = self.a(i);
+            self.fop(if i == 0 { "subwf" } else { "subwfb" }, &am, "w");
+        }
+        let keep = self.fresh();
+        self.br(if max { Cc::C } else { Cc::Nc }, &keep);
+        for i in 0..n {
+            let s = self.opd_byte(&bo, i);
+            self.ld_w(&s);
+            let am = self.a(i);
+            self.fo("movwf", &am);
+        }
+        self.label(&keep);
+        if n == 1 {
+            let a0 = self.a(0);
+            self.fop("movf", &a0, "w");
         }
     }
 
