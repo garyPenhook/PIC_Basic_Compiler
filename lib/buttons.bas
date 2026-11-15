@@ -76,3 +76,48 @@ Public Function Button(ByVal pin As Byte, ByVal down As Boolean, ByVal delay As 
     End If
     state = s
 End Function
+
+' Button without the wait: a non-blocking push button on pin, down when it reads `down` (True = high). Call it again
+' and again, from the main loop, at a steady rate. A new press counts once `settle` calls in a row have found the button
+' down (0 or 1 = the first one), so a bounce shorter than `settle` calls is ignored; then it returns True, and again, if
+' `delay` is not 0 or 255, after `delay` more calls with the button held, then every `rate` calls (0 = every call). Any
+' call that finds the button up starts over. `state` is the button's memory: a Word of the caller's, one per button, that
+' must be 0 at the start and must not be changed in between (its low byte counts the repeat, its high byte the settle).
+Public Function ButtonPoll(ByVal pin As Byte, ByVal down As Boolean, ByVal settle As Byte, ByVal delay As Byte, ByVal rate As Byte, ByRef state As Word) As Boolean
+    ' The state is worked on in `s` and written back once: `state` is reached through a pointer.
+    Dim s As Word
+    Dim r As s.Byte0
+    Dim n As s.Byte1
+    Result = False
+    If Not Pinio.PinOk(pin) Then
+        Exit
+    End If
+    Pinio.BindData(pin)
+    Pinio.PinInput(pin)
+    s = 0
+    If Pinio.DataRead() = down Then
+        s = state
+        If r = 0 Then
+            ' Settling: count the calls that found it down.
+            n = n + 1
+            If n >= settle Then
+                Result = True
+                n = 0
+                r = delay
+                If r = 0 Then
+                    r = 255
+                End If
+            End If
+        ElseIf r <> 255 Then
+            r = r - 1
+            If r = 0 Then
+                Result = True
+                r = rate
+                If r = 0 Then
+                    r = 1
+                End If
+            End If
+        End If
+    End If
+    state = s
+End Function

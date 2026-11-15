@@ -655,9 +655,9 @@ Bit-banged shift for 74HC595/74HC165, DACs, ADCs: `ShiftOut(data, dataPin, clkPi
 low, data changes while low and is valid on the rising edge (SPI mode 0). Bad pins or bit counts do nothing.
 Test `tests/exec/lib_shift.bas` (set-up only; the simulator has no pin model); built for every family.
 
-## buttons (Counter, Button)
+## buttons (Counter, Button, ButtonPoll)
 
-Polled, on any pin as in `pinio` (0..23, up to 47 with ports D to F). `Counter(pin, ms)` counts rising edges in about `ms` ms (10 to 40 per cent long; edges faster than about 40 kHz missed). `Button(pin, down, delay, rate, ByRef state)` is a debounced push button with auto-repeat: True for a press to act on, `state` a caller's Byte (0 at start). Test `tests/exec/lib_buttons.bas`. Include as `Include "buttons"`; calls are `Buttons.Button(...)`.
+Polled, on any pin as in `pinio` (0..23, up to 47 with ports D to F). `Counter(pin, ms)` counts rising edges in about `ms` ms (10 to 40 per cent long; edges faster than about 40 kHz missed). `Button(pin, down, delay, rate, ByRef state)` is a debounced push button with auto-repeat: True for a press to act on, `state` a caller's Byte (0 at start); it waits 10 ms on a new press. `ButtonPoll(pin, down, settle, delay, rate, ByRef state)` is the same without the wait: a press counts after `settle` calls in a row find it down, `state` a caller's Word (0 at start). Test `tests/exec/lib_buttons.bas`. Include as `Include "buttons"`; calls are `Buttons.Button(...)`.
 
 ## pulse (PulseIn, PulseOut, RCin, Pot, Servo, PwmPin, Sound, Sound2, Freqout, DtmfOut)
 

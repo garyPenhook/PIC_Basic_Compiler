@@ -8157,7 +8157,7 @@ st = Aht30Measure(t, rh)
 
 **See also** `Aht30Start`, `Aht30Fetch`
 
-## buttons  (`Include "buttons"`, Counter and Button)
+## buttons  (`Include "buttons"`, Counter, Button and ButtonPoll)
 
 Counterparts of the classic BASIC pin commands, on any pin numbered as in `pinio` (0..23, up to 47 on parts with ports D to F); a pin the part lacks reads as low. The pin is made an input.
 They are polled and cycle-counted like `pulse`, so they follow `Clock`, interrupts lengthen them, and the module is not reentrant. The module is called `Buttons`
@@ -8206,6 +8206,37 @@ Do
     DelayMS(10)
 Loop
 ```
+### ButtonPoll
+
+**Syntax**
+```basic
+pressed = Buttons.ButtonPoll(pin, down, settle, delay, rate, state)
+```
+**Overview** `Button` without the wait: it never delays, so the main loop keeps running while a button settles. Call it again and again from the main loop,
+at a steady rate. A new press counts once `settle` calls in a row have found the button down (`settle` 0 or 1 = the first call, no debounce), so a bounce shorter
+than `settle` calls is ignored; then it returns `True`, and, if `delay` is not 0 or 255, again after `delay` more calls with the button held, then every `rate`
+calls (0 = every call). A call that finds the button up starts over. The debounce time is `settle` times the loop period: with the loop below, every 2 ms,
+`settle` 5 is 10 ms. `state` is the button's memory: a `Word` of the caller's, one for each button, which must be 0 at the start and must not be changed in
+between (its low byte counts the repeat, its high byte the settle).
+
+**Example**
+```basic
+Include "buttons"
+Dim stA As Word
+Dim stB As Word
+Dim count As Word
+Do
+    If Buttons.ButtonPoll(8, False, 5, 250, 50, stA) Then   ' RB0 to ground: 10 ms debounce, repeat after 0.5 s then every 0.1 s
+        Inc(count)
+    End If
+    If Buttons.ButtonPoll(9, False, 5, 0, 0, stB) Then      ' RB1 to ground: no repeat
+        Toggle(PORTB.2)
+    End If
+    ' ... other work that must not stall ...
+    DelayMS(2)
+Loop
+```
+
 Test: `tests/exec/lib_buttons.bas` (the simulator has no pin model: a pin that reads low is a held button).
 
 ## pulse, irremote and x10  (`Include "pulse"`, `Include "irremote"`, `Include "x10"`)
@@ -10667,7 +10698,7 @@ reports these rather than miscompiling them.
 | `HRsout`, `HRsin`, `HSerout`, `HSerin`, `Rsout` | `serial` / `serial2` routines (*SerialReadTimeout*, *SerialReadLine*, *SerialWaitFor* and *SerialReadDec* for the timeout, `Wait`, `Str` and `Dec` forms of the input) |
 | `Dec`, `Hex`, `Bin`, `Str$`, `Val` formatting modifiers | `Str`, `Str$`, `Val` (plain decimal) and the `format` module: *FmtDec*, *FmtSDec*, *FmtHex*, *FmtBin* fill `FmtBuf` with a width and fill; `SerialWriteWord`, `SerialWriteHex` |
 | `ADin` | `Adc.ADin(ch)` of the `adc` module (with parentheses; no `ADin_Tad` / `ADin_Stime` declares, `AdcInit` picks the clock and a 5 to 8 us acquisition) |
-| `Counter`, `Button`, `Count` | `buttons` module: *Counter*, *Button* (a call returning True instead of a branch); *FreqCount* of the `timer` module counts with Timer1 |
+| `Counter`, `Button`, `Count` | `buttons` module: *Counter*, *Button* (a call returning True instead of a branch; *ButtonPoll* debounces without waiting); *FreqCount* of the `timer` module counts with Timer1 |
 | `ClrWdt` | `ClrWdt()` (the `clrwdt` instruction) |
 | `Sleep`, `Snooze` | `System.Sleep()` (the plain instruction), `System.Sleep(seconds)`, `System.Snooze(period)` |
 | `Pot`, `RCin`, `PulseIn`, `PulseOut`, `Servo`, `PWM` (software), `Sound`, `Sound2`, `Freqout`, `DtmfOut` | `pulse` module: *Pot*, *RCin*, *PulseIn*, *PulseOut*, *Servo*, *PwmPin* (the software `PWM`), *Sound*, *Sound2*, *Freqout* (square waves, no sine), *DtmfOut* |
