@@ -28,6 +28,8 @@ examples/
   two programs for the same sensor sit together whichever module drives it. A program that uses several
   external parts goes in the folder of the main one, and its header lists the others.
 * The same idea on another processor is its own program in that processor's folder.
+* A program that has been run in basil-sim keeps its board next to it (`<program>.stim.toml`: the simulated
+  sensors and displays), with the command line in the file's first lines.
 
 ## How an example is written
 
@@ -45,4 +47,5 @@ examples/
 
 | Processor | Sensor / part | Program | Modules | Shows |
 |---|---|---|---|---|
+| PIC18F25K22 | aht30, ssd1309 | `aht30/aht30_oled_display.bas` (+ `.stim.toml` for basil-sim) | `intosc`, `i2c`, `aht30`, `oled`, `format` | Temperature and humidity once a second on a 128 x 64 OLED, both on the MSSP1 I2C bus; a sensor error shown as its status code |
 | PIC18F27Q10 | onchip (LED) | `onchip/timer_interrupt_blink.bas` | `intosc`, `timer` | Timer0 overflow interrupt toggling an LED, with the flag cleared in the handler |

@@ -1,0 +1,20 @@
+# basil-sim board for aht30_oled_display.bas: the OLED and the AHT30 on MSSP1 of the PIC18F25K22 (SCL RC3, SDA RC4).
+#   basil aht30_oled_display.bas
+#   basil-sim aht30_oled_display.hex --device 18F25K22 --stim aht30_oled_display.stim.toml --max-cycles 6000000
+# The simulator's OLED is an SSD1306; external_vcc = true stands for the SSD1309's own panel supply.
+# The AHT30 is a plain I2C client at 0x38 that answers one reading: status 18h, then 20 bits of humidity and
+# 20 bits of temperature that the library turns into 45.60 %RH and 25.12 C, then the CRC8 (64h). Later reads
+# return FFh, which the program shows as "Sensor error 5" (busy).
+
+[[oled]]
+bus = "i2c1"
+scl = "RC3"
+sda = "RC4"
+address = 0x3C
+height = 64
+external_vcc = true
+
+[[i2c]]
+port = 1
+address = 0x38
+data = [0x18, 0x74, 0xB9, 0x36, 0x02, 0x5B, 0x64]
