@@ -178,6 +178,10 @@ in `docs/MANUAL.md` and `vscode-extension/README.md`.
   `.cfgdata` file away (see `tools/pic-config/README.md`).
 
   ![pic-config](docs/images/pic-config.png)
+* **PIC Simulator** ([github.com/garyPenhook/PIC_Simulator](https://github.com/garyPenhook/PIC_Simulator)):
+  a cycle-exact simulator for the parts basil builds for, in a separate repository. `basil-sim` runs a `.hex`
+  from the command line (scripts and tests use it), and a window program shows the BASIC source of a `-g`
+  build as it runs (see *Running a program without hardware* in the manual).
 * **devgen** (`tools/devgen/`): generates a device description (`devices/*.toml`) from a Microchip device pack and cross-checks it against numbers read from the data sheet.
 
 ## Using it

@@ -202,7 +202,8 @@ variables by name and type, and stops at `__halt`.
 
 ### Running a program without hardware: `basil-sim`
 
-`basil-sim` is the command-line simulator of the separate `picsim` workspace (the window program, `pic-sim`, is
+`basil-sim` is the command-line simulator of the separate `picsim` workspace
+([github.com/garyPenhook/PIC_Simulator](https://github.com/garyPenhook/PIC_Simulator)) (the window program, `pic-sim`, is
 for a person at a screen; scripts and tests use only `basil-sim`). It runs a `.hex` from reset, cycle exact, until
 `__halt` (or another symbol, or a cycle limit), then prints the stop line, serial text, pin and LED changes and the
 variables you ask for. Its exit status is 0 at the halt and 1 for a cycle limit or Sleep, so it works in scripts.
