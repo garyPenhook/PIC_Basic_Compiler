@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.250**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
+Revision for **basil 0.1.251**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -64,7 +64,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 | Device | Core | Program memory | RAM | Status |
 |---|---|---|---|---|
 | PIC18F27Q10 | PIC18 (8-bit), legacy instruction set (`XINST = 0`) | 128 KB (65,536 words) | 3,359 usable GPR bytes (as reported by the build summary) | **Supported.** Device file `devices/18F27Q10.toml`, generated from pack `PIC18F-Q_DFP 1.31.492`. All library modules |
-| PIC18F04Q41, PIC18F05Q41, PIC18F06Q41 (14-pin) | PIC18 (8-bit), legacy instruction set (`XINST = 0`), vectored interrupt controller run with `MVECEN = 0` | 16 / 32 / 64 KB (8 / 16 / 32 K words) | 1,024 / 2,048 / 4,096 usable GPR bytes; 512 bytes data EEPROM | **Supported.** Device files `devices/18F04Q41.toml` … (pack `PIC18F-Q_DFP 1.31.492`, data sheets DS40002242F and DS40002214G, facts in `docs/FACTS-18F-Q41.md`). Ports A and C. Library: every module except `floatlib`, which has not been run there (`gpio`, `delay`, `intosc`, `system`, `timer`, `serial`, `serial2`, `adc`, `eeprom`, `flashwrite`, `spi`, `lcd`, `i2c`, `pwm`, `oled`, `aht30`, and `dma`, which only the Q41 has); `i2c` is a software host and `pwm` uses the six PWM outputs (see `docs/LIBRARY.md`). Tested in the simulator (PIC18F16Q41) and built for every part; not run on hardware |
+| PIC18F04Q41, PIC18F05Q41, PIC18F06Q41 (14-pin) | PIC18 (8-bit), legacy instruction set (`XINST = 0`), vectored interrupt controller run with `MVECEN = 0` | 16 / 32 / 64 KB (8 / 16 / 32 K words) | 1,024 / 2,048 / 4,096 usable GPR bytes; 512 bytes data EEPROM | **Supported.** Device files `devices/18F04Q41.toml` … (pack `PIC18F-Q_DFP 1.31.492`, data sheets DS40002242F and DS40002214G, facts in `docs/FACTS-18F-Q41.md`). Ports A and C. Library: every module builds for these parts, and `dma` is only on this family; `i2c` is a software host by default (`#option I2c = Hardware` for the I2C1 peripheral) and `pwm` uses the six PWM outputs (see `docs/LIBRARY.md`). In the MPLAB X simulator (PIC18F16Q41) the `timer`, `serial`, `adc`, `eeprom`, `flashwrite`, `spi`, `i2c`, `pwm`, `dma`, `system` and `intosc` tests and the device-independent programs (`Float` among them) run; the other modules are built, not run. Not run on hardware |
 | PIC18F14Q41, PIC18F15Q41, PIC18F16Q41 (20-pin) | as above | 16 / 32 / 64 KB | 1,024 / 2,048 / 4,096 usable GPR bytes; 512 bytes data EEPROM | **Supported**, as the 14-pin parts, with port B (RB4..RB7) |
 | PIC18F23K22 / 24K22 / 25K22 / 26K22 (28-pin), PIC18F43K22 / 44K22 / 45K22 / 46K22 (40/44-pin) and the PIC18LF twins | PIC18 (8-bit), legacy instruction set (`XINST = OFF`; `XINST = ON` is refused), legacy interrupt controller with IPEN in RCON | 8 / 16 / 32 / 64 KB | 512 / 768 / 1,536 / 3,896 bytes; 256 bytes data EEPROM (1,024 on the x6 parts) | **Supported (0.1.245).** Device files `devices/18F23K22.toml` … `18LF46K22.toml` (pack `PIC18F-K_DFP 1.17.312`, data sheet DS40001412H, errata DS80000498K, DS80000512J, DS80000514J, facts in `docs/FACTS-18F-K22.md`). No PPS: the peripheral pins are fixed (EUSART1 RC6/RC7, EUSART2 RB6/RB7 or RD6/RD7, MSSP1 RC3/RC4/RC5, MSSP2 RB1/RB2/RB3 or RD0/RD1/RD4, CCP1..CCP5 as `docs/LIBRARY.md` lists). Every library module except `dma` (the part has none, #error); `intosc` reaches 64 and 32 MHz only with `Config FOSC = INTIO67` (the PLL is on the primary clock path). Tested in basil-sim (the picsim repository models the family) and in MDB, and built for all sixteen parts; not run on hardware |
 | PIC16F17126 (14/16-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes | **Supported (0.1.50; library and `Float` complete in 0.1.51; assembly `Float` and peephole passes in 0.1.52).** Device file `devices/16F17126.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002343F). Integer, Boolean, Char, array, structure, string, `Float`, `Interrupt`, `Reentrant`, `DelayMs/DelayUs` and every library module except `dma` (the part has no DMA) compile and run in the simulator; `AddressOf` of a `Const` array is an FSR address. **Not yet on this core:** calling C and interrupt priorities. `-g` writes the line table, routines and variables (0.1.155; an object that runs across banks is left out of the variable list). Single-call routines are inlined (0.1.53). `Float` is assembly on this core and its routines take their operands in `__A`/`__B` (0.1.54; `FMul`/`FDiv` rewritten on them in 0.1.55: a program using `+ * /` is about 605 words, the PIC18's about 615). Nothing has run on a real part |
@@ -72,7 +72,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 | PIC16F18313 (8-pin), PIC16F18323 / 18324 / 18325 / 18326 (14-pin), PIC16F18344 / 18345 / 18346 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 2K / 4K / 8K / 16K / 4K / 8K / 16K words | 256 / 256 / 512 / 1,024 / 2,048 / 512 / 1,024 / 2,048 bytes; 256 bytes of EEPROM | **Supported (0.1.87; the LF parts 0.1.88).** Device files `devices/16F18313.toml` … `16F18346.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheets DS40001799F, DS40001800E, DS40001795K and DS40001839E, errata DS80000666H, DS80000667E, DS80000668L and DS80000709H, facts in `docs/FACTS-16F183xx.md`). The code generator is the PIC16F171xx one. The PIC16LF18313 … 18346 (1.8 to 3.6 V) have their own device files (`devices/16LF18313.toml` …) with the same registers; their FVR has no 4.096 V gain (DS40001839E Register 16-1). The portable programs and `tests/exec_p16` that apply, with `tests/exec_p183`, pass in the simulator on the PIC16F18346 and the PIC16F18326; every part builds `tests/exec_p183_parts/small.bas`. The power-up clock is chosen with `Config RSTOSC = HFINT32` (32 MHz) or `HFINT1`. Modules: `serial2`, `dma` and `intosc` stop with `#error` (one EUSART, no DMA, `intosc` not ported); `timer` has the old Timer1 and Timer2 (no clock-select or hardware-limit registers, so no `T2Mode*`/`T2Rst*` and no `Timer2StartLimit`); `pwm` offers CCP1, CCP2, PWM5 and PWM6 (channels 1..4); the 8-pin part has port A only and the 14-pin parts no port B. Nothing has run on a real part |
 | PIC16F15213 / 15214 (8-pin), PIC16F15223 / 15224 (14-pin), PIC16F15243 / 15244 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 4K words | 256 / 512 bytes; no data EEPROM | **Supported (0.1.89).** Device files `devices/16F15213.toml` … `16F15244.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002195E, errata DS80000918K, facts in `docs/FACTS-16F152xx.md`). Fixed clock (no clock switching; `intosc` only sets `OSCFRQ`), 10-bit ADC, one MSSP and EUSART, CCP1/2 and PWM3/4. Library: every module is ported or stops with `#error` (`eeprom`, `serial2`, `dma`); see `docs/LIBRARY.md`. Larger parts of the family (PIC16F15225 …) are not described. |
 | PIC16(L)F15313 / 15323 (8 / 14 pin), 15324 / 15325 (14 pin), 15344 / 15345 (20 pin), 15354 / 15355 / 15356 (28 pin), 15375 / 15376 (40 / 44 pin), 15385 / 15386 (48 pin) | PIC16 enhanced mid-range (`pic16e`) | 2K to 16K words | 256 to 2048 bytes; no data EEPROM | **Supported (0.1.233, pin routing corrected in 0.1.234).** Device files `devices/16F15313.toml` … `16F15386.toml` and the 13 `16LF` twins (pack `PIC16F1xxxx_DFP 1.32.471`, data sheets DS40001897C, DS40001889E, DS40001865F, DS40001853E and DS40001866E, errata DS80000728D, DS80000721D, DS80000717K and DS80000725F, facts in `docs/FACTS-16F153xx.md`). The oscillator of the PIC16F183xx with HFFRQ codes 1 to 32 MHz (`intosc` works for `Clock` = 32 down to 1 and the divided 1 MHz), 10-bit ADC, one or two MSSP and EUSART, CCP1/2 and PWM3 to PWM6 (the library offers PWM3 and PWM4). Library: every module is ported or stops with `#error` (`eeprom`, `dma`, and `serial2` on the PIC16(L)F15313/23); see `docs/LIBRARY.md`. The run-time pin modules number the pins 0..47 (RA = 0..7, RB = 8..15, RC = 16..23, RD = 24..31, RE = 32..39, RF = 40..47), so every port of the 40- and 48-pin parts is reachable; on the 28-pin and larger parts PPS routes each signal to two ports only, which `pwm`, `spi`, `i2c` and `serial2` follow. |
-| PIC16F18056 (28-pin), PIC16F18076 (40/44-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes; 256 bytes of data flash (EEPROM) | **Supported (0.1.152).** Device files `devices/16F18056.toml`, `16F18076.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002325C, errata DS80001014D, facts in `docs/FACTS-16F1805x.md`). Fixed clock (no clock switching; `intosc` only sets `OSCFRQ`), 10-bit ADCC, two MSSP and two EUSART, CCP1/2 and PWM3/4/5. Library: every module is ported except `dma`, which stops with `#error`; `spi` and `i2c` take pins of ports B and C, `pwm` offers CCP1, CCP2, PWM3 and PWM4 (channels 1..4); ports D and E of the PIC16F18076 are reached by name and by `Adc`/`Gpio`, not by the pin-number modules. Four of the portable test programs are held back in the simulator (see `docs/FACTS-16F1805x.md`). Nothing has run on a real part. |
+| PIC16F18056 (28-pin), PIC16F18076 (40/44-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes; 256 bytes of data flash (EEPROM) | **Supported (0.1.152).** Device files `devices/16F18056.toml`, `16F18076.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002325C, errata DS80001014D, facts in `docs/FACTS-16F1805x.md`). Fixed clock (no clock switching; `intosc` only sets `OSCFRQ`), 10-bit ADCC, two MSSP and two EUSART, CCP1/2 and PWM3/4/5. Library: every module is ported except `dma`, which stops with `#error`; `spi` and `i2c` take pins of ports B and C, `pwm` offers CCP1, CCP2, PWM3 and PWM4 (channels 1..4); the pin-number modules (`pinio` and those built on it) reach ports D and E of the PIC16F18076 as pins 24..39. Four of the portable test programs are held back in the simulator (see `docs/FACTS-16F1805x.md`). Nothing has run on a real part. |
 | PIC16F13113 / 13114 / 13115 (8-pin), PIC16F13123 / 13124 / 13125 (14-pin), PIC16F13143 / 13144 / 13145 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 4K / 8K words | 256 / 512 / 1,024 bytes; no data EEPROM | **Supported (0.1.76; erratum 1.3.1 work around in 0.1.77).** Device files `devices/16F13113.toml` … `16F13145.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002519D, errata DS80001115F, facts in `docs/FACTS-16F1314x.md`). The code generator is the PIC16F171xx one. The portable programs that fit the RAM and flash, `tests/exec_p16` and `tests/exec_p13` pass in the simulator on the PIC16F13145; every part builds `tests/exec_p13_parts/small.bas`. Modules: `serial2` and `eeprom` stop with `#error` (one EUSART, no data EEPROM), `dma` stops with `#error`; `pwm` offers CCP1, CCP2, PWM1 and PWM2 (channels 1..4); the 8-pin part has port A only. Nothing has run on a real part. Erratum 1.3.1 (revisions A2, A3, instruction fetch above 16 MHz) is worked around with a NOP at 0000h and at the handler start when `Clock` is above 16; `#option FetchNop = false` removes them for revision A4; an `Asm` `sleep` needs two `nop`s after it |
 | PIC16F13214 / 13215 (8-pin), PIC16F13224 / 13225 (14-pin), PIC16F13244 / 13245 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 4K / 8K words | 512 / 1,024 bytes; 256 bytes data EEPROM | **Supported (0.1.176).** Device files `devices/16F13214.toml` … `16F13245.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002686B, errata DS80001213B, facts in `docs/FACTS-16F132xx.md`). The code generator is the PIC16F171xx one; the part has two EUSART, one MSSP, two 16-bit PWM modules, a 10-bit ADCC (TAD from 0.5 us), the data EEPROM, a secondary oscillator, Timer3/4 and the CLB. Library: every module is ported except `dma` (no DMA), which stops with `#error`; `serial2` uses RA2/RA1 on the 8-pin parts; `pwm`, `spi` and `i2c` refuse pins the part does not have; `timer` adds the codes of this family. The portable programs that fit the RAM and flash, `tests/exec_p16` and `tests/exec_p132` pass in the simulator on the PIC16F13245; every part builds `tests/exec_p132_parts/small.bas` and `tests/exec_p132/pins8`, `pins14` and `pins20` check the pins of each size. Nothing has run on a real part. Erratum 1.1.1 (CCP compare toggle mode does not work, no work around) concerns only a program that uses that mode. No fetch erratum, so no NOPs at the vectors. |
 
@@ -2763,8 +2763,9 @@ Wend
 Modules are in `lib/` and loaded with `Include "name"`. Call as `Module.Routine(...)` or by the bare
 routine name when unambiguous. **A routine is only known after its module is included**: without
 `Include "gpio"`, `GpioAllDigital()` is `E-UNDECLARED`. Only the routines a program calls are linked.
-All modules cite the PIC18F27Q10 data sheet (DS40002043F) and errata (DS80000832G) for their register
-values.
+Each module cites the data sheet and errata of every family it supports for its register values. The entries
+below describe the PIC18F27Q10, which the examples use; where another family differs (other pins, channels, sizes or
+peripherals), the entry says so briefly and the full per-part details are in `docs/LIBRARY.md`, *Device support*.
 
 Each entry below has a **Syntax**, an **Overview**, **Parameters**, what it **Returns** (functions),
 and a short **Example**. The examples are fragments: they assume the program header
@@ -2783,8 +2784,8 @@ first, as the language requires.
 **Common rules**
 
 * **Pins** are given by number: `RA0..RA7` = 0..7, `RB0..RB7` = 8..15, `RC0..RC7` = 16..23, and on the parts that have
-  them `RD0..RD7` = 24..31, `RE0..RE7` = 32..39, `RF0..RF7` = 40..47 (the PIC16F18076 and the 40- and 48-pin
-  PIC16F153xx; the PIC18 parts have ports A to C only). `Pinio.PinCount` is one more than the highest number the part
+  them `RD0..RD7` = 24..31, `RE0..RE7` = 32..39, `RF0..RF7` = 40..47 (the PIC16F18076, the 40/44-pin
+  PIC18(L)F4xK22 and the 40- and 48-pin PIC16F153xx; the PIC18F27Q10 and the PIC18-Q41 have ports A to C only). `Pinio.PinCount` is one more than the highest number the part
   can have, and a pin the part lacks is refused. The modules that drive any pin (`pinio` and those built on it: `pulse`,
   `buttons`, `shift`, `softserial`, `onewire`, `irremote`, `x10`, `lcd`, `glcd`, `oled`, `epaper`) take every pin of
   the part; the peripheral modules (`pwm`, `i2c`, `spi`, `serial2`) reach only the pins their routing allows, listed per
@@ -2807,14 +2808,19 @@ Modules are grouped in categories, in alphabetical order, and the modules in eac
 
 ## Category: Analog and memory
 
-## adc  (`Include "adc"`, ADCC, 10-bit, right-justified)
+## adc  (`Include "adc"`, analog-to-digital converter, right-justified)
 
 Software-started conversions with the clock derived from FOSC (`Clock` must be FOSC in MHz). Channel
 numbers 0..23 are pins (`RA0..RA7` = 0..7, `RB0..RB7` = 8..15, `RC0..RC7` = 16..23), and on the parts with more ports
 24..31 are `RD0..RD7`, 32..34 `RE0..RE2` and 40..47 `RF0..RF7`. Internal channels on the PIC18F27Q10: `AdcChVss` 60,
 `AdcChTemp` 61, `AdcChDac` 62, `AdcChFvr` 63; the numbers differ on other parts, so use the names.
 
-Errata handling: (1.4.4) the first conversion after a channel change is run and dropped; code that
+The module drives whichever converter the part has (the ADCC, or the older ADC of the PIC18(L)F2x/4xK22, PIC16F183xx,
+PIC16F152xx and PIC16F153xx). Results are 10 bits (`AdcMax` = 1023) except on the PIC18-Q41 and the PIC16F17126/46,
+which give 12 bits (`AdcMax` = 4095); use `AdcMax` rather than a number. The internal channels, TAD limits and errata
+of each family are in `docs/LIBRARY.md` (*adc*).
+
+Errata handling on the PIC18F27Q10: (1.4.4) the first conversion after a channel change is run and dropped; code that
 writes `ADPCH` itself bypasses this. (1.4.1) `AdcRefFvr` needs TAD of at least 8 us, which `ADCS`
 allows only up to `Clock` = 16 MHz; above that use the VDD reference.
 
@@ -2859,7 +2865,7 @@ raw = AdcRead(ch)
 
 **Parameters** `ch` 0..63.
 
-**Returns** `Word`, 0..1023.
+**Returns** `Word`, 0..`AdcMax`.
 
 **Example**
 ```basic
@@ -2917,7 +2923,7 @@ v = AdcReadAvg(1, 16)
 ```basic
 mv = AdcMillivolts(raw, vrefMv)
 ```
-**Overview** Converts a result to millivolts: `raw * vrefMv / 1023`.
+**Overview** Converts a result to millivolts: `raw * vrefMv / AdcMax`.
 
 **Parameters** `raw` a `Word` from `AdcRead`; `vrefMv` the reference in millivolts.
 
@@ -2961,8 +2967,8 @@ taken as 4, 0 as 1.
 ```basic
 AdcRefFvr(2)                      ' 2.048 V
 ```
-**Notes** Slows the conversion clock to TAD of at least 8 us (errata 1.4.1); not possible above
-`Clock` = 16 MHz. The temperature indicator needs `FVRCON.TSEN`, which the module does not set.
+**Notes** Slows the conversion clock to TAD of at least 8 us (PIC18F27Q10 erratum 1.4.1); on the PIC18F27Q10 this is not
+possible above `Clock` = 16 MHz. The temperature indicator needs `FVRCON.TSEN`, which the module does not set.
 
 ## dma  (`Include "dma"`, PIC18-Q41 DMA: copies, trigger-started feeds, abort triggers)
 
@@ -3164,11 +3170,14 @@ ok = DmaOnTrigger(1, DmaTrigU1Tx, @msg, @U1TXB, 8, DmaFixedDst)
 DmaStop(1)                  ' disarm it again
 ```
 
-## eeprom  (`Include "eeprom"`, data EEPROM, 1024 bytes)
+## eeprom  (`Include "eeprom"`, data EEPROM)
 
-Global interrupts are held off for the unlock sequence and their previous state is restored. Success
-is judged by read-back (errata 1.6.1), not `NVMERR`. Reading stored values is **not verifiable in the
-simulator** (it does not model DFM reads); test on hardware.
+The size is the part's: 1024 bytes on the PIC18F27Q10 and the PIC18(L)F26K22/46K22, 512 on the PIC18-Q41, 256 on
+the other K22 parts and on the PIC16 parts that have data EEPROM. On a part without it (the PIC16F13113 … 13145,
+PIC16F152xx and PIC16F153xx) the module stops with `#error`: use `flashwrite` there. Global interrupts are held off for
+the unlock sequence and their previous state is restored. Success is judged by read-back, not by the error flag (which
+errata on the PIC18F27Q10 and the PIC16F183xx make unreliable after a Reset during a write). On the PIC18F27Q10,
+reading stored values is **not verifiable in the simulator** (it does not model DFM reads); test on hardware.
 
 ### EepromSize
 
@@ -3176,7 +3185,7 @@ simulator** (it does not model DFM reads); test on hardware.
 ```basic
 EepromSize
 ```
-**Overview** Constant, 1024: the number of bytes.
+**Overview** Constant: the number of bytes of the part (1024 on the PIC18F27Q10; see above).
 
 **Example**
 ```basic
@@ -3192,9 +3201,9 @@ b = EepromRead(addr)
 ```
 **Overview** Reads one byte.
 
-**Parameters** `addr` is a `Word`, 0..1023.
+**Parameters** `addr` is a `Word`, 0 to `EepromSize - 1` (1023 on the PIC18F27Q10).
 
-**Returns** `Byte`; 255 for an address above 1023.
+**Returns** `Byte`; 255 for an address at or above `EepromSize`.
 
 **Example**
 ```basic
@@ -3211,7 +3220,7 @@ ok = EepromWrite(addr, value)
 **Overview** Skips the write if the byte already holds `value` (saves a cycle); otherwise erases and
 programs it with the unlock sequence and waits.
 
-**Parameters** `addr` 0..1023; `value` a `Byte`.
+**Parameters** `addr` 0 to `EepromSize - 1`; `value` a `Byte`.
 
 **Returns** `Byte`: 1 when the byte reads back as `value`, 0 for a bad address or a failed write.
 
@@ -3261,8 +3270,11 @@ ok = EepromWriteWord(10, 1234)
 
 ## flashwrite  (`Include "flashwrite"`, program flash self-write)
 
-Addresses are program flash **word** addresses, 0..65535 (byte address / 2). A sector is 128 words (256
-bytes); there are 512 sectors. The compiler fills flash from address 0, so keep data in the last sector
+Addresses are program flash **word** addresses (byte address / 2 on a PIC18). On the PIC18F27Q10 they are 0..65535, a
+sector is 128 words (256 bytes) and there are 512 sectors. The sizes are the part's (`FlashSectorWords`,
+`FlashLastSector`): the PIC18-Q41 has 128-word sectors too; on the PIC18(L)F2x/4xK22 a sector is the 64-byte block
+(32 words); on the PIC16 parts it is the 32-word row, a word holds 14 bits and an erased word reads 16383 (3FFFh)
+instead of 65535. The errata below are the PIC18F27Q10's; the other families' are in `docs/LIBRARY.md` (*flashwrite*). The compiler fills flash from address 0, so keep data in the last sector
 (`FlashLastSector`) unless `basil --report` shows the code ends well below it: erasing a sector that holds
 code destroys that code. Global interrupts are held off for each operation and restored; the CPU stalls
 while a sector erases (10 ms typical) or writes, so interrupts are served late. Errata 1.9.1: the module
@@ -3278,9 +3290,9 @@ w = FlashReadWord(addr)
 ```
 **Overview** Reads one 16-bit word; needs no unlock sequence.
 
-**Parameters** `addr` a `Word`, 0..65535.
+**Parameters** `addr` a `Word`, a word address of the part (0..65535 on the PIC18F27Q10).
 
-**Returns** `Word`; 65535 when the word is erased.
+**Returns** `Word`; 65535 when the word is erased (16383 on a PIC16).
 
 **Example**
 ```basic
@@ -3295,11 +3307,11 @@ w = FlashReadWord(FlashSectorAddr(FlashLastSector))
 ```basic
 ok = FlashEraseSector(sector)
 ```
-**Overview** Erases one sector of program flash (every word reads 65535 afterwards). Take care that `sector` is not one that holds the program.
+**Overview** Erases one sector of program flash (every word reads 65535 afterwards, 16383 on a PIC16). Take care that `sector` is not one that holds the program.
 
-**Parameters** `sector` a `Word`, 0..511.
+**Parameters** `sector` a `Word`, 0..`FlashLastSector` (511 on the PIC18F27Q10).
 
-**Returns** `Byte`: 1; 0 for a sector above 511 (nothing is erased) or when `NVMERR` was set (write-protected sector).
+**Returns** `Byte`: 1; 0 for a sector above `FlashLastSector` (nothing is erased) or when `NVMERR` was set (write-protected sector).
 
 **Example**
 ```basic
@@ -7525,10 +7537,10 @@ st = RtccspiEventFlags(lo, hi, True)
 
 ## Category: Serial and buses
 
-## i2c  (`Include "i2c"`, MSSP1 host)
+## i2c  (`Include "i2c"`, I2C host)
 
-I2C host (master). On the PIC18F27Q10 SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
-(19) and SDA = RC4 (20). The pins the other parts can route are in `docs/LIBRARY.md` (*i2c*). The module is the only host on the bus (no multi-master): a collision is an
+I2C host (master) on MSSP1; on the PIC18-Q41 a software host by default (see below). On the PIC18F27Q10 SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
+(19) and SDA = RC4 (20); the PIC18(L)F2x/4xK22 has no PPS, so SCL = RC3 and SDA = RC4 only. The pins the other parts can route are in `docs/LIBRARY.md` (*i2c*). The module is the only host on the bus (no multi-master): a collision is an
 error. The bus needs external pull-ups. `Clock` must be FOSC in MHz. Every step is done by the hardware
 one at a time and each wait is bounded, so a stuck bus returns an error instead of hanging.
 
@@ -8089,10 +8101,11 @@ End If
 ```
 **See also** `OwSelect`
 
-## serial  (`Include "serial"`, EUSART1, 8N1, TX = RC6, RX = RC7)
+## serial  (`Include "serial"`, EUSART1 or UART1, 8N1)
 
-`Clock` must be FOSC in MHz. The internal oscillator drifts with temperature and voltage, so use a
-crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
+The pins are fixed: TX = RC6 and RX = RC7 on the PIC18F27Q10, the PIC18(L)F2x/4xK22 and the PIC16F18056/76; TX = RC4 and
+RX = RC5 on the PIC18-Q41 (UART1) and the other PIC16 parts (RA4 and RA5 on their 8-pin parts). `Clock` must be FOSC
+in MHz. The internal oscillator drifts with temperature and voltage, so use a crystal for anything beyond casual use. There is no formatted `Print`: build output from the routines
 below (for a signed number or a `Float`, convert in your own code).
 
 ### SerialInit
@@ -8372,9 +8385,13 @@ SerialWrite("bye")
 SerialFlush()
 ```
 
-## serial2  (`Include "serial2"`, EUSART2, TX = RB6, RX = RB7)
+## serial2  (`Include "serial2"`, EUSART2 or UART2)
 
-The routines of `serial` with the prefix `Serial2`, on the second EUSART; each has its entry below.
+The routines of `serial` with the prefix `Serial2`, on the second EUSART; each has its entry below. The pins: TX = RB6
+and RX = RB7 on the PIC18F27Q10 and the PIC16F18056/76; on the PIC18(L)F2x/4xK22 RB6/RB7 on the 28-pin parts
+and RD6/RD7 on the 40/44-pin parts; TX = RC2 and RX = RC1 on the PIC18-Q41 (UART2), the PIC16F17126/46 and the PIC16F13214 … 13245 (RA2
+and RA1 on the 8-pin parts); on the PIC16F153xx RC2/RC1, or RB6/RB7 from 28 pins up. The parts with one EUSART
+(PIC16F183xx, PIC16F152xx, PIC16F13113 … 13145, PIC16(L)F15313/23) stop with `#error`.
 
 **Example**
 ```basic
@@ -8888,11 +8905,13 @@ SoftHoldIrq(False)                ' the timer interrupt must not wait a whole by
 ```
 **Notes** +3 words on the PIC18F27Q10.
 
-## spi  (`Include "spi"`, MSSP1 host)
+## spi  (`Include "spi"`, SPI host)
 
-SPI host (master). On the PIC18F27Q10 SCK, SDO and SDI go to pins of ports B and C (8..23; the other parts: `docs/LIBRARY.md`, *spi*); SDO can be 255 for a
+SPI host (master) on MSSP1 (SPI1 on the PIC18-Q41). On the PIC18F27Q10 SCK, SDO and SDI go to pins of ports B and C
+(8..23; the other parts: `docs/LIBRARY.md`, *spi*). The PIC18(L)F2x/4xK22 has no PPS: the pins choose the MSSP, MSSP1 on
+SCK = RC3, SDI = RC4, SDO = RC5 or MSSP2 on SCK = RB1, SDI = RB2, SDO = RB3 (RD0, RD1, RD4 on the 40/44-pin parts); SDO can be 255 for a
 receive-only host. The chip select is not part of the module: drive it with a port bit. `Clock` must be
-FOSC in MHz. The module owns MSSP1 (do not use `i2c` together) and does not use its interrupt.
+FOSC in MHz. The module owns the MSSP it uses (do not use `i2c` on the same MSSP1 at the same time) and does not use its interrupt.
 
 **Modes**: 0 = idle low, data changes on the falling edge; 1 = idle low, rising; 2 = idle high,
 falling; 3 = idle high, rising (CPOL/CPHA as `CKP`/`CKE`). **Status** (`SpiStatus`): 0 after the last
@@ -9102,7 +9121,19 @@ reads `OSCCON2` to pick the order.
 
 Accepted `Clock` values (anything else is a compile error): 64, 48, 32, 16, 12, 8, 4, 2, 1 MHz, and
 0.5, 0.25, 0.125, 0.0625, 0.03125 MHz (1 MHz divided by 2 to 32). `Config` needs `CSWEN = ON` unless
-`Clock` already equals the `RSTOSC` speed. If a write is ignored, `SysClockOk()` is False.
+`Clock` already equals the `RSTOSC` speed. If a write is ignored, `SysClockOk()` is False. The PIC18-Q41 is the same.
+
+**Other parts** (details in `docs/LIBRARY.md`, *Device support*):
+
+* **PIC18(L)F2x/4xK22**: `OSCCON.IRCF` and the 4x PLL. `Clock` = 64 or 32 needs `Config FOSC = INTIO67` (or `INTIO7`),
+  because the PLL is on the primary clock path; 16 down to 1, 0.5, 0.25 and 0.03125 MHz run from the internal block.
+  `SetClockDiv(mhz, s)` is `SetClock(mhz >> s)`.
+* **PIC16F17126/46, PIC16F13113 … 13145, PIC16F13214 … 13245, PIC16F153xx**: as above with 32 MHz the highest (48 and
+  64 are refused); 12 MHz only on the PIC16F153xx.
+* **PIC16F152xx, PIC16F18056/76**: the clock cannot be switched, so only `OSCFRQ` is written: `Clock` = 32, 16, 8, 4, 2
+  or 1, with `Config RSTOSC = HFINTOSC_32MHZ` or `HFINTOSC_1MHZ` as the source; `SetClockDiv` takes `shift` 0 only.
+* **PIC16F183xx**: not ported (`#error`). Set the speed with `Config RSTOSC = HFINT32` (32 MHz) or `HFINT1` and give
+  `Clock` to match.
 
 ```basic
 Program Blink
@@ -9815,11 +9846,19 @@ Loop
 
 ## Category: Timers and PWM
 
-## pwm  (`Include "pwm"`, CCP1, CCP2, PWM3, PWM4 on Timer2)
+## pwm  (`Include "pwm"`, PWM outputs on one timebase)
 
-Four outputs on one timebase: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share the
-Timer2 period (the frequency); each has its own duty cycle. The module owns Timer2 while a channel
-runs, so do not use `Timer2` routines at the same time. On the PIC18F27Q10 CCP1/CCP2 can output on ports B and C
+On the PIC18F27Q10, four outputs on Timer2: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share
+one period (the frequency); each has its own duty cycle. The channels of the other parts:
+
+* PIC18(L)F2x/4xK22: channels 1..5 = CCP1..CCP5 on Timer2, each on its fixed pin; `PwmInvert` on channels 1..3.
+* PIC18-Q41: channels 1..6 = the two outputs of PWM1, PWM2 and PWM3 (16-bit PWM modules), one shared period.
+* PIC16F17126/46 and PIC16F13214 … 13245: channels 1..4 = the two outputs of PWM1 and PWM2 (16-bit PWM modules).
+* PIC16F183xx: CCP1, CCP2, PWM5, PWM6; PIC16F13113 … 13145: CCP1, CCP2, PWM1, PWM2; PIC16F152xx, PIC16F153xx and
+  PIC16F18056/76: CCP1, CCP2, PWM3, PWM4; all as channels 1..4 on Timer2.
+
+Where the channels run on Timer2, the module owns Timer2 while a channel runs, so do not use `Timer2` routines at the
+same time. On the PIC18F27Q10 CCP1/CCP2 can output on ports B and C
 (pins 8..23) and PWM3/PWM4 on ports A and C; the routing of the other parts is in `docs/LIBRARY.md` (*pwm*). The duty is a number of steps out of `PwmSteps()`.
 
 ### PwmInit
