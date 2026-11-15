@@ -646,6 +646,29 @@ fn debug_flag_adds_variables_and_routines_to_the_elf() {
     assert!(!elf2.windows(6).any(|w| w == b"basil\0"), "plain build carries debug-only data");
 }
 
+/// Overlaid RAM symbols in this library-heavy K22 program used to make pic-as fail with error 1314.
+#[test]
+fn debug_flag_links_aht30_oled_with_overlaid_ram() {
+    if !have_pic_as() {
+        return;
+    }
+    let dir = scratch("debug_k22_overlay");
+    for (name, flags) in [("optimized", vec!["-g"]), ("unoptimized", vec!["-g", "-O0"])] {
+        let hex = dir.join(format!("{name}.hex"));
+        let out = Command::new(basil())
+            .args(flags)
+            .arg("-o").arg(&hex)
+            .arg(root().join("examples/PIC18F25K22/aht30/aht30_oled_display.bas"))
+            .output().unwrap();
+        assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(hex.is_file());
+        let elf = std::fs::read(hex.with_extension("elf")).unwrap();
+        for name in [b"FmtBuf\0".as_slice(), b"WriteHundredths\0", b"basil\0"] {
+            assert!(elf.windows(name.len()).any(|w| w == name), "debug name missing: {name:?}");
+        }
+    }
+}
+
 /// `-g` on an enhanced mid-range part: `#line` for the BASIC lines, and routines and variables in word / data addresses.
 #[test]
 fn debug_flag_on_pic16_adds_lines_routines_and_variables() {

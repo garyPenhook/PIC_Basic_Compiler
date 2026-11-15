@@ -7120,6 +7120,16 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     }
     text.push_str(&p.edata_asm(1));
     text.push_str("\n; ---- data (addresses chosen by the compiler)\n");
+    // BASIC aliases are unqualified, so only expose names that identify one stored global.
+    // Library modules can each have private globals such as `ready` or `lastStatus`.
+    let mut debug_names = HashMap::<String, usize>::new();
+    if !tgt.debug_files.is_empty() {
+        for (i, v) in p.vars.iter().enumerate() {
+            if v.kind == VarKind::Global && objs[i].bytes > 0 && layout.addr[i].is_some() {
+                *debug_names.entry(v.name.to_ascii_lowercase()).or_default() += 1;
+            }
+        }
+    }
     for (i, o) in objs.iter().enumerate() {
         if let Some(a) = layout.addr[i] {
             if i >= nvars && i < nvars + 4 {
@@ -7133,9 +7143,11 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             if i < nvars && o.bytes > 0 && !tgt.debug_files.is_empty() {
                 // A real symbol (not an `equ`), so the debugger can show the variable by name; a global
                 // also answers to its BASIC name, which the DWARF entry describes.
+                // Share one overlay psect: sibling frames can occupy the same RAM. Separate
+                // absolute psects make pic-as fail with error 1314 when their storage overlaps.
                 let basic = &p.vars[i].name;
-                let alias = if matches!(p.vars[i].kind, VarKind::Global) && *basic != o.name && !matches!(basic.to_ascii_lowercase().as_str(), "a" | "b" | "c" | "f" | "w" | "z" | "n" | "ov" | "dc" | "wreg" | "fast" | "access" | "banked") && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic}:\n") } else { String::new() };
-                text.push_str(&format!("PSECT dbg{i},class=RAM,space=1,abs,delta=1,noexec\n    ORG 0x{a:03X}\nGLOBAL {n}\n{n}:\n{alias}DS {}{note}\n", o.bytes, n = o.name, alias = alias));
+                let alias = if matches!(p.vars[i].kind, VarKind::Global) && debug_names.get(&basic.to_ascii_lowercase()) == Some(&1) && *basic != o.name && !matches!(basic.to_ascii_lowercase().as_str(), "a" | "b" | "c" | "f" | "w" | "z" | "n" | "ov" | "dc" | "wreg" | "fast" | "access" | "banked") && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic}:\n") } else { String::new() };
+                text.push_str(&format!("PSECT dbg,class=RAM,space=1,abs,ovrld,delta=1,noexec\n    ORG 0x{a:03X}\nGLOBAL {n}\n{n}:\n{alias}DS {}{note}\n", o.bytes, n = o.name, alias = alias));
                 continue;
             }
             text.push_str(&format!("{} equ 0x{:03X}{}\n", o.name, a, note));
