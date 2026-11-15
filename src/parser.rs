@@ -1164,8 +1164,8 @@ impl<'a> Parser<'a> {
 
     fn case_cond(&mut self) -> PResult<CaseCond> {
         let op = match self.peek() {
-            Tok::Punct("=") => Some(BinOp::Eq),
-            Tok::Punct("<>") => Some(BinOp::Ne),
+            Tok::Punct("=" | "==") => Some(BinOp::Eq),
+            Tok::Punct("<>" | "!=") => Some(BinOp::Ne),
             Tok::Punct("<") => Some(BinOp::Lt),
             Tok::Punct(">") => Some(BinOp::Gt),
             Tok::Punct("<=") => Some(BinOp::Le),
@@ -1243,8 +1243,8 @@ impl<'a> Parser<'a> {
                 (0, Tok::Kw("or")) => BinOp::Or,
                 (0, Tok::Kw("xor")) => BinOp::Xor,
                 (1, Tok::Kw("and")) => BinOp::And,
-                (2, Tok::Punct("=")) => BinOp::Eq,
-                (2, Tok::Punct("<>")) => BinOp::Ne,
+                (2, Tok::Punct("=" | "==")) => BinOp::Eq,
+                (2, Tok::Punct("<>" | "!=")) => BinOp::Ne,
                 (2, Tok::Punct("<")) => BinOp::Lt,
                 (2, Tok::Punct(">")) => BinOp::Gt,
                 (2, Tok::Punct("<=")) => BinOp::Le,
@@ -1262,7 +1262,7 @@ impl<'a> Parser<'a> {
             let rhs = self.binary_level(level + 1)?;
             lhs = Expr { id: self.id(), span, kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)) };
             // The relational level is not associative: `a < b < c` is rejected.
-            if level == 2 && matches!(self.peek(), Tok::Punct("=" | "<>" | "<" | ">" | "<=" | ">=")) {
+            if level == 2 && matches!(self.peek(), Tok::Punct("=" | "==" | "<>" | "!=" | "<" | ">" | "<=" | ">=")) {
                 return self.fail("E-SYNTAX", "comparisons cannot be chained; use `And` to combine them");
             }
         }

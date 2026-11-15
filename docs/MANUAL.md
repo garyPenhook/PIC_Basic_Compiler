@@ -772,7 +772,7 @@ Highest precedence first:
 | 2 | `*`, `/`, `Mod` |
 | 3 | `+`, `-` |
 | 4 | `<<`, `>>` |
-| 5 | `=`, `<>`, `<`, `>`, `<=`, `>=` |
+| 5 | `=`, `<>`, `<`, `>`, `<=`, `>=` (`==` and `!=` are accepted for `=` and `<>`) |
 | 6 | `And` |
 | 7 | `Or`, `Xor` |
 
@@ -1413,7 +1413,7 @@ also be called from Basic as usual.
 | `#define NAME [value]`, `#undefine NAME` | scoped to the file that defines them (only `-D` names are shared). A value is an expression that `#if` can use (`#define Level 3`, then `#if Level > 2`); it does not become a program constant, use `#constant` for that |
 | `#constant Name = expression` | a compile-time value: `#if` can test it, and the line becomes `Const Name = value` so the program can use it. The expression may use numbers, `True`/`False`, text in quotes, `_clock` and the other predefined names, earlier `#define` / `#constant` names, `+ - * / mod << >>` and parentheses. Defining the same name again with another value is an error. Whole numbers divide as integers (`7 / 2` is 3), shifts bind looser than `+ -`. The line becomes a `Const` declaration, so put a `#constant` after `Device`, `Clock`, `Config` and the `Include` lines |
 | `#ifdef`, `#ifndef`, `#else`, `#endif` | |
-| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `#constant` / `#define` names, arithmetic (`+ - * / mod << >>`), `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; `_ram` and `_eeprom` are the part's usable data RAM and data EEPROM in bytes (`_eeprom` is 0 on the PIC16F13145 family); the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
+| `#if`, `#elseif`, `#else`, `#endif` | expressions with numbers, `#constant` / `#define` names, arithmetic (`+ - * / mod << >>`), `_clock`, `_device`, `_has(REG)` (true when the device description defines that register, or with `REG.FIELD` that bit field, any letter case: `#if _has(ANSELB)`, `#if _has(OSCFRQ.HFFRQ)`; `_ram` and `_eeprom` are the part's usable data RAM and data EEPROM in bytes (`_eeprom` is 0 on the PIC16F13145 family); the older (legacy) field names of a register count too: `_has(ADREF.ADPREF)` is true on the PIC18-Q41, whose field is `PREF`), `= <> < > <= >=` (also `==`, `!=`), `in (a, b, ...)`, `not`, `and`, `or`, parentheses. A device name is written bare: `#if _device = 18F27Q10` |
 | `#error "text"`, `#warning "text"` | |
 | `#option Optimize = Size\|Speed\|Balanced`, `Strict = true\|false`, `ISR_SHADOW`, `FetchNop = true\|false` (PIC16F13145 family above 16 MHz: a NOP at 0000h and at the start of the handler for erratum 1.3.1, default true), `Warn.<id> = true\|false` | |
 

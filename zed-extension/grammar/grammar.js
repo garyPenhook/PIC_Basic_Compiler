@@ -45,7 +45,7 @@ module.exports = grammar({
     )),
     directive: _ => token(/#[A-Za-z]+/),
     identifier: _ => /[A-Za-z_][A-Za-z0-9_]*/,
-    operator: _ => token(choice('<>', '<=', '>=', '<<', '>>', '=', '<', '>', '+', '-', '*', '/', '@')),
+    operator: _ => token(choice('<>', '<=', '>=', '<<', '>>', '==', '!=', '=', '<', '>', '+', '-', '*', '/', '@')),
     punctuation: _ => token(choice('(', ')', ',', '.', ':')),
     // Assembly lines inside Asm blocks and anything else unexpected: tolerated, never an error.
     other: _ => token(prec(-1, /[^\s]/)),

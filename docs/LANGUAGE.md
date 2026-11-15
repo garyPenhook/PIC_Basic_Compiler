@@ -212,7 +212,7 @@ Highest first. (SF; matches the reference language's table.)
 | 2 | `*`, `/`, `Mod` |
 | 3 | `+`, `-` |
 | 4 | `<<`, `>>` |
-| 5 | `=`, `<>`, `<`, `>`, `<=`, `>=` |
+| 5 | `=`, `<>`, `<`, `>`, `<=`, `>=` (`==` and `!=` are accepted for `=` and `<>`) |
 | 6 | `And` |
 | 7 | `Or`, `Xor` |
 
@@ -438,7 +438,7 @@ Because the directive's line is replaced by a `Const` declaration, a `#constant`
 `#if/#elseif/#else/#endif`, `#error`, `#warning`, `#option`. `#if` / `#elseif` take numbers, the
 predefined `_clock` and `_device` (read from the program's `Clock` and `Device` lines, so a module can
 test them), names given a value by `#define NAME value` or `#constant NAME = expr`, the arithmetic
-`+ - * / mod << >>`, `= <> < > <= >=`, `in (a, b, ...)`, `not`, `and`, `or` and parentheses; a device name such as
+`+ - * / mod << >>`, `= <> < > <= >=` (also `==`, `!=`), `in (a, b, ...)`, `not`, `and`, `or` and parentheses; a device name such as
 `18F27Q10` is written bare and compared with `=`, `<>` or `in`. Example:
 `#if not(_clock in (1, 2, 4))` ... `#error "..."` ... `#endif`. (SF) **Predefined constants** come from the device description:
 `_device`, `_clock`, `_core`, `_maxram`, `_maxrom`, `_ports`, `_adc`, `_adres`, `_eeprom`,

@@ -334,7 +334,7 @@ pub fn lex(file: u32, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
             }
             _ => {
                 let two: String = chars[i..(i + 2).min(chars.len())].iter().collect();
-                let p2 = ["<>", "<=", ">=", "<<", ">>"].iter().find(|p| **p == two).copied();
+                let p2 = ["<>", "<=", ">=", "<<", ">>", "==", "!="].iter().find(|p| **p == two).copied();
                 if let Some(p) = p2 {
                     adv!();
                     adv!();

@@ -156,6 +156,10 @@ fn tokenize_expr(s: &str) -> Result<Vec<String>, String> {
             }
             i += 1;
             out.push(b[st..i].iter().collect::<String>());
+        } else if (c == '=' || c == '!') && b.get(i + 1) == Some(&'=') {
+            // `==` and `!=` are spellings of `=` and `<>`.
+            out.push(if c == '=' { "=" } else { "<>" }.to_string());
+            i += 2;
         } else if "(),=+-*/%".contains(c) {
             out.push(c.to_string());
             i += 1;
