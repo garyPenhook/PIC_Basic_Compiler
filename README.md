@@ -210,6 +210,8 @@ Useful options: `--report` (sizes), `-S` (stop at assembly), `--check` (type-che
 `--explain E-TYPE` (what a diagnostic code means, with an example), `-O0`
 (no optimisation), `-g` (debug build: BASIC line, variable and routine information in `prog.elf`).
 
+Example programs for the library modules, sensors and displays are in `examples/` (see `examples/README.md`; each one builds as it is).
+
 Documentation: the user manual `docs/MANUAL.md` (also `docs/Basil_Manual.pdf`), language `docs/LANGUAGE.md` and `docs/GRAMMAR.md`, library `docs/LIBRARY.md`,
 diagnostics `docs/DIAGNOSTICS.md`, clock and oscillator set-up `docs/CLOCK.md`, benchmarks `docs/BENCHMARKS.md`, efficiency worklist `docs/EFFICIENCY.md`. For contributors: `PLAN.md`,
 `docs/PROGRESS.md`, `docs/DECISIONS.md`. Tests: `cargo test`, and

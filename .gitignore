@@ -16,3 +16,12 @@ my_src/**/*.i
 my_src/**/*.sdb
 my_src/**/*.sym
 __pycache__/
+# compiler outputs next to the sources in examples/
+examples/**/*.S
+examples/**/*.cmf
+examples/**/*.d
+examples/**/*.hxl
+examples/**/*.i
+examples/**/*.lst
+examples/**/*.sdb
+examples/**/*.sym

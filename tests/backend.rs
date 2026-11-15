@@ -247,6 +247,39 @@ fn library_modules_build_cleanly() {
     assert!(!text.contains("warning"), "{text}");
 }
 
+/// Every program under `examples/` (any depth) builds, with no warning from the compiler or pic-as.
+#[test]
+fn examples_build() {
+    if !have_pic_as() {
+        return;
+    }
+    fn walk(dir: &Path, v: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                walk(&p, v);
+            } else if p.extension().is_some_and(|e| e == "bas") {
+                v.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&root().join("examples"), &mut files);
+    files.sort();
+    assert!(!files.is_empty(), "no programs under examples/");
+    let out = scratch("examples");
+    let mut failures = Vec::new();
+    for f in &files {
+        let name = f.strip_prefix(root().join("examples")).unwrap().to_string_lossy().replace(['/', '\\'], "_");
+        let r = Command::new(basil()).arg(f).arg("-o").arg(out.join(format!("{name}.hex"))).output().unwrap();
+        let text = String::from_utf8_lossy(&r.stderr).into_owned();
+        if !r.status.success() || text.contains("warning") {
+            failures.push(format!("{}:\n{text}", f.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn reentrant_routines_use_a_software_stack_and_only_then() {
     let out = scratch("reentrant");
