@@ -1703,6 +1703,100 @@ pub fn without_write_only(p: &Program, names: &HashSet<String>) -> Option<Progra
     Some(q)
 }
 
+/// Remove scalar globals whose only uses are side-effect-free updates of themselves.
+/// Check the remaining program after removing each candidate's stores: this also excludes
+/// conditions, aliases, interrupt uses, and writes in forms we do not understand.
+pub fn without_dead_updates(p: &Program, tgt: &crate::codegen::Target) -> Option<Program> {
+    if p.c_link() || !p.cfiles.is_empty() {
+        return None;
+    }
+    fn safe(e: &Ex, vars: &[Var]) -> bool {
+        match &e.k {
+            ExK::Const(_) | ExK::FuncAddr(_) | ExK::FlashAddr(..) => true,
+            ExK::Load(pl) => matches!(pl.base, Base::Var(v) if !vars[v].volatile && !vars[v].by_ref) && pl.idx.is_none() && pl.dbit.is_none(),
+            ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => safe(x, vars),
+            ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) | ExK::AndAlso(a, b) | ExK::OrElse(a, b) => safe(a, vars) && safe(b, vars),
+            _ => false,
+        }
+    }
+    let mut q = p.clone();
+    // Raw assembly can access RAM through an address or an alias, not just a symbol name.
+    struct Indirect<'a> { found: bool, tgt: &'a crate::codegen::Target }
+    impl Visit for Indirect<'_> {
+        fn place(&mut self, p: &Place, _: Acc) {
+            if let Base::Abs { addr, name } = &p.base {
+                let ram = (0..p.bytes()).any(|off| {
+                    let a = addr.saturating_add(p.off).saturating_add(off);
+                    if let Some(mem) = &self.tgt.pic16 {
+                        mem.gpr.iter().any(|&(s, e)| a >= s && a < e)
+                            || (mem.common.0..mem.common.1).contains(&(a & 0x7f)) || a >= 0x2000
+                    } else {
+                        (self.tgt.access.0..self.tgt.access.1).contains(&a)
+                            || self.tgt.ram.iter().any(|&(s, e)| a >= s && a < e)
+                    }
+                });
+                self.found |= ram || p.idx.is_some() || crate::ir::indirect_sfr(name);
+            }
+        }
+    }
+    struct Candidates<'a> { vars: &'a [Var], ids: HashSet<VarId> }
+    impl Visit for Candidates<'_> {
+        fn stmt(&mut self, s: &S) {
+            match &s.st {
+                St::Assign(pl, e) => {
+                    if let Some(v) = whole_var(pl, self.vars) && e.touches(v, true) { self.ids.insert(v); }
+                }
+                St::Add(pl, _) => {
+                    if let Some(v) = whole_var(pl, self.vars) { self.ids.insert(v); }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut candidates = Candidates { vars: &p.vars, ids: HashSet::new() };
+    for (_, body) in all_bodies(&mut q) {
+        let f = scan(body);
+        let mut indirect = Indirect { found: false, tgt };
+        w_block(&mut indirect, body);
+        w_block(&mut candidates, body);
+        if f.asm || f.save_func || indirect.found { return None; }
+    }
+    // Each candidate requires a whole-program check; bound compile time on large modules.
+    if candidates.ids.iter().filter(|&&v| p.vars[v].kind == VarKind::Global).count() > 16 { return None; }
+    let mut changed = false;
+    for v in 0..q.vars.len() {
+        if !candidates.ids.contains(&v) { continue; }
+        let var = &q.vars[v];
+        if var.kind != VarKind::Global || var.volatile || var.by_ref || !matches!(var.ty, Ty::Int(..) | Ty::Bool) { continue; }
+        let mut trial = q.clone();
+        let vars = trial.vars.clone();
+        let mut removed = false;
+        for (_, body) in all_bodies(&mut trial) {
+            retain_stmts(body, &mut |s| {
+                let drop = match &s.st {
+                    St::Assign(pl, e) => whole_var(pl, &vars) == Some(v) && safe(e, &vars),
+                    St::Add(pl, _) | St::Clear(pl) => whole_var(pl, &vars) == Some(v),
+                    _ => false,
+                };
+                removed |= drop;
+                !drop
+            });
+        }
+        if !removed { continue; }
+        let mut used = false;
+        for (_, body) in all_bodies(&mut trial) {
+            let f = scan(body);
+            used |= f.read.contains(&v) || f.written.contains(&v) || f.addr.contains(&v);
+        }
+        if !used {
+            trial.vars[v].init = None;
+            q = trial;
+            changed = true;
+        }
+    }
+    changed.then_some(q)
+}
+
 /// A routine whose last statement is `Result = G(..)` and that uses its `Result` nowhere else (no early `Return`, no other
 /// write) needs no copy of its own: it shares `G`'s `Result` object, and its callers read that. This removes a
 /// `movff` pair per byte at every such hop (`ADin` -> `AdcRead` -> `Convert`), the entry clear of the `Result`, and its RAM.

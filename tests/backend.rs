@@ -682,7 +682,7 @@ fn debug_flag_adds_variables_and_routines_to_the_elf() {
     }
     let dir = scratch("debug_vars");
     let bas = dir.join("vars.bas");
-    std::fs::write(&bas, "Program T\nDevice = 18F27Q10\nClock = 1\nDim counter As Word = 0\nSub Bump(amount As Byte)\n    Dim local_tmp As Byte\n    local_tmp = amount\n    counter = counter + local_tmp\nEnd Sub\nDo\n    Bump(3)\nLoop\n").unwrap();
+    std::fs::write(&bas, "Program T\nDevice = 18F27Q10\nClock = 1\nDim counter As Word = 0\nSub Bump(amount As Byte)\n    Dim local_tmp As Byte\n    local_tmp = amount\n    counter = counter + local_tmp\nEnd Sub\nDo\n    Bump(3)\n    LATC = Byte(counter)\nLoop\n").unwrap();
     let out = Command::new(basil()).arg("-g").arg(&bas).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!String::from_utf8_lossy(&out.stderr).contains("no variable information"));
@@ -1775,6 +1775,28 @@ fn write_only_globals_get_no_ram_and_counted_loops_share_their_variable() {
     let isr = "Dim a, k As Byte\nDim q As PORTB\nInterrupt H()\n    q = a\nEnd Interrupt\nFor a = 1 To 5\n    k = k + 1\nNext\nq = a + k\n";
     let s = asm_of(&d, "isr", isr, &[]);
     assert!(s.contains("__H"), "{s}");
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
+fn dead_accumulator_updates_preserve_observable_reads() {
+    if !have_pic_as() { return; }
+    let d = scratch("dead_updates");
+    let dead = "Dim acc As LongWord\nDim a As Word\na = PORTB\nWhile True\n    acc = acc + LongWord(a) * a\n    LATC = Byte(a)\nWend\n";
+    let s = asm_of(&d, "dead", dead, &[]);
+    assert!(!s.contains("T_ACC equ"), "{s}");
+    assert!(asm_of(&d, "keep", dead, &["--keep-vars"]).contains("T_ACC equ"));
+    let live = dead.replace("LATC = Byte(a)", "LATC = Byte(acc)");
+    assert!(asm_of(&d, "live", &live, &[]).contains("T_ACC equ"));
+    let volatile = "Volatile Dim sourceval As Byte\nDim acc As Byte\nWhile True\n    acc = acc + sourceval\nWend\n";
+    assert!(asm_of(&d, "volatile", volatile, &[]).contains("T_ACC equ"));
+    let isr = "Dim acc As Byte\nInterrupt H()\n    LATC = acc\nEnd Interrupt\nWhile True\n    acc = acc + 1\nWend\n";
+    assert!(asm_of(&d, "isr_acc", isr, &[]).contains("T_ACC equ"));
+    let src = d.join("p16dead.bas");
+    std::fs::write(&src, format!("Program T\nDevice = 16F18346\nClock = 16\n{dead}")).unwrap();
+    let r = Command::new(basil()).arg("-S").arg(&src).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(!std::fs::read_to_string(d.join("p16dead.S")).unwrap().contains("T_ACC equ"));
     std::fs::remove_dir_all(&d).ok();
 }
 

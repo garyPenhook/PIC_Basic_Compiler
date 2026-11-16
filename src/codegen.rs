@@ -6574,6 +6574,19 @@ pub struct Generated {
     pub debug: crate::dwarf::DebugInfo,
 }
 
+/// Count occupied physical RAM bytes, including overlapping routine frames only once.
+pub(crate) fn occupied_ram(g: &Generated, pic16: bool) -> usize {
+    let mut bytes = HashSet::new();
+    for (i, o) in g.objs.iter().enumerate() {
+        if let Some(a) = g.layout.addr[i] {
+            for off in 0..o.bytes {
+                bytes.insert(if pic16 { crate::codegen16::layout::phys_off(a, off) } else { a + off });
+            }
+        }
+    }
+    bytes.len()
+}
+
 /// Runs one generation pass over the whole program.
 fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, facts: Option<&'p Facts>) -> (Gen<'p>, Vec<Item>) {
     // Safety: the generator borrows `p`, `tgt` and `layout` for the same lifetime.
@@ -6958,6 +6971,19 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     if tgt.pic16.is_some() {
         return crate::codegen16::generate(p, tgt);
     }
+    let g = generate_base(p, tgt);
+    if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
+    if let Some(q) = crate::opt::without_dead_updates(p, tgt) {
+        let candidate = generate_base(&q, tgt);
+        if candidate.errors.is_empty() && candidate.out.words <= g.out.words
+            && occupied_ram(&candidate, false) <= occupied_ram(&g, false) {
+            return candidate;
+        }
+    }
+    g
+}
+
+fn generate_base(p: &Program, tgt: &Target) -> Generated {
     let (g, unreferenced) = generate_inner(p, tgt);
     if unreferenced.is_empty() || !g.errors.is_empty() || !tgt.opt || tgt.keep_vars {
         return fits_flash(g, tgt);

@@ -478,6 +478,26 @@ Program bytes: total 7124 to 7092. Test: `tests/exec/partial_write_clear.bas`.
 
 ## 11. Random library programs against XC8 (0.1.167, 2026-11-10)
 
+### Dead scalar updates, 2026-11-15
+
+The compiler now tries removing scalar global updates whose values have no use outside their own
+discardable updates. It rebuilds the program and keeps that candidate only if neither generated
+flash nor occupied RAM increases. It excludes volatile and indirect reads, raw assembly, C links,
+and globals referenced by other code, and respects `--keep-vars` and `-O0`. The analysis is bounded
+to 16 candidate globals; arrays and general dependency cycles are not handled.
+
+On freshly generated `bench/random` seeds 101-112, 16 operations per program, basil's totals changed
+as follows (RAM is summed across the 12 independent programs):
+
+| Device | Flash before | Flash after | RAM before | RAM after | XC8 `-Os` flash / RAM |
+|---|---:|---:|---:|---:|---:|
+| PIC18F27Q10 | 9442 bytes | 7712 bytes | 550 bytes | 456 bytes | 10058 bytes / 467 bytes |
+| PIC16F18346 | 5588 words | 4815 words | 592 bytes | 484 bytes | 5845 words / 480 bytes |
+
+These are size measurements, not a behavioral comparison of the generated C and BASIC programs.
+The generator includes self-updating accumulators whose values are not observed, so this sample
+particularly exercises the new optimization.
+
 `bench/random/`: `gen.py` writes a seeded random program in BASIC and in C. Each program takes 2 or 3 of the library
 modules `adc`, `serial`, `eeprom`, `bits` and `delay`, plus core statements (Word arithmetic, a 32-bit multiply, a
 divide, array loops, port writes), 16 operations in an endless loop; every input is read from a port, so nothing folds.
