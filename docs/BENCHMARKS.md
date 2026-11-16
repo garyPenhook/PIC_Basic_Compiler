@@ -339,3 +339,68 @@ The other three optimized programs pass their simulator expectations. Ten genera
 1–10, 25 operations) remain at 5243 total words, with no individual flash or reported RAM regression. This is a
 measured improvement for the control benchmark, not a general percentage claim. See EFFICIENCY.md §15 for the
 placement algorithm, acceptance check and limits.
+
+## Proven local-array initialization (2026-11-15)
+
+Compared with `fae23d5`, using `tests/exec/array_init.bas` and storage optimizations enabled:
+
+| Target | Flash words before → after | RAM before → after | basil-sim cycles before → after |
+|---|---:|---:|---:|
+| PIC18F27Q10 | 148 → 138 | 47 → 47 bytes | 1208 → 1074 |
+| PIC16F17146 | 193 → 181 | 52 → 52 bytes | 1652 → 1516 |
+
+The initialized arrays lose their entry clears; a partially initialized sibling array retains its clear and
+reads zero from its unwritten element after frame reuse. Results match the baseline and `-O0` builds on both
+cores. All four `bench/large` image sizes and reported RAM totals remain unchanged on PIC18F27Q10 and PIC16F18346.
+This is a focused result, not a general reduction claim. See EFFICIENCY.md §16 for proof limits and repeatable
+simulator commands using the harness's new `--no-keep-vars` option.
+
+## Current local build versus XC8 v4.00 (2026-11-15)
+
+Latest local release: `fae23d5` plus the uncommitted array-initialization pass, version 0.1.256. The local basil symlink was verified after a release rebuild. Exact binary SHA-256: `c6946821696fa30c4e5593716f8815d1f67fcfa710740fde345721581ebc4f45`.
+
+target/benchmarks/latest/report.md contains the full tables, methodology and raw-artifact locations. Suite totals below use bytes for PIC18 flash and instruction words for PIC16; RAM is summed per-program bytes. Negative differences favour Basil.
+
+| Suite | Device | Flash Basil / XC8 -Os | Flash difference | RAM difference |
+|---|---:|---:|---:|---:|
+| large | 18F27Q10 | 5752 / 7560 B | -23.9% | -5.1% |
+| large | 16F18346 | 4371 / 4337 words | +0.8% | -3.2% |
+| modules | 18F27Q10 | 4658 / 5302 B | -12.1% | -7.6% |
+| random | 18F27Q10 | 8908 / 9606 B | -7.3% | +7.9% |
+| random | 16F18346 | 5243 / 5765 words | -9.1% | +6.2% |
+| kernels | 18F27Q10 | 1538 / 2165 B | -29.0% | -9.1% |
+
+The large-program cycle totals (including startup) are:
+
+| Device | Basil | XC8 -Os | XC8 -O2 | vs -Os | vs -O2 |
+|---|---:|---:|---:|---:|---:|
+| 18F27Q10 | 201016 | 525513 | 484339 | -61.7% | -58.5% |
+| 16F18346 | 466081 | 540075 | 640111 | -13.7% | -27.2% |
+
+All 24 large-program executions match their expected sinks in basil-sim. All 33 PIC18 kernel binaries also match their sinks in an independent basil-sim run. The established MPLAB X v6.35 harness measures kernel intervals, with marker scaffold/call costs removed: Basil is smaller on every kernel and faster on 8/11 versus -Os, 9/11 versus -O2.
+
+Random tests use seeds 1–10, 25 operations, on each device. Peripheral and random comparisons are size-only; hardware behaviour was not revalidated. These repository-owned integer/peripheral sources are not an independent benchmark sample, and the results are not a general guarantee. Notable limits: PIC16 b_dsp uses 1594 words versus 1458 for XC8 -Os, and random-program RAM totals favour XC8 despite Basil flash savings.
+
+## PIC16 code pages versus table pages (2026-11-16)
+
+First flash-placement step: omit blanket page selections when the entire executable program fits in the reset
+page and neither typed code nor verified assembly can change or observe the page latch. Tables may extend into
+later pages. The conservative assembler remains the fallback; general latch-flow analysis and routine reordering
+are not yet implemented. See EFFICIENCY.md §17 for the full improvement plan and proof limits.
+
+`tests/exec_p16/float_random.bas`, PIC16F17146, compared with the local release immediately before this step:
+
+| Build | Flash words before → after | RAM before → after | `movlp` before → after |
+|---|---:|---:|---:|
+| Optimized | 3991 → 3969 | 36 → 36 bytes | 22 → 0 |
+| Harness with observed counters (`--keep-vars`) | 3999 → 3977 | 38 → 38 bytes | 22 → 0 |
+
+In basil-sim the observed-counter build improves from 162122 to 161332 cycles. Both error counters remain zero,
+as in the baseline and `-O0` reference. A generated 2100-NOP cross-page case retains paging and remains at 2185
+words and 4314 cycles, with expected result 110. These are focused measurements; the existing four large PIC16
+benchmarks are below the paging threshold and are not expected to benefit from this step.
+
+The Timer0 interrupt regression extended with a 2050-byte table also passes in baseline, optimized and `-O0`
+builds. Its image is 2658 → 2651 words with 100 RAM bytes unchanged. Timer phase changes total execution cycles
+from 142864 to 143126 despite fewer instructions; this pass guarantees the page invariant, not a universal timing
+improvement. All eight large-program builds retain their flash and RAM totals.

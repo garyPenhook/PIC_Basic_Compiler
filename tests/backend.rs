@@ -1892,3 +1892,114 @@ fn pic16_bank_placement_reduces_control_program() {
     assert_eq!(code(&text), code(&debug), "debug markers changed bank placement or code");
 
 }
+
+/// Fully initialized local arrays lose their entry clears; partial words and volatile arrays retain them.
+#[test]
+fn initialized_arrays_drop_only_redundant_entry_clears() {
+    let out = scratch("arrayinit");
+    let source = std::fs::read_to_string(root().join("tests/exec/array_init.bas")).unwrap();
+    for dev in ["18F27Q10", "16F17146"] {
+        for (name, from, to, cleared) in [
+            ("full", "buf(i) = x + i", "buf(i) = x + i", false),
+            ("partial_word", "buf(i) = x + i", "buf(i).Byte0 = Byte(x + i)", true),
+            ("volatile", "Dim buf(16) As Word", "Volatile Dim buf(16) As Word", true),
+        ] {
+            let src = out.join(format!("{name}_{dev}.bas"));
+            std::fs::write(&src, source.replacen(from, to, 1)).unwrap();
+            if dev.starts_with("16") { for_p16(&src, dev, &src); }
+            let asm = src.with_extension("S");
+            let r = Command::new(basil()).args(["-S", "--report"]).arg(&src).arg("-o").arg(&asm).output().unwrap();
+            assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+            let text = std::fs::read_to_string(&asm).unwrap();
+            let filled = text.split("T_FILLED:").nth(1).unwrap().split("T_PARTIALBUF:").next().unwrap();
+            let partial = text.split("T_PARTIALBUF:").nth(1).unwrap().split("T_BRANCHBUF:").next().unwrap();
+            let clear = if dev.starts_with("18") { "clrf POSTINC0" } else { "movwi FSR0++" };
+            assert_eq!(filled.contains(clear), cleared, "{name} {dev}: {filled}");
+            assert!(partial.contains(clear), "{dev}: an unwritten element still needs its zero");
+            if name == "full" {
+                let report = String::from_utf8_lossy(&r.stdout);
+                let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+                assert!(words <= if dev.starts_with("18") { 138 } else { 181 }, "{report}");
+                let debug_asm = src.with_extension("debug.S");
+                let r = Command::new(basil()).args(["-S", "-g"]).arg(&src).arg("-o").arg(&debug_asm).output().unwrap();
+                assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+                let debug = std::fs::read_to_string(debug_asm).unwrap();
+                let code = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");
+                assert_eq!(code(&text), code(&debug), "-g changed array initialization code");
+
+            }
+        }
+    }
+}
+
+/// Tables in later pages must not force MOVLP when all code remains in the reset page.
+#[test]
+fn pic16_tables_do_not_force_code_page_selections() {
+    let out = scratch("flashpages");
+    let src = root().join("tests/exec_p16/float_random.bas");
+    let asm = out.join("float.S");
+    let r = Command::new(basil()).args(["-S", "--report"]).arg(&src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(&asm).unwrap();
+    let report = String::from_utf8_lossy(&r.stdout);
+    let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    assert!(words > 2048 && words <= 3969, "{report}");
+    assert!(!text.lines().any(|l| l.trim_start().starts_with("movlp ")), "unnecessary page selections");
+    assert!(text.lines().any(|l| l.starts_with(";SYM __CA") && u32::from_str_radix(l.split("0x").nth(1).unwrap(), 16).unwrap() >= 2048));
+    let debug = out.join("float_debug.S");
+    let r = Command::new(basil()).args(["-S", "-g"]).arg(&src).arg("-o").arg(&debug).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let code = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");
+    assert_eq!(code(&text), code(&std::fs::read_to_string(debug).unwrap()), "debug info changed paging");
+    for (name, extra, suffix) in [
+        ("reference", vec!["-O0"], ""),
+        ("latch", vec![], "\nPCLATH = 0\n"),
+        ("assembly", vec![], "\nAsm\n    movwf PCLATH\nEnd Asm\n"),
+        ("macro", vec![], "\nAsm\n    pagesel __reset\nEnd Asm\n"),
+    ] {
+        let f = out.join(format!("{name}.bas"));
+        std::fs::write(&f, std::fs::read_to_string(&src).unwrap() + suffix).unwrap();
+        let s = f.with_extension("S");
+        let r = Command::new(basil()).arg("-S").args(extra).arg(f).arg("-o").arg(&s).output().unwrap();
+        assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
+        assert!(std::fs::read_to_string(s).unwrap().lines().any(|l| l.trim_start().starts_with("movlp ")), "{name}: paging must remain");
+    }
+}
+
+/// Code in page one still needs selections, including a return to a caller whose latch differs.
+#[test]
+fn pic16_real_code_in_later_pages_keeps_page_selections() {
+    let out = scratch("realpages");
+    let src = out.join("pages.bas");
+    let body = format!("Program Pages\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nVolatile Dim answer As Word\nNoInline Function A(ByVal x As Word) As Word\nAsm\n{}End Asm\nResult = x + 7\nEnd Function\nNoInline Function B(ByVal x As Word) As Word\nResult = x + 3\nEnd Function\nanswer = A(20)\nanswer = answer + B(10)\nanswer = answer + A(30)\nanswer = answer + B(30)\n", "nop\n".repeat(2100));
+    std::fs::write(&src, body).unwrap();
+    let asm = src.with_extension("S");
+    let r = Command::new(basil()).arg("-S").arg(src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(asm).unwrap();
+    let b = text.lines().find(|l| l.starts_with(";SYM PAGES_B ")).unwrap().split("0x").nth(1).unwrap();
+    let addr = u32::from_str_radix(b, 16).unwrap();
+    assert!(addr >= 2048);
+    assert!(text.contains(&format!("movlp 0x{:02X}", (addr >> 8) & 0x7f)), "the later page must be selected");
+}
+
+/// Hardware interrupt shadowing preserves the reset-page invariant; an explicit shadow read does not.
+#[test]
+fn pic16_interrupts_with_late_tables_preserve_page_zero() {
+    let out = scratch("interruptpages");
+    let src = out.join("irq.bas");
+    let text = std::fs::read_to_string(root().join("tests/exec_p16/isr_single.bas")).unwrap();
+    let pad = (0..2050).map(|i| (i & 255).to_string()).collect::<Vec<_>>().join(",");
+    let text = text.replacen("Function Mix(", &format!("Volatile Dim sample As Byte\nConst Pad(2050) As Byte = ({pad})\nFunction Mix("), 1) + "\nsample = Pad(Byte(n))\n";
+    for (name, suffix, pages) in [("table", "", false), ("shadow", "\nsample = PCLATH_SHAD\n", true), ("assembly", "\nAsm\n    nop\nEnd Asm\n", true)] {
+        std::fs::write(&src, text.clone() + suffix).unwrap();
+        let asm = out.join(format!("{name}.S"));
+        let r = Command::new(basil()).args(["-S", "--report"]).arg(&src).arg("-o").arg(&asm).output().unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let report = String::from_utf8_lossy(&r.stdout);
+        let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+        assert!(words > 2048);
+        let asm = std::fs::read_to_string(asm).unwrap();
+        assert_eq!(asm.lines().any(|l| l.trim_start().starts_with("movlp ")), pages, "{name}");
+    }
+}

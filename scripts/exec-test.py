@@ -32,6 +32,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--basil", default=os.path.join(os.path.dirname(__file__), "../target/debug/basil"))
 ap.add_argument("--mdb", default=None)
 ap.add_argument("--keep", action="store_true")
+ap.add_argument("--no-keep-vars", action="store_true", help="enable storage optimizations; result variables must remain observable (e.g. Volatile)")
 ap.add_argument("--device", default="18F27Q10", help="part to build for and simulate; the program's Device line is replaced")
 ap.add_argument("--engine", choices=["mdb", "sim", "both"], default=os.environ.get("BASIL_ENGINE"),
                 help="mdb: MPLAB X simulator; sim: basil-sim (crates/picsim); both: run both, and fail on a different cycle count. Default: sim for a PIC18 part when basil-sim is built (it has no enhanced mid-range core), else mdb")
@@ -92,7 +93,7 @@ for src in a.files:
                 shutil.copy(mod, work)
         src = os.path.join(work, name + ".bas")
         open(src, "w").write(text)
-    r = subprocess.run([a.basil, "--keep-vars", *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
+    r = subprocess.run([a.basil, *([] if a.no_keep_vars else ["--keep-vars"]), *a.flags.split(), src, "-o", hexf], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL {name}: compile\n{r.stderr}")
         fails += 1

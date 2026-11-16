@@ -1703,9 +1703,61 @@ pub fn without_write_only(p: &Program, names: &HashSet<String>) -> Option<Progra
     Some(q)
 }
 
-/// Try phase-local storage reuse. Code generation accepts
-/// this candidate only when neither the finished flash image nor occupied RAM grows.
+/// PIC16 typed-source guard: no operation can alter or observe the page latch, including
+/// its interrupt shadow, indirect registers, pointer parameters and register aliases. The
+/// emitted raw assembly must be checked separately by the code generator.
+pub(crate) fn preserves_page_zero(p: &Program, tgt: &crate::codegen::Target) -> bool {
+    struct Uses { bad: bool, special: Vec<u32> }
+    impl Uses {
+        fn access(&mut self, pl: &Place, bytes: u32) {
+            match &pl.base {
+                Base::Ptr(_) => self.bad = true,
+                Base::Abs { addr, name } => {
+                    self.bad |= pl.idx.is_some() || crate::ir::indirect_sfr(name)
+                        || (0..bytes).any(|off| {
+                            let a = addr.saturating_add(pl.off).saturating_add(off);
+                            matches!(a & 0x7f, 0 | 1 | 2 | 10)
+                                || self.special.contains(&a)
+                        });
+                }
+                _ => {}
+            }
+        }
+    }
+    impl Visit for Uses {
+        fn place(&mut self, pl: &Place, _: Acc) { self.access(pl, pl.bytes()); }
+        fn ex(&mut self, e: &Ex) {
+            if let ExK::Load(pl) | ExK::Addr(pl) = &e.k { self.access(pl, pl.bytes()); }
+        }
+        fn stmt(&mut self, s: &S) {
+            match &s.st {
+                St::ClearMem(pl, bytes) => self.access(pl, *bytes),
+                St::Copy { dst, src, bytes } => { self.access(dst, *bytes); self.access(src, *bytes); }
+                _ => {}
+            }
+        }
+    }
+    let mut uses = Uses { bad: false, special: tgt.sfr.iter().filter(|(n, _)| n.to_ascii_uppercase().starts_with("PCL")).map(|(_, &a)| a).collect() };
+    w_block(&mut uses, &p.main.body);
+    for f in &p.funcs { w_block(&mut uses, &f.body); }
+    !uses.bad
+}
+
+mod array_init;
+
+/// A size-checked candidate without redundant entry clears of private local arrays.
+pub fn without_array_clears(p: &Program, tgt: &crate::codegen::Target) -> Option<Program> {
+    array_init::candidate(p, tgt)
+}
+
+/// Try phase-local storage reuse. Code generation accepts this candidate only when RAM and flash do not grow.
 pub fn compact_storage(p: &Program, tgt: &crate::codegen::Target) -> Option<Program> {
+    if opaque_ram(p, tgt) { return None; }
+    let mut q = p.clone();
+    reuse_locals(&mut q).then_some(q)
+}
+
+fn opaque_ram(p: &Program, tgt: &crate::codegen::Target) -> bool {
     // Absolute RAM and indirect-register accesses may observe a local without naming it,
     // including from an interrupt handler while the leaf routine is running.
     struct Opaque<'a> { found: bool, tgt: &'a crate::codegen::Target }
@@ -1735,9 +1787,7 @@ pub fn compact_storage(p: &Program, tgt: &crate::codegen::Target) -> Option<Prog
     let mut opaque = Opaque { found: false, tgt };
     w_block(&mut opaque, &p.main.body);
     for f in &p.funcs { w_block(&mut opaque, &f.body); }
-    if opaque.found { return None; }
-    let mut q = p.clone();
-    reuse_locals(&mut q).then_some(q)
+    opaque.found
 }
 
 /// Share equal-sized scalar locals with disjoint top-level statement intervals. Structured
@@ -3174,6 +3224,38 @@ mod local_storage_tests {
             p.main.body.push(assign(2, Ex::new(ExK::Load(pl), 16, false)));
             assert!(compact_storage(&p, &tgt).is_none());
         }
+    }
+    #[test]
+    fn reset_page_source_proof_covers_aliases_shadow_registers_and_wide_accesses() {
+        let tgt = crate::codegen::Target { ram: vec![(0x20, 0x70)], access: (0x70, 0x80),
+            access_sfr: (0, 0), sfr: [("PCLATH_SHAD".into(), 0x1fe7)].into_iter().collect(), hw_context: false, ipen: None,
+            prog_bytes: 0, data_top: 0x2000, hw_stack: 16, opt: true, keep_vars: false,
+            debug_files: vec![], pic16: Some(crate::codegen::Pic16Mem { gpr: vec![(0x20, 0x70)], common: (0x70, 0x80), prog_words: 16384 }) };
+        assert!(preserves_page_zero(&fixture(), &tgt));
+        for addr in [0, 1, 2, 10, 0x18a, 0x1fe7] {
+            let mut p = fixture();
+            let mut pl = place(0);
+            pl.ty = crate::types::BYTE;
+            pl.base = Base::Abs { addr, name: "ALIAS".into() };
+            p.main.body.push(assign(2, Ex::new(ExK::Load(pl), 8, false)));
+            assert!(!preserves_page_zero(&p, &tgt), "alias {addr:#x}");
+        }
+        let mut p = fixture();
+        let mut wide = place(0); wide.base = Base::Abs { addr: 9, name: "WIDE".into() };
+        p.main.body.push(assign(2, Ex::new(ExK::Load(wide), 16, false)));
+        assert!(!preserves_page_zero(&p, &tgt));
+        let mut p = fixture();
+        let mut block = place(0); block.ty = crate::types::BYTE; block.base = Base::Abs { addr: 8, name: "RANGE".into() };
+        p.main.body.push(stmt(St::ClearMem(block, 4)));
+        assert!(!preserves_page_zero(&p, &tgt));
+        let mut p = fixture();
+        let mut ptr = place(0); ptr.base = Base::Ptr(0);
+        p.main.body.push(assign(2, Ex::new(ExK::Load(ptr), 16, false)));
+        assert!(!preserves_page_zero(&p, &tgt));
+        let mut p = fixture();
+        let mut port = place(0); port.ty = crate::types::BYTE; port.base = Base::Abs { addr: 12, name: "PORTA".into() };
+        p.main.body.push(assign(2, Ex::new(ExK::Load(port), 8, false)));
+        assert!(preserves_page_zero(&p, &tgt));
     }
     #[test]
     fn storage_reuse_preserves_overlaps_initial_values_and_escaped_storage() {

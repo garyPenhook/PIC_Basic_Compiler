@@ -312,6 +312,44 @@ fn size16(it: &Item, long: bool, multipage: bool) -> u32 {
     }
 }
 
+/// Whether the compact, unpaged layout keeps all executable items and symbolic transfer targets
+/// in the reset page. Tables can follow it in higher pages. The caller must separately prove
+/// that typed source and raw instructions cannot change or observe PCLATH (including aliases,
+/// pointers and macros). Raw directives with unknown size must also be excluded by the caller.
+pub(crate) fn code_in_first_page16(items: &[Item], start: u32, assembled: &Assembled) -> bool {
+    if start != 0 { return false; }
+    let mut pc = start;
+    for it in items {
+        match it {
+            Item::Org(at) => { pc = *at; continue; }
+            Item::Data(bytes) => { pc += bytes.len() as u32; continue; }
+            Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Fit(_) => continue,
+            _ => {}
+        }
+        let n = size16(it, false, false);
+        if n == 0 { continue; }
+        if pc + n > 2048 { return false; }
+        let target = match it {
+            Item::Call(t) | Item::Br(_, t) | Item::SkipBr(_, t) => Some(t.as_str()),
+            Item::Ins(t) | Item::Raw(t) => {
+                let text = t.split(';').next().unwrap_or("").trim();
+                let mut words = text.split_whitespace();
+                let op = words.next().unwrap_or("").to_ascii_lowercase();
+                if matches!(op.as_str(), "callw" | "movlp" | "fcall" | "ljmp")
+                    || text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|w| w.eq_ignore_ascii_case("PCL") || w.eq_ignore_ascii_case("PCLATH") || w.eq_ignore_ascii_case("PCLATH_SHAD")) {
+                    return false;
+                }
+                if matches!(op.as_str(), "call" | "goto" | "bra") { words.next() } else { None }
+            }
+            _ => None,
+        };
+        if target.is_some_and(|t| assembled.labels.get(t).is_none_or(|&a| a >= 2048)) { return false; }
+        pc += n;
+    }
+    // This proof is for the unpaged layout, where short and long branches have equal size.
+    pc - start == assembled.words
+}
+
 /// Like `assemble` for the enhanced mid-range core. `bra` reaches -256..255 words; farther jumps are `goto`, with
 /// `movlp` first when the program spans more than one 2K-word page (`multipage`), because `call` and `goto` carry
 /// only 11 address bits and take the rest from PCLATH. A conditional branch is a flag test that skips a `bra`.
@@ -452,6 +490,48 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pic16_data_in_later_pages_does_not_make_executable_code_multipage() {
+        let items = vec![Item::Call("FUNC".into()), Item::Br(Cc::Always, "HALT".into()),
+            Item::Label("FUNC".into()), Item::Ins("return".into()), Item::Label("HALT".into()), Item::Br(Cc::Always, "HALT".into()),
+            Item::Label("TABLE".into()), Item::Data(vec![42; 3000])];
+        let a = assemble16(&items, 0, false);
+        assert!(a.words > 2048 && code_in_first_page16(&items, 0, &a));
+        assert_eq!(a.words, 3004);
+        let mut after = items.clone();
+        after.push(Item::Ins("return".into()));
+        assert!(!code_in_first_page16(&after, 0, &assemble16(&after, 0, false)));
+    }
+    #[test]
+    fn pic16_code_page_boundary_and_table_calls_are_checked_at_actual_addresses() {
+        let mut items = vec![Item::Ins("nop".into()); 2047];
+        items.push(Item::Ins("return".into()));
+        items.push(Item::Data(vec![0; 64]));
+        assert!(code_in_first_page16(&items, 0, &assemble16(&items, 0, false)));
+        items.insert(0, Item::Ins("nop".into()));
+        assert!(!code_in_first_page16(&items, 0, &assemble16(&items, 0, false)));
+        let table_call = vec![Item::Call("TABLE".into()), Item::Org(2048), Item::Label("TABLE".into()), Item::Data(vec![1])];
+        assert!(!code_in_first_page16(&table_call, 0, &assemble16(&table_call, 0, false)));
+        let unknown = vec![Item::Call("EXTERNAL".into())];
+        assert!(!code_in_first_page16(&unknown, 0, &assemble16(&unknown, 0, false)));
+    }
+    #[test]
+    fn pic16_unpaged_proof_includes_raw_labels_and_relative_branch_relaxation() {
+        let mut items = vec![Item::Br(Cc::Z, "FAR".into()), Item::Raw("call FAR".into())];
+        items.extend((0..300).map(|_| Item::Ins("nop".into())));
+        items.push(Item::Raw("FAR:".into()));
+        items.push(Item::Raw("return".into()));
+        items.push(Item::Data(vec![0; 3000]));
+        let a = assemble16(&items, 0, false);
+        assert!(a.lines.iter().any(|l| l.contains("goto FAR")));
+        assert!(code_in_first_page16(&items, 0, &a));
+        assert!(!code_in_first_page16(&items, 1, &a));
+        for unsafe_ins in ["movlp 0", "callw", "movwf PCL", "movf PCLATH,w"] {
+            let items = vec![Item::Ins(unsafe_ins.into()), Item::Data(vec![0; 3000])];
+            assert!(!code_in_first_page16(&items, 0, &assemble16(&items, 0, false)));
+        }
+    }
 
     fn branch_over(n: usize, back: bool) -> Vec<String> {
         let mut items = Vec::new();

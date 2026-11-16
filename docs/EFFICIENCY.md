@@ -920,3 +920,119 @@ in total, with no individual flash or reported RAM increase. PIC18 placement is 
 Tests cover common RAM preservation, grouping related objects, partial banks, arrays crossing banks, safe frame
 overlay, deterministic output, control-flow boundaries in the graph, and the control benchmark's flash/RAM
 limits. The benchmark also checks that `-g` leaves generated code unchanged.
+
+## 16. Remove proven redundant local-array entry clears (2026-11-15)
+
+`opt::without_array_clears` tries removing the entry clear of a private integer or Char array, then proves that
+no read can observe an unwritten byte. Fixed stores, explicit clears and copies mark byte ranges initialized;
+reads check those ranges. Branches intersect their initialized-byte sets. Constant-bound `For` loops with local,
+nonvolatile, unescaped counters are analyzed one iteration at a time, including descending and nested loops.
+Word elements and byte-field aliases use their actual byte offsets. This analysis does not unroll emitted code.
+
+The proof is limited to arrays of at most 2048 bytes and a 4096-step analysis budget. Before full initialization, unknown
+indices or loop bounds, dynamic loops, modified loop counters, calls, early exits, partial bits and unsupported
+control flow keep the clear. Volatile arrays and escaped storage are excluded. C linkage, assembly
+or opaque RAM access anywhere in the program prevents the trial. The original array clear is removed from a
+copy of the IR; explicit later clears remain writes. Both back ends accept the candidate only if final flash
+words and occupied physical RAM do not increase. `-O0` and `--keep-vars` retain the original clears.
+
+Measured against `fae23d5`, using `tests/exec/array_init.bas`:
+
+| Target | Flash words before → after | Reported RAM | basil-sim cycles before → after |
+|---|---:|---:|---:|
+| PIC18F27Q10 | 148 → 138 | 47 bytes, unchanged | 1208 → 1074 |
+| PIC16F17146 | 193 → 181 | 52 bytes, unchanged | 1652 → 1516 |
+
+The fixture fills a 16-Word local array and a four-byte array initialized in both branches. Their clears go.
+A sibling routine writes only 15 elements of its 16-Word array, and still reads zero from the last element after
+reusing the filled routine's frame: its clear stays. Optimized, baseline and `-O0` builds produce the same results
+on both cores. Regression tests also keep the clear for partial Word writes and volatile arrays; debug builds
+preserve the generated code. Unit tests exercise branch joins, signed conversions, nested and descending loops,
+zero-trip loops, counter mutation and escape, address exposure, copies, reads before writes and the proof budget.
+
+All four `bench/large` programs are unchanged on PIC18F27Q10 and PIC16F18346. In particular, the variable-length
+`ToDec` buffer still keeps its clear: proving an initialized prefix needs a stronger analysis than this pass.
+The fixture's savings are not a general percentage claim.
+
+The simulator harness now accepts `--no-keep-vars` to exercise storage optimizations directly. Observed result
+variables in this fixture are `Volatile`, so they remain present. Reproduce the optimized runs with:
+
+```
+python3 scripts/exec-test.py --engine sim --no-keep-vars tests/exec/array_init.bas
+python3 scripts/exec-test.py --engine sim --no-keep-vars --device 16F17146 tests/exec/array_init.bas
+```
+
+Add `--flags=-O0` for the reference build. Other harness runs retain their normal `--keep-vars` default.
+
+## 17. Smarter program-memory page use (2026-11-16)
+
+Flash-placement improvement plan, in order:
+
+1. **Implemented: distinguish executable code from constant tables when selecting PIC16 paging.** Previously,
+   total image size controlled paging: any image over 2048 instruction words added `movlp` before generated
+   calls and long jumps. Tables read through an FSR may extend beyond the first page without requiring those
+   selections if all code and transfer targets remain in page zero and nothing can change or observe PCLATH.
+   The conservative paging path is retained whenever those conditions cannot be proved.
+2. **Future: track PCLATH through control flow and calls.** Remove repeated page selections when the necessary bits are
+   known on every incoming path. Summarize callees; a return restores PC, not PCLATH. Computed jumps, explicit
+   register access, raw assembly and interrupt context require their own rules.
+3. **Future: place related routines together.** Group callers, callees and helpers to reduce PIC16 page changes and
+   increase relative-branch reach. PIC18 can similarly gain more `rcall`/`bra` forms. Preserve reset/interrupt
+   vectors, table reach and debug addresses, and keep a placement only when final image size improves.
+
+The first step is deliberately not a general PCLATH flow analysis. Its safety proof must cover aliases and
+indirect access, real code beyond page zero, and transfers to tables as well as ordinary routine calls. Programs
+with genuine executable code in later pages retain their existing selections. `-O0` retains the reference path.
+The four existing large PIC16 benchmarks are below 2048 words, so this work is aimed at larger firmware rather
+than the current DSP benchmark's size gap.
+
+### 17.1 First step implemented: tables do not force code paging
+
+`asm::code_in_first_page16` checks the relaxed **unpaged** layout: every instruction and every direct transfer
+must be in addresses 0000h–07FFh, and every target must resolve. Only constant-table data can extend into later
+pages. This uses actual word addresses after branch relaxation; the last instruction may end exactly at 0800h.
+It does not infer safety from a caller and callee merely sharing a page.
+
+The generator combines that placement proof with `opt::preserves_page_zero` and `codegen16::paging`:
+
+- Typed code cannot read, write or expose PCL/PCLATH, its interrupt shadow, or an indirect-register alias;
+  pointer accesses and indexed absolute accesses keep the original paging. Wide stores and copies check all
+  bytes, so an alias spanning WREG and PCLATH cannot evade the test.
+- Assembly is accepted only for recognized one-word operations. File operands must resolve to common RAM or
+  mirrored STATUS/WREG, independent of BSR. Direct branch/call labels must resolve into page zero. Unknown
+  macros, directives, computed assembly transfers, indirect assembly moves and explicit latch operations keep
+  the conservative implementation. Raw `retfie` is excluded because it can restore an uninitialized shadow
+  outside a hardware interrupt. Programs combining interrupts and raw assembly also retain paging until entry
+  contexts can be proved. The FloatLib assembly qualifies without being specially trusted by name.
+- The invariant starts from reset with PCLATH zero. No accepted operation changes or observes it, and interrupt
+  entry/return preserves that invariant. Thus the extra generated `movlp` instructions are unnecessary. No
+  general call-summary or PCLATH flow analysis is implemented yet.
+
+When either proof fails, the existing multipage assembler is used unchanged. Real instructions in a later page,
+calls into a later table page, unknown targets, explicit page-register access, and `-O0` keep their selections.
+Small images avoid the extra proof entirely. PIC18 code generation is unchanged.
+
+Measured against the local release before this step, using `tests/exec_p16/float_random.bas` on PIC16F17146:
+
+| Build | Words before → after | `movlp` before → after | RAM |
+|---|---:|---:|---:|
+| Normal optimized build | 3991 → 3969 | 22 → 0 | 36 bytes, unchanged |
+| Simulator harness (`--keep-vars`) | 3999 → 3977 | 22 → 0 | 38 bytes, unchanged |
+
+The harness retains the error counter that the normal build can remove. With those observed counters retained,
+basil-sim reports 162122 → 161332 cycles, and both `FR_BAD` and `FR_FIRST` remain zero. The `-O0` reference also
+passes (166871 cycles). The generated cross-page test uses a 2100-NOP routine followed by another routine in page
+one, with calls returning to page zero and then selecting page one again. Old and new builds are both 2185 words
+and 4314 cycles, with the expected result 110; the `-O0` result also agrees.
+
+Tests cover the 2048-word boundary, late data versus late executable code, table calls, unresolved labels,
+relaxed conditional branches, raw labels, numeric/register aliases, wide accesses, page-register shadows,
+indirect operations, unknown assembly and debug-code consistency. Steps 2 and 3 above remain future work.
+
+Additional interrupt validation extends `tests/exec_p16/isr_single.bas` with a 2050-byte constant table and a
+volatile sample of that table. The image shrinks from 2658 to 2651 words (`movlp`: 7 to 0), retaining 100 RAM
+bytes. Baseline, optimized and `-O0` executions agree on all expected interrupt counts and data, including the
+table sample 44. With timer-driven interrupts, total cycles vary with interrupt phase: 142864 before and 143126
+after, so the flash saving does not imply every I/O-driven workload finishes sooner. A permanent backend test
+checks both this placement and the conservative fallback when the shadow is read or assembly is introduced.
+All four large programs retain their flash and RAM sizes on both PIC18F27Q10 and PIC16F18346.

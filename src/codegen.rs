@@ -6974,7 +6974,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
     let mut storage = None;
-    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage] {
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears] {
         if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
             let candidate = generate_base(&q, tgt);
             if candidate.errors.is_empty() && candidate.out.words <= g.out.words

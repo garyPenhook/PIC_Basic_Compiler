@@ -14,9 +14,10 @@
 //! consecutive banks, which the linear data memory (FSR 2000h up) shows as one run of bytes; they are
 //! reached through an FSR. Indirect access uses `moviw`/`movwi` with FSR0 (and FSR1 for copies).
 //!
-//! Code. `call` and `goto` carry 11 address bits; a program over 2K words sets PCLATH before each (see
-//! `assemble16`). The core has no conditional branches, only flag tests that skip, and no `N`/`OV`
-//! flags: a signed comparison flips the sign bit of both operands and compares unsigned.
+//! Code. `call` and `goto` carry 11 address bits. Multipage code selects PCLATH before each; tables alone
+//! do not require selections when all executable code stays in the reset page and the latch is untouched.
+//! The core has no conditional branches, only flag tests that skip, and no `N`/`OV` flags: a signed
+//! comparison flips the sign bit of both operands and compares unsigned.
 
 use crate::asm::{Assembled, Cc, Item, assemble16};
 use crate::codegen::{Generated, Layout, Obj, Output, Target, independent};
@@ -31,6 +32,7 @@ mod expr;
 mod helpers;
 pub(crate) mod layout;
 mod opt;
+mod paging;
 mod stmt;
 
 pub use layout::plan_layout16;
@@ -354,7 +356,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
     let mut storage = None;
-    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage] {
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears] {
         if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
             let candidate = generate_base(&q, tgt);
             if candidate.errors.is_empty() && candidate.out.words <= g.out.words
@@ -515,7 +517,8 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
         items
     };
     let mut asmd: Assembled = assemble16(&items, 0, false);
-    let multipage = asmd.words > 2048;
+    let multipage = asmd.words > 2048
+        && !(tgt.opt && paging::reset_page(&items, &asmd, p, tgt, &objs, &layout));
     if multipage {
         asmd = assemble16(&items, 0, true);
     }
