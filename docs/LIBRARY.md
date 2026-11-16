@@ -775,6 +775,20 @@ Portable (no device registers); `tests/exec/lib_strings.bas` runs on the PIC18 a
 `FmtBuf` is `Public Dim FmtBuf As String(32)`: pass it to `SerialWrite`, `LcdWrite`, `OledWrite` and the like. Portable (no device registers);
 `tests/exec/lib_format.bas` runs on the PIC18, 16F17146 and 16F15244 in the simulators (MDB).
 
+## clc (configurable logic cells, PIC18F27Q10 only)
+Source: DS40002043F chapter 26 (data selection table p.409, gating p.410, functions p.411, setup steps p.412, registers p.416-426), PPS tables 18-1 p.286 and 18-2 p.287. The eight cells' registers are 10 bytes apart (CLC1CON E27h, CLC2CON E31h ... CLC8CON E6Dh), so the routines address them through FSR0 from one base. No cell's data are bit-banged; the cells run without the CPU. Other families are not ported: the module stops with `#error` (the PIC16F153xx/18xxx cells have four cells and a different register layout, the PIC18-Q41 has the CLB instead).
+
+| Routine | Effect |
+|---|---|
+| `ClcCombine(n, srcA, srcB, op)` | cell n = A op B (`ClcOpAnd`, `ClcOpOr`, `ClcOpXor`, `ClcOpNand`, `ClcOpNor`, `ClcOpXnor`), enabled |
+| `ClcMode(n, mode)` | disable cell n and set its function (`ClcMode*`) |
+| `ClcSource(n, d, source)` / `ClcGate(n, g, mask)` / `ClcPolarity(n, pol)` | input d, gate g and polarity registers |
+| `ClcEdges(n, rising, falling)` / `ClcEnable(n)` / `ClcDisable(n)` | INTP / INTN and EN, the other bits kept |
+| `ClcOutput(n)` / `ClcOutputs()` | CLCxCON.OUT of one cell / CLCDATA (all eight at once) |
+| `ClcInputPin(i, pin)` / `ClcOutputPin(n, pin)` | CLCINiPPS / RxyPPS = 18h + n - 1 and the pin direction; False for a pin the PPS table does not give |
+
+A first version of `ClcCombine` wrote each register through its own call (107 words); one pass with `POSTINC0` is 49 + 25 words. `ClcSource` is not called `ClcSelect` because that is a register name on the Q41. Errata: DS80000832G lists nothing for the CLC.
+
 ## floatlib (Float arithmetic; included automatically)
 Not included by hand: any source that mentions `Float` gets it. A Float is its IEEE-754 binary32 pattern in 4 bytes. The compiler turns
 `+ - * /`, the six comparisons and the conversions into calls to `FAdd FSub FMul FDiv`, `FEq FNe FLt FLe FGt FGe`, `FFromLong FFromULong FToLong`

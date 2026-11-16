@@ -121,6 +121,7 @@ basil --report blink.bas # also prints code and RAM sizes per routine and variab
 | `epaper` | WeAct 2.13" and 2.9" e-paper (SSD1680, black / white or black / white / red) over SPI: rectangles, text, bitmap windows, refresh, sleep |
 | `strings` | `Len` of a `String` (any size, or a literal); `Left`, `Mid` and `Right` are built into the language |
 | `aht30` | AHT30 temperature and humidity sensor over I2C: start, fetch with CRC check, 1/100 degree and 1/100 %RH results |
+| `clc` | the eight configurable logic cells of the PIC18F27Q10: `ClcCombine` (AND, OR, XOR, NAND, NOR, XNOR of two sources in one call), or every input, gate, function and polarity by register for latches and flip-flops; pins in and out, edge interrupts |
 | `pwm` | four PWM outputs (CCP1, CCP2, PWM3, PWM4) with a shared frequency and per-channel duty |
 | `dma` | PIC18-Q41 DMA: software-started copy (RAM/SFR, flash or EEPROM source), trigger-started feed with abort triggers, on four channels, done flag, stop |
 

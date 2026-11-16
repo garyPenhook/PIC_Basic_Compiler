@@ -1519,3 +1519,9 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
   `tests/exec` programs and `tests/exec_k22` were also run in MDB: same results, and the same cycles but for the differences picsim lists.
 - Not done: nothing ran on a real part; capture/compare, half/full-bridge PWM, Timer3/5 pins, the RB interrupt-on-change and the INT pin edges are not modelled in basil-sim; MDB does not model
   the oscillator status bits, so `intosc` is tested in basil-sim only.
+
+## clc module (done 2026-11-16, 0.1.257)
+- `lib/clc.bas` (module `Clc`): the eight configurable logic cells of the PIC18F27Q10, from DS40002043F chapter 26 (data selection table p.409, gating p.410, functions p.411, registers p.416-426) and the PPS tables 18-1 and 18-2. `ClcCombine` (AND, OR, XOR, NAND, NOR, XNOR of two sources, enabled) and register-level `ClcMode`, `ClcSource`, `ClcGate`, `ClcPolarity`, `ClcEdges`, `ClcEnable`, `ClcDisable`, `ClcOutput`, `ClcOutputs`, `ClcInputPin`, `ClcOutputPin`. The cell registers are 10 bytes apart and PPS and CLCIN registers are consecutive, so all go through one FSR0 load. Other parts stop with `#error` (28-pin Q10 only: the 40/44-pin routing differs).
+- `ClcCombine` 107 words -> 74 (49 + the 25-word shared `CombineRegs`): one POSTINC0 pass instead of ten calls. `ClcSelect` was renamed `ClcSource`: it is a register name on 25 parts (CLCSELECT).
+- Test `tests/exec/lib_clc.bas` (basil-sim, stimulus on RC0/RC1): the six operations read with A=1,B=0 and again with A=1,B=1; cell 8 register by register (the 10-register stride); pin routing accepted and refused. The test found a real fault: the operation number had been used as the CLC mode (XOR and XNOR computed AND). Not run on a real part.
+- Next: CWG (DS40002043F chapter 25, Q10 and the other families) and NCO (not on the Q10; Q41 and PIC16F1xxxx), each with its own family branches.

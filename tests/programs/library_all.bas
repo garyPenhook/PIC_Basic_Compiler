@@ -18,6 +18,7 @@ Include "system"
 Include "lcd"
 Include "oled"
 Include "aht30"
+Include "clc"
 Include "rtcc"
 Include "rtccspi"
 Include "strings"
@@ -160,3 +161,15 @@ x = Irremote.SonyIn(9)
 x = Irremote.RC5In(9)
 x10ok = X10.Xout(8, 9, 0, X10.UnitOn, 2)
 x10ok = X10.Xin(8, 9, 10, x)
+x10ok = Clc.ClcInputPin(0, 16)
+Clc.ClcCombine(1, Clc.ClcInCLCIN0, Clc.ClcInTmr0, Clc.ClcOpXor)
+Clc.ClcMode(2, Clc.ClcModeSr)
+Clc.ClcSource(2, 1, Clc.ClcInClc1)
+Clc.ClcGate(2, 1, Clc.ClcD1T Or Clc.ClcD2N)
+Clc.ClcPolarity(2, Clc.ClcInvOut)
+Clc.ClcEdges(2, True, False)
+Clc.ClcEnable(2)
+Clc.ClcDisable(2)
+x10ok = Clc.ClcOutput(1)
+r = Clc.ClcOutputs()
+x10ok = Clc.ClcOutputPin(1, 0)

@@ -46,7 +46,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 2. Language commands (in categories, alphabetical within each)
    - Branching and loops; Compiler and assembler; Delays; General; Math; Pin input and output
 3. Library modules (categories in alphabetical order, modules alphabetical within each)
-   - Analog and memory; Bits, maths and strings; Displays; Sensors, clocks and remote control; Serial and buses; System and clock; Timers and PWM
+   - Analog and memory; Bits, maths and strings; Core-independent peripherals; Displays; Sensors, clocks and remote control; Serial and buses; System and clock; Timers and PWM
 4. Diagnostics
 5. Appendix A: Alternative spellings and unsupported forms
 6. Appendix B: Test checklist
@@ -2864,7 +2864,7 @@ first, as the language requires.
 
 ---
 
-Modules are grouped in categories, in alphabetical order, and the modules in each category are alphabetical: Analog and memory; Bits, maths and strings; Displays; Sensors, clocks and remote control; Serial and buses; System and clock; Timers and PWM.
+Modules are grouped in categories, in alphabetical order, and the modules in each category are alphabetical: Analog and memory; Bits, maths and strings; Core-independent peripherals; Displays; Sensors, clocks and remote control; Serial and buses; System and clock; Timers and PWM.
 
 ---
 
@@ -4096,6 +4096,238 @@ Dim n As Byte
 n = Len(name)        ' 5
 n = Len("abc")       ' 3
 ```
+
+---
+
+## Category: Core-independent peripherals
+
+## clc  (`Include "clc"`, Configurable Logic Cells, PIC18F27Q10)
+
+The eight configurable logic cells (CLC1 to CLC8, data sheet chapter 26) are small blocks of programmable logic that
+run without the CPU, also in Sleep. A cell has four input selectors (64 sources: pins, clocks, timers, comparators,
+CCP and PWM outputs, the other cells), four gates that AND any mix of the true and inverted inputs, one of eight logic
+functions and an output polarity. The output can go to a pin, to other peripherals (a cell is a source for another
+cell, a timer gate, a CWG input, and so on) and to an edge interrupt.
+
+There are two ways to use the module. `ClcCombine` makes a cell that computes `A op B` (AND, OR, XOR, NAND, NOR,
+XNOR) of two sources and enables it: one call. `ClcMode`, `ClcSource`, `ClcGate`, `ClcPolarity`, `ClcEdges` and
+`ClcEnable` write the cell register by register, for the latches, flip-flops and the four-gate AND-OR and OR-XOR
+forms. Set a cell up in this order: `ClcMode` (always first: it disables the cell, and a reset leaves the selectors,
+gates and polarities as they were), the inputs, the gates, the polarity, the pins, and `ClcEnable` last. Cell numbers
+are 1 to 8; a routine ignores a cell number outside that range.
+
+**Input sources** (the `source` of `ClcSource` and `ClcCombine`) are the codes of the data sheet table: `ClcInCLCIN0`
+to `ClcInCLCIN7` (0 to 7, the pins set by `ClcInputPin`), `ClcInFosc` 8, `ClcInHfintosc` 9, `ClcInLfintosc` 10,
+`ClcInClkr` 16, `ClcInTmr0` 17, `ClcInTmr1` 18, `ClcInTmr2` 19, `ClcInCcp1` 24, `ClcInCcp2` 25, `ClcInPwm3` 26,
+`ClcInPwm4` 27, `ClcInCmp1` 28, `ClcInCmp2` 29, `ClcInClc1` to `ClcInClc8` (33 to 40), `ClcInCwg1A` 49 and
+`ClcInCwg1B` 50. Any other value of the data sheet table (0 to 63) can be given as a number.
+
+**Constants** `ClcModeAndOr` 0, `ClcModeOrXor` 1, `ClcModeAnd4` 2, `ClcModeSr` 3 (S-R latch), `ClcModeDffSr` 4
+(D flip-flop with set and reset), `ClcModeDffR` 5 (two-input D flip-flop with reset), `ClcModeJk` 6, `ClcModeLatch` 7
+(transparent latch); `ClcOpAnd` 0, `ClcOpOr` 1, `ClcOpXor` 2, `ClcOpNand` 3, `ClcOpNor` 4, `ClcOpXnor` 5; gate bits
+`ClcD1T`, `ClcD1N` to `ClcD4T`, `ClcD4N` (input 1 to 4, true or inverted); polarity bits `ClcInvOut`, `ClcInvG1` to
+`ClcInvG4`.
+
+**Pins** Inputs: `ClcInputPin(i, pin)` routes `CLCINi` to a pin; inputs 0, 1, 4 and 5 reach ports A and C, inputs 2, 3,
+6 and 7 ports B and C. Output: `ClcOutputPin(n, pin)`; cells 1, 2, 5 and 6 reach ports A and C, cells 3, 4, 7 and 8
+ports B and C. Pins are numbered as in `pinio` (RA0 = 0 to RC7 = 23). Both functions return `False` and change nothing
+for a pin the part cannot route. The module supports the 28-pin PIC18F27Q10 only (the 40/44-pin routing differs) and
+stops with `#error` on any other part; the PIC16 and PIC18-Q41 logic cells are not ported yet.
+
+**Interrupts** `ClcEdges` enables the rising and falling edge detectors. The flag `CLCnIF` and the enable `CLCnIE` are the
+program's own; clear the flag in the handler. Cells 1 to 4 are bits 4 to 7 of `PIR5` / `PIE5` (CLC1IF = PIR5.4) and cells 5 to 8 bits 4 to 7 of
+`PIR6` / `PIE6` [DS40002043F 15.13.15, 15.13.16]. Changing the polarity of a cell
+with an edge enabled raises an interrupt.
+
+**Example** (an alarm output high while either of two inputs is high, and a latch)
+```basic
+Include "gpio"
+Include "clc"
+Gpio.GpioAllDigital()
+ok = Clc.ClcInputPin(0, 16)                 ' CLCIN0 = RC0
+ok = Clc.ClcInputPin(1, 17)                 ' CLCIN1 = RC1
+Clc.ClcCombine(1, Clc.ClcInCLCIN0, Clc.ClcInCLCIN1, Clc.ClcOpOr)
+ok = Clc.ClcOutputPin(1, 0)                 ' CLC1OUT = RA0
+' an S-R latch in cell 2: set by RC0 (gate 1), reset by RC1 (gate 2)
+Clc.ClcMode(2, Clc.ClcModeSr)
+Clc.ClcSource(2, 1, Clc.ClcInCLCIN0)
+Clc.ClcSource(2, 2, Clc.ClcInCLCIN1)
+Clc.ClcGate(2, 1, Clc.ClcD1T)
+Clc.ClcGate(2, 2, Clc.ClcD2T)
+Clc.ClcGate(2, 3, 0)
+Clc.ClcGate(2, 4, 0)
+Clc.ClcPolarity(2, 0)
+Clc.ClcEnable(2)
+```
+**Notes** The routines are not reentrant: do not call them from a handler and from the main program (a handler that uses `FSR0` or the multiplier registers itself is safe: the compiler saves what a handler touches). Out-of-range cell, input, gate and operation numbers are ignored; `mode`, `source` and `pol` are reduced to their valid bits (3, 6 and 5 bits), so `ClcSource(1, 1, 64)` selects source 0.
+A cell that is enabled and reads its inputs from pins needs those pins digital: `ClcInputPin` does that.
+
+### ClcCombine
+
+**Syntax**
+```basic
+Clc.ClcCombine(n, srcA, srcB, op)
+```
+**Overview** Makes cell `n` compute `A op B` and enables it. AND uses the AND-OR function with gates 1 and 2, OR and
+XOR use the OR-XOR function (XOR takes input 2 in gate 3), the unused gates are constant 0, and NAND, NOR and XNOR
+invert the output. CLCxPOL is replaced, inputs 3 and 4 are left as they were, and the edge enables are cleared.
+The cell is disabled while it is rewritten (the data sheet's set-up order), so calling `ClcCombine` on a cell that is already running drops its output to 0 for a moment, even when the function is unchanged: a pin it drives pulses low and a cell or timer fed by it sees an edge.
+
+**Parameters** `n` 1 to 8; `srcA`, `srcB` input sources (0 to 63); `op` `ClcOpAnd` to `ClcOpXnor`. A cell number or
+operation out of range does nothing.
+
+**Example**
+```basic
+Clc.ClcCombine(3, Clc.ClcInTmr0, Clc.ClcInCLCIN2, Clc.ClcOpAnd)
+```
+**See also** `ClcOutput`, `ClcOutputPin`
+
+### ClcMode
+
+**Syntax**
+```basic
+Clc.ClcMode(n, mode)
+```
+**Overview** Disables cell `n` and selects its logic function (`ClcMode*`, 0 to 7). The edge interrupt enables are cleared. Always the first call of a cell set-up.
+
+**Example**
+```basic
+Clc.ClcMode(4, Clc.ClcModeDffR)
+```
+**See also** `ClcSource`, `ClcEnable`
+
+### ClcSource
+
+**Syntax**
+```basic
+Clc.ClcSource(n, d, source)
+```
+**Overview** Selects the signal on input `d` (1 to 4) of cell `n`.
+
+**Parameters** `source` a `ClcIn*` constant or a code 0 to 63 of the data sheet table.
+
+**Example**
+```basic
+Clc.ClcSource(1, 1, Clc.ClcInClc2)
+```
+**See also** `ClcGate`
+
+### ClcGate
+
+**Syntax**
+```basic
+Clc.ClcGate(n, g, mask)
+```
+**Overview** Sets which inputs gate `g` (1 to 4) of cell `n` takes, true or inverted; the gate ANDs them. `mask` is the sum of `ClcD1T`, `ClcD1N`, `ClcD2T`, `ClcD2N`, `ClcD3T`, `ClcD3N`, `ClcD4T` and `ClcD4N`. A gate with `mask` = 0 is a constant: 0, or 1 when its `ClcInvGy` bit is set in `ClcPolarity`. Selecting an input both true and inverted makes the gate 0 but can glitch.
+
+**Example**
+```basic
+Clc.ClcGate(1, 1, Clc.ClcD1T Or Clc.ClcD2N)   ' g1 = in1 AND NOT in2
+```
+**See also** `ClcPolarity`
+
+### ClcPolarity
+
+**Syntax**
+```basic
+Clc.ClcPolarity(n, pol)
+```
+**Overview** Writes CLCxPOL: `ClcInvOut` inverts the cell output, `ClcInvG1` to `ClcInvG4` invert gate 1 to 4 before the logic function. Other bits are ignored. Inverting every input and the gate output makes the gate an AND; with none inverted it is an OR.
+
+**Example**
+```basic
+Clc.ClcPolarity(1, Clc.ClcInvOut)
+```
+**See also** `ClcGate`
+
+### ClcEdges
+
+**Syntax**
+```basic
+Clc.ClcEdges(n, rising, falling)
+```
+**Overview** Enables the edge detectors of cell `n`: `rising` sets INTP, `falling` sets INTN. An enabled edge sets `CLCnIF`; enable `CLCnIE` and the interrupt path yourself.
+
+**Example**
+```basic
+Clc.ClcEdges(1, True, False)
+PIE5.4 = 1                                  ' CLC1IE
+```
+**See also** `ClcEnable`
+
+### ClcEnable
+
+**Syntax**
+```basic
+Clc.ClcEnable(n)
+```
+**Overview** Enables cell `n` (EN = 1). Call it after everything else is set; the other settings are kept.
+
+**See also** `ClcDisable`, `ClcMode`
+
+### ClcDisable
+
+**Syntax**
+```basic
+Clc.ClcDisable(n)
+```
+**Overview** Disables cell `n`: its output is logic 0. The settings are kept.
+
+**See also** `ClcEnable`
+
+### ClcOutput
+
+**Syntax**
+```basic
+b = Clc.ClcOutput(n)
+```
+**Overview** The output of cell `n` (CLCxCON.OUT, after the output polarity).
+
+**Returns** `Boolean`; `False` for a cell number out of range or a cell that is disabled.
+
+**Example**
+```basic
+If Clc.ClcOutput(1) Then
+    High(PORTB.0)
+End If
+```
+**See also** `ClcOutputs`
+
+### ClcOutputs
+
+**Syntax**
+```basic
+v = Clc.ClcOutputs()
+```
+**Overview** The outputs of all eight cells at one instant (the CLCDATA mirror): bit n - 1 is cell n. Use it when several cells must be read together.
+
+**Returns** `Byte`
+
+**See also** `ClcOutput`
+
+### ClcInputPin
+
+**Syntax**
+```basic
+ok = Clc.ClcInputPin(i, pin)
+```
+**Overview** Routes CLC input `i` (0 to 7, `ClcInCLCINi`) to a pin and makes the pin a digital input.
+
+**Returns** `Boolean`; `False` (nothing changed) if the pin is not one input `i` reaches: inputs 0, 1, 4, 5 ports A and C; inputs 2, 3, 6, 7 ports B and C.
+
+**See also** `ClcOutputPin`
+
+### ClcOutputPin
+
+**Syntax**
+```basic
+ok = Clc.ClcOutputPin(n, pin)
+```
+**Overview** Sends the output of cell `n` to a pin and makes the pin a digital output.
+
+**Returns** `Boolean`; `False` (nothing changed) if the cell cannot reach the pin: cells 1, 2, 5, 6 ports A and C; cells 3, 4, 7, 8 ports B and C.
+
+**See also** `ClcInputPin`
 
 ---
 

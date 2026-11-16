@@ -1,0 +1,17 @@
+[[pin]]
+port = "C"
+bit = 0
+level = 1
+at = 1
+
+[[pin]]
+port = "C"
+bit = 1
+level = 0
+at = 1
+
+[[pin]]
+port = "C"
+bit = 1
+level = 1
+at = 60000
