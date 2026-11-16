@@ -6971,13 +6971,17 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     if tgt.pic16.is_some() {
         return crate::codegen16::generate(p, tgt);
     }
-    let g = generate_base(p, tgt);
+    let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
-    if let Some(q) = crate::opt::without_dead_updates(p, tgt) {
-        let candidate = generate_base(&q, tgt);
-        if candidate.errors.is_empty() && candidate.out.words <= g.out.words
-            && occupied_ram(&candidate, false) <= occupied_ram(&g, false) {
-            return candidate;
+    let mut storage = None;
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage] {
+        if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
+            let candidate = generate_base(&q, tgt);
+            if candidate.errors.is_empty() && candidate.out.words <= g.out.words
+                && occupied_ram(&candidate, false) <= occupied_ram(&g, false) {
+                g = candidate;
+                storage = Some(q);
+            }
         }
     }
     g

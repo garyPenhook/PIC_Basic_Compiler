@@ -1289,7 +1289,7 @@ fn startup_clears_are_kept_where_a_read_can_see_zero() {
     // Read before the write: the clear stays.
     assert_eq!(clears("r", "Dim x As Byte\nPORTB = x\nx = PORTA"), 1);
     // An interrupt handler can see a variable at any time: nothing is dropped.
-    assert_eq!(clears("i", "Dim cnt As Byte\nDim a As Byte\nInterrupt H()\n    Inc(cnt)\nEnd Interrupt\na = PORTA\ncnt = a"), 2);
+    assert_eq!(clears("i", "Dim cnt As Byte\nDim a As Byte\nInterrupt H()\n    Inc(cnt)\nEnd Interrupt\na = PORTA\ncnt = a\nPORTB = cnt"), 2);
 }
 
 const P132_PARTS: [&str; 6] = ["16F13214", "16F13215", "16F13224", "16F13225", "16F13244", "16F13245"];
@@ -1839,4 +1839,32 @@ fn adc_conversion_clock_is_computed_at_compile_time() {
     assert!(s.contains("movlw 0x07\n    movwf ADCLK") || s.contains("movlw 0x07\n    movlb"), "{s}");
     assert!(s.contains("movlw 0x05"), "{s}");
     std::fs::remove_dir_all(&d).ok();
+}
+
+/// Reuse phase-local storage on both cores, while retaining overlapping and observable locals.
+#[test]
+fn disjoint_local_lifetimes_share_storage() {
+    let out = scratch("localreuse");
+    let source = std::fs::read_to_string(root().join("tests/exec/local_reuse.bas")).unwrap();
+    for dev in ["18F27Q10", "16F17146"] {
+        for (name, from, edit, shared) in [
+            ("phases", "total = total + b * 5", "total = total + b * 5", true),
+            ("overlap", "total = total + b * 5", "total = total + b * 5 + a", false),
+            ("volatile", "Dim b As Word", "Volatile Dim b As Word", false),
+            ("partial", "b = x Xor 5678", "b.Byte0 = Byte(x)", false),
+            ("jump", "b = x Xor 5678", "GoTo phase2\nphase2:\nb = x Xor 5678", false),
+        ] {
+            let text = source.replace("18F27Q10", dev)
+                .replace("Clock = 64", "Clock = 32")
+                .replace("RSTOSC = HFINTOSC_64MHZ", if dev.starts_with("16") { "RSTOSC = HFINTOSC_32MHz" } else { "RSTOSC = HFINTOSC_64MHZ" })
+                .replace(from, edit);
+            let src = out.join(format!("{name}_{dev}.bas"));
+            let asm = src.with_extension("S");
+            std::fs::write(&src, text).unwrap();
+            let r = Command::new(basil()).arg("-S").arg(&src).arg("-o").arg(&asm).output().unwrap();
+            assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+            let text = std::fs::read_to_string(asm).unwrap();
+            assert_eq!(!data_addrs(&text).contains_key("T_WORK__B"), shared, "{name} {dev}");
+        }
+    }
 }

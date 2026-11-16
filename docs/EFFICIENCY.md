@@ -857,3 +857,32 @@ modules take pin and channel numbers as arguments, so this was most of the gap t
 **Not done.** A fixed-pin `PwmStart` (it is still 212 words); making the copy decision
 without a trial build (an IR weight with a call-overhead term was tried and mispredicted `lib_i2c`); copying routines
 with `ByRef` parameters on their array or string argument.
+
+## 14. Reuse scalar locals between routine phases (2026-11-15)
+
+`opt::compact_storage` now tries sharing equal-type scalar locals whose use intervals do not overlap within a
+leaf routine, in addition to removing dead scalar updates. A whole top-level statement is one interval: all
+iterations of a loop and every arm of a conditional stay together. A candidate's first real use must assign its
+whole value without reading the previous value; its redundant entry clear can then go. Expression loads and
+statement destinations are renamed together. The existing unused-object pass removes the superseded storage.
+
+The first implementation excludes parameters, results, arrays, initialized and volatile locals, address-taken
+locals, non-leaf routines, and routines with jumps, labels, raw absolute accesses or `Save`. Uses outside the
+owning routine prevent sharing. C linkage, assembly, absolute RAM accesses and indirect RAM access anywhere in
+the program prevent the candidate, including accesses from interrupt handlers. `-O0` and `--keep-vars` retain
+separate storage. Both back ends compare the finished candidate against the original and accept it only when
+neither instruction words nor occupied physical RAM increases.
+
+Measured against the same compiler with only this pass disabled, using `tests/exec/local_reuse.bas`:
+
+| Target | Occupied RAM before → after | Instruction words before → after |
+|---|---|---|
+| PIC18F27Q10 | 16 → 14 bytes | 55 → 54 |
+| PIC16F17146 | 23 → 21 bytes | 103 → 93 |
+
+Both targets return the expected result (32077) in basil-sim with storage optimization enabled and with `-O0`.
+The simulation harness normally supplies `--keep-vars`; for this check that argument was removed so the new
+pass actually ran, with the observed input and sink declared `Volatile`. The four PIC18 `bench/large` programs
+have unchanged image sizes (657, 1019, 646 and 554 words respectively). These are focused savings, not a claim
+of a general percentage reduction. Regression checks cover overlapping lifetimes, reads of initial values,
+partial writes, volatile and initialized locals, escaped addresses, loops, jumps and later clears.

@@ -1703,6 +1703,128 @@ pub fn without_write_only(p: &Program, names: &HashSet<String>) -> Option<Progra
     Some(q)
 }
 
+/// Try phase-local storage reuse. Code generation accepts
+/// this candidate only when neither the finished flash image nor occupied RAM grows.
+pub fn compact_storage(p: &Program, tgt: &crate::codegen::Target) -> Option<Program> {
+    // Absolute RAM and indirect-register accesses may observe a local without naming it,
+    // including from an interrupt handler while the leaf routine is running.
+    struct Opaque<'a> { found: bool, tgt: &'a crate::codegen::Target }
+    impl Visit for Opaque<'_> {
+        fn place(&mut self, p: &Place, _: Acc) {
+            match &p.base {
+                Base::Ptr(_) => self.found = true,
+                Base::Abs { addr, name } => {
+                    self.found |= p.idx.is_some() || crate::ir::indirect_sfr(name) || (0..p.bytes()).any(|off| {
+                        let a = addr.saturating_add(p.off).saturating_add(off);
+                        if let Some(mem) = &self.tgt.pic16 {
+                            mem.gpr.iter().any(|&(s, e)| (s..e).contains(&a))
+                                || (mem.common.0..mem.common.1).contains(&(a & 0x7f)) || a >= 0x2000
+                        } else {
+                            (self.tgt.access.0..self.tgt.access.1).contains(&a)
+                                || self.tgt.ram.iter().any(|&(s, e)| (s..e).contains(&a))
+                        }
+                    });
+                }
+                _ => {}
+            }
+        }
+        fn ex(&mut self, e: &Ex) {
+            if let ExK::Load(pl) | ExK::Addr(pl) = &e.k { self.place(pl, Acc::Read); }
+        }
+    }
+    let mut opaque = Opaque { found: false, tgt };
+    w_block(&mut opaque, &p.main.body);
+    for f in &p.funcs { w_block(&mut opaque, &f.body); }
+    if opaque.found { return None; }
+    let mut q = p.clone();
+    reuse_locals(&mut q).then_some(q)
+}
+
+/// Share equal-sized scalar locals with disjoint top-level statement intervals. Structured
+/// statements are indivisible intervals, so loop backedges cannot invalidate the analysis.
+/// Each local must start with a whole assignment that does not read its previous value.
+fn reuse_locals(p: &mut Program) -> bool {
+    if p.c_link() || !p.cfiles.is_empty() { return false; }
+    if p.funcs.iter().any(|f| scan(&f.body).asm) || scan(&p.main.body).asm { return false; }
+    struct Unsafe(bool);
+    impl Visit for Unsafe {
+        fn stmt(&mut self, s: &S) {
+            self.0 |= matches!(s.st, St::Goto(_) | St::Label(_) | St::GoSub(_) | St::SubRet | St::Save { .. });
+        }
+        fn place(&mut self, p: &Place, _: Acc) {
+            self.0 |= matches!(p.base, Base::Abs { .. } | Base::Ptr(_));
+        }
+        fn ex(&mut self, e: &Ex) {
+            if let ExK::Load(pl) | ExK::Addr(pl) = &e.k {
+                self.place(pl, Acc::Read);
+            }
+        }
+    }
+    let mut changed = false;
+    for fi in 0..p.funcs.len() {
+        let f = &p.funcs[fi];
+        if f.ext || f.reg || !leaf(&f.body) { continue; }
+        let mut unsafe_uses = Unsafe(false);
+        w_block(&mut unsafe_uses, &f.body);
+        if unsafe_uses.0 { continue; }
+        let mut outside = scan(&p.main.body);
+        for (j, other) in p.funcs.iter().enumerate() {
+            if j != fi {
+                let facts = scan(&other.body);
+                outside.read.extend(facts.read);
+                outside.written.extend(facts.written);
+                outside.addr.extend(facts.addr);
+            }
+        }
+        let facts = scan(&f.body);
+        let statements: Vec<Facts> = f.body.iter().map(|s| scan(std::slice::from_ref(s))).collect();
+        let mut intervals = Vec::new();
+        for (v, var) in p.vars.iter().enumerate() {
+            if var.kind != VarKind::Local || var.owner != Some(fi) || var.volatile || var.by_ref
+                || var.init.is_some() || !matches!(var.ty, Ty::Int(..) | Ty::Bool)
+                || facts.addr.contains(&v) || outside.read.contains(&v) || outside.written.contains(&v)
+                || outside.addr.contains(&v) { continue; }
+            // Entry clears may be dropped only after proving the first real use overwrites all bytes.
+            let uses: Vec<usize> = f.body.iter().enumerate().filter_map(|(i, s)| {
+                if matches!(&s.st, St::Clear(pl) if whole_var(pl, &p.vars) == Some(v)) { return None; }
+                let u = &statements[i];
+                (u.read.contains(&v) || u.written.contains(&v)).then_some(i)
+            }).collect();
+            let (Some(&first), Some(&last)) = (uses.first(), uses.last()) else { continue };
+            if !matches!(&f.body[first].st, St::Assign(pl, e)
+                if whole_var(pl, &p.vars) == Some(v) && !e.touches(v, true)) { continue; }
+            // A later clear is a real write, not an entry initialization.
+            if f.body[first..].iter().any(|s| matches!(&s.st, St::Clear(pl) if whole_var(pl, &p.vars) == Some(v))) { continue; }
+            intervals.push((first, last, v));
+        }
+        intervals.sort_unstable();
+        let mut slots: Vec<(usize, VarId)> = Vec::new();
+        let mut rename = HashMap::new();
+        for (first, last, v) in intervals {
+            if let Some(slot) = slots.iter_mut().find(|(end, old)| *end < first && p.vars[*old].ty == p.vars[v].ty && p.vars[*old].bytes == p.vars[v].bytes) {
+                rename.insert(v, slot.1);
+                slot.0 = last;
+            } else {
+                slots.push((last, v));
+            }
+        }
+        if rename.is_empty() { continue; }
+        let body = &mut p.funcs[fi].body;
+        body.retain(|s| !matches!(&s.st, St::Clear(pl) if matches!(pl.base, Base::Var(v) if rename.contains_key(&v))));
+        let mut remap = |pl: &mut Place| {
+            if let Base::Var(v) = &mut pl.base {
+                if let Some(&to) = rename.get(v) { *v = to; }
+            }
+        };
+        stmt_places(body, &mut remap, &mut |_| {});
+        m_block(body, &mut |e| {
+            if let ExK::Load(pl) | ExK::Addr(pl) = &mut e.k { remap(pl); }
+        });
+        changed = true;
+    }
+    changed
+}
+
 /// Remove scalar globals whose only uses are side-effect-free updates of themselves.
 /// Check the remaining program after removing each candidate's stores: this also excludes
 /// conditions, aliases, interrupt uses, and writes in forms we do not understand.
@@ -3004,5 +3126,79 @@ fn pool_literals(p: &mut Program) {
             i += 1;
             !drop.contains(&(i - 1))
         });
+    }
+}
+
+#[cfg(test)]
+mod local_storage_tests {
+    use super::*;
+    fn place(v: VarId) -> Place {
+        Place { base: Base::Var(v), off: 0, bit: None, idx: None, dbit: None, ty: WORD }
+    }
+    fn stmt(st: St) -> S { S { st, span: Default::default() } }
+    fn load(v: VarId) -> Ex { Ex::new(ExK::Load(place(v)), 16, false) }
+    fn assign(v: VarId, e: Ex) -> S { stmt(St::Assign(place(v), e)) }
+    fn fixture() -> Program {
+        let func = Func { asm: "F".into(), name: "F".into(), params: vec![], result: Some(2),
+            body: vec![assign(0, Ex::konst(7, 16, false)), assign(2, load(0)),
+                assign(1, Ex::konst(9, 16, false)), assign(2, load(1))],
+            span: Default::default(), reg: false, ext: false, no_inline: true };
+        Program { structs: Default::default(), exports: vec![], ext_funcs: vec![], externs: vec![], cfiles: vec![],
+            vars: (0..3).map(|i| Var { asm: format!("V{i}"), name: format!("v{i}"), ty: WORD, bytes: 2,
+                kind: if i == 2 { VarKind::Result } else { VarKind::Local }, owner: Some(0), init: None,
+                by_ref: false, volatile: false }).collect(),
+            funcs: vec![func.clone()], flash: vec![], main: Func { body: vec![], ..func }, label_names: vec![],
+            device: String::new(), clock_mhz: 64.0, config: vec![], edata: vec![], isrs: vec![], n_saves: 0,
+            isr_shadow: true, fetch_nop: true, speed: false }
+    }
+    #[test]
+    fn separate_phases_reuse_storage_and_drop_only_the_replaced_entry_clear() {
+        let mut p = fixture();
+        p.funcs[0].body.splice(0..0, [stmt(St::Clear(place(0))), stmt(St::Clear(place(1)))]);
+        assert!(reuse_locals(&mut p));
+        let f = scan(&p.funcs[0].body);
+        assert!(!f.read.contains(&1) && !f.written.contains(&1));
+        assert!(matches!(p.funcs[0].body[0].st, St::Clear(_)));
+        assert_eq!(p.funcs[0].body.len(), 5);
+    }
+    #[test]
+    fn absolute_reads_outside_the_routine_prevent_local_reuse() {
+        let tgt = crate::codegen::Target { ram: vec![(0x100, 0x400)], access: (0, 0x60),
+            access_sfr: (0xf60, 0x1000), sfr: Default::default(), hw_context: false, ipen: None,
+            prog_bytes: 0, data_top: 0x1000, hw_stack: 31, opt: true, keep_vars: false,
+            debug_files: vec![], pic16: None };
+        for (addr, name) in [(0x20, "RAM"), (0xfef, "INDF0")] {
+            let mut p = fixture();
+            let mut pl = place(0);
+            pl.base = Base::Abs { addr, name: name.into() };
+            p.main.body.push(assign(2, Ex::new(ExK::Load(pl), 16, false)));
+            assert!(compact_storage(&p, &tgt).is_none());
+        }
+    }
+    #[test]
+    fn storage_reuse_preserves_overlaps_initial_values_and_escaped_storage() {
+        for case in 0..9 {
+            let mut p = fixture();
+            match case {
+                0 => p.funcs[0].body.push(assign(2, load(0))), // a is still live
+                1 => p.funcs[0].body.insert(2, assign(2, load(1))), // b's initial zero is read
+                2 => p.vars[1].volatile = true,
+                3 => p.vars[1].init = Some(3),
+                4 => p.funcs[0].body.insert(2, stmt(St::Label(0))),
+                5 => { // Taking an address anywhere prevents sharing that local.
+                    p.main.body.push(assign(2, Ex::new(ExK::Addr(place(1)), 16, false)));
+                }
+                6 => { // Both values belong to the same loop interval.
+                    let body = std::mem::take(&mut p.funcs[0].body);
+                    p.funcs[0].body.push(stmt(St::While(Ex::konst(1, 8, false), body)));
+                }
+                7 => {
+                    if let St::Assign(pl, _) = &mut p.funcs[0].body[2].st { pl.ty = crate::types::BYTE; }
+                }
+                8 => p.funcs[0].body.push(stmt(St::Clear(place(1)))),
+                _ => unreachable!(),
+            }
+            assert!(!reuse_locals(&mut p), "unsafe case {case}");
+        }
     }
 }

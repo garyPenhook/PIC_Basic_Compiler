@@ -351,13 +351,17 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
 /// its start-up zeroing if the stores stay in the program, so when `opt::without_write_only` finds such globals the
 /// program is generated again without those stores (kept only if it is not larger).
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
-    let g = generate_base(p, tgt);
+    let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
-    if let Some(q) = crate::opt::without_dead_updates(p, tgt) {
-        let candidate = generate_base(&q, tgt);
-        if candidate.errors.is_empty() && candidate.out.words <= g.out.words
-            && crate::codegen::occupied_ram(&candidate, true) <= crate::codegen::occupied_ram(&g, true) {
-            return candidate;
+    let mut storage = None;
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage] {
+        if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
+            let candidate = generate_base(&q, tgt);
+            if candidate.errors.is_empty() && candidate.out.words <= g.out.words
+                && crate::codegen::occupied_ram(&candidate, true) <= crate::codegen::occupied_ram(&g, true) {
+                g = candidate;
+                storage = Some(q);
+            }
         }
     }
     g
