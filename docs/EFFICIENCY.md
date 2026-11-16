@@ -973,7 +973,7 @@ Flash-placement improvement plan, in order:
    calls and long jumps. Tables read through an FSR may extend beyond the first page without requiring those
    selections if all code and transfer targets remain in page zero and nothing can change or observe PCLATH.
    The conservative paging path is retained whenever those conditions cannot be proved.
-2. **Future: track PCLATH through control flow and calls.** Remove repeated page selections when the necessary bits are
+2. **Implemented conservatively (§21): track PCLATH page bits through control flow and calls.** Remove repeated page selections when the necessary bits are
    known on every incoming path. Summarize callees; a return restores PC, not PCLATH. Computed jumps, explicit
    register access, raw assembly and interrupt context require their own rules.
 3. **Future: place related routines together.** Group callers, callees and helpers to reduce PIC16 page changes and
@@ -1005,8 +1005,8 @@ The generator combines that placement proof with `opt::preserves_page_zero` and 
   outside a hardware interrupt. Programs combining interrupts and raw assembly also retain paging until entry
   contexts can be proved. The FloatLib assembly qualifies without being specially trusted by name.
 - The invariant starts from reset with PCLATH zero. No accepted operation changes or observes it, and interrupt
-  entry/return preserves that invariant. Thus the extra generated `movlp` instructions are unnecessary. No
-  general call-summary or PCLATH flow analysis is implemented yet.
+  entry/return preserves that invariant. Thus the extra generated `movlp` instructions are unnecessary. This
+  first step does not perform call-summary or latch-flow analysis; see §21 for the later guarded analysis.
 
 When either proof fails, the existing multipage assembler is used unchanged. Real instructions in a later page,
 calls into a later table page, unknown targets, explicit page-register access, and `-O0` keep their selections.
@@ -1027,7 +1027,7 @@ and 4314 cycles, with the expected result 110; the `-O0` result also agrees.
 
 Tests cover the 2048-word boundary, late data versus late executable code, table calls, unresolved labels,
 relaxed conditional branches, raw labels, numeric/register aliases, wide accesses, page-register shadows,
-indirect operations, unknown assembly and debug-code consistency. Steps 2 and 3 above remain future work.
+indirect operations, unknown assembly and debug-code consistency. Step 2 is now implemented with the conservative guards in §21; step 3 remains future work.
 
 Additional interrupt validation extends `tests/exec_p16/isr_single.bas` with a 2050-byte constant table and a
 volatile sample of that table. The image shrinks from 2658 to 2651 words (`movlp`: 7 to 0), retaining 100 RAM
@@ -1052,3 +1052,69 @@ Confirmed example: a 160-byte array starting at 0020h occupies 0020h–006Fh and
 0070h and a sample byte at 0071h bring the total to **162 bytes**, not the previously reported 160. Regression
 tests cover this CLI result and usage summary, partially overlaid cross-bank frames, unallocated/zero-sized
 objects, and unchanged PIC18 accounting. This corrects the displayed total; it does not reduce actual RAM use.
+
+## 19. PIC16 Word-array addresses and walks (2026-11-16)
+
+A Word-array index made by widening an unsigned Byte and shifting it once is now scaled directly in the
+FSR pair. The shift carries bit eight into FSRH before the base is added; indices 128–255 therefore keep their
+full offsets. The address no longer needs the two-byte `__A` intermediate. Other index expressions retain
+normal address generation, as does `-O0`.
+
+The single-array loop walker now accepts Word elements too. It initializes FSR0 before the loop and advances
+it by two bytes at the continue point. Its existing restrictions still apply: one indexed array, an unsigned
+Byte induction variable with constant start and step +1, no calls, pointer accesses or flash reads, and no
+interrupt-visible induction variable. Mixed element sizes do not share a walk. Branches and `Continue` keep
+the pointer update; descending loops and the FIR loop using both hist and coef keep normal addressing.
+
+On PIC16F18346, `bench/large/b_dsp` decreases from 1594 to 1525 words, with 164 reported RAM bytes unchanged.
+The gap against the recorded XC8 v4.00 -Os result of 1458 words narrows from 9.3% to 4.6%; it is not eliminated.
+The four large PIC16 benchmarks total 4371 → 4300 words (a_algo 911, b_dsp 1525, c_text 1005, d_ctrl 859).
+PIC18 remains 5752 bytes total. All four PIC16 sink checks pass in basil-sim. The portable `word_walk.bas`
+fixture checks writes at 127/128/255, a walk across a linear RAM-bank boundary, `Continue`, and descending-loop
+fallback; optimized and `-O0` agree. Backend checks retain fallback for calls and volatile arrays.
+
+## 20. Local phase storage across known calls (2026-11-16)
+
+The phase-local scalar reuse trial no longer requires a leaf routine. Transitive routine-effect summaries must
+be known, and no called routine may read or write a variable owned by the caller. Recursive entry into a frame
+with live locals consequently retains the reference scheme. Calls still use their own frames; caller/callee
+frame overlap rules are unchanged. Existing restrictions on escaped, volatile, initialized and partially
+written locals, raw assembly, opaque RAM, jumps and structured statement intervals remain. Final flash words
+and occupied physical RAM must both be no larger before accepting the trial.
+
+`tests/exec/local_reuse_calls.bas` keeps a local live across a real call, consumes it, then reuses its storage
+for a later local. PIC18 reported RAM decreases from 20 to 18 bytes with flash unchanged at 72 words; PIC16F17146 decreases
+from 27 to 25 bytes with flash unchanged at 114 words. Optimized, baseline and `-O0` simulator runs agree. Unit
+checks exclude unknown effects, recursive entry, a callee accessing the caller's local, and overlapping phases.
+The ten recorded random programs (seeds 1–10, 25 operations) show **no additional flash or RAM reduction** on
+either core. This extends the proof's coverage; it does not resolve the measured random-program RAM gap.
+
+## 21. PIC16 page-bit tracking for larger code (2026-11-16)
+
+For eligible multipage programs, the assembler propagates the CALL/GOTO page bits of PCLATH through generated
+control flow. Joins retain a page only when every incoming path agrees. Relative branches preserve the latch;
+long conditional and counted branches change it only on the taken path. Skip instructions account for intervening
+zero-word labels and compiler markers. Reset begins on page zero; interrupt entry begins with unknown page bits.
+
+A conservative transitive callee summary proves preservation only when every selection reachable in the callee
+and its callees selects its incoming call page. A return restores the PC, not the latch. A callee with an
+unproven summary leaves the caller's page unknown. Thus repeated calls can omit selections without assuming
+that the return address's page is selected. Only the page bits used by CALL/GOTO are tracked, not the lower
+PCLATH bits used by computed transfers.
+
+Typed-source alias and shadow-register guards are shared with the reset-page proof. Computed transfers,
+explicit latch access, opaque pointer accesses, raw calls/jumps, unknown assembly and interrupt programs with
+raw assembly retain blanket selections. Verified raw arithmetic and NOP padding can qualify. A skip whose next
+emitted item is an expandable transfer also retains the reference path. `-O0` is unchanged.
+
+Page selections and relative-branch relaxation are recomputed together after layout changes, including targets
+that move across a 2048-word boundary. A bounded iteration falls back to blanket selections if it does not
+converge; final flash must not exceed the conservative assembly. All labels, debug addresses and reports use
+the final layout. Routine reordering remains future work.
+
+A generated 2100-NOP cross-page fixture calls A in page zero and B in page one, including repeated B calls and
+returns to page-zero code. It decreases from 2202 to 2200 words (five to three `movlp`), with 10 reported RAM
+bytes unchanged. Baseline, optimized and `-O0` produce result 133 in basil-sim; baseline/optimized cycles are
+4343/4341. This is a focused proof case, not a general firmware percentage claim. Unit checks cover transitive
+callees, mixed-page joins, skip metadata, conditional/counting branches, unknown interrupt entry and moving page
+boundaries; backend checks require consistent debug code and retain necessary cross-page selections.

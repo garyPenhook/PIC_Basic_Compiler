@@ -1,5 +1,4 @@
-//! A reset-page invariant, not general page-latch data flow. With no code outside page zero
-//! and no operation changing/observing the latch, its CALL/GOTO page bits stay at their reset value.
+//! Guards for reset-page elimination and generated CALL/GOTO page-bit flow.
 use super::*;
 
 pub(super) fn reset_page(items: &[Item], assembled: &Assembled, p: &Program, tgt: &Target, objs: &[Obj], layout: &Layout) -> bool {
@@ -7,6 +6,40 @@ pub(super) fn reset_page(items: &[Item], assembled: &Assembled, p: &Program, tgt
     // Until entry contexts are analyzed, only wholly typed interrupt programs qualify.
     if !p.isrs.is_empty() && items.iter().any(|it| matches!(it, Item::Raw(_))) { return false; }
     if !crate::asm::code_in_first_page16(items, 0, assembled) || !crate::opt::preserves_page_zero(p, tgt) { return false; }
+    neutral(items, p, tgt, objs, layout)
+}
+
+pub(super) fn trackable(items: &[Item], p: &Program, tgt: &Target, objs: &[Obj], layout: &Layout) -> bool {
+    crate::opt::preserves_page_zero(p, tgt) && neutral(items, p, tgt, objs, layout)
+        && items.iter().enumerate().all(|(i, it)| match it {
+            Item::Ins(t) | Item::Raw(t) => {
+                let op = t.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+                let skip_safe = !matches!(op.as_str(), "btfsc" | "btfss" | "decfsz" | "incfsz")
+                    || next_is_single_instruction(&items[i + 1..]);
+                skip_safe && !matches!(op.as_str(), "brw" | "callw" | "movlp" | "goto" | "call" | "fcall" | "ljmp")
+                    && (!matches!(it, Item::Raw(_)) || !matches!(op.as_str(), "bra" | "reset"))
+            }
+            _ => true,
+        })
+}
+
+fn next_is_single_instruction(items: &[Item]) -> bool {
+    for it in items {
+        match it {
+            Item::Label(_) | Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Fit(_) => {}
+            Item::Ins(s) | Item::Raw(s) => match crate::asm::words_of16(s) {
+                0 => {},
+                1 => return true,
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn neutral(items: &[Item], p: &Program, tgt: &Target, objs: &[Obj], layout: &Layout) -> bool {
+    if !p.isrs.is_empty() && items.iter().any(|it| matches!(it, Item::Raw(_))) { return false; }
     let mut symbols = tgt.sfr.clone();
     for (i, o) in objs.iter().enumerate() {
         let Some(a) = layout.addr[i] else { continue };

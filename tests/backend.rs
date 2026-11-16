@@ -1097,7 +1097,7 @@ const P16_PORTABLE: &[&str] = &[
     "absminmax", "boundscheck", "boundscheck_hoist", "minmax_once", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_func", "str_func2", "gosub", "call_stmt", "if_gosub", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_pinio_ref", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings", "lib_format", "lib_onewire",
-    "loop_free_end", "unary_signext", "table_pair", "array_walk", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops",
+    "loop_free_end", "unary_signext", "table_pair", "array_walk", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
 ];
 
 /// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.
@@ -1971,7 +1971,7 @@ fn pic16_tables_do_not_force_code_page_selections() {
 fn pic16_real_code_in_later_pages_keeps_page_selections() {
     let out = scratch("realpages");
     let src = out.join("pages.bas");
-    let body = format!("Program Pages\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nVolatile Dim answer As Word\nNoInline Function A(ByVal x As Word) As Word\nAsm\n{}End Asm\nResult = x + 7\nEnd Function\nNoInline Function B(ByVal x As Word) As Word\nResult = x + 3\nEnd Function\nanswer = A(20)\nanswer = answer + B(10)\nanswer = answer + A(30)\nanswer = answer + B(30)\n", "nop\n".repeat(2100));
+    let body = format!("' expect: PAGES_ANSWER=133\nProgram Pages\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nVolatile Dim answer As Word\nNoInline Function A(ByVal x As Word) As Word\nAsm\n{}End Asm\nResult = x + 7\nEnd Function\nNoInline Function B(ByVal x As Word) As Word\nResult = x + 3\nEnd Function\nanswer = A(20)\nanswer = answer + B(10)\nanswer = answer + B(20)\nanswer = answer + A(30)\nanswer = answer + B(30)\n", "nop\n".repeat(2100));
     std::fs::write(&src, body).unwrap();
     let asm = src.with_extension("S");
     let r = Command::new(basil()).arg("-S").arg(src).arg("-o").arg(&asm).output().unwrap();
@@ -1981,6 +1981,13 @@ fn pic16_real_code_in_later_pages_keeps_page_selections() {
     let addr = u32::from_str_radix(b, 16).unwrap();
     assert!(addr >= 2048);
     assert!(text.contains(&format!("movlp 0x{:02X}", (addr >> 8) & 0x7f)), "the later page must be selected");
+    assert_eq!(text.lines().filter(|l| l.trim_start().starts_with("movlp ")).count(), 3);
+    let debug = out.join("pages_debug.S");
+    let r = Command::new(basil()).args(["-S", "-g"]).arg(out.join("pages.bas")).arg("-o").arg(&debug).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let debug = std::fs::read_to_string(debug).unwrap();
+    let code = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");
+    assert_eq!(code(&text), code(&debug));
 }
 
 /// Hardware interrupt shadowing preserves the reset-page invariant; an explicit shadow read does not.
@@ -2014,4 +2021,52 @@ fn pic16_ram_report_counts_physical_bytes_across_banks() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let report = String::from_utf8_lossy(&r.stdout);
     assert!(report.contains("total 162 bytes"), "{report}");
+}
+
+/// Word walks must keep full byte offsets and stop at code that can clobber the FSR.
+#[test]
+fn pic16_word_array_walks_and_dsp_size() {
+    let out = scratch("wordwalk");
+    let source = "Program W\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim a(8) As Word\nDim i As Byte\nVolatile Dim sink As Word\nNoInline Sub Touch()\nsink = sink + 1\nEnd Sub\nFor i = 0 To 7\na(i) = Word(i) * 3\nNext\nsink = a(7)\n";
+    for (name, text, walking) in [
+        ("plain", source.to_string(), true),
+        ("volatile", source.replace("Dim a(8)", "Volatile Dim a(8)"), false),
+        ("call", source.replace("a(i) =", "Touch()\na(i) ="), false),
+        ("descending", source.replace("0 To 7", "7 To 0 Step -1"), false),
+    ] {
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, text).unwrap();
+        let r = Command::new(basil()).arg("-S").arg(src).arg("-o").arg(&asm).output().unwrap();
+        assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        assert_eq!(text.contains("addfsr FSR0, 2"), walking, "{name}");
+    }
+    let src = for_p16(&root().join("bench/large/b_dsp.bas"), "16F18346", &out.join("dsp.bas"));
+    let asm = src.with_extension("S");
+    let r = Command::new(basil()).args(["-S", "--report"]).arg(&src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let report = String::from_utf8_lossy(&r.stdout);
+    let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    assert!(words <= 1525, "{report}");
+    assert!(ram <= 164, "{report}");
+}
+
+
+#[test]
+fn local_storage_reuse_accepts_known_callees_on_both_cores() {
+    let out = scratch("localcalls");
+    for dev in ["18F27Q10", "16F17146"] {
+        let src = if dev.starts_with("16") {
+            for_p16(&root().join("tests/exec/local_reuse_calls.bas"), dev, &out.join("reuse16.bas"))
+        } else { root().join("tests/exec/local_reuse_calls.bas") };
+        for (name, flags, shared) in [("release", vec![], true), ("kept", vec!["--keep-vars"], false)] {
+            let asm = out.join(format!("{name}_{dev}.S"));
+            let r = Command::new(basil()).arg("-S").args(flags).arg(&src).arg("-o").arg(&asm).output().unwrap();
+            assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+            let text = std::fs::read_to_string(asm).unwrap();
+            assert_eq!(!data_addrs(&text).contains_key("REUSE_WORK__B"), shared, "{name} {dev}");
+        }
+    }
 }

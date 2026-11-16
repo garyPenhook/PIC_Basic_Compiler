@@ -1,6 +1,6 @@
 # Basil Manual
 
-Revision for **basil 0.1.251**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
+Revision for **basil 0.1.256**, target devices: the PIC18 and PIC16 parts listed in *Supported device*.
 
 This manual describes exactly what the compiler accepts and generates today. It gives an overview of the
 language, then one entry per command (Syntax, Overview, Parameters, Example, Notes), then one entry
@@ -24,6 +24,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 1. Compiler overview
    - Supported device
    - Running the compiler
+   - Optimisation and PIC16 program pages
    - Debugging
    - Program layout
    - Identifiers, labels, comments, line continuation
@@ -170,6 +171,67 @@ basil: blink.bas -> blink.hex (28 words, 56 bytes)
 
 Errors print as `file:line:col: error[CODE]: message`, with the source line and a caret. Several
 errors are reported per run. Exit status is non-zero if any error was reported.
+
+## Optimisation and PIC16 program pages
+
+Optimisation is on by default. `-O1`, `-O2` and `-Os` select that same mode; they do not select different
+speed/size levels. `-O0` keeps the reference code-generation path. `-g` adds debug information without
+changing the generated instructions or their page layout.
+
+Among the storage and array optimisations, Basil can reuse an ordinary scalar local's storage after its
+last use, including in a routine that calls other routines when their effects are known. A local still
+live across a call keeps its value. Escaped, volatile and initialized locals, unknown call effects and
+recursive access to the caller's locals retain the reference storage scheme. A candidate is kept only
+when both flash and occupied RAM do not grow. `--keep-vars` disables these storage-removal trials so a
+test can inspect otherwise unused variables; `Volatile` is the usual way to keep an observed result.
+On PIC16, eligible Byte and Word array loops can advance an FSR instead of rebuilding an element address
+on every iteration. Doubled unsigned Byte indices retain the ninth offset bit, including indices 128–255.
+
+### Program pages and constant tables
+
+The enhanced mid-range PIC16 core's `CALL` and `GOTO` instructions encode an address within a
+**2,048-word program page**. The upper address bits come from `PCLATH`. Basil emits the necessary
+page selections automatically for generated BASIC calls and jumps. RAM banks, selected through `BSR`,
+are separate from these program-memory pages.
+
+A large constant table does not by itself require page selections around the executable code. If all
+instructions and direct transfer targets fit in page zero (word addresses `0000h`–`07FFh`), and no code
+can change or observe the page latch, Basil omits the blanket selections even when constant-table data
+extends into later pages. Constant tables read through an FSR use their full program-memory addresses.
+The check uses the final instruction layout, rather than the total image size alone.
+
+### Tracking page selections in larger programs
+
+For eligible programs with executable code in later pages, Basil tracks the CALL/GOTO page bits through
+branches and calls. A selection can go only when every incoming path already has the required page.
+Relative branches preserve the latch; a long conditional jump changes it only on the taken path.
+
+A call's return address does **not** restore `PCLATH`. Basil carries page knowledge across a call only
+with a proven callee summary; otherwise the page becomes unknown. The current conservative summary
+requires selections in the callee and its callees to stay on the incoming call page. Thus repeated calls
+to a suitable routine can share a selection, while a call back to another page still selects that page.
+Interrupt entry starts with unknown page bits, and the analysis respects hardware context restoration.
+
+Computed transfers, explicit page-latch access (including aliases and shadow registers), opaque pointer
+accesses and unverified assembly retain conservative selections. Verified simple assembly can qualify,
+but raw assembly calls/jumps and interrupt programs containing raw assembly keep the reference path.
+These optimisations do not add automatic page management inside handwritten `Asm` blocks.
+Basil does not currently reorder routines to group callers and callees by page.
+
+There is no additional option to enable page tracking. `-O0` retains blanket selections for multipage
+images. Basil recomputes branch sizes, labels and debug addresses after selections change, and keeps the
+conservative result if the trial does not converge or would increase the final image size.
+
+To inspect the result, compare the assembly and per-routine word counts:
+
+```sh
+basil -S --report firmware.bas -o firmware_opt.S
+basil -O0 -S --report firmware.bas -o firmware_ref.S
+```
+
+The `.S` files show the remaining `movlp` selections. A smaller whole image may also reflect other
+optimisations, so this comparison does not isolate page-selection savings. Implementation details,
+measured examples and regression limits are in `docs/EFFICIENCY.md`, sections 17 and 19–21.
 
 ## Debugging
 

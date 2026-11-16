@@ -89,12 +89,32 @@ impl<'p> G<'p> {
     pub fn set_fsr(&mut self, n: u32, p: &Place) {
         // The element a walking loop is at: FSR0 is there already.
         if n == 0
-            && let Some((arr, iv, off)) = self.walk
-            && crate::codegen::walk_elem(p, iv) == Some((arr, off))
+            && let Some((arr, iv, off, stride)) = self.walk
+            && (if stride == 2 { crate::codegen::walk_word_elem(p, iv) } else { crate::codegen::walk_elem(p, iv) }) == Some((arr, off))
         {
             return;
         }
         let (l, h) = (format!("FSR{n}L"), format!("FSR{n}H"));
+        // Scale a widened unsigned Byte directly in the destination pointer. Keep the ninth
+        // offset bit: indices 128..255 must not wrap as they would in byte arithmetic.
+        if self.tgt.opt && let Some(idx) = &p.idx
+            && let ExK::Bin(BinKind::Shl, x, k) = &idx.k
+            && idx.w == 16 && k.as_const() == Some(1)
+            && let ExK::Conv(x) = &x.k
+            && x.w == 8 && !x.signed
+            && let Base::Var(v) = p.base
+        {
+            self.ev(x);
+            self.ins(format!("movwf {l}"));
+            self.ins(format!("lslf {l}, f"));
+            self.ins(format!("clrf {h}"));
+            self.ins(format!("rlf {h}, f"));
+            let m = self.var_mem(v, p.off);
+            self.note_address_taken(&m.sym);
+            self.add_fsr(n, m.addr().map_or(0, fsr_addr));
+            return;
+        }
+
         let lo = |me: &mut Self, v: u32| {
             if v == 0 {
                 me.ins(format!("clrf {l}"));

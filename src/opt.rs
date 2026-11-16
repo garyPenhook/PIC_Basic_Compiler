@@ -1810,10 +1810,21 @@ fn reuse_locals(p: &mut Program) -> bool {
             }
         }
     }
+    // Known callees may use their own frames while this frame remains live. Unknown
+    // effects and recursive entry retain the reference storage scheme.
+    let effects = crate::ir::routine_effects(p);
     let mut changed = false;
     for fi in 0..p.funcs.len() {
         let f = &p.funcs[fi];
-        if f.ext || f.reg || !leaf(&f.body) { continue; }
+        if f.ext || f.reg || effects[fi].is_none() { continue; }
+        struct Calls(HashSet<FuncId>);
+        impl Visit for Calls {
+            fn call(&mut self, f: FuncId, _: &[(Place, Ex)]) { self.0.insert(f); }
+        }
+        let mut calls = Calls(HashSet::new());
+        w_block(&mut calls, &f.body);
+        if calls.0.iter().any(|&callee| effects[callee].as_ref().is_none_or(|e|
+            callee == fi || e.reads.iter().chain(e.writes.iter()).any(|&v| p.vars[v].owner == Some(fi)))) { continue; }
         let mut unsafe_uses = Unsafe(false);
         w_block(&mut unsafe_uses, &f.body);
         if unsafe_uses.0 { continue; }
@@ -3256,6 +3267,26 @@ mod local_storage_tests {
         let mut port = place(0); port.ty = crate::types::BYTE; port.base = Base::Abs { addr: 12, name: "PORTA".into() };
         p.main.body.push(assign(2, Ex::new(ExK::Load(port), 8, false)));
         assert!(preserves_page_zero(&p, &tgt));
+    }
+    #[test]
+    fn storage_reuse_across_known_calls_preserves_live_and_recursive_frames() {
+        for case in 0..5 {
+            let mut p = fixture();
+            let mut callee = p.funcs[0].clone();
+            callee.asm = "G".into(); callee.name = "G".into();
+            callee.result = None; callee.body.clear();
+            p.funcs.push(callee);
+            // The first value stays live across this call; the second starts after it dies.
+            p.funcs[0].body.insert(1, stmt(St::Call(1, vec![])));
+            match case {
+                1 => p.funcs[1].ext = true,
+                2 => p.funcs[1].body.push(stmt(St::Call(0, vec![]))),
+                3 => p.funcs[1].body.push(assign(2, load(0))),
+                4 => p.funcs[0].body.push(assign(2, load(0))),
+                _ => {}
+            }
+            assert_eq!(reuse_locals(&mut p), case == 0, "call case {case}");
+        }
     }
     #[test]
     fn storage_reuse_preserves_overlaps_initial_values_and_escaped_storage() {

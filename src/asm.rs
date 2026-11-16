@@ -354,10 +354,26 @@ pub(crate) fn code_in_first_page16(items: &[Item], start: u32, assembled: &Assem
 /// `movlp` first when the program spans more than one 2K-word page (`multipage`), because `call` and `goto` carry
 /// only 11 address bits and take the rest from PCLATH. A conditional branch is a flag test that skips a `bra`.
 /// Constant tables are one `retlw` per byte, so they can be read through an FSR (low 8 bits of the word) or called.
+mod page16;
+
 pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
+    assemble16_inner(items, start, multipage, false)
+}
+
+pub(crate) fn assemble16_tracked(items: &[Item], start: u32) -> Assembled {
+    let baseline = assemble16_inner(items, start, true, false);
+    let trial = assemble16_inner(items, start, true, true);
+    if trial.words <= baseline.words { trial } else { baseline }
+}
+
+fn assemble16_inner(items: &[Item], start: u32, multipage: bool, tracking: bool) -> Assembled {
+    let mut pages = vec![multipage; items.len()];
+    let mut rounds = 0;
     let mut long = vec![false; items.len()];
     let mut labels: HashMap<String, u32> = HashMap::new();
     loop {
+        rounds += 1;
+        if tracking && rounds > 64 { return assemble16_inner(items, start, multipage, false); }
         labels.clear();
         let mut pc = start;
         let mut at = vec![0u32; items.len()];
@@ -376,7 +392,7 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
                 }
                 _ => {}
             }
-            pc += size16(it, long[i], multipage);
+            pc += size16(it, long[i], pages[i]);
         }
         let mut changed = false;
         for (i, it) in items.iter().enumerate() {
@@ -396,6 +412,10 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
         }
         if changed {
             continue;
+        }
+        if tracking {
+            let next = page16::selections(items, &long, &labels);
+            if next != pages { pages = next; continue; }
         }
         let words = pc - start;
         let mut lines = Vec::new();
@@ -421,7 +441,7 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
                 }
                 Item::Br(Cc::Always, t) => {
                     lines.extend(cur.map(str::to_string));
-                    match (long[i], multipage) {
+                    match (long[i], pages[i]) {
                         (false, _) => lines.push(format!("    bra {t}")),
                         (true, false) => lines.push(format!("    goto {t}")),
                         (true, true) => {
@@ -435,7 +455,7 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
                     let (bit, set) = flag16(*cc);
                     // Skip the jump when the condition is false.
                     let skip_false = if set { "btfsc" } else { "btfss" };
-                    match (long[i], multipage) {
+                    match (long[i], pages[i]) {
                         (false, _) => {
                             lines.push(format!("    {skip_false} STATUS, {bit}"));
                             lines.push(format!("    bra {t}"));
@@ -459,7 +479,7 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
                 Item::SkipBr(ins, t) => {
                     lines.extend(cur.map(str::to_string));
                     lines.push(format!("    {ins}"));
-                    match (long[i], multipage) {
+                    match (long[i], pages[i]) {
                         (false, _) => lines.push(format!("    bra {t}")),
                         (true, false) => lines.push(format!("    goto {t}")),
                         (true, true) => {
@@ -476,7 +496,7 @@ pub fn assemble16(items: &[Item], start: u32, multipage: bool) -> Assembled {
                 }
                 Item::Call(t) => {
                     lines.extend(cur.map(str::to_string));
-                    if multipage {
+                    if pages[i] {
                         lines.push(format!("    movlp 0x{:02X}", hi(t)));
                     }
                     lines.push(format!("    call {t}"));

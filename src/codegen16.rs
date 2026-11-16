@@ -109,9 +109,9 @@ pub(crate) struct G<'p> {
     pub save_max: Vec<u32>,
     pub isr_end: Option<String>,
     pub flash_used: BTreeSet<usize>,
-    /// A `For` loop walking a Byte array: (array, loop variable, byte offset of the element the variable picks). While
+    /// A `For` loop walking a Byte or Word array: (array, loop variable, byte offset, stride). While
     /// it is set FSR0 points at that element and `set_fsr(0, ..)` of it emits nothing.
-    pub walk: Option<(VarId, VarId, u32)>,
+    pub walk: Option<(VarId, VarId, u32, u32)>,
     /// Scratch bytes in use in the previous round: the size of the registers a handler saves.
     pub isr_scratch: [u32; 4],
     /// Routines each routine calls, as the previous round found out (a `Save` copies the frames of everything its
@@ -520,7 +520,9 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
     let multipage = asmd.words > 2048
         && !(tgt.opt && paging::reset_page(&items, &asmd, p, tgt, &objs, &layout));
     if multipage {
-        asmd = assemble16(&items, 0, true);
+        asmd = if tgt.opt && paging::trackable(&items, p, tgt, &objs, &layout) {
+            crate::asm::assemble16_tracked(&items, 0)
+        } else { assemble16(&items, 0, true) };
     }
     let mut text = String::new();
     text.push_str(&format!("; basil output for {}\n", p.device));

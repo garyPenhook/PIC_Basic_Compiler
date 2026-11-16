@@ -1008,6 +1008,17 @@ pub(crate) fn walk_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
     (x.w == 8 && !x.signed && q.base == Base::Var(iv) && q.off == 0 && q.idx.is_none() && q.bit.is_none() && q.dbit.is_none()).then_some((*arr, p.off))
 }
 
+/// Word element indexed by an unsigned Byte widened before its byte scaling.
+pub(crate) fn walk_word_elem(p: &Place, iv: VarId) -> Option<(VarId, u32)> {
+    let (Base::Var(arr), Some(ix)) = (&p.base, &p.idx) else { return None };
+    if p.bit.is_some() || p.dbit.is_some() || p.bytes() != 2 { return None; }
+    let ExK::Bin(BinKind::Shl, x, k) = &ix.k else { return None };
+    if ix.w != 16 || k.as_const() != Some(1) { return None; }
+    let ExK::Conv(x) = &x.k else { return None };
+    let ExK::Load(q) = &x.k else { return None };
+    (x.w == 8 && !x.signed && q.base == Base::Var(iv) && q.off == 0 && q.idx.is_none() && q.bit.is_none() && q.dbit.is_none()).then_some((*arr, p.off))
+}
+
 /// What `walk_block` finds: the element every indirect place names, and whether the body reads the loop variable
 /// other than as that index.
 #[derive(Default)]
@@ -1016,6 +1027,8 @@ pub(crate) struct WalkScan {
     pub other: bool,
     /// The enhanced mid-range core reads constant tables through an FSR too, so a body with one does not walk.
     pub no_flash: bool,
+    pub words: bool,
+    pub stride: u32,
 }
 
 /// A place in the body of a loop that may walk an array: a direct one, a constant-table element, or the element
@@ -1033,8 +1046,9 @@ fn walk_place(p: &Place, iv: VarId, st: &mut WalkScan) -> bool {
         }
         return true;
     }
-    match walk_elem(p, iv) {
-        Some(e) if st.found.is_none_or(|f| f == e) => {
+    match walk_elem(p, iv).or_else(|| st.words.then(|| walk_word_elem(p, iv)).flatten()) {
+        Some(e) if st.found.is_none_or(|f| f == e) && (st.stride == 0 || st.stride == p.bytes()) => {
+            st.stride = p.bytes();
             st.found = Some(e);
             true
         }

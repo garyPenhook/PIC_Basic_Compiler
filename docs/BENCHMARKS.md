@@ -404,3 +404,40 @@ The Timer0 interrupt regression extended with a 2050-byte table also passes in b
 builds. Its image is 2658 → 2651 words with 100 RAM bytes unchanged. Timer phase changes total execution cycles
 from 142864 to 143126 despite fewer instructions; this pass guarantees the page invariant, not a universal timing
 improvement. All eight large-program builds retain their flash and RAM totals.
+
+## PIC16 DSP addresses, call-local reuse and page tracking (2026-11-16)
+
+Measured from the local build at the start of this work, with the same benchmark sources and XC8 reference:
+
+| PIC16F18346 | Before words | After words | Reported RAM before / after |
+|---|---:|---:|---:|
+| a_algo | 911 | 911 | unchanged |
+| b_dsp | 1594 | 1525 | 164 / 164 bytes |
+| c_text | 1005 | 1005 | unchanged |
+| d_ctrl | 861 | 859 | 237 / 237 bytes |
+| Total | 4371 | 4300 | unchanged |
+
+DSP remains 67 words (4.6%) larger than XC8 -Os's recorded 1458 words, down from 136 words (9.3%). Savings
+come from full-width doubled-Byte array addresses and Word-array walking, without page-placement changes.
+All four optimized PIC16 sinks pass in basil-sim. PIC18 large-program flash remains 5752 bytes.
+
+Extending phase-local storage reuse to known calls saves two bytes in `local_reuse_calls.bas` on PIC18
+(20 → 18 reported bytes, unchanged 72 words) and PIC16F17146 (27 → 25 bytes, unchanged 114 words). Seeds 1–10 of the existing 25-operation random suite show no
+additional saving from this extension: PIC18 4454 words / 453 reported RAM bytes and PIC16 5243 words / 463
+reported RAM bytes, unchanged. The random RAM gap remains open.
+
+Guarded PCLATH page-bit tracking reduces a generated cross-page A/B-call fixture from 2202 to 2200 words
+and five to three selections, retaining 10 RAM bytes. Basil-sim returns 133 for baseline, optimized and `-O0`;
+cycles are 4343 → 4341 for baseline/optimized. This fixture includes a 2100-NOP routine, repeated calls into
+page one, and calls selecting page zero after a return from page one. It is a focused result. See EFFICIENCY.md
+§§19–21 for mechanisms, fallbacks and validation limits.
+
+Validation: 145 unit tests and the 75-test backend suite pass, along with the additional call-storage
+backend regression. The PIC18 optimized and `-O0` simulator gates pass (227 execution programs plus
+library models). The full PIC16 gate exposes an existing `lib_timer_hw` expectation mismatch:
+`LTH_R7` expects 188 but reports 184, reproduced with the baseline binary in both optimized and `-O0`
+builds. This is not counted as a passing PIC16 timer check.
+With that already-failing timer fixture excluded, all 120 remaining PIC16 execution programs pass in both
+optimized and `-O0` builds. The new Word-array and call-storage fixtures also pass with storage trials enabled.
+The manual's optimisation section and its regenerated PDF cover both reset-page elimination and guarded
+multipage tracking, including assembly/alias fallbacks and inspection commands.

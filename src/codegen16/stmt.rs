@@ -591,9 +591,9 @@ impl<'p> G<'p> {
     }
 
     /// The array a `For` over a Byte variable from a constant, stepping up by one, can walk with FSR0: (array, loop
-    /// variable, element offset, start value). Not inside another walking loop, and not when an interrupt handler can
+    /// variable, element offset, start value, byte stride). Not inside another walking loop, and not when an interrupt handler can
     /// see the variable.
-    fn walk_plan(&mut self, var: &Place, from: &Ex, step: i64, body: &[S]) -> Option<(VarId, VarId, u32, u32)> {
+    fn walk_plan(&mut self, var: &Place, from: &Ex, step: i64, body: &[S]) -> Option<(VarId, VarId, u32, u32, u32)> {
         if !self.tgt.opt || self.walk.is_some() || step != 1 || var.width() != 8 || var.signed() {
             return None;
         }
@@ -606,13 +606,13 @@ impl<'p> G<'p> {
             return None;
         }
         let start = from.as_const()?;
-        let mut st = crate::codegen::WalkScan { no_flash: true, ..Default::default() };
+        let mut st = crate::codegen::WalkScan { no_flash: true, words: true, ..Default::default() };
         if !crate::codegen::walk_block(body, iv, &mut st) {
             return None;
         }
         let (arr, off) = st.found?;
         let a = &self.p.vars[arr];
-        (!a.by_ref && !a.volatile && arr != iv).then_some((arr, iv, off, start))
+        (!a.by_ref && !a.volatile && arr != iv).then_some((arr, iv, off, start, st.stride))
     }
 
     fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S], free: bool) {
@@ -632,22 +632,22 @@ impl<'p> G<'p> {
             let kind = if step > 0 { CmpKind::Gt } else { CmpKind::Lt };
             self.cmp_jump(kind, &load(var), limit, &end, true);
         }
-        // A Byte array indexed by the loop variable and nothing else through an FSR: FSR0 walks the array, set once
+        // A Byte or Word array indexed by the loop variable and nothing else through an FSR: FSR0 walks the array, set once
         // here and stepped with `addfsr` at the end of each pass (see `codegen::walk_block` for what the body may hold).
         let walking = self.walk_plan(var, from, step, body);
-        if let Some((arr, iv, off, start)) = walking {
-            let first = Place { base: Base::Var(arr), off: off + start, idx: None, bit: None, dbit: None, ty: crate::types::BYTE };
+        if let Some((arr, iv, off, start, stride)) = walking {
+            let first = Place { base: Base::Var(arr), off: off + start * stride, idx: None, bit: None, dbit: None, ty: crate::types::BYTE };
             self.set_fsr(0, &first);
-            self.walk = Some((arr, iv, off));
+            self.walk = Some((arr, iv, off, stride));
         }
         self.label(&top);
         self.loops.push((cont.clone(), end.clone()));
         self.block(body);
         self.loops.pop();
         self.label(&cont);
-        if walking.is_some() {
+        if let Some((_, _, _, _, stride)) = walking {
             self.walk = None;
-            self.ins("addfsr FSR0, 1");
+            self.ins(format!("addfsr FSR0, {stride}"));
         }
         // Nothing reads the variable after the loop: step first, then go round again unless the limit was just left.
         if free && self.tgt.opt && (step == 1 || step == -1)
