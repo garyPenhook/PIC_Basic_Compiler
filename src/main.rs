@@ -382,7 +382,7 @@ fn main() -> ExitCode {
         eprintln!("basil: cannot write {}: {e}", lst_path.display());
     }
     if want_report {
-        print!("{}", report(&program, &generated));
+        print!("{}", report(analysis.device.as_ref().unwrap(), &program, &generated));
     }
     if asm_only {
         eprintln!("basil: wrote {} ({} words)", asm_path.display(), generated.out.words);

@@ -185,21 +185,10 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Pat
     Ok(AsmRun { ok: out.status.success(), output: text })
 }
 
-/// Data RAM bytes the program places (variables, temporaries, scratch registers).
-/// Overlaid objects (locals of routines that never run at once) share addresses, so this counts distinct
-/// addresses: the union of the objects' ranges, not the sum of their sizes.
-pub fn ram_used(g: &Generated) -> u32 {
-    let mut r: Vec<(u32, u32)> = g.objs.iter().enumerate().filter_map(|(i, o)| g.layout.addr.get(i).copied().flatten().filter(|_| o.bytes > 0).map(|a| (a, a + o.bytes))).collect();
-    r.sort();
-    let (mut total, mut end) = (0, 0);
-    for (a, b) in r {
-        let a = a.max(end);
-        if b > a {
-            total += b - a;
-            end = b;
-        }
-    }
-    total
+/// Occupied physical RAM bytes (variables, temporaries and scratch), counting overlays once.
+/// PIC16 arrays skip SFR/common-memory holes when they cross bank boundaries.
+pub fn ram_used(dev: &Device, g: &Generated) -> u32 {
+    crate::codegen::occupied_ram(g, dev.device.family == "pic16e") as u32
 }
 
 /// One bar line: `label [####....]  used / size unit (pct)`.
@@ -223,11 +212,11 @@ pub fn usage_summary(dev: &Device, g: &Generated, color: bool) -> String {
     let (flash_used, flash_size, unit) = if dev.device.family == "pic16e" { (g.out.words, dev.memory.program.size, "words") } else { (g.out.words * 2, dev.memory.program.size, "bytes") };
     let mut s = format!("{}:\n", dev.device.name);
     s.push_str(&usage_line("Flash", flash_used, flash_size, unit, color));
-    s.push_str(&usage_line("RAM", ram_used(g), dev.memory.data.usable_gpr, "bytes", color));
+    s.push_str(&usage_line("RAM", ram_used(dev, g), dev.memory.data.usable_gpr, "bytes", color));
     s
 }
 
-pub fn report(p: &Program, g: &Generated) -> String {
+pub fn report(dev: &Device, p: &Program, g: &Generated) -> String {
     let mut s = String::new();
     s.push_str(&format!("Program: {} words ({} bytes)\n", g.out.words, g.out.words * 2));
     for (n, w) in &g.out.func_words {
@@ -246,6 +235,47 @@ pub fn report(p: &Program, g: &Generated) -> String {
     for (a, n, b) in rows {
         s.push_str(&format!("  0x{a:03X}  {b:3}  {n}\n"));
     }
-    s.push_str(&format!("  total {} bytes (overlaid objects share addresses)\n", ram_used(g)));
+    s.push_str(&format!("  total {} bytes (overlaid objects share addresses)\n", ram_used(dev, g)));
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codegen::{Layout, Obj, Output};
+
+    fn device(name: &str) -> Device {
+        Device::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("devices").join(format!("{name}.toml"))).unwrap()
+    }
+    fn generated(ranges: &[(Option<u32>, u32)]) -> Generated {
+        Generated {
+            out: Output { text: String::new(), words: 0, labels: Default::default(), func_words: vec![] },
+            stack_levels: 0,
+            objs: ranges.iter().enumerate().map(|(i, &(_, bytes))| Obj { name: format!("OBJ{i}"), bytes, weight: 0,
+                force_access: false, zero: false, owner: if i < 2 { Some(i) } else { None } }).collect(),
+            layout: Layout { addr: ranges.iter().map(|r| r.0).collect(), size: ranges.iter().map(|r| r.1).collect() },
+            errors: vec![], debug: Default::default(),
+        }
+    }
+    #[test]
+    fn pic16_ram_total_keeps_common_bytes_distinct_from_cross_bank_arrays() {
+        let dev = device("16F17146");
+        let g = generated(&[(Some(0x20), 160), (None, 0), (Some(0x70), 1), (Some(0x71), 1)]);
+        assert_eq!(ram_used(&dev, &g), 162);
+        let summary = usage_summary(&dev, &g, false);
+        assert!(summary.lines().find(|l| l.trim_start().starts_with("RAM")).unwrap().contains("162 /"), "{summary}");
+    }
+    #[test]
+    fn bank_mapping_counts_overlaid_frames_once_and_ignores_unallocated_objects() {
+        let dev = device("16F17146");
+        // The second routine's frame overlays the second bank of the first frame.
+        let g = generated(&[(Some(0x20), 160), (Some(0xa0), 80), (Some(0x70), 2), (Some(0x120), 3), (None, 64), (Some(0x35), 0)]);
+        assert_eq!(ram_used(&dev, &g), 165);
+    }
+    #[test]
+    fn pic18_totals_still_use_contiguous_addresses_and_count_overlays_once() {
+        let dev = device("18F27Q10");
+        let g = generated(&[(Some(0x100), 160), (Some(0x120), 80), (Some(0), 2), (Some(0x200), 3), (None, 64), (Some(0x35), 0)]);
+        assert_eq!(ram_used(&dev, &g), 165);
+    }
 }

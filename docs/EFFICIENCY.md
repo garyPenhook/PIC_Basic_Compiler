@@ -1036,3 +1036,19 @@ table sample 44. With timer-driven interrupts, total cycles vary with interrupt 
 after, so the flash saving does not imply every I/O-driven workload finishes sooner. A permanent backend test
 checks both this placement and the conservative fallback when the shadow is read or assembly is introduced.
 All four large programs retain their flash and RAM sizes on both PIC18F27Q10 and PIC16F18346.
+
+## 18. Count physical PIC16 RAM in reports (2026-11-16)
+
+The RAM report previously merged numeric ranges `[address, address + bytes)`. That works for contiguous PIC18
+objects, but a PIC16 array crossing a bank boundary skips SFR and common-memory holes. The apparent interval
+can therefore overlap unrelated common objects or misrepresent the overlap of two routine frames.
+
+`driver::ram_used` now uses the same occupied-physical-byte counter as the storage optimization checks. Both
+`--report` and the normal usage summary pass the device family explicitly. PIC16 object offsets are mapped to
+physical GPR addresses before counting, and overlaid bytes are counted once. PIC18 uses contiguous addresses as
+before. Allocation and generated machine code are unchanged.
+
+Confirmed example: a 160-byte array starting at 0020h occupies 0020h–006Fh and 00A0h–00EFh. A scratch byte at
+0070h and a sample byte at 0071h bring the total to **162 bytes**, not the previously reported 160. Regression
+tests cover this CLI result and usage summary, partially overlaid cross-bank frames, unallocated/zero-sized
+objects, and unchanged PIC18 accounting. This corrects the displayed total; it does not reduce actual RAM use.

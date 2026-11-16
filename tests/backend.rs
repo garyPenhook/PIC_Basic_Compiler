@@ -2003,3 +2003,15 @@ fn pic16_interrupts_with_late_tables_preserve_page_zero() {
         assert_eq!(asm.lines().any(|l| l.trim_start().starts_with("movlp ")), pages, "{name}");
     }
 }
+
+/// PIC16 arrays span GPR banks without occupying the common bytes inside the apparent address interval.
+#[test]
+fn pic16_ram_report_counts_physical_bytes_across_banks() {
+    let out = scratch("physicalram");
+    let src = out.join("ram.bas");
+    std::fs::write(&src, "Program RamCheck\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nVolatile Dim buf(160) As Byte\nVolatile Dim sample As Byte\nbuf(0) = PORTA\nbuf(159) = PORTA\nsample = buf(PORTA And 127)\n").unwrap();
+    let r = Command::new(basil()).args(["-S", "--report"]).arg(src).arg("-o").arg(out.join("ram.S")).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let report = String::from_utf8_lossy(&r.stdout);
+    assert!(report.contains("total 162 bytes"), "{report}");
+}
