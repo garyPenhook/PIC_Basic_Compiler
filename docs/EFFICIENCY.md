@@ -886,3 +886,37 @@ pass actually ran, with the observed input and sink declared `Volatile`. The fou
 have unchanged image sizes (657, 1019, 646 and 554 words respectively). These are focused savings, not a claim
 of a general percentage reduction. Regression checks cover overlapping lifetimes, reads of initial values,
 partial writes, volatile and initialized locals, escaped addresses, loops, jumps and later clears.
+
+## 15. PIC16 placement by consecutive RAM accesses (2026-11-15)
+
+The PIC16 generator now tries a second RAM layout when optimized code uses at least two data banks. The
+symbolic first-pass instructions supply an undirected graph of consecutive direct object accesses; common
+scratch accesses preserve the current neighbour, while labels, calls, branches and raw assembly end a run.
+The graph is a placement heuristic, not a proof about aliases or execution frequency.
+
+Common RAM keeps the original hot-object placement. For banked RAM, the trial grows clusters from hot objects,
+preferring objects connected to already placed ones and free positions in their banks. It uses the same legal
+regions, partial-bank limits, contiguous linear arrays, and frame-independence checks as the original allocator.
+All code, branch/page sizes, debug addresses and save areas are regenerated for the trial. The original layout
+wins unless the completed trial has strictly fewer flash words and no increase in occupied physical RAM.
+`-O0`, one-bank programs, and programs with more than 512 allocation objects skip the trial.
+
+Measured against commit `da4b7da` on PIC16F18346:
+
+| `bench/large` | Words before → after | `movlb` instructions before → after |
+|---|---:|---:|
+| a_algo | 911 → 911 | 14 → 14 |
+| b_dsp | 1594 → 1594 | 92 → 92 |
+| c_text | 1005 → 1005 | 63 → 63 |
+| d_ctrl | 891 → 861 | 43 → 31 |
+| Total | 4401 → 4371 | 212 → 200 |
+
+The control program uses the same 237 reported RAM bytes. Its basil-sim execution drops from 37905 to 37158
+cycles (about 2%); both builds produce the expected sink, 67006. The new build also produces that sink under
+`-O0` and on PIC16F17146. The other three large programs pass their simulator expectations. Ten generated
+PIC16 peripheral programs (`bench/random/gen.py`, seeds 1 through 10, 25 operations each) remain at 5243 words
+in total, with no individual flash or reported RAM increase. PIC18 placement is unchanged.
+
+Tests cover common RAM preservation, grouping related objects, partial banks, arrays crossing banks, safe frame
+overlay, deterministic output, control-flow boundaries in the graph, and the control benchmark's flash/RAM
+limits. The benchmark also checks that `-g` leaves generated code unchanged.

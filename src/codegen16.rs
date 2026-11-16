@@ -383,6 +383,22 @@ fn generate_base(p: &Program, tgt: &Target) -> Generated {
 }
 
 fn generate_inner(p: &Program, tgt: &Target) -> Generated {
+    let baseline = generate_placed(p, tgt, false);
+    if !tgt.opt || !baseline.errors.is_empty() || baseline.objs.len() > 512 { return baseline; }
+    let banks: HashSet<u32> = baseline.objs.iter().zip(&baseline.layout.addr)
+        .filter(|(o, _)| !o.force_access && o.bytes <= 80)
+        .filter_map(|(_, a)| a.filter(|&a| layout::lin(a).is_some()).map(|a| a >> 7)).collect();
+    if banks.len() < 2 { return baseline; }
+    let candidate = generate_placed(p, tgt, true);
+    if candidate.errors.is_empty() && candidate.out.words < baseline.out.words
+        && crate::codegen::occupied_ram(&candidate, true) <= crate::codegen::occupied_ram(&baseline, true) {
+        candidate
+    } else {
+        baseline
+    }
+}
+
+fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
     let mem = tgt.pic16.as_ref().expect("the PIC16 generator needs the enhanced mid-range memory description");
     let nvars = p.vars.len();
     let nf = p.funcs.len();
@@ -399,7 +415,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
     if let Some(msg) = unsupported {
         return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors: vec![(Span::default(), msg.to_string())], debug: Default::default() };
     }
-    let (g1, _items1) = run_pass(p, tgt, None, [0; 4], vec![BTreeSet::new(); nf + 1]);
+    let (g1, items1) = run_pass(p, tgt, None, [0; 4], vec![BTreeSet::new(); nf + 1]);
     let mut calls = g1.calls.clone();
     let mut soft = g1.soft_max;
     let mut uses = g1.uses.clone();
@@ -434,7 +450,8 @@ fn generate_inner(p: &Program, tgt: &Target) -> Generated {
         // The software stack for the frames of recursive calls, and its pointer (common RAM).
         objs.push(Obj { name: "__SWSTK".into(), bytes: soft * 16, weight: 0, force_access: false, zero: false, owner: None });
         objs.push(Obj { name: "__SSP".into(), bytes: if soft > 0 { 2 } else { 0 }, weight: u64::MAX, force_access: true, zero: false, owner: None });
-        let layout = match plan_layout16(&objs, mem, &indep) {
+        let planned = if affinity { layout::plan_affinity(&objs, mem, &indep, &items1) } else { plan_layout16(&objs, mem, &indep) };
+        let layout = match planned {
             Ok(l) => l,
             Err(e) => {
                 errors.push((Span::default(), e));

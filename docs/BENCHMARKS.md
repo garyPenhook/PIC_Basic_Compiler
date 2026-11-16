@@ -320,3 +320,22 @@ Library test programs that call routines with differing constants shrank the mos
 Compile time: a program with a routine called with differing constants costs up to 12 more trial builds (a few
 seconds for the largest library test, `lib_glcd`: 1.3 s to 9 s); a program with nothing to copy, or an IR larger than
 4000 nodes (`tests/programs/library_all.bas`), costs nothing.
+
+## PIC16 bank placement trial (2026-11-15)
+
+Compared with `da4b7da`, using the same optimized sources and PIC16F18346:
+
+| `bench/large` | Flash words before | Flash words after |
+|---|---:|---:|
+| a_algo | 911 | 911 |
+| b_dsp | 1594 | 1594 |
+| c_text | 1005 | 1005 |
+| d_ctrl | 891 | 861 |
+| Total | 4401 | 4371 |
+
+`d_ctrl` keeps 237 reported RAM bytes; bank-selection instructions decrease from 43 to 31, and basil-sim cycles
+from 37905 to 37158. Its sink remains 67006, also checked in the `-O0` reference build and on PIC16F17146.
+The other three optimized programs pass their simulator expectations. Ten generated PIC16 programs (seeds
+1–10, 25 operations) remain at 5243 total words, with no individual flash or reported RAM regression. This is a
+measured improvement for the control benchmark, not a general percentage claim. See EFFICIENCY.md §15 for the
+placement algorithm, acceptance check and limits.

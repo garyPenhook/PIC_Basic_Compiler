@@ -1868,3 +1868,27 @@ fn disjoint_local_lifetimes_share_storage() {
         }
     }
 }
+
+/// The bank placement trial must keep the measured control-program saving, including page sizing.
+#[test]
+fn pic16_bank_placement_reduces_control_program() {
+    let out = scratch("bankplacement");
+    let src = for_p16(&root().join("bench/large/d_ctrl.bas"), "16F18346", &out.join("control.bas"));
+    let asm = out.join("control.S");
+    let r = Command::new(basil()).arg("-S").arg("--report").arg(src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let report = String::from_utf8_lossy(&r.stdout);
+    let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    assert!(words <= 861, "{report}");
+    assert!(ram <= 237, "{report}");
+    let text = std::fs::read_to_string(asm).unwrap();
+    assert!(text.lines().filter(|l| l.trim_start().starts_with("movlb ")).count() <= 31);
+    let debug_asm = out.join("control_debug.S");
+    let r = Command::new(basil()).args(["-S", "-g"]).arg(out.join("control.bas")).arg("-o").arg(&debug_asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let debug = std::fs::read_to_string(debug_asm).unwrap();
+    let code = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");
+    assert_eq!(code(&text), code(&debug), "debug markers changed bank placement or code");
+
+}
