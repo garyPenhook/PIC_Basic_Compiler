@@ -4754,6 +4754,98 @@ fn pass_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
+/// Retarget inlined PIC16 results, restoring the original bank after each
+/// changed access. The normal bank cleanup coalesces adjacent selections.
+fn pass_result_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
+    if env.keep_writes { return false; }
+    let keep = protected(items);
+    let taken = addr_taken(items, env);
+    for j in 1..items.len() {
+        if keep[j] { continue; }
+        let Item::Ins(t) = &items[j] else { continue };
+        let Some((mn, ops)) = parse(t) else { continue };
+        if mn != "movwf" || ops.len() != 1 { continue; }
+        let d = ops[0].to_string();
+        if !env.is_plain(&d) || scratch(&d).is_some()
+            || split_off(&d).is_none_or(|(n, _)| env.shared.contains(n) || taken.contains(n)) { continue; }
+        let mut c = j;
+        let mut source = None;
+        while c > 0 {
+            c -= 1;
+            match &items[c] {
+                Item::Comment(_) => {},
+                Item::Ins(u) if !keep[c] => {
+                    let Some((m, o)) = parse(u) else { break };
+                    if m == "movlb" { continue; }
+                    if m == "movf" && o.len() == 2 && matches!(dest(o[1]), Some(Dest::W)) {
+                        source = Some(o[0].to_string());
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        }
+        let Some(source) = source else { continue };
+        if !env.is_plain(&source) || split_off(&source).is_none_or(|(n, _)|
+            !n.ends_with("__RESULT") || env.shared.contains(n) || taken.contains(n))
+            || may_alias(env, &source, &d)
+            || !result_overwritten(items, j + 1, &source, env, &taken) { continue; }
+        // Overlay names can expose the same physical byte to pointers or ISRs.
+        if env.shared.iter().chain(taken.iter()).any(|n| env.plain.get(n)
+            .is_some_and(|&(a, size)| [&source, &d].iter().any(|s|
+                env.addr(s).is_some_and(|b| b >= a && b - a < size)))) { continue; }
+        let mut window = vec![c];
+        let mut def = None;
+        for m in (c.saturating_sub(120)..c).rev() {
+            match &items[m] {
+                Item::Comment(_) | Item::Fence => {},
+                Item::Ins(u) if !keep[m] => {
+                    let Some((mn, ops)) = parse(u) else { break };
+                    if mn == "movlb" { continue; }
+                    let Some(e) = effect(u) else { break };
+                    // Numeric file operands and indirect accesses may alias either object.
+                    if (!mn.ends_with("lw") && ops.first().is_some_and(|o| o.starts_with(|c: char| c.is_ascii_digit())))
+                        || e.rmem.iter().any(|r| is_indirect(r) || may_alias(env, r, &d)
+                            || (may_alias(env, r, &source) && r != &source))
+                        || e.wmem.iter().any(|w| match w {
+                            Mem::Unknown => true,
+                            Mem::Sym(w) => may_alias(env, w, &d) || (may_alias(env, w, &source) && w != &source),
+                        }) { break; }
+                    let read = e.rmem.contains(&source);
+                    let write = e.wmem.iter().any(|w| matches!(w, Mem::Sym(w) if w == &source));
+                    if read || write { window.push(m); }
+                    if write && !read {
+                        if matches!(mn.as_str(), "movwf" | "clrf") { def = Some(m); }
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        if def.is_none() { continue; }
+        // Each original access selects source's bank. Common RAM has no such
+        // guarantee; reject it when switching to a banked destination.
+        let (Some(sa), Some(da)) = (env.addr(&source), env.addr(&d)) else { continue };
+        let switch = !reach16(env, &d, &source);
+        if switch && sa & 0x7f >= 0x70 { continue; }
+        // The copy's movf stays: it preserves W and Z, which may be live.
+        items.remove(j);
+        window.sort_unstable();
+        for m in window.into_iter().rev() {
+            let Item::Ins(u) = &items[m] else { unreachable!() };
+            let (mn, ops) = parse(u).unwrap();
+            let new: Vec<_> = ops.iter().map(|o| if *o == source { d.as_str() } else { *o }).collect();
+            let replacement = Item::Ins(format!("{mn} {}", new.join(", ")));
+            if switch {
+                items.splice(m..=m, [Item::Ins(format!("movlb {}", da >> 7)), replacement,
+                    Item::Ins(format!("movlb {}", sa >> 7))]);
+            } else { items[m] = replacement; }
+        }
+        return true;
+    }
+    false
+}
+
 /// Deletes `movwf T` to a compiler temporary that nothing reads before it is written again (or the routine returns).
 fn pass_dead_temp_stores(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
@@ -6028,6 +6120,7 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_forward16(&mut items, env);
         changed |= pass_copy_prop(&mut items, env);
         changed |= pass_dead_temp_stores(&mut items, env);
+        changed |= pass_result_retarget16(&mut items, env);
         changed |= pass_retarget16(&mut items, env);
         changed |= pass_rotate3_16(&mut items, env);
         changed |= pass_wreg(&mut items, env);
@@ -7092,6 +7185,40 @@ mod tests {
         let r = run16_keep(&[ins("movf X, w"), ins("movwf __A0"), ins("movf Y, w"), ins("addwf __A0, f"), ins("movf __A0, w"), ins("movwf T"), Item::Fence]);
         assert!(!r.iter().any(|t| t.contains("__A0")), "{r:?}");
         assert!(r.contains(&"addwf T, f".to_string()) && r.contains(&"movwf T".to_string()), "{r:?}");
+    }
+
+    #[test]
+    fn p16_named_result_retarget_preserves_banks_and_guards() {
+        let mut e = env();
+        e.plain.insert("F__RESULT".into(), (0x20, 1));
+        e.plain.insert("T".into(), (0xa0, 1));
+        let src = vec![ins("movf X, w"), ins("movwf F__RESULT"),
+            Item::Fence, ins("movf F__RESULT, w"), ins("movlb 1"), ins("movwf T"),
+            ins("movlb 0"), ins("clrf F__RESULT"), ins("movf T, w"), ins("movwf Y")];
+        let mut r = src.clone();
+        assert!(pass_result_retarget16(&mut r, &e));
+        assert!(!r.iter().any(|i| matches!(i, Item::Ins(t) if t == "movwf F__RESULT")), "{r:?}");
+        assert!(r.windows(3).any(|w| matches!((&w[0], &w[1], &w[2]),
+            (Item::Ins(a), Item::Ins(b), Item::Ins(c)) if a == "movlb 1" && b == "movwf T" && c == "movlb 0")), "{r:?}");
+        for guard in ["keep", "shared", "read", "alias", "indirect", "destination"] {
+            let mut guarded = env();
+            guarded.plain = e.plain.clone();
+            let mut e = guarded;
+            let mut v = src.clone();
+            match guard {
+                "keep" => e.keep_writes = true,
+                "shared" => { e.shared.insert("T".into()); },
+                "read" => { v[7] = ins("movf F__RESULT, w"); },
+                "alias" => {
+                    e.plain.insert("ALIAS".into(), (0x20, 1));
+                    v.insert(2, ins("movf ALIAS, w"));
+                },
+                "indirect" => { v.insert(2, ins("moviw 0[FSR0]")); },
+                "destination" => { v.insert(2, ins("movf T, w")); },
+                _ => unreachable!(),
+            }
+            assert!(!pass_result_retarget16(&mut v, &e), "{guard}");
+        }
     }
 
     #[test]

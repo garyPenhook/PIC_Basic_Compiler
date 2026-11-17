@@ -2092,7 +2092,7 @@ fn pic16_word_array_walks_and_dsp_size() {
     let report = String::from_utf8_lossy(&r.stdout);
     let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
     let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-    assert!(words <= 1455, "{report}");
+    assert!(words <= 1448, "{report}");
     assert!(ram <= 164, "{report}");
     let text = std::fs::read_to_string(&asm).unwrap();
     for name in ["K_LOWPASS__Y", "K_U"] {
@@ -2155,6 +2155,21 @@ fn dsp_inlined_fir_result_is_built_in_saved_destination() {
     assert!(!asm.lines().any(|l| l.trim_start().starts_with("movff K_FIR__RESULT+1,")));
     assert!(asm.contains("movff __A0, K_F\n"));
     assert!(asm.contains("movff __A1, K_F+1\n"));
+}
+
+#[test]
+fn pic16_dsp_result_retargeting() {
+    let dir = scratch("dsp_result16");
+    let src = for_p16(&root().join("bench/large/b_dsp.bas"), "16F18346", &dir.join("dsp.bas"));
+    let asm = dir.join("dsp.S");
+    let r = Command::new(basil()).arg("-S").arg(src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(asm).unwrap();
+    for name in ["K_FIR__RESULT", "K_LOWPASS__RESULT"] {
+        assert!(!text.lines().any(|l| l.trim().starts_with(&format!("movwf {name}"))), "staged result: {name}");
+        assert!(!text.lines().any(|l| l.trim().starts_with(&format!("movf {name},"))), "staged result read: {name}");
+        assert!(!text.lines().any(|l| l.trim().starts_with(&format!("movf {name}+1,"))), "staged high result read: {name}");
+    }
 }
 
 #[test]

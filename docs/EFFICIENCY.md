@@ -1461,3 +1461,47 @@ preserved the coverage, and the complete affected `p152_parts_build` check
 passed on rerun. Final copy guards and DSP execution pass after preserving
 source-line markers in the specialized body. The other three large PIC16
 benchmark sinks and cycle counts are unchanged. `git diff --check` is clean.
+
+## 29. PIC16 bank-aware inlined result retargeting (2026-11-17)
+
+PIC16 now builds eligible inlined `__RESULT` bytes in the caller's destination.
+The pass follows the result back to its last pure write through a straight-line
+region, including statement markers and bank selections. Each rewritten access
+selects the destination bank and restores the source bank; normal bank cleanup
+removes redundant selections. The final load is retained until existing passes
+prove its W and Z effects unnecessary.
+
+The source's physical byte must be overwritten before any later read on every
+reachable path, including paths through overlaid frames. Intervening accesses
+to the destination, aliased spellings of the source, indirect accesses, unknown
+instructions, calls and control flow stop the producer scan. Address-taken or
+interrupt-visible objects and overlapping exposed storage are excluded.
+`--keep-vars` preserves the result stores; -O0 bypasses the optimization.
+
+FIR now uses `__A -> K_F` directly, removing four move instructions. Lowpass
+also builds its high result byte in `K_Y+1` and stores its low byte directly in
+`K_Y`. Default optimized PIC16F18346 DSP measurements against the saved compiler:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Flash words | 1455 | 1448 |
+| Reported RAM bytes | 164 | 164 |
+| basil-sim cycles to halt | 208571 | 208347 |
+
+Both runs produce `K_SINK=4294933580`. PIC16F17146 also passes at 208347
+cycles. These are whole-program simulator measurements. The backend regression
+requires both FIR and Lowpass result staging to disappear and tightens the DSP
+ceiling to 1448 words. Unit coverage checks bank restoration and rejection for
+retained variables, ISR visibility, later result reads, aliases, indirect reads
+and intervening destination reads.
+
+The other three large PIC16 benchmarks retain their expected sinks and cycle
+counts: a_algo 103554, c_text 68935 and d_ctrl 37126. PIC18 DSP remains at
+67971 cycles against the same saved compiler.
+
+Validation: all 152 library unit tests and all 12 focused PIC16 backend checks
+pass, including the new result regression. Optimized DSP execution passes on
+PIC16F18346 and PIC16F17146; the four large PIC16 benchmarks and PIC18 DSP pass
+the comparisons above. `git diff --check` is clean. The full release suite was
+interrupted by a server restart during the device build matrix; it did not
+complete and is not counted as a full-suite pass.
