@@ -1531,3 +1531,19 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - `ClcCombine` 107 words -> 74 (49 + the 25-word shared `CombineRegs`): one POSTINC0 pass instead of ten calls. `ClcSelect` was renamed `ClcSource`: it is a register name on 25 parts (CLCSELECT).
 - Test `tests/exec/lib_clc.bas` (basil-sim, stimulus on RC0/RC1): the six operations read with A=1,B=0 and again with A=1,B=1; cell 8 register by register (the 10-register stride); pin routing accepted and refused. The test found a real fault: the operation number had been used as the CLC mode (XOR and XNOR computed AND). Not run on a real part.
 - Next: CWG (DS40002043F chapter 25, Q10 and the other families) and NCO (not on the Q10; Q41 and PIC16F1xxxx), each with its own family branches.
+
+## Inlined result and parameter copies (done 2026-11-16, 0.1.258)
+
+PIC18 builds saved inlined results directly in their destinations when the
+physical result byte stays unread until overwritten, including across indirect
+sample reads, branches and loops. PIC16 now propagates copies of named scalar
+parameters and saved results, selecting and restoring banks where needed and
+checking physical aliases and interrupt visibility. Superseded empty PIC16 bank
+selections are removed.
+
+PIC18 DSP is 2038 → 2022 flash bytes and 68227 → 67971 simulator cycles across
+the result-retargeting work. This PIC16 extension reduces DSP from 1517 to 1514
+words and 247853 to 247757 simulator cycles, with RAM unchanged at 164 bytes.
+All 150 library unit tests and nine PIC16 backend checks pass; optimized and
+`-O0` simulator checks match expected results. Details and limits are in
+`EFFICIENCY.md` sections 23–25.

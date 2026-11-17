@@ -116,7 +116,8 @@ PIC18
 - `Integer * Byte` inline with two `mulwf`.
 
 16F
-- Copy propagation, load reuse and `moviw k[FSR0]`, bank placement, counted walk with `decfsz`,
+- Named-scalar copy propagation is now enabled with bank preservation (2026-11-16, `EFFICIENCY.md` section 25). Scratch/result producer retargeting across overlaid frames remains.
+- Load reuse and `moviw k[FSR0]`, bank placement, counted walk with `decfsz`,
   `__mul4` early exit outside `Optimize = Speed`.
 - 16F forms of `pass_shared_compare`, `pass_same_load` and `pass_forward_unary` (all return at once on
   that core).

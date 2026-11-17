@@ -802,7 +802,7 @@ Measured, not counted: `bench/large` built with each version, sinks checked in b
 
 | # | Status | Where |
 |---|---|---|
-| R1 | done (PIC18): `pass_retarget_build`, `pass_copy_prop`. Not done: the same copy propagation on the 16F. PIC18 producer retargeting now also removes saved result copies across overlaid frames (sections 23–24) | `peephole.rs` |
+| R1 | done (PIC18): `pass_retarget_build`, `pass_copy_prop`. PIC16 now propagates copies of named scalars with bank preservation (section 25); scratch-to-result retargeting across overlaid frames remains. PIC18 producer retargeting now also removes saved result copies across overlaid frames (sections 23–24) | `peephole.rs` |
 | R2 | done for a sign-extended variable folded into a wider one. Not done: an operand that reads the destination kept at its own width (`sink + Isqrt(..) + Isqrt(sink)`); a sum of two variables routed through W into `__A` was tried and dropped (it lost `pass_sum_share`, +4 words net) | `codegen.rs` `fold_into` |
 | R3 | done, both cores (`St::For::free`, `opt::free_loop_ends`) | `opt.rs`, `for_loop` |
 | R4 | done for one-byte elements `arr(var)`, both cores; the PIC18 also counts the passes down when the variable has no other use. Not done: wider elements, two arrays at once (the FIR), `arr(var + k)` | `walk_plan`, `pass_fold_postinc` |
@@ -1244,3 +1244,58 @@ for both bytes. Removing two `movff` instructions saves eight flash bytes and
 
 Validation: all 148 library unit tests and the focused DSP backend regression
 pass. The release compiler rebuild succeeds; `git diff --check` is clean.
+
+## 25. PIC16 copies of inlined parameters and saved results (2026-11-16)
+
+The enhanced mid-range optimizer now runs the scalar copy-propagation pass.
+A variable whose named bytes are each copied once from compiler-placed scalar
+RAM can read the original source instead, including across statement boundaries,
+local branches and arithmetic helper calls. The source must remain unchanged.
+Scratch sources are excluded: helper calls and statement boundaries invalidate
+those values. In `b_dsp`, this removes the `K_Y -> K_LOWPASS__Y` parameter copies
+and the `K_PID__OUT -> K_U -> __A` result staging through `K_U`.
+
+Common RAM and same-bank operands need no addressing change. For a different-bank
+source, a non-skip read selects its bank and restores the destination's bank
+before the following instruction. Cross-bank skips and banked sources replacing
+common-RAM operands are left alone. A small cleanup removes bank selections that
+are immediately superseded without a file access between them, respecting skips,
+labels, calls and raw assembly.
+
+The pass rejects interrupt-visible physical aliases, address-taken destination
+aliases, overlapping source/destination storage, and alternate destination names
+inside the live region. If another used frame name overlaps a deleted copy, every
+path after its final named read must overwrite the byte before observing it.
+Unknown code and external entry into the region prevent propagation; branches
+between byte definitions are excluded. Raw assembly or absolute file reads retain
+the copies. `--keep-vars` retains stores while allowing safe read forwarding.
+
+PIC16F18346, default optimized `bench/large/b_dsp`, comparing the release compiler
+at `c1cef68` with this extension:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Flash words | 1517 | 1514 |
+| Reported RAM bytes | 164 | 164 |
+| basil-sim cycles to halt | 247853 | 247757 |
+
+This saves three words (six flash bytes) and 96 cycles over the whole program.
+The sink remains `K_SINK=4294933580` (`4C 7C FF FF`). The two FIR result-to-`K_F`
+copies remain: those are produced in scratch and need a separate bank-aware
+producer-retargeting extension.
+
+The other large PIC16 programs measure `a_algo` 911 → 911, `c_text` 1005 → 1003,
+and `d_ctrl` 859 → 859 words; the four-program total is 4292 → 4287 words.
+
+Validation: all 150 library unit tests and all nine PIC16 backend checks pass;
+the tightened DSP size/copy regression passes on the final code. Unit coverage
+checks bank selection/restoration, interrupt-visible aliases of both objects,
+alias writes and reads after the live region, external entry, unknown calls,
+raw/absolute reads, retained variables, and empty bank selections around skips
+and control-flow barriers. The release compiler rebuild succeeds.
+
+In basil-sim, the four large programs plus `param_result`, `overlay` and
+`local_reuse_calls` match their expected values in both optimized and `-O0`
+builds with `--keep-vars`. DSP takes 248589 and 269378 cycles respectively in
+those retained-variable builds; the default storage-optimized DSP run takes
+247757 cycles. These timings are whole-program simulator measurements.

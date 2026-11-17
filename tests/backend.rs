@@ -2049,8 +2049,12 @@ fn pic16_word_array_walks_and_dsp_size() {
     let report = String::from_utf8_lossy(&r.stdout);
     let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
     let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-    assert!(words <= 1517, "{report}");
+    assert!(words <= 1514, "{report}");
     assert!(ram <= 164, "{report}");
+    let text = std::fs::read_to_string(&asm).unwrap();
+    for name in ["K_LOWPASS__Y", "K_U"] {
+        assert!(!text.lines().any(|l| l.trim().starts_with(&format!("movwf {name}"))), "copy into {name} remains");
+    }
 }
 
 

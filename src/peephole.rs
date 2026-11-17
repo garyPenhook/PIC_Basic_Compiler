@@ -2577,6 +2577,15 @@ fn result_overwritten(items: &[Item], from: usize, source: &str, env: &Env,
                 if *cc == Cc::Always { next.clear(); }
                 if let Some(&p) = labels.get(target.as_str()) { next.push(p); true } else { false }
             }
+            Item::Call(c) if core16() && !env.reg_calls.contains(c)
+                && ["__mul", "__smul", "__div", "__sdiv", "__shl", "__shr", "__sar"].iter().any(|h| c.starts_with(h)) => true,
+            Item::SkipBr(t, target) if core16() => {
+                if let Some((_, ops)) = parse(t) {
+                    let read = ops.first().is_none_or(|r| r.starts_with(|c: char| c.is_ascii_digit())
+                        || if is_indirect(r) { indirect } else { may_alias(env, r, source) });
+                    if let Some(&p) = labels.get(target.as_str()) { next.push(p); !read } else { false }
+                } else { false }
+            }
             Item::Ins(t) => {
                 if let Some((m, ops)) = parse(t) {
                     if matches!(m.as_str(), "bra" | "goto") && ops.len() == 1 {
@@ -2762,7 +2771,9 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
 /// instruction in it writes a source byte (by address) or stores through a pointer, it has no call but to the `__`
 /// helpers (which write only scratch), no raw assembly, and no label that anything outside it branches to. `D` and the
 /// sources are compiler-placed, not `Volatile` and not visible to an interrupt handler. A read that is not a `movff`
-/// needs the access bit on both the old operand and the source.
+/// needs the access bit on both the old operand and the source on PIC18. PIC16
+/// uses common/same-bank operands directly, or selects and restores the bank for
+/// a non-skip read of a banked destination.
 fn pass_copy_prop(items: &mut Vec<Item>, env: &Env) -> bool {
     let mut changed = false;
     for _ in 0..64 {
@@ -2846,8 +2857,9 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
                         c -= 1;
                         match &items[c] {
                             Item::Comment(_) => {}
+                            Item::Ins(u) if core16() && parse(u).is_some_and(|(m, _)| m == "movlb") => {}
                             Item::Ins(u) if !keep[c] => {
-                                src = parse(u).and_then(|(m, o)| (m == "movf" && o.len() == 3 && matches!(dest(o[1]), Some(Dest::W))).then(|| o[0].to_string()));
+                                src = parse(u).and_then(|(m, o)| (m == "movf" && o.len() == (if core16() { 2 } else { 3 }) && matches!(dest(o[1]), Some(Dest::W))).then(|| o[0].to_string()));
                                 break;
                             }
                             _ => break,
@@ -2860,11 +2872,11 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
                 }
                 "movff" if ops.len() == 2 && h == 0 => reads.push((i, h)),
                 "movf" | "addwf" | "addwfc" | "subwf" | "subwfb" | "subfwb" | "andwf" | "iorwf" | "xorwf" | "comf" | "incf" | "decf" | "rlcf" | "rrcf" | "rlncf" | "rrncf" | "swapf"
-                    if h == 0 && ops.len() == 3 && matches!(dest(ops[1]), Some(Dest::W)) =>
+                    if h == 0 && ops.len() == (if core16() { 2 } else { 3 }) && matches!(dest(ops[1]), Some(Dest::W)) =>
                 {
                     reads.push((i, h))
                 }
-                "btfsc" | "btfss" if h == 0 && ops.len() == 3 => reads.push((i, h)),
+                "btfsc" | "btfss" if h == 0 && ops.len() == (if core16() { 2 } else { 3 }) => reads.push((i, h)),
                 "cpfseq" | "cpfsgt" | "cpfslt" | "tstfsz" | "mulwf" if h == 0 && ops.len() == 2 => reads.push((i, h)),
                 _ => ok = false,
             }
@@ -2884,7 +2896,14 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
                 ok = false;
                 break;
             };
-            if mn != "movff" && !(ops.last().is_some_and(|a| a.eq_ignore_ascii_case("c")) && env.is_access(sb) && env.is_access(ops[h])) {
+            if core16() {
+                // A banked destination tells us the bank required by the old read.
+                // Common destinations need no BSR assumption when the source is common.
+                if !reach16(env, sb, ops[h]) && (is_skip(t) || env.addr(ops[h]).is_none_or(|a| a & 0x7f >= 0x70)) {
+                    ok = false;
+                    break;
+                }
+            } else if mn != "movff" && !(ops.last().is_some_and(|a| a.eq_ignore_ascii_case("c")) && env.is_access(sb) && env.is_access(ops[h])) {
                 ok = false;
                 break;
             }
@@ -2906,9 +2925,29 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
         }
         let def_items: std::collections::HashSet<usize> = defs.values().map(|d| d.0).collect();
         // A store through an FSR can change a source only when the program takes the address of its variable.
-        let src_by_ptr = srcs.iter().any(|sb| split_off(sb).is_none_or(|(n, _)| taken.contains(n)));
+        let exposed = |byte: &str, names: &std::collections::HashSet<String>| {
+            env.addr(byte).is_none_or(|address| names.iter().any(|n| env.plain.get(n)
+                .is_some_and(|&(a, size)| address >= a && address - a < size)))
+        };
+        let src_by_ptr = srcs.iter().any(|sb| exposed(sb, &taken));
+        if core16() && (defs.keys().any(|d| exposed(d, &taken) || exposed(d, &env.shared))
+            || srcs.iter().any(|sb| exposed(sb, &env.shared))
+            || items.iter().any(|it| match it {
+                Item::Raw(_) => true,
+                Item::Ins(t) => effect(t).is_some_and(|e| e.rmem.iter()
+                    .any(|r| r.starts_with(|c: char| c.is_ascii_digit()))),
+                _ => false,
+            })) { continue; }
+        // Removing the copy must not expose an old value through another frame
+        // name after the final explicit read. Prove that byte dead on all paths.
+        if core16() && !env.keep_writes && defs.keys().any(|d| {
+            let alias_used = named.keys().any(|n| n != base && env.plain.get(n.as_str())
+                .is_some_and(|&(a, size)| env.addr(d).is_some_and(|p| p >= a && p - a < size)));
+            alias_used && !result_overwritten(items, last + 1, d, env, &taken)
+        }) { continue; }
         let mut labels: Vec<&str> = Vec::new();
-        for it in items.iter().take(last + 1).skip(first) {
+        for (idx, it) in items.iter().enumerate().take(last + 1).skip(first) {
+            if core16() && idx < last_def && matches!(it, Item::Br(..) | Item::SkipBr(..) | Item::Label(_)) { ok = false; break; }
             match it {
                 Item::Comment(_) | Item::Fence | Item::Br(..) | Item::Fit(_) | Item::Keep(_) => {}
                 Item::Label(l) => {
@@ -2925,6 +2964,10 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
                         ok = false;
                     }
                 }
+                Item::Ins(t) if core16() && (effect(t).is_some_and(|e| e.rmem.iter()
+                    .any(|r| r.starts_with(|c: char| c.is_ascii_digit())))
+                    || parse(t).is_some_and(|(_, ops)| ops.iter().any(|o|
+                        defs.keys().any(|d| may_alias(env, o, d) && o != d)))) => { ok = false; }
                 Item::Ins(t) => match written_files(t) {
                     None => ok = false,
                     Some(ws) => {
@@ -2965,12 +3008,21 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
         if outside_ref {
             continue;
         }
+        // Work backward so inserted bank selections do not invalidate indices.
+        plan.sort_by_key(|p| std::cmp::Reverse(p.0));
         for (i, h, sb) in plan {
             let Item::Ins(t) = &items[i] else { unreachable!() };
             let (mn, ops) = parse(t).unwrap();
             let mut new: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
+            let banks = if core16() && !reach16(env, &sb, ops[h]) {
+                Some((env.addr(&sb).unwrap() >> 7, env.addr(ops[h]).unwrap() >> 7))
+            } else { None };
             new[h] = sb;
-            items[i] = Item::Ins(format!("{mn} {}", new.join(", ")));
+            let replacement = Item::Ins(format!("{mn} {}", new.join(", ")));
+            if let Some((source_bank, old_bank)) = banks {
+                items.splice(i..=i, [Item::Ins(format!("movlb {source_bank}")), replacement,
+                    Item::Ins(format!("movlb {old_bank}"))]);
+            } else { items[i] = replacement; }
         }
         // With `--keep-vars` the copies stay (the variable keeps its value); nothing reads them any more.
         if !env.keep_writes {
@@ -5868,6 +5920,28 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
     items
 }
 
+/// Copy removal can leave a bank selection immediately superseded by another.
+/// These selections have no file access between them and cannot affect flags or W.
+fn pass_empty_banks16(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let mut pending = None;
+    let mut gone = vec![false; items.len()];
+    for (i, it) in items.iter().enumerate() {
+        match it {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Ins(t) if !keep[i] && parse(t).is_some_and(|(m, _)| m == "movlb") => {
+                if let Some(p) = pending { gone[p] = true; }
+                pending = Some(i);
+            }
+            _ => pending = None,
+        }
+    }
+    let changed = gone.iter().any(|&g| g);
+    let mut i = 0;
+    items.retain(|_| { let keep = !gone[i]; i += 1; keep });
+    changed
+}
+
 /// [`optimise`] for the enhanced mid-range core: the passes that do not depend on PIC18 instructions. The bank
 /// clean-up has its own pass (`codegen16::opt`), and there is no `movff` to forward or argument in WREG.
 pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
@@ -5896,10 +5970,12 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_branch_to_return(&mut items);
         changed |= pass_copy_back16(&mut items, env);
         changed |= pass_forward16(&mut items, env);
+        changed |= pass_copy_prop(&mut items, env);
         changed |= pass_dead_temp_stores(&mut items, env);
         changed |= pass_retarget16(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
+        changed |= pass_empty_banks16(&mut items);
         if !env.keep_writes {
             changed |= pass_write_only(&mut items, env);
         }
@@ -6797,6 +6873,74 @@ mod tests {
     }
 
     #[test]
+    fn p16_global_copy_propagation_preserves_banks_and_aliases() {
+        let mut e = env();
+        e.plain.insert("SRC".into(), (0xa0, 2));
+        e.plain.insert("PARAM".into(), (0x20, 2));
+        e.plain.insert("ALIAS".into(), (0xa0, 2));
+        e.plain.insert("DEST_ALIAS".into(), (0x20, 2));
+        let original = vec![ins("movlb 1"), ins("movf SRC, w"), ins("movlb 0"), ins("movwf PARAM"),
+            Item::Fence, Item::Br(Cc::Z, "_Lcopy".into()), ins("nop"), Item::Label("_Lcopy".into()),
+            ins("movf PARAM, w"), ins("movwf Y"), ins("movf PARAM, w"), ins("movwf Z")];
+        let check = |v: Vec<Item>, e: &Env| {
+            CORE16.with(|c| c.set(true));
+            let mut v = v;
+            let changed = pass_copy_prop(&mut v, e);
+            CORE16.with(|c| c.set(false));
+            (changed, v)
+        };
+        let (changed, v) = check(original.clone(), &e);
+        assert!(changed);
+        assert!(!v.iter().any(|i| matches!(i, Item::Ins(t) if t.contains("PARAM"))));
+        assert!(v.windows(3).any(|w| matches!(&w[0], Item::Ins(t) if t == "movlb 1")
+            && matches!(&w[1], Item::Ins(t) if t == "movf SRC, w")
+            && matches!(&w[2], Item::Ins(t) if t == "movlb 0")));
+        for barrier in [ins("clrf ALIAS"), ins("movf DEST_ALIAS, w"),
+            Item::Raw("nop".into()), Item::Call("user_function".into())] {
+            let mut v = original.clone(); v.insert(8, barrier);
+            assert!(!check(v, &e).0);
+        }
+        for n in ["SRC", "ALIAS", "PARAM", "DEST_ALIAS"] {
+            let mut e = Env { plain: e.plain.clone(), shared: Default::default(), ..env() };
+            e.shared.insert(n.into());
+            assert!(!check(original.clone(), &e).0);
+        }
+        let mut v = original.clone();
+        v.insert(0, Item::Br(Cc::Always, "_Lcopy".into()));
+        assert!(!check(v, &e).0);
+        let mut v = original.clone(); v.insert(8, ins("movlw low(DEST_ALIAS)"));
+        assert!(!check(v, &e).0);
+        for barrier in [ins("movf 0x020, w"), Item::Raw("movf 0x20, w".into())] {
+            let mut v = original.clone(); v.push(barrier);
+            assert!(!check(v, &e).0);
+        }
+        let mut v = original.clone();
+        v.extend([ins("movf DEST_ALIAS, w"), ins("return")]);
+        assert!(!check(v, &e).0);
+        let mut v = original.clone();
+        v.extend([ins("clrf DEST_ALIAS"), ins("movf DEST_ALIAS, w")]);
+        assert!(check(v, &e).0);
+        e.keep_writes = true;
+        let (changed, v) = check(original, &e);
+        assert!(changed);
+        assert!(v.iter().any(|i| matches!(i, Item::Ins(t) if t == "movwf PARAM")));
+    }
+
+    #[test]
+    fn p16_empty_bank_selection_respects_skips_and_barriers() {
+        let mut v = vec![ins("movlb 0"), Item::Fence, ins("movlb 1"), ins("movf X, w")];
+        assert!(pass_empty_banks16(&mut v));
+        assert!(!v.iter().any(|i| matches!(i, Item::Ins(t) if t == "movlb 0")));
+        for middle in [ins("movf X, w"), ins("btfsc Y, 0"), Item::Label("_L1".into()),
+            Item::Call("callee".into()), Item::Raw("nop".into())] {
+            let mut v = vec![ins("movlb 0"), middle, ins("movlb 1")];
+            assert!(!pass_empty_banks16(&mut v));
+        }
+        let mut v = vec![ins("btfsc Y, 0"), ins("movlb 0"), ins("movlb 1")];
+        assert!(!pass_empty_banks16(&mut v));
+    }
+
+    #[test]
     fn p16_label_used_only_by_a_skip_branch_stays() {
         let r = run16(&[Item::Label("_L1".into()), ins("movwi 0[FSR0]"), Item::SkipBr("decfsz __D0, f".into(), "_L1".into())]);
         assert!(r.contains(&"_L1:".to_string()), "{r:?}");
@@ -7040,15 +7184,15 @@ mod tests {
     }
 
     #[test]
-    fn p16_copy_is_not_forwarded_into_another_bank() {
-        // U is in bank 2, T in bank 0: the read of T under `movlb 0` must not become a read of U.
+    fn p16_copy_forwarding_selects_and_restores_another_bank() {
+        // U is in bank 2, T in bank 0: forwarding must select U and restore bank 0 for X.
         let mut e = env();
         e.plain.insert("T".into(), (0x20, 1));
         e.plain.insert("U".into(), (0x120, 1));
         e.keep_writes = true;
         let src = [ins("movlb 2"), ins("movf U, w"), ins("movlb 0"), ins("movwf T"), ins("movlw 3"), ins("movwf X"), ins("movf T, w"), ins("addwf X, f"), Item::Fence];
         let r: Vec<String> = optimise16(src.to_vec(), &e).iter().filter_map(|i| if let Item::Ins(t) = i { Some(t.clone()) } else { None }).collect();
-        assert!(r.contains(&"movf T, w".to_string()) && r.iter().filter(|t| t.contains("U")).count() == 1, "{r:?}");
+        assert!(r.windows(4).any(|w| w == ["movlb 2", "movf U, w", "movlb 0", "addwf X, f"]), "{r:?}");
     }
 
     #[test]
