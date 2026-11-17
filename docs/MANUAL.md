@@ -3245,6 +3245,33 @@ the unlock sequence and their previous state is restored. Success is judged by r
 errata on the PIC18F27Q10 and the PIC16F183xx make unreliable after a Reset during a write). On the PIC18F27Q10,
 reading stored values is **not verifiable in the simulator** (it does not model DFM reads); test on hardware.
 
+### Protecting EEPROM endurance
+
+The compiler supplies these protections through `Include "eeprom"` and its library routines:
+
+* **Write only changed bytes.** `EepromWrite` reads the existing byte first and skips programming when it already
+  matches. Repeatedly saving the same value therefore avoids unnecessary erase/write cycles.
+* **Check each byte of a word separately.** `EepromWriteWord` uses the byte writer, so only changed bytes are
+  programmed. If only the low byte changes, the high byte is spared a write cycle.
+* **Reject invalid writes.** Byte writes check the device's EEPROM size. Word writes check that both bytes fit
+  before changing anything, preventing a rejected request from wearing or modifying the final byte.
+* **Verify writes without automatic retries.** A changed byte is read back after programming. Failure returns 0;
+  the library does not repeatedly program a failing cell. A failed low-byte write also stops the word write.
+
+These protections apply when using the library routines; direct writes to EEPROM control registers bypass them.
+Reads do not consume erase/write cycles. The compiler does not track remaining endurance, automatically reduce
+the application's save frequency, or provide wear leveling.
+
+Keep frequently changing values in RAM and save at deliberate checkpoints. For counters or other frequently saved
+data, rotate records across a reserved EEPROM region rather than repeatedly updating one address. Budget writes
+using the endurance rating and operating conditions in the specific device's data sheet; do not assume one rating
+applies to every supported part. Always check the return value of a write.
+
+A successful read-back checks the current value; it does not make a multi-byte update safe against power loss.
+For critical settings, use alternating records with a sequence number, checksum and a commit marker written last,
+keeping the previous valid record until its replacement is complete. Configure the device's brown-out protection
+and meet its specified write voltage. Do not call this module from both interrupt handlers and the main program.
+
 ### EepromSize
 
 **Syntax**
@@ -3322,6 +3349,9 @@ w = EepromReadWord(10)
 ok = EepromWriteWord(addr, value)
 ```
 **Overview** Stores a `Word`, low byte first, at `addr` and `addr + 1`.
+Both addresses are checked before writing: a request at the last EEPROM byte or beyond returns 0 without
+changing either byte. If the low-byte write fails, the high-byte write is skipped. A power loss or hardware
+failure can still leave a partially updated word; this operation is not atomic.
 
 **Parameters** `addr` 0 to the EEPROM size - 2 (1022 on the PIC18F27Q10); `value` a `Word`.
 

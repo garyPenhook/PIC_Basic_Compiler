@@ -199,12 +199,13 @@ Public Function EepromReadWord(ByVal addr As Word) As Word
     End If
 End Function
 
-' Returns 1 when both bytes were stored; a write at 65535 does not wrap round to byte 0.
+' Rejects the whole request unless both addresses exist, before wearing either byte.
+' Returns 1 when both bytes were stored. Not atomic against a failed write or power loss.
 Public Function EepromWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
-    Result = EepromWrite(addr, Byte(value))
-    If addr < 65535 Then
-        Result = Result And EepromWrite(addr + 1, Byte(value >> 8))
-    Else
-        Result = 0
+    Result = 0
+    If addr < EepromSize - 1 Then
+        If EepromWrite(addr, Byte(value)) = 1 Then
+            Result = EepromWrite(addr + 1, Byte(value >> 8))
+        End If
     End If
 End Function
