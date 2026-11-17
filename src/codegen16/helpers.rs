@@ -15,6 +15,7 @@ impl<'p> G<'p> {
         match &name[..name.len() - 1] {
             "mul" => self.mul_helper(n),
             "udiv" => self.udiv_helper(n),
+            "divk" => self.divk_helper(n),
             "sdiv" => self.sdiv_helper(n),
             "sdivp" => self.sdiv_pow2_helper(n),
             "strs" => self.str_append_helper(),
@@ -78,6 +79,33 @@ impl<'p> G<'p> {
             self.fop("movf", &c, "w");
             self.fo("movwf", &a);
         }
+        self.ins("return");
+    }
+
+    /// Unsigned division by a nonzero byte; the ninth remainder bit is carry.
+    fn divk_helper(&mut self, n: u32) {
+        for i in 0..n {
+            let c = self.c(i);
+            self.fo("clrf", &c);
+        }
+        let d = self.d(0);
+        self.ins(format!("movlw {}", n * 8));
+        self.fo("movwf", &d);
+        let (lp, sub, next) = (self.fresh(), self.fresh(), self.fresh());
+        self.label(&lp);
+        self.shl_reg(0, n);
+        let (c, b, a) = (self.c(0), self.b(0), self.a(0));
+        self.fop("rlf", &c, "f");
+        self.br(Cc::C, &sub);
+        self.fop("movf", &b, "w");
+        self.fop("subwf", &c, "w");
+        self.br(Cc::Nc, &next);
+        self.label(&sub);
+        self.fop("movf", &b, "w");
+        self.fop("subwf", &c, "f");
+        self.ins(format!("bsf {}, 0", a.text()));
+        self.label(&next);
+        self.items.push(Item::SkipBr(format!("decfsz {}, f", d.text()), lp));
         self.ins("return");
     }
 

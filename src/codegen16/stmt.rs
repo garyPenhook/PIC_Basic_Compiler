@@ -6,10 +6,68 @@ use crate::asm::Cc;
 
 impl<'p> G<'p> {
     pub fn block(&mut self, b: &[S]) {
-        for s in b {
-            self.line_marker(s.span);
-            self.stmt(s);
+        let mut i = 0;
+        while i < b.len() {
+            let mark = self.temp_cur;
+            let paired = self.tgt.opt && i + 1 < b.len() && self.prepare_div_pair(&b[i], &b[i + 1]);
+            self.line_marker(b[i].span);
+            self.stmt(&b[i]);
+            if paired {
+                self.line_marker(b[i + 1].span);
+                self.stmt(&b[i + 1]);
+                self.div_pair.clear();
+                i += 1;
+            }
+            self.temp_cur = mark;
+            i += 1;
         }
+    }
+
+    /// Share adjacent quotient/remainder assignments, including casts and constant arithmetic.
+    fn prepare_div_pair(&mut self, first: &S, second: &S) -> bool {
+        fn division(e: &Ex) -> Option<&Ex> {
+            match &e.k {
+                ExK::Bin(BinKind::Div | BinKind::Mod, _, _) => Some(e),
+                ExK::Conv(x) => division(x),
+                ExK::Bin(BinKind::Add | BinKind::Sub, a, b) if b.as_const().is_some() => division(a),
+                _ => None,
+            }
+        }
+        let (St::Assign(dst, x), St::Assign(_, y)) = (&first.st, &second.st) else { return false };
+        let (Some(x), Some(y)) = (division(x), division(y)) else { return false };
+        let (ExK::Bin(k, a, b), ExK::Bin(l, c, d)) = (&x.k, &y.k) else { return false };
+        if b.as_const().is_some_and(|v| v.is_power_of_two()) || k == l || a != c || b != d || x.w != y.w || x.signed != y.signed { return false; }
+        // Restrict operands to stable scalars; the first store must not change either.
+        let stable = |e: &Ex| {
+            let mut e = e;
+            while let ExK::Conv(v) = &e.k { e = v; }
+            match &e.k {
+                ExK::Const(_) => true,
+                ExK::Load(p) => matches!(p.base, Base::Var(v) if !self.p.vars[v].volatile && !self.p.vars[v].by_ref)
+                    && !p.indirect() && !p.is_bit() && p.base != dst.base,
+                _ => false,
+            }
+        };
+        if !stable(a) || !stable(b) || !matches!(dst.base, Base::Var(v) if !self.p.vars[v].by_ref)
+            || dst.idx.as_ref().is_some_and(|e| e.has_call()) || dst.dbit.is_some() { return false; }
+        self.span = first.span;
+        let n = u32::from(x.w / 8);
+        let q = self.temp(n);
+        let r = self.temp(n);
+        let div = Ex::new(ExK::Bin(BinKind::Div, a.clone(), b.clone()), x.w, x.signed);
+        self.ev(&div);
+        if n == 1 { let a = self.a(0); self.fo("movwf", &a); }
+        for i in 0..n {
+            let a = self.a(i);
+            self.fop("movf", &a, "w");
+            self.fo("movwf", &q.at(i));
+            let c = self.c(i);
+            self.fop("movf", &c, "w");
+            self.fo("movwf", &r.at(i));
+        }
+        self.div_pair.push((div, q));
+        self.div_pair.push((Ex::new(ExK::Bin(BinKind::Mod, a.clone(), b.clone()), x.w, x.signed), r));
+        true
     }
 
     /// A dense run of equality tests on one Byte as a computed jump: `brw` adds W (unsigned) to the program counter

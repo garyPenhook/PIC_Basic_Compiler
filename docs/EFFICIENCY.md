@@ -1505,3 +1505,25 @@ PIC16F18346 and PIC16F17146; the four large PIC16 benchmarks and PIC18 DSP pass
 the comparisons above. `git diff --check` is clean. The full release suite was
 interrupted by a server restart during the device build matrix; it did not
 complete and is not counted as a full-suite pass.
+
+## 30. PIC16 byte divisors and paired quotient/remainder (2026-11-17)
+
+Optimized unsigned Word and LongWord division by a nonzero byte constant uses
+`__divk2` or `__divk4`. Like PIC18's byte-divisor helper, it keeps the remainder
+in one byte and handles its ninth bit in carry. Zero and wider divisors retain
+the full-width helper.
+
+Adjacent assignments using matching `/` and `Mod` operands share one division,
+including casts and addition/subtraction of a constant around the result. Both
+results are saved in temporary storage before emitting the assignments. Operands
+must be constants or nonvolatile direct scalars; the first assignment cannot
+change an operand. Power-of-two divisors retain their existing specialization.
+
+The embedded display benchmark on PIC16F18346 produces the expected sink with
+704 program bytes, 50 RAM bytes and 780076 cycles, versus 722 bytes, 50 RAM bytes
+and 909672 cycles with the saved release compiler (14.2% fewer cycles). Its paired
+decimal conversions now execute 512 divisions instead of 1024.
+
+Validation: PIC16F18346 simulator runs of `divk_word` (edge values and divisors
+through 255, including the ninth remainder bit) and `display`; backend guards
+for paired expressions, volatile operands, and unoptimized fallback.

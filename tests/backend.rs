@@ -2192,3 +2192,28 @@ fn pic16_descending_copy_guards() {
         assert_eq!(text.contains("addfsr FSR1, -2"), walking, "{name}");
     }
 }
+
+#[test]
+fn pic16_byte_divisor_and_paired_results() {
+    let out = scratch("pic16_div_pair");
+    let source = "Program DP\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim value As Word\nVolatile Dim sink As Byte\nvalue = Word(PORTA) * 257\nsink = Byte(value Mod 10) + 48\nvalue = value / 10\nsink = Byte(value)\n";
+    for (name, source, flags, calls) in [
+        ("paired", source.to_string(), vec![], 1),
+        ("volatile", source.replace("Dim value", "Volatile Dim value"), vec![], 2),
+        ("unoptimized", source.to_string(), vec!["-O0"], 2),
+    ] {
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, source).unwrap();
+        let r = Command::new(basil()).arg("-S").args(flags).arg(&src).arg("-o").arg(&asm).output().unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        let helper = if name == "unoptimized" { "call __udiv2" } else { "call __divk2" };
+        if name == "paired" {
+            assert_eq!(text.matches("movlw 16").count(), 1, "{text}");
+            assert!(!text.contains("subwfb"), "byte remainder: {text}");
+        } else {
+            assert_eq!(text.matches(helper).count(), calls, "{name}: {text}");
+        }
+    }
+}

@@ -333,6 +333,16 @@ impl<'p> G<'p> {
     /// Evaluates `e` into WREG (8 bits) or A (wider).
     pub fn ev(&mut self, e: &Ex) {
         let n = (e.w / 8) as u32;
+        if let Some((_, m)) = self.div_pair.iter().find(|(x, _)| x == e).cloned() {
+            for i in 0..n {
+                self.fop("movf", &m.at(i), "w");
+                if n > 1 {
+                    let a = self.a(i);
+                    self.fo("movwf", &a);
+                }
+            }
+            return;
+        }
         match &e.k {
             ExK::Const(v) => {
                 if n == 1 {
@@ -1158,6 +1168,7 @@ impl<'p> G<'p> {
         }
         let name = match (k, e.signed) {
             (BinKind::Mul, _) => format!("mul{n}"),
+            (_, false) if self.tgt.opt && n > 1 && b.as_const().is_some_and(|c| (1..=255).contains(&c)) => format!("divk{n}"),
             (_, false) => format!("udiv{n}"),
             (_, true) => format!("sdiv{n}"),
         };
