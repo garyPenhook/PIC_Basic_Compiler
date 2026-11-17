@@ -2551,6 +2551,71 @@ fn written_files(t: &str) -> Option<Vec<String>> {
     }
 }
 
+/// Prove a physical result byte is overwritten before being read on every path.
+/// Every reachable instruction must avoid reading the byte until an overwrite.
+/// A revisited loop needs no second scan: its exits are checked by the first
+/// visit. Falling out of the list, returns and unknown code fail the proof.
+fn result_overwritten(items: &[Item], from: usize, source: &str, env: &Env,
+    taken: &std::collections::HashSet<String>) -> bool {
+    let Some(address) = env.addr(source) else { return false };
+    // Taking the address of any overlapping object exposes this byte too.
+    let indirect = taken.iter().any(|n| env.plain.get(n)
+        .is_some_and(|&(a, size)| address >= a && address - a < size));
+    let labels: HashMap<&str, usize> = items.iter().enumerate().filter_map(|(i, it)|
+        if let Item::Label(l) = it { Some((l.as_str(), i)) } else { None }).collect();
+    fn visit(items: &[Item], i: usize, source: &str, env: &Env, indirect: bool,
+        labels: &HashMap<&str, usize>, states: &mut [u8], budget: &mut usize) -> bool {
+        if i >= items.len() || *budget == 0 { return false; }
+        match states[i] { 3 => return false, 1 | 2 => return true, _ => {} }
+        *budget -= 1;
+        states[i] = 1;
+        let mut next = vec![i + 1];
+        let mut overwritten = false;
+        let known = match &items[i] {
+            Item::Comment(_) | Item::Fence | Item::Label(_) => true,
+            Item::Br(cc, target) => {
+                if *cc == Cc::Always { next.clear(); }
+                if let Some(&p) = labels.get(target.as_str()) { next.push(p); true } else { false }
+            }
+            Item::Ins(t) => {
+                if let Some((m, ops)) = parse(t) {
+                    if matches!(m.as_str(), "bra" | "goto") && ops.len() == 1 {
+                        next.clear();
+                        if let Some(&p) = labels.get(ops[0]) { next.push(p); true } else { false }
+                    } else {
+                        // All skips read their file operand; a modifying skip
+                        // cannot establish a pure overwrite of the result.
+                        let reads = if matches!(m.as_str(), "btfsc" | "btfss" | "tstfsz" | "cpfseq" | "cpfsgt" | "cpfslt" | "decfsz" | "dcfsnz" | "incfsz" | "infsnz") {
+                            ops.first().map(|o| vec![o.to_string()])
+                        } else { None };
+                        let e = effect(t);
+                        if let Some(rmem) = reads.as_ref().or(e.as_ref().map(|e| &e.rmem)) {
+                            let read = rmem.iter().any(|r| r.starts_with(|c: char| c.is_ascii_digit())
+                                || if is_indirect(r) { indirect } else { may_alias(env, r, source) });
+                            overwritten = e.as_ref().is_some_and(|e| e.wmem.iter()
+                                .any(|w| matches!(w, Mem::Sym(w) if same_byte(env, w, source))));
+                            if is_skip(t) {
+                                if !matches!(items.get(i + 1), Some(Item::Ins(_) | Item::Br(_, _))) {
+                                    states[i] = 3;
+                                    return false;
+                                }
+                                next.push(i + 2);
+                            }
+                            !read
+                        } else { false }
+                    }
+                } else { false }
+            }
+            _ => false,
+        };
+        let ok = known && (overwritten || next.into_iter().all(|p|
+            visit(items, p, source, env, indirect, labels, states, budget)));
+        states[i] = if ok { 2 } else { 3 };
+        ok
+    }
+    visit(items, from, source, env, indirect, &labels, &mut vec![0; items.len()], &mut 512)
+}
+
 /// PIC18 result retargeting, the counterpart of [`pass_retarget16`]: a value built in scratch or an inlined result and then
 /// copied with `movff __Rk, D` into a compiler-placed Access Bank byte `D` is built in `D` instead. From the last pure
 /// write of `__Rk` (`movwf`, `clrf`, `setf`, the destination of a `movff`) to the copy every operand `__Rk` becomes `D`
@@ -2587,30 +2652,8 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
         if sk.is_none() && may_alias(env, &source, &d) {
             continue;
         }
-        if sk.is_none() {
-            // Require a real overwrite before any read or control flow. A return
-            // is not proof: a non-inlined routine exposes its result to callers.
-            let mut overwritten = false;
-            for it in items.iter().skip(j + 1).take(120) {
-                match it {
-                    Item::Comment(_) | Item::Fence => continue,
-                    Item::Ins(u) => {
-                        if is_skip(u) || parse(u).is_none_or(|(m, _)| matches!(m.as_str(), "return" | "retlw" | "retfie" | "bra" | "goto")) {
-                            break;
-                        }
-                        let Some(e) = effect(u) else { break };
-                        if e.rmem.iter().any(|r| is_indirect(r) || r.starts_with(|c: char| c.is_ascii_digit()) || may_alias(env, r, &source)) {
-                            break;
-                        }
-                        if e.wmem.iter().any(|w| matches!(w, Mem::Sym(w) if same_byte(env, w, &source))) {
-                            overwritten = true;
-                            break;
-                        }
-                    }
-                    _ => break,
-                }
-            }
-            if !overwritten { continue; }
+        if sk.is_none() && !result_overwritten(items, j + 1, &source, env, &taken) {
+            continue;
         }
         // An FSR can reach `D` only when the program takes the address of its variable.
         let by_ptr = split_off(&d).is_none_or(|(n, _)| taken.contains(n));
@@ -6004,6 +6047,50 @@ mod tests {
         e.keep_writes = false;
         e.shared.insert("F__RESULT".into());
         let mut v = original;
+        assert!(!pass_retarget_build(&mut v, &e));
+    }
+
+    #[test]
+    fn result_build_proves_all_paths_across_indirect_reads() {
+        let mut e = env();
+        e.plain.insert("F__RESULT".into(), (0x20, 2));
+        e.plain.insert("G__LOCAL".into(), (0x20, 2));
+        let prefix = vec![ins("movff __A0, F__RESULT"), ins("movff F__RESULT, X")];
+        let tail = vec![ins("lfsr 0, Y"), ins("movf POSTINC0, w, c"),
+            Item::Br(Cc::Z, "other".into()), ins("clrf G__LOCAL, c"),
+            Item::Br(Cc::Always, "done".into()), Item::Label("other".into()),
+            ins("movwf G__LOCAL, c"), Item::Label("done".into()), ins("return 0")];
+        let mut original = prefix;
+        original.extend(tail);
+        let mut v = original.clone();
+        assert!(pass_retarget_build(&mut v, &e));
+        assert!(matches!(&v[0], Item::Ins(t) if t == "movff __A0, X"));
+        let mut v = original.clone();
+        v.splice(2..2, [Item::Label("loop".into()), ins("decfsz __D0, f, c"),
+            Item::Br(Cc::Always, "loop".into())]);
+        assert!(pass_retarget_build(&mut v, &e));
+        let mut v = original.clone();
+        v.splice(2..2, [Item::Label("loop".into()), ins("decfsz __D0, f, c"),
+            Item::Br(Cc::Always, "loop".into()), ins("movf G__LOCAL, w, c")]);
+        assert!(!pass_retarget_build(&mut v, &e));
+        // An address-taken alias exposes the physical result to indirect reads.
+        let mut v = original.clone();
+        v.insert(2, ins("lfsr 1, G__LOCAL"));
+        assert!(!pass_retarget_build(&mut v, &e));
+        // One branch reading, returning or targeting unknown code fails.
+        for bad in [ins("movf G__LOCAL, w, c"), ins("return 0"),
+            Item::Br(Cc::Always, "missing".into()),
+            ins("movf 0x020, w, c"), ins("rcall external")] {
+            let mut v = original.clone();
+            v[8] = bad;
+            assert!(!pass_retarget_build(&mut v, &e));
+        }
+        // A skip is safe only if both successors overwrite before reading.
+        let mut v = original[..2].to_vec();
+        v.extend([ins("btfsc Y, 0, c"), ins("clrf G__LOCAL, c"), ins("clrf G__LOCAL, c")]);
+        assert!(pass_retarget_build(&mut v, &e));
+        let mut v = original[..2].to_vec();
+        v.extend([ins("btfsc Y, 0, c"), ins("clrf G__LOCAL, c"), ins("movf G__LOCAL, w, c")]);
         assert!(!pass_retarget_build(&mut v, &e));
     }
 

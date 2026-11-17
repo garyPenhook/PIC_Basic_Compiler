@@ -802,7 +802,7 @@ Measured, not counted: `bench/large` built with each version, sinks checked in b
 
 | # | Status | Where |
 |---|---|---|
-| R1 | done (PIC18): `pass_retarget_build`, `pass_copy_prop`. Not done: the same copy propagation on the 16F; a result whose frame is overlaid by the next inlined routine (`K_FIR__RESULT` under `K_PID__D`) still takes its copy | `peephole.rs` |
+| R1 | done (PIC18): `pass_retarget_build`, `pass_copy_prop`. Not done: the same copy propagation on the 16F. PIC18 producer retargeting now also removes saved result copies across overlaid frames (sections 23–24) | `peephole.rs` |
 | R2 | done for a sign-extended variable folded into a wider one. Not done: an operand that reads the destination kept at its own width (`sink + Isqrt(..) + Isqrt(sink)`); a sum of two variables routed through W into `__A` was tried and dropped (it lost `pass_sum_share`, +4 words net) | `codegen.rs` `fold_into` |
 | R3 | done, both cores (`St::For::free`, `opt::free_loop_ends`) | `opt.rs`, `for_loop` |
 | R4 | done for one-byte elements `arr(var)`, both cores; the PIC18 also counts the passes down when the variable has no other use. Not done: wider elements, two arrays at once (the FIR), `arr(var + k)` | `walk_plan`, `pass_fold_postinc` |
@@ -1161,7 +1161,7 @@ result through an overlaid frame name. Forwarding later reads back to the result
 would be unsafe in that case.
 
 The pass requires a proven physical-byte overwrite before any subsequent read
-or control flow. It excludes interrupt-visible and address-taken results,
+or control flow (extended across control flow in section 24). It excludes interrupt-visible and address-taken results,
 `--keep-vars`, overlapping source/destination bytes, alias accesses in the
 producer, destination accesses during the computation and indirect accesses.
 A routine return and a skipped overwrite do not prove the result dead. The
@@ -1198,7 +1198,7 @@ words and four cycles per loop iteration, or 128 cycles over 32 iterations.
 The result at 0x013 shares storage with `K_PID__E`, which PID overwrites
 immediately afterward.
 
-The FIR-to-PID case still retains both result-to-`K_F` copies. In this build,
+At this stage, the FIR-to-PID case still retained both result-to-`K_F` copies. In this build,
 `K_FIR__RESULT` occupies 0x015–0x016, sharing with `K_PID__P` (rather than
 `K_PID__D` in the older R1 notes). Indirect sample reads and Lowpass/PID
 control flow intervene before that overwrite, so the straight-line proof
@@ -1208,3 +1208,39 @@ Both default builds halt with `K_SINK=4294933580` (`4C 7C FF FF`). Execution
 checks with the rebuilt current compiler also pass with `--keep-vars`
 (68739 cycles) and `-O0 --keep-vars` (144098 cycles). These are simulator
 measurements of the whole program.
+
+## 24. PIC18 FIR result copies across control flow (2026-11-16)
+
+The result overwrite proof now follows conditional and unconditional branches,
+bit and arithmetic skips, and loops. It scans every reachable instruction until
+an overwrite of the physical result byte, rejecting any path that reads that
+byte, returns, falls out of the code, or reaches unknown code or an unknown
+branch target. Revisiting a loop needs no second scan; all its exits are checked.
+The proof is bounded to 512 visited items and retains the copy if exhausted.
+
+Indirect reads can cross the proof when no address-taken object overlaps the
+result byte. Address-taking is checked against physical object ranges, so an
+address-taken alias of an overlaid frame also prevents this relaxation. The
+producer itself still uses the existing straight-line restrictions.
+
+Regression coverage includes indirect sample reads, address-taken frame aliases,
+branch diamonds, skipped overwrites, shift-style loops and a read on a loop exit,
+returns, unknown calls and targets, and absolute-address reads. A backend check
+compiles the DSP benchmark and requires both FIR bytes to be built directly in
+`K_F`, with neither result-to-`K_F` copy remaining.
+
+On PIC18F27Q10, release builds before and after this extension measure:
+
+| Default optimized build | Before | After |
+| --- | ---: | ---: |
+| Flash bytes | 2030 | 2022 |
+| Reported RAM bytes | 145 | 145 |
+| basil-sim cycles to halt | 68099 | 67971 |
+
+The assembly diff replaces `__A -> K_FIR__RESULT -> K_F` with `__A -> K_F`
+for both bytes. Removing two `movff` instructions saves eight flash bytes and
+128 cycles over 32 iterations. Both executions halt with `K_SINK=4294933580`
+(`4C 7C FF FF`). These are whole-program simulator measurements.
+
+Validation: all 148 library unit tests and the focused DSP backend regression
+pass. The release compiler rebuild succeeds; `git diff --check` is clean.

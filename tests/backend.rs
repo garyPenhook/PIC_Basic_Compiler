@@ -2094,3 +2094,17 @@ fn pic16_two_array_walk_guards() {
         assert_eq!(text.contains("addfsr FSR1, 2"), walking, "{name}");
     }
 }
+
+#[test]
+fn dsp_inlined_fir_result_is_built_in_saved_destination() {
+    let dir = scratch("dsp_result_retarget");
+    let out = dir.join("b_dsp.hex");
+    let r = Command::new(basil()).arg(root().join("bench/large/b_dsp.bas"))
+        .args(["-S"]).arg("-o").arg(&out).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let asm = std::fs::read_to_string(dir.join("b_dsp.S")).unwrap();
+    assert!(!asm.lines().any(|l| l.trim_start().starts_with("movff K_FIR__RESULT,")));
+    assert!(!asm.lines().any(|l| l.trim_start().starts_with("movff K_FIR__RESULT+1,")));
+    assert!(asm.contains("movff __A0, K_F\n"));
+    assert!(asm.contains("movff __A1, K_F+1\n"));
+}
