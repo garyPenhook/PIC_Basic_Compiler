@@ -1,15 +1,23 @@
-# Basic_Compiler
+# Basil — BASIC compiler for Microchip PIC16 and PIC18
 
 [![CI](https://github.com/garyPenhook/PIC_Basic_Compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/garyPenhook/PIC_Basic_Compiler/actions/workflows/ci.yml)
+
+Basil is a **BASIC compiler for Microchip PIC microcontrollers**, with support for
+selected **PIC16 and PIC18** families. Write structured, typed BASIC and compile
+it into compact `.hex` firmware on **Windows, Linux or macOS**. It includes
+peripheral libraries, interrupt support, examples and measured code-size and
+execution-time benchmarks.
+
+[Download the PIC compiler](https://github.com/garyPenhook/PIC_Basic_Compiler/releases/latest)
+· [Quick start](QUICKSTART.md)
+· [Language and device manual](docs/MANUAL.md)
+· [Examples](examples/)
+· [Benchmarks](docs/BENCHMARKS.md)
 
 Pre-built `basil` for Linux, macOS and Windows (with `lib/`, `devices/` and the docs) is on the
 [releases page](https://github.com/garyPenhook/PIC_Basic_Compiler/releases). Unpack it, put the
 folder's `basil` on your `PATH`, and keep your programs inside that folder or pass `-L` and `--devices`.
 You still need MPLAB XC8 (for `pic-as`) and the device pack, see QUICKSTART.md.
-
-A BASIC compiler for PIC microcontrollers, built for small, fast code. It turns a structured,
-typed BASIC (modules, subroutines and functions, structures, interrupts) into a `.hex` file, and
-comes with a library of ready-made modules for the common peripherals.
 
 First target: **PIC18F27Q10**. The **PIC18F04/05/06/14/15/16Q41** family, the sixteen-part **PIC18(L)F23/24/25/26/43/44/45/46K22** family (28 and 40/44 pins, no PPS), the enhanced mid-range **PIC16F17126/17146**, the
 nine-part **PIC16F13113/13114/13115/13123/13124/13125/13143/13144/13145** family (8, 14 and 20 pins), the six-part **PIC16F13214/13215/13224/13225/13244/13245** family (8, 14 and 20 pins) and the eight-part
