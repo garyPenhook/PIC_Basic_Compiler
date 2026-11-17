@@ -1,5 +1,12 @@
 # Benchmarks
 
+For common small-PIC application workloads, use the separate
+[embedded benchmark suite](../bench/embedded/README.md): ADC threshold control,
+debounced inputs and cooperative timers, UART command frames, and LCD decimal
+formatting. It provides paired BASIC/C sources, checked execution on PIC16 and
+PIC18, an optional XC8 comparison, and a [32-run initial baseline](../bench/embedded/BASELINE.md).
+These results are kept separate from the kernel and large/DSP tables below.
+
 Produced by `scripts/bench.py` (kernels in `bench/kernels/NAME.bas` and `NAME.c`). Sizes are
 program bytes and data-RAM bytes of the whole image including start-up code; cycles are the
 simulator's count between two markers (MPLAB X `mdb`, PIC18F27Q10), with the C marker-call
