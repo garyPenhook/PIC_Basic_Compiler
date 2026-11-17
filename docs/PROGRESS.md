@@ -1520,6 +1520,12 @@ Decision (2026-10-27): DMA is a library module (`Include "dma"`), not language c
 - Not done: nothing ran on a real part; capture/compare, half/full-bridge PWM, Timer3/5 pins, the RB interrupt-on-change and the INT pin edges are not modelled in basil-sim; MDB does not model
   the oscillator status bits, so `intosc` is tested in basil-sim only.
 
+## PIC18 saved copies of inlined results (done 2026-11-16)
+- Producer retargeting can build an inlined `__RESULT` byte directly in its saved destination when the next routine overwrites the result's physical storage. It follows physical aliases when proving the overwrite and permits statement markers between the producer and copy.
+- Access Bank, interrupt visibility, address-taking, destination interference and alias guards retain unsafe copies. Returns and skipped writes do not prove a result dead; `--keep-vars` retains the result. Equivalent scratch spellings remain supported.
+- Validation: 147 library unit tests pass. The full backend run completed with 76 passes and one initialized-array size failure from before the scratch-alias fix; that check passes on the final targeted rerun. Details are in `docs/EFFICIENCY.md`, section 23.
+- Remaining: measure whole-program savings and execution on the FIR/PID overlap in `b_dsp`; extend to PIC16. The focused fixture saves one two-word `movff`; no whole-program reduction is claimed.
+
 ## clc module (done 2026-11-16, 0.1.257)
 - `lib/clc.bas` (module `Clc`): the eight configurable logic cells of the PIC18F27Q10, from DS40002043F chapter 26 (data selection table p.409, gating p.410, functions p.411, registers p.416-426) and the PPS tables 18-1 and 18-2. `ClcCombine` (AND, OR, XOR, NAND, NOR, XNOR of two sources, enabled) and register-level `ClcMode`, `ClcSource`, `ClcGate`, `ClcPolarity`, `ClcEdges`, `ClcEnable`, `ClcDisable`, `ClcOutput`, `ClcOutputs`, `ClcInputPin`, `ClcOutputPin`. The cell registers are 10 bytes apart and PPS and CLCIN registers are consecutive, so all go through one FSR0 load. Other parts stop with `#error` (28-pin Q10 only: the 40/44-pin routing differs).
 - `ClcCombine` 107 words -> 74 (49 + the 25-word shared `CombineRegs`): one POSTINC0 pass instead of ten calls. `ClcSelect` was renamed `ClcSource`: it is a register name on 25 parts (CLCSELECT).

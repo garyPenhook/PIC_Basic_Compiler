@@ -1150,3 +1150,35 @@ RAM. After reducing the fixture's arrays (retaining the boundary cases), that fa
 passes on rerun. All nine PIC16 backend checks pass with the final implementation. The four large
 PIC16 benchmarks pass in basil-sim; the fixture passes on PIC16F18346 and PIC16F15244, at `-O0`,
 and on PIC18. MPLAB MDB also passes the final fixture and the DSP benchmark on PIC16F17146.
+
+## 23. PIC18 saved copies of inlined routine results (2026-11-16)
+
+The PIC18 producer-retargeting pass now accepts an inlined `__RESULT` byte as
+well as scratch. When the producer and its copy are in one straight line,
+its computation can run directly in the saved destination. This removes the
+result-to-temporary `movff` even when the next inlined routine overwrites the
+result through an overlaid frame name. Forwarding later reads back to the result
+would be unsafe in that case.
+
+The pass requires a proven physical-byte overwrite before any subsequent read
+or control flow. It excludes interrupt-visible and address-taken results,
+`--keep-vars`, overlapping source/destination bytes, alias accesses in the
+producer, destination accesses during the computation and indirect accesses.
+A routine return and a skipped overwrite do not prove the result dead. The
+existing Access Bank and protected-instruction restrictions remain. Inlined
+results may cross statement markers; scratch retargeting still stops there.
+PIC16 is unchanged.
+
+The focused unit fixture removes one two-word `movff` and checks overlaid-frame
+reads, skipped writes, returns, destination interference, alias operands,
+interrupt visibility and retained-variable builds. This is a local instruction
+saving; no whole-program benchmark reduction is claimed here.
+
+Validation: all 147 library unit tests pass, including equivalent scratch operand
+spellings. The initialized-array backend size/debug check also passes after
+preserving the existing scratch alias handling.
+
+The broad backend run completed all 77 checks: 76 passed; its sole failure was
+the initialized-array size check encountered before the scratch alias fix.
+That check passes on a final targeted rerun with the corrected implementation.
+No other backend failures were reported.

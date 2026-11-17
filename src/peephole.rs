@@ -2551,10 +2551,10 @@ fn written_files(t: &str) -> Option<Vec<String>> {
     }
 }
 
-/// PIC18 result retargeting, the counterpart of [`pass_retarget16`]: a value built in a scratch byte `__Rk` and then
+/// PIC18 result retargeting, the counterpart of [`pass_retarget16`]: a value built in scratch or an inlined result and then
 /// copied with `movff __Rk, D` into a compiler-placed Access Bank byte `D` is built in `D` instead. From the last pure
 /// write of `__Rk` (`movwf`, `clrf`, `setf`, the destination of a `movff`) to the copy every operand `__Rk` becomes `D`
-/// and the copy goes. Only inside one statement and one straight line, when nothing in the stretch reads or writes `D`
+/// and the copy goes. Only in one straight line (and one statement for scratch), when nothing reads or writes `D`
 /// or reaches memory through an FSR, `__Rk` is dead after the copy, and no interrupt handler can see `D`, which holds
 /// half-computed values in between.
 fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
@@ -2570,10 +2570,47 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
         if mn != "movff" || ops.len() != 2 {
             continue;
         }
-        let Some(k) = scratch(ops[0]) else { continue };
+        let source = ops[0].to_string();
+        let sk = scratch(&source);
+        let is_source = |o: &str| sk.map_or(o == source, |k| scratch(o) == Some(k));
+        // Inlined results can be built in the caller's saved temporary, even when
+        // the next routine reuses the result's physical byte.
+        let result = split_off(&source).is_some_and(|(n, _)| n.ends_with("__RESULT")
+            && !env.shared.contains(n) && !taken.contains(n));
+        if sk.is_none() && (!result || env.keep_writes || !env.is_access(&source)) {
+            continue;
+        }
         let d = ops[1].to_string();
         if scratch(&d).is_some() || is_indirect(&d) || !env.is_access(&d) || split_off(&d).is_none_or(|(n, _)| env.shared.contains(n)) {
             continue;
+        }
+        if sk.is_none() && may_alias(env, &source, &d) {
+            continue;
+        }
+        if sk.is_none() {
+            // Require a real overwrite before any read or control flow. A return
+            // is not proof: a non-inlined routine exposes its result to callers.
+            let mut overwritten = false;
+            for it in items.iter().skip(j + 1).take(120) {
+                match it {
+                    Item::Comment(_) | Item::Fence => continue,
+                    Item::Ins(u) => {
+                        if is_skip(u) || parse(u).is_none_or(|(m, _)| matches!(m.as_str(), "return" | "retlw" | "retfie" | "bra" | "goto")) {
+                            break;
+                        }
+                        let Some(e) = effect(u) else { break };
+                        if e.rmem.iter().any(|r| is_indirect(r) || r.starts_with(|c: char| c.is_ascii_digit()) || may_alias(env, r, &source)) {
+                            break;
+                        }
+                        if e.wmem.iter().any(|w| matches!(w, Mem::Sym(w) if same_byte(env, w, &source))) {
+                            overwritten = true;
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            if !overwritten { continue; }
         }
         // An FSR can reach `D` only when the program takes the address of its variable.
         let by_ptr = split_off(&d).is_none_or(|(n, _)| taken.contains(n));
@@ -2588,6 +2625,7 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
             }
             match &items[m] {
                 Item::Comment(_) => {}
+                Item::Fence if sk.is_none() => {}
                 Item::Ins(u) if !keep[m] => {
                     let Some(e) = effect(u) else {
                         ok = false;
@@ -2605,13 +2643,23 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
                         ok = false;
                         break;
                     }
-                    let reads_s = e.reads.contains(&Loc::S(k));
-                    let writes_s = e.writes.contains(&Loc::S(k));
+                    // Aliased spellings are deliberately left alone: every
+                    // access being retargeted must name this exact operand.
+                    if sk.is_none() && (e.rmem.iter().any(|r| is_indirect(r) || (may_alias(env, r, &source) && r != &source))
+                        || e.wmem.iter().any(|w| match w {
+                            Mem::Unknown => true,
+                            Mem::Sym(w) => may_alias(env, w, &source) && w != &source,
+                        })) {
+                        ok = false;
+                        break;
+                    }
+                    let reads_s = sk.map_or_else(|| e.rmem.contains(&source), |k| e.reads.contains(&Loc::S(k)));
+                    let writes_s = sk.map_or_else(|| e.wmem.iter().any(|w| matches!(w, Mem::Sym(w) if w == &source)), |k| e.writes.contains(&Loc::S(k)));
                     if writes_s && !reads_s {
                         let (wm, wo) = parse(u).unwrap_or_default();
                         let pure = match wm.as_str() {
-                            "movwf" | "clrf" | "setf" => wo.first().is_some_and(|o| scratch(o) == Some(k)),
-                            "movff" => wo.len() == 2 && scratch(wo[1]) == Some(k) && scratch(wo[0]) != Some(k),
+                            "movwf" | "clrf" | "setf" => wo.first().is_some_and(|o| is_source(o)),
+                            "movff" => wo.len() == 2 && is_source(wo[1]) && !is_source(wo[0]),
                             _ => false,
                         };
                         if pure {
@@ -2639,14 +2687,14 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
         }
         let (true, Some(def)) = (ok, def) else { continue };
         window.push(def);
-        if !matches!(loc_live(items, j, Loc::S(k), env), Live::Dead) {
+        if sk.is_some_and(|k| !matches!(loc_live(items, j, Loc::S(k), env), Live::Dead)) {
             continue;
         }
         // Renamed at once, so the next copy sees the stretch as it now is.
         for &w in &window {
             let Item::Ins(u) = &items[w] else { continue };
             let (wm, wo) = parse(u).unwrap();
-            let new: Vec<String> = wo.iter().map(|o| if scratch(o) == Some(k) { d.clone() } else { o.to_string() }).collect();
+            let new: Vec<String> = wo.iter().map(|o| if is_source(o) { d.clone() } else { o.to_string() }).collect();
             items[w] = Item::Ins(format!("{wm} {}", new.join(", ")));
         }
         dead[j] = true;
@@ -5910,6 +5958,53 @@ mod tests {
         // `movlw` sets no flags, so the test stays.
         let r = run(&[ins("movlw 0x80"), ins("xorlw 0x00"), Item::Br(Cc::Z, "L".into())]);
         assert_eq!(r.len(), 3);
+    }
+
+    #[test]
+    fn retarget_build_accepts_equivalent_scratch_spellings() {
+        let mut v = vec![ins("movwf __A0+1, c"), ins("movff __A1, X"), Item::Fence];
+        assert!(pass_retarget_build(&mut v, &env()));
+        assert!(matches!(&v[0], Item::Ins(t) if t == "movwf X, c"));
+        assert_eq!(v.len(), 2);
+    }
+
+    #[test]
+    fn result_build_moves_to_saved_copy_before_overlaid_frame_write() {
+        let mut e = env();
+        e.plain.insert("F__RESULT".into(), (0x20, 2));
+        e.plain.insert("G__LOCAL".into(), (0x20, 2));
+        let original = vec![ins("movff __A0, F__RESULT"),
+            Item::Fence, ins("movff F__RESULT, X"), Item::Fence,
+            ins("clrf G__LOCAL, c"), ins("movf X, w, c")];
+        let mut v = original.clone();
+        assert!(pass_retarget_build(&mut v, &e));
+        assert!(matches!(&v[0], Item::Ins(t) if t == "movff __A0, X"));
+        assert_eq!(v.len(), original.len() - 1);
+        // Reading the overlapping frame byte before overwriting it keeps the copy.
+        let mut v = original.clone();
+        v.insert(4, ins("movf G__LOCAL, w, c"));
+        assert!(!pass_retarget_build(&mut v, &e));
+        // A skipped overwrite and a routine return cannot prove the result dead.
+        for barrier in [ins("btfsc Y, 0, c"), ins("return 0")] {
+            let mut v = original.clone();
+            v.insert(4, barrier);
+            assert!(!pass_retarget_build(&mut v, &e));
+        }
+        // Moving the producer earlier must not overwrite a still-needed destination.
+        let mut v = original.clone();
+        v.insert(1, ins("movf X, w, c"));
+        assert!(!pass_retarget_build(&mut v, &e));
+        // An alternate name for the source cannot be silently left unretargeted.
+        let mut v = original.clone();
+        v.insert(1, ins("incf G__LOCAL, f, c"));
+        assert!(!pass_retarget_build(&mut v, &e));
+        let mut v = original.clone();
+        e.keep_writes = true;
+        assert!(!pass_retarget_build(&mut v, &e));
+        e.keep_writes = false;
+        e.shared.insert("F__RESULT".into());
+        let mut v = original;
+        assert!(!pass_retarget_build(&mut v, &e));
     }
 
     #[test]
