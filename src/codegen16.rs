@@ -101,6 +101,9 @@ pub(crate) struct G<'p> {
     pub called: BTreeSet<FuncId>,
     pub calls: Vec<BTreeSet<FuncId>>,
     pub helpers: BTreeSet<String>,
+    /// Trial policy for signed power-of-two division and whether it was used.
+    pub pow2_div: bool,
+    pub pow2_div_used: bool,
     pub errors: Vec<(Span, String)>,
     pub span: Span,
     pub nvars: usize,
@@ -169,6 +172,8 @@ impl<'p> G<'p> {
             called: BTreeSet::new(),
             calls: vec![BTreeSet::new(); nf + 1],
             helpers: BTreeSet::new(),
+            pow2_div: false,
+            pow2_div_used: false,
             errors: Vec::new(),
             span: Span::default(),
             nvars: p.vars.len(),
@@ -201,8 +206,9 @@ impl<'p> G<'p> {
 }
 
 /// Runs one generation pass over the whole program.
-fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, isr_scratch: [u32; 4], prev_calls: Vec<BTreeSet<FuncId>>) -> (G<'p>, Vec<Item>) {
+fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, isr_scratch: [u32; 4], prev_calls: Vec<BTreeSet<FuncId>>, pow2_div: bool) -> (G<'p>, Vec<Item>) {
     let mut g = G::new(p, tgt, layout, isr_scratch, prev_calls);
+    g.pow2_div = pow2_div;
     // PIC16F13145 family, erratum 1.3.1 (DS80001115F p.3): above 16 MHz the first instruction fetched after a Reset, a wake-up or
     // an interrupt can fail on silicon A2 and A3. The work around is a NOP where that fetch happens: at 0000h (the code starts at
     // 0001h) and, as the same fetch happens on entering the handler, at 0004h. `#option FetchNop = false` removes them (silicon A4).
@@ -388,22 +394,37 @@ fn generate_base(p: &Program, tgt: &Target) -> Generated {
 }
 
 fn generate_inner(p: &Program, tgt: &Target) -> Generated {
-    let baseline = generate_placed(p, tgt, false);
-    if !tgt.opt || !baseline.errors.is_empty() || baseline.objs.len() > 512 { return baseline; }
-    let banks: HashSet<u32> = baseline.objs.iter().zip(&baseline.layout.addr)
-        .filter(|(o, _)| !o.force_access && o.bytes <= 80)
-        .filter_map(|(_, a)| a.filter(|&a| layout::lin(a).is_some()).map(|a| a >> 7)).collect();
-    if banks.len() < 2 { return baseline; }
-    let candidate = generate_placed(p, tgt, true);
-    if candidate.errors.is_empty() && candidate.out.words < baseline.out.words
-        && crate::codegen::occupied_ram(&candidate, true) <= crate::codegen::occupied_ram(&baseline, true) {
+    let (candidate, used) = generate_banked(p, tgt, tgt.opt);
+    if !used || p.speed { return candidate; }
+    // A general divider may still be needed elsewhere. Keep the specialization
+    // only when final layout, paging and scratch allocation do not grow.
+    let (baseline, _) = generate_banked(p, tgt, false);
+    if candidate.errors.is_empty() && (!baseline.errors.is_empty()
+        || (candidate.out.words <= baseline.out.words
+            && crate::codegen::occupied_ram(&candidate, true) <= crate::codegen::occupied_ram(&baseline, true))) {
         candidate
     } else {
         baseline
     }
 }
 
-fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
+fn generate_banked(p: &Program, tgt: &Target, pow2_div: bool) -> (Generated, bool) {
+    let (baseline, used) = generate_placed(p, tgt, false, pow2_div);
+    if !tgt.opt || !baseline.errors.is_empty() || baseline.objs.len() > 512 { return (baseline, used); }
+    let banks: HashSet<u32> = baseline.objs.iter().zip(&baseline.layout.addr)
+        .filter(|(o, _)| !o.force_access && o.bytes <= 80)
+        .filter_map(|(_, a)| a.filter(|&a| layout::lin(a).is_some()).map(|a| a >> 7)).collect();
+    if banks.len() < 2 { return (baseline, used); }
+    let (candidate, _) = generate_placed(p, tgt, true, pow2_div);
+    if candidate.errors.is_empty() && candidate.out.words < baseline.out.words
+        && crate::codegen::occupied_ram(&candidate, true) <= crate::codegen::occupied_ram(&baseline, true) {
+        (candidate, used)
+    } else {
+        (baseline, used)
+    }
+}
+
+fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) -> (Generated, bool) {
     let mem = tgt.pic16.as_ref().expect("the PIC16 generator needs the enhanced mid-range memory description");
     let nvars = p.vars.len();
     let nf = p.funcs.len();
@@ -418,9 +439,10 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
         None
     };
     if let Some(msg) = unsupported {
-        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors: vec![(Span::default(), msg.to_string())], debug: Default::default() };
+        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors: vec![(Span::default(), msg.to_string())], debug: Default::default() }, false);
     }
-    let (g1, items1) = run_pass(p, tgt, None, [0; 4], vec![BTreeSet::new(); nf + 1]);
+    let (g1, items1) = run_pass(p, tgt, None, [0; 4], vec![BTreeSet::new(); nf + 1], pow2_div);
+    let pow2_div_used = g1.pow2_div_used;
     let mut calls = g1.calls.clone();
     let mut soft = g1.soft_max;
     let mut uses = g1.uses.clone();
@@ -463,7 +485,7 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
                 Layout { addr: vec![None; objs.len()], size: vec![0; objs.len()] }
             }
         };
-        let (g2, items) = run_pass(p, tgt, Some(&layout), scratch, calls.clone());
+        let (g2, items) = run_pass(p, tgt, Some(&layout), scratch, calls.clone(), pow2_div);
         let grew = (0..4).any(|r| g2.scratch_max[r] > scratch[r]) || (0..temps.len()).any(|f| g2.temp_max[f] > temps[f]) || (0..nvars).any(|i| g2.uses[i] > 0 && uses[i] == 0) || (0..save_bytes.len()).any(|k| g2.save_max[k] > save_bytes[k]) || g2.soft_max > soft;
         let calls_changed = g2.calls != calls;
         if calls_changed {
@@ -498,7 +520,7 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
     }
     let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
-        return Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() };
+        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() }, pow2_div_used);
     };
     let items = if tgt.opt {
         let items = crate::codegen::inline_single_calls(items, ranges);
@@ -620,5 +642,5 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool) -> Generated {
             debug.vars.push(crate::dwarf::DVar { name: v.name.clone(), ty: if v.by_ref { crate::types::WORD } else { v.ty.clone() }, bytes: v.bytes, addr, scope, param: matches!(v.kind, VarKind::Param) });
         }
     }
-    Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }
+    (Generated { out: Output { text, words: asmd.words, labels: asmd.labels, func_words }, stack_levels, objs, layout, errors, debug }, pow2_div_used)
 }

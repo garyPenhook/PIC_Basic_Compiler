@@ -1560,6 +1560,7 @@ places change:
 | A `Word` divided by a constant | the divide routine (a constant 3 to 255 uses a shorter byte-divisor routine) | a multiply by the reciprocal, inline, no loop. Not in a `-O0` build | PIC18 |
 | A `Word` or `LongWord` divided by a variable | the divide routine runs its full loop | the routine first checks whether both operands fit in half the width and, if so, runs a loop half as long | PIC18 |
 | A `LongWord` divided by a constant 3 to 255 | the short byte-divisor routine | the general divide routine with its half-width fast path | PIC18 |
+| Signed division by a positive power of two, 2 to 256 | a shared bias-and-shift routine for multi-byte division by 2 to 128; byte division and division by 256 use inline instructions. Accepted only when final flash and occupied RAM do not grow | bias and arithmetic shifts inline | PIC16F1 |
 | A 24- or 32-bit multiply | the loop runs once per bit | the loop stops when no bits of the multiplier are left, so a small multiplier finishes in a few passes | PIC16F1 (the PIC18 multiplies with `MULWF`) |
 
 Everything else is the same under all three settings. Use `--report` to compare the size of two builds.

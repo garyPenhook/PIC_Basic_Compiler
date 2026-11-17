@@ -16,6 +16,7 @@ impl<'p> G<'p> {
             "mul" => self.mul_helper(n),
             "udiv" => self.udiv_helper(n),
             "sdiv" => self.sdiv_helper(n),
+            "sdivp" => self.sdiv_pow2_helper(n),
             "strs" => self.str_append_helper(),
             "strc" => self.str_char_helper(),
             "stre" => self.str_end_helper(),
@@ -112,6 +113,30 @@ impl<'p> G<'p> {
         let a0 = self.a(0);
         self.ins(format!("bsf {}, 0", a0.text()));
         self.label(&nosub);
+        self.items.push(Item::SkipBr(format!("decfsz {}, f", d0.text()), lp));
+        self.ins("return");
+    }
+
+    /// A / 2^D0, truncating toward zero. W is the bias 2^D0-1.
+    /// Only counts 1..7 are passed; division by 256 uses byte moves inline.
+    fn sdiv_pow2_helper(&mut self, n: u32) {
+        let top = self.a(n - 1);
+        self.ins(format!("btfss {}, 7", top.text()));
+        self.ins("movlw 0");
+        let a0 = self.a(0);
+        self.fop("addwf", &a0, "f");
+        self.ins("movlw 0");
+        for i in 1..n {
+            let m = self.a(i);
+            self.fop("addwfc", &m, "f");
+        }
+        let lp = self.fresh();
+        self.label(&lp);
+        for i in (0..n).rev() {
+            let m = self.a(i);
+            self.ins(format!("{} {}, f", if i == n - 1 { "asrf" } else { "rrf" }, m.text()));
+        }
+        let d0 = self.d(0);
         self.items.push(Item::SkipBr(format!("decfsz {}, f", d0.text()), lp));
         self.ins("return");
     }

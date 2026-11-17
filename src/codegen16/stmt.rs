@@ -643,6 +643,37 @@ impl<'p> G<'p> {
         Some(plan)
     }
 
+    /// A single descending element copy. Two stationary pointers preserve source order
+    /// even when the arrays overlap; byte offsets never mutate either pointer in the body.
+    fn descending_copy_plan(&self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S]) -> Option<Vec<(Place, u32)>> {
+        if !self.tgt.opt || self.walk.is_some() || !self.pair_walk.is_empty() || step != -1
+            || var.width() != 8 || var.signed() || var.indirect() || var.off != 0 || var.bit.is_some() || var.dbit.is_some()
+        { return None; }
+        let Base::Var(iv) = var.base else { return None };
+        let v = &self.p.vars[iv];
+        if v.by_ref || v.volatile || v.bytes != 1 || !crate::opt::interrupt_vars(self.p).is_some_and(|s| !s.contains(&iv)) {
+            return None;
+        }
+        let (start, last) = (from.as_const()?, limit.as_const()?);
+        if start > 255 || last > start { return None; }
+        let [stmt] = body else { return None };
+        let St::Assign(dst, value) = &stmt.st else { return None };
+        let ExK::Load(src) = &value.k else { return None };
+        if dst.width() != src.width() || dst.signed() != src.signed() { return None; }
+        let mut plan = Vec::new();
+        for p in [dst, src] {
+            let (arr, off, k, stride) = crate::codegen::stream_elem(p, iv)?;
+            let a = &self.p.vars[arr];
+            if a.by_ref || a.volatile || arr == iv { return None; }
+            // Byte index arithmetic must not wrap: a linear pointer would differ.
+            if last as i64 + (k as i64) < 0 || start as i64 + k as i64 > 255 { return None; }
+            let first = off.checked_add((start as i64 + k as i64) as u32 * stride)?;
+            if first.checked_add(stride)? > a.bytes { return None; }
+            plan.push((Place { base: Base::Var(arr), off: first, idx: None, bit: None, dbit: None, ty: p.ty.clone() }, stride));
+        }
+        Some(plan)
+    }
+
     fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S], free: bool) {
         let (w, sg) = (var.width(), var.signed());
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
@@ -662,6 +693,7 @@ impl<'p> G<'p> {
         }
         // A Byte or Word array indexed by the loop variable and nothing else through an FSR: FSR0 walks the array, set once
         // here and stepped with `addfsr` at the end of each pass (see `codegen::walk_block` for what the body may hold).
+        let copy = self.descending_copy_plan(var, from, limit, step, body);
         let walking = self.walk_plan(var, from, step, body);
         let pair = if walking.is_none() { self.pair_walk_plan(var, from, limit, step, body) } else { None };
         if let Some(plan) = &pair {
@@ -676,11 +708,33 @@ impl<'p> G<'p> {
             self.set_fsr(0, &first);
             self.walk = Some((arr, iv, off, stride));
         }
+        if let Some(plan) = &copy {
+            for (fsr, (p, _)) in plan.iter().enumerate() { self.set_fsr(fsr as u32, p); }
+        }
         self.label(&top);
         self.loops.push((cont.clone(), end.clone()));
-        self.block(body);
+        if let Some(plan) = &copy {
+            self.line_marker(body[0].span);
+            self.span = body[0].span;
+            // Read the complete value before writing, matching normal assignment semantics.
+            for k in 0..plan[0].1 {
+                self.ins(format!("moviw {k}[FSR1]"));
+                let a = self.a(k);
+                self.fo("movwf", &a);
+            }
+            for k in 0..plan[0].1 {
+                let a = self.a(k);
+                self.fop("movf", &a, "w");
+                self.ins(format!("movwi {k}[FSR0]"));
+            }
+        } else { self.block(body); }
         self.loops.pop();
         self.label(&cont);
+        if let Some(plan) = copy {
+            for (fsr, (_, stride)) in plan.into_iter().enumerate() {
+                self.ins(format!("addfsr FSR{fsr}, -{stride}"));
+            }
+        }
         if let Some((_, _, _, _, stride)) = walking {
             self.walk = None;
             self.ins(format!("addfsr FSR0, {stride}"));

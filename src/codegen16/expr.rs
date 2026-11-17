@@ -1033,9 +1033,75 @@ impl<'p> G<'p> {
         }
     }
 
+    /// Signed division truncates toward zero. Add 2^k-1 to negative dividends
+    /// before the arithmetic shift, including carry into every higher byte.
+    fn div_signed_pow2(&mut self, a: &Ex, k: u32, n: u32) {
+        self.ev(a);
+        if n == 1 {
+            let a0 = self.a(0);
+            self.fo("movwf", &a0);
+        }
+        if !self.p.speed && n > 1 && k < 8 {
+            // Share the bias and counted shift between sites. W carries the
+            // negative-dividend bias; D0 carries the number of shifts.
+            let d0 = self.d(0);
+            self.ins(format!("movlw {k}"));
+            self.fo("movwf", &d0);
+            self.ins(format!("movlw 0x{:02X}", (1u32 << k) - 1));
+            let name = format!("sdivp{n}");
+            self.helpers.insert(name.clone());
+            self.call(&format!("__{name}"));
+            return;
+        }
+        let top = self.a(n - 1);
+        self.ins("movlw 0");
+        self.ins(format!("btfsc {}, 7", top.text()));
+        self.ins(format!("movlw 0x{:02X}", (1u32 << k) - 1));
+        let a0 = self.a(0);
+        self.fop("addwf", &a0, "f");
+        if n > 1 {
+            self.ins("movlw 0");
+            for i in 1..n {
+                let m = self.a(i);
+                self.fop("addwfc", &m, "f");
+            }
+        }
+        if k == 8 {
+            // Whole-byte shift. Copy low to high so sources survive until read,
+            // then extend the sign from the original top byte.
+            for i in 0..n - 1 {
+                let (s, d) = (self.a(i + 1), self.a(i));
+                self.fop("movf", &s, "w");
+                self.fo("movwf", &d);
+            }
+            self.ins("movlw 0");
+            self.ins(format!("btfsc {}, 7", top.text()));
+            self.ins("movlw 0xFF");
+            self.fo("movwf", &top);
+        } else {
+            for _ in 0..k {
+                self.shift1(false, true, n);
+            }
+        }
+        if n == 1 {
+            let a0 = self.a(0);
+            self.fop("movf", &a0, "w");
+        }
+    }
+
     fn muldiv(&mut self, k: BinKind, a: &Ex, b: &Ex, e: &Ex) {
         let n = (e.w / 8) as u32;
         let (a, b) = (fit(a, e.w), fit(b, e.w));
+        if self.pow2_div && k == BinKind::Div && e.signed
+            && let Some(c) = b.as_const()
+            && c.is_power_of_two() && (2..=256).contains(&c)
+            // A set sign bit denotes a negative divisor at this width.
+            && c < (1u32 << (e.w - 1))
+        {
+            self.pow2_div_used = true;
+            self.div_signed_pow2(&a, c.trailing_zeros(), n);
+            return;
+        }
         // Multiplication by a power of two is a shift.
         if k == BinKind::Mul && let Some(c) = b.as_const() && c.is_power_of_two() {
             let sh = Ex::konst(c.trailing_zeros(), 8, false);

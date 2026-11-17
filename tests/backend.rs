@@ -1097,7 +1097,7 @@ const P16_PORTABLE: &[&str] = &[
     "absminmax", "boundscheck", "boundscheck_hoist", "minmax_once", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_func", "str_func2", "gosub", "call_stmt", "if_gosub", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_pinio_ref", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings", "lib_format", "lib_onewire",
-    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "mul_walk_rotate", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
+    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "descending_copy", "mul_walk_rotate", "signed_div_pow2", "signed_div_pow2_shared", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
 ];
 
 /// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.
@@ -2025,6 +2025,49 @@ fn pic16_ram_report_counts_physical_bytes_across_banks() {
 
 /// Word walks must keep full byte offsets and stop at code that can clobber the FSR.
 #[test]
+fn pic16_signed_power_of_two_division_and_fallbacks() {
+    let out = scratch("signed_div_pow2");
+    let source = "Program DP\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nVolatile Dim a, d, r1, r2, r3 As Integer\nr1 = a / 8\nr2 = a / 32\nr3 = a / 2\n";
+    for (name, text, flags, specialized) in [
+        ("balanced", source.to_string(), vec![], true),
+        ("kept", source.to_string(), vec!["--keep-vars"], true),
+        ("speed", source.replace("Volatile Dim", "#option Optimize = Speed\nVolatile Dim"), vec![], true),
+        ("unoptimized", source.to_string(), vec!["-O0"], false),
+        ("negative", source.replace("/ 8", "/ -8").replace("/ 32", "/ -32").replace("/ 2", "/ -2"), vec![], false),
+        ("other_constant", source.replace("/ 8", "/ 3").replace("/ 32", "/ 3").replace("/ 2", "/ 3"), vec![], false),
+        ("variable", source.replace("/ 8", "/ d").replace("/ 32", "/ d").replace("/ 2", "/ d"), vec![], false),
+        ("unsigned", source.replace("As Integer", "As Word"), vec![], false),
+        ("mixed", source.replace("r1 = a / 8", "r1 = a / d").replace("r2 = a / 32", "r2 = a / 3"), vec![], false),
+    ] {
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, text).unwrap();
+        let r = Command::new(basil()).arg("-S").args(flags).arg(src).arg("-o").arg(&asm).output().unwrap();
+        assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        if name == "speed" {
+            assert!(text.contains("asrf __A1, f"));
+            assert!(!text.contains("__sdivp2"));
+            assert!(!text.contains("__sdiv2"));
+        } else {
+            assert_eq!(text.contains("call __sdivp2"), specialized, "{name}");
+        }
+        if matches!(name, "negative" | "other_constant" | "variable" | "unoptimized") {
+            assert!(text.contains("call __sdiv2"), "general signed divide: {name}");
+        }
+        if name == "mixed" {
+            assert!(!text.contains("asrf __A1"), "unprofitable inline specialization must also be rejected");
+        }
+    }
+    let src = for_p16(&root().join("tests/exec/signed_div_pow2_shared.bas"), "16F18346", &out.join("shared.bas"));
+    let asm = src.with_extension("S");
+    let r = Command::new(basil()).arg("-S").arg(src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(asm).unwrap();
+    assert_eq!(text.matches("call __sdivp").count(), 14, "shared fixture must exercise specialization");
+}
+
+#[test]
 fn pic16_word_array_walks_and_dsp_size() {
     let out = scratch("wordwalk");
     let source = "Program W\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim a(8) As Word\nDim i As Byte\nVolatile Dim sink As Word\nNoInline Sub Touch()\nsink = sink + 1\nEnd Sub\nFor i = 0 To 7\na(i) = Word(i) * 3\nNext\nsink = a(7)\n";
@@ -2049,7 +2092,7 @@ fn pic16_word_array_walks_and_dsp_size() {
     let report = String::from_utf8_lossy(&r.stdout);
     let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
     let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-    assert!(words <= 1500, "{report}");
+    assert!(words <= 1455, "{report}");
     assert!(ram <= 164, "{report}");
     let text = std::fs::read_to_string(&asm).unwrap();
     for name in ["K_LOWPASS__Y", "K_U"] {
@@ -2112,4 +2155,25 @@ fn dsp_inlined_fir_result_is_built_in_saved_destination() {
     assert!(!asm.lines().any(|l| l.trim_start().starts_with("movff K_FIR__RESULT+1,")));
     assert!(asm.contains("movff __A0, K_F\n"));
     assert!(asm.contains("movff __A1, K_F+1\n"));
+}
+
+#[test]
+fn pic16_descending_copy_guards() {
+    let out = scratch("descending_copy");
+    let source = "Program W\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim a(8) As Integer\nDim i As Byte\nVolatile Dim sink As Integer\nFor i = 7 To 1 Step -1\na(i) = a(i - 1)\nNext\nsink = a(7)\n";
+    for (name, text, flags, walking) in [
+        ("plain", source.to_string(), vec![], true),
+        ("unoptimized", source.to_string(), vec!["-O0"], false),
+        ("volatile", source.replace("Dim a(8)", "Volatile Dim a(8)"), vec![], false),
+        ("wrap", source.replace("7 To 1", "7 To 0"), vec![], false),
+        ("conditional", source.replace("a(i) = a(i - 1)", "If i <> 3 Then\na(i) = a(i - 1)\nEnd If"), vec![], false),
+    ] {
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, text).unwrap();
+        let r = Command::new(basil()).arg("-S").args(flags).arg(src).arg("-o").arg(&asm).output().unwrap();
+        assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        assert_eq!(text.contains("addfsr FSR1, -2"), walking, "{name}");
+    }
 }

@@ -1350,3 +1350,114 @@ in MPLAB MDB on PIC16F17146 (4537 cycles in both simulators).
 
 The final `cargo test --release` run passes in full, including all 78 backend
 checks, frontend/lexer checks and doc tests. `git diff --check` is clean.
+
+
+## 27. PIC16 signed division by powers of two (2026-11-17)
+
+Positive constant divisors 2, 4, 8, 16, 32, 64, 128 and 256 can now use
+bias and arithmetic shifts on the enhanced mid-range core. A negative dividend
+receives a bias of divisor minus one before shifting, preserving truncation
+toward zero (for example, -9 / 8 = -1). Carry propagates through the full
+operation width. The dividend is evaluated once, including nested calls.
+
+Balanced/Size share a small counted-shift helper per multi-byte width for
+counts 1–7. Byte division is inline, and division by 256 uses byte moves and
+sign extension after the bias. The generator compares the specialized and
+reference builds after bank placement, peepholes and final assembly layout;
+it keeps specialization only when flash words and occupied physical RAM do
+not grow. A program retaining a general divider can consequently keep the
+reference path. Speed emits the bias and shifts inline. Negative, zero,
+variable, non-power-of-two and larger divisors retain normal division;
+unsigned division and signed Mod are unchanged. -O0 retains the reference path.
+
+Fresh default optimized release builds, comparing a saved pre-change compiler
+with the updated compiler on PIC16F18346:
+
+| DSP whole-program metric | Before | After |
+| --- | ---: | ---: |
+| Flash words | 1500 | 1472 |
+| Reported RAM bytes | 164 | 164 |
+| basil-sim cycles to halt | 243533 | 214171 |
+
+This saves 28 words (56 flash bytes) and 29,362 cycles (12.06%). Both executions
+produce K_SINK=4294933580. These are simulator results, not hardware timings.
+The freshly measured baseline timing is used here; older sections record timings
+from their own runs. With --keep-vars the new DSP build takes 215003 cycles;
+the -O0 retained-variable build takes 269378 cycles.
+
+The four large PIC16 benchmarks total 4269 → 4241 words. a_algo stays at 907,
+c_text at 1003 and d_ctrl at 859; their default simulator cycle counts are also
+unchanged. All four PIC18 sizes remain unchanged, totaling 5736 bytes.
+
+Regression fixtures:
+
+* signed_div_pow2.bas uses Speed to compare all 256 ShortInt bit patterns and
+  Integer/LongInt edge cases against runtime-divisor division, across the
+  applicable powers of two. It checks 2049 cases, including a nested call
+  evaluated exactly once.
+* signed_div_pow2_shared.bas exercises all shared shift counts and inline /256
+  with host-calculated sums of signed edge-case quotients. The PIC16 listing
+  contains fourteen shared-helper calls, so the size fallback cannot silently
+  bypass this coverage.
+* Backend checks cover balanced/shared, Speed/inline, retained-variable and -O0
+  builds, divisor fallbacks, unsigned inputs, rejection of an unprofitable mixed
+  divider build, and the tightened 1472-word DSP ceiling.
+
+Both fixtures pass optimized and -O0 execution in basil-sim on PIC16F18346
+and PIC18F27Q10. Optimized storage-enabled runs also pass on PIC16F15244.
+MPLAB MDB on PIC16F17146 passes both final fixtures and b_dsp; MDB and basil-sim
+agree at 506728, 28008 and 214171 cycles respectively for those storage-enabled
+optimized builds.
+
+Validation: `cargo test --release` passes, including all 151 library unit tests,
+79 backend checks, frontend/lexer checks and doc tests. The ten focused PIC16
+checks also pass with the shared-fixture assertion; the strengthened mixed-divider
+fallback check passes on a final targeted run. `git diff --check` is clean.
+
+
+## 28. PIC16 descending element copies (2026-11-17)
+
+A straight-line `For` with an unsigned Byte counter and constant bounds, stepping
+by -1, now keeps destination and source in FSR0 and FSR1 for a single array
+element assignment. This includes FIR's `hist(i) = hist(i - 1)`. Both pointers
+stay at the low byte during the copy and step backward by the element width at
+the loop tail. The complete source value is read before the destination is
+written, preserving sequential overlapping-copy semantics. Byte, Word/Integer
+and four-byte elements of matching signedness are eligible.
+
+Index offsets must remain within 0..255 throughout the walk and within the
+allocated arrays. Volatile/ByRef arrays, interrupt-visible counters, conditional
+bodies, calls, conversions and -O0 retain normal addressing. This is an element
+copy specialization; general descending expression walks still use normal
+addressing on PIC16. PIC18 uses its existing streaming implementation.
+
+Fresh default optimized PIC16F18346 DSP measurements against a saved compiler
+from immediately before this change:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Flash words | 1472 | 1455 |
+| Reported RAM bytes | 164 | 164 |
+| basil-sim cycles to halt | 214171 | 208571 |
+
+The seven-iteration FIR shift replaces repeated address construction with two
+`addfsr` instructions per iteration. Whole-program savings are 17 words and
+5600 cycles (2.61%); both runs produce K_SINK=4294933580. PIC18 DSP remains at
+68739 cycles. These are simulator measurements, not hardware timings.
+
+`descending_copy.bas` checks a safe overlapping shift, a descending copy between
+arrays, and overlap that propagates the last element backward. Word accesses
+cross indices 127/128 and linear RAM-bank boundaries; Byte and signed LongInt
+copies also run through the specialized path. It passes optimized and
+-O0 on PIC16F18346, and optimized on PIC18F27Q10 and PIC16F17146. Backend guards check the
+pointer path and fallbacks for volatile arrays, wrapping indices, conditional
+bodies and -O0. The DSP size ceiling is tightened to 1455 words.
+
+
+Validation: all 151 library unit tests and 80 backend checks pass across the
+release suite and focused reruns. The first full run passed 79 backend checks
+and found the new fixture exceeded PIC16F15244 RAM; reducing its second array
+preserved the coverage, and the complete affected `p152_parts_build` check
+passed on rerun. Final copy guards and DSP execution pass after preserving
+source-line markers in the specialized body. The other three large PIC16
+benchmark sinks and cycle counts are unchanged. `git diff --check` is clean.
