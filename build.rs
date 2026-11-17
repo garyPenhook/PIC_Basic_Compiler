@@ -15,6 +15,17 @@ fn files(dir: &str, ext: &str, skip: &str) -> Vec<String> {
 }
 
 fn main() {
+    // PIC16 code generation for larger programs can exceed Windows' default
+    // 1 MiB main-thread stack, especially in debug builds. Reserve 8 MiB for
+    // the compiler executable (pages are committed only as they are used).
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        let arg = if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            "/STACK:8388608"
+        } else {
+            "-Wl,--stack,8388608"
+        };
+        println!("cargo:rustc-link-arg-bin=basil={arg}");
+    }
     let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let mut out = String::new();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
