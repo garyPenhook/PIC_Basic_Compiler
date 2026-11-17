@@ -16,6 +16,7 @@ impl<'p> G<'p> {
             "mul" => self.mul_helper(n),
             "udiv" => self.udiv_helper(n),
             "divk" => self.divk_helper(n, 1),
+            "divten" => self.divten_helper(),
             "divw" => self.divk_helper(n, 2),
             "sdiv" => self.sdiv_helper(n),
             "sdivp" => self.sdiv_pow2_helper(n),
@@ -80,6 +81,69 @@ impl<'p> G<'p> {
             self.fop("movf", &c, "w");
             self.fo("movwf", &a);
         }
+        self.ins("return");
+    }
+
+    /// Exact unsigned Word / 10, with remainder in C. The shift/add estimate
+    /// is at most one below floor(n/10); the low-byte residual is in 0..19.
+    fn divten_helper(&mut self) {
+        for i in 0..2 {
+            let (a, c) = (self.a(i), self.c(i));
+            self.fop("movf", &a, "w");
+            self.fo("movwf", &c);
+        }
+        // q = (n >> 1) + (n >> 2); q += q >> 4; q += q >> 8.
+        for (stage, shifts) in [1, 1, 4, 8].into_iter().enumerate() {
+            if stage != 1 {
+                for i in 0..2 {
+                    let (a, b) = (self.a(i), self.b(i));
+                    self.fop("movf", &a, "w");
+                    self.fo("movwf", &b);
+                }
+            }
+            if shifts == 8 {
+                let (lo, hi) = (self.b(0), self.b(1));
+                self.fop("movf", &hi, "w");
+                self.fo("movwf", &lo);
+                self.fo("clrf", &hi);
+            }
+            for _ in 0..if shifts == 8 { 0 } else { shifts } {
+                let (lo, hi) = (self.b(0), self.b(1));
+                self.fop("lsrf", &hi, "f");
+                self.fop("rrf", &lo, "f");
+            }
+            for i in 0..2 {
+                let (a, b) = (self.a(i), self.b(i));
+                self.fop("movf", &b, "w");
+                if stage == 0 { self.fo("movwf", &a); }
+                else { self.fop(if i == 0 { "addwf" } else { "addwfc" }, &a, "f"); }
+            }
+        }
+        for _ in 0..3 {
+            let (lo, hi) = (self.a(0), self.a(1));
+            self.fop("lsrf", &hi, "f");
+            self.fop("rrf", &lo, "f");
+        }
+        // Only the low byte of n - 10*q is needed; its true value is < 20.
+        let (a, b, c, hi) = (self.a(0), self.b(0), self.c(0), self.c(1));
+        self.fop("lslf", &a, "w");
+        self.fo("movwf", &b);
+        self.fop("subwf", &c, "f");
+        self.fop("lslf", &b, "f");
+        self.fop("lslf", &b, "w");
+        self.fop("subwf", &c, "f");
+        self.fo("clrf", &hi);
+        let done = self.fresh();
+        self.ins("movlw 10");
+        self.fop("subwf", &c, "w");
+        self.br(Cc::Nc, &done);
+        self.fo("movwf", &c);
+        self.ins("movlw 1");
+        self.fop("addwf", &a, "f");
+        let a1 = self.a(1);
+        self.ins("movlw 0");
+        self.fop("addwfc", &a1, "f");
+        self.label(&done);
         self.ins("return");
     }
 

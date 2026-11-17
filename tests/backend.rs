@@ -2196,7 +2196,7 @@ fn pic16_descending_copy_guards() {
 #[test]
 fn pic16_byte_divisor_and_paired_results() {
     let out = scratch("pic16_div_pair");
-    let source = "Program DP\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim value As Word\nVolatile Dim sink As Byte\nvalue = Word(PORTA) * 257\nsink = Byte(value Mod 10) + 48\nvalue = value / 10\nsink = Byte(value)\n";
+    let source = "Program DP\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim value As Word\nVolatile Dim sink As Byte\nvalue = Word(PORTA) * 257\nsink = Byte(value Mod 11) + 48\nvalue = value / 11\nsink = Byte(value)\n";
     for (name, source, flags, calls) in [
         ("paired", source.to_string(), vec![], 1),
         ("volatile", source.replace("Dim value", "Volatile Dim value"), vec![], 2),
@@ -2245,5 +2245,26 @@ fn pic16_word_divisor_and_paired_results() {
         } else {
             assert!(text.contains("rlf __C3, f"), "{name}: {text}");
         }
+    }
+}
+
+#[test]
+fn pic16_word_divten_selection() {
+    let out = scratch("pic16_divten");
+    for (name, ty, divisor, flags, specialized) in [
+        ("word", "Word", 10, vec![], true),
+        ("signed", "Integer", 10, vec![], false),
+        ("long", "LongWord", 10, vec![], false),
+        ("other", "Word", 11, vec![], false),
+        ("unoptimized", "Word", 10, vec!["-O0"], false),
+    ] {
+        let source = format!("Program DT\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nVolatile Dim value, q, r As {ty}\nvalue = {ty}(PORTA)\nq = value / {divisor}\nr = value Mod {divisor}\n");
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, source).unwrap();
+        let result = Command::new(basil()).arg("-S").args(flags).arg(src).arg("-o").arg(&asm).output().unwrap();
+        assert!(result.status.success(), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        assert_eq!(text.contains("call __divten2"), specialized, "{name}: {text}");
     }
 }

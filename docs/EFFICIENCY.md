@@ -1557,3 +1557,37 @@ execution of `divw_long` under optimized and `-O0` builds, covering zero,
 maximum LongWord dividends, deterministic random values, divisors 256, 257,
 1023, 32767, 32768, 32769 and 65535, and both quotient/remainder orders.
 The existing byte-divisor execution fixture also passes.
+
+## 32. PIC16 exact Word division by ten (2026-11-17)
+
+Optimized unsigned Word `/ 10` and `Mod 10` now select `__divten2`, including
+adjacent paired expressions in either order. The helper computes
+`q = (n >> 1) + (n >> 2)`, adds `q >> 4` and then `q >> 8`, and shifts the
+estimate right by three. The estimate is at most one below the exact quotient.
+The residual `n - 10*q` is in 0..19, so a low-byte subtraction and at most one
+correction return the exact quotient in A and zero-extended remainder in C.
+The eight-bit shift uses byte moves. No loop or additional scratch RAM is needed.
+Signed, LongWord, other divisors and unoptimized builds retain their prior paths.
+
+Measured against the immediate pre-change compiler with identical sources on
+PIC16F18346 (default optimized builds):
+
+| Workload | Before cycles | After cycles | Before/after flash bytes | RAM bytes |
+| --- | ---: | ---: | ---: | ---: |
+| embedded display | 770392 | 690230 | 688 / 774 | 50 |
+| exhaustive decimal-counter check | 19008221 | 7381961 | 242 / 304 | 29 |
+
+Display saves 80162 cycles (10.4%) at a cost of 86 flash bytes; its sink remains
+474523. The second workload includes loop/reference checking overhead and all
+65536 dividends, so its timing is not an isolated helper latency. It records
+zero mismatches. Flash differences include helper inlining and layout effects.
+The default optimized selection favors this repeated decimal-formatting work;
+this is a speed improvement with a measured flash cost, not a size reduction.
+
+Validation: `python3 scripts/check-div10-word.py` generates Python `divmod`
+reference tables for every unsigned 16-bit input and checks the assembled PIC16
+code in basil-sim, alternating paired assignment orders across 32 images. All
+65536 quotient/remainder comparisons pass. `tests/exec_p16/div10_word.bas`
+provides an independent decimal-counter reference. All 15 PIC16 backend tests
+pass, covering selection and signed, width and optimization fallbacks; existing
+`divk_word` and `div_mod_share` simulator fixtures pass as well.
