@@ -1042,6 +1042,42 @@ impl<'p> G<'p> {
             self.shift(BinKind::Shl, &a, &sh, e);
             return;
         }
+        // Both operands are already addressed by the read-only paired walk. Load B directly:
+        // evaluating these loads into A cannot overwrite B or either pointer. Keep the
+        // ordinary evaluation path for every other expression (especially helper calls).
+        if self.tgt.opt && k == BinKind::Mul
+            && let (Some(_), Some((p, sn, signed))) = (self.walk_operand(&a), self.walk_operand(&b))
+        {
+            let fsr = self.pair_walk_fsr(p).expect("paired operand");
+            for i in 0..sn {
+                self.ins(format!("moviw {i}[FSR{fsr}]"));
+                let m = self.b(i);
+                self.fo("movwf", &m);
+            }
+            if signed && sn < n {
+                let top = self.b(sn - 1);
+                self.ins("movlw 0");
+                self.ins(format!("btfsc {}, 7", top.text()));
+                self.ins("movlw 0xFF");
+            }
+            for i in sn..n {
+                let m = self.b(i);
+                if signed { self.fo("movwf", &m); } else { self.fo("clrf", &m); }
+            }
+            self.ev(&a);
+            if n == 1 {
+                let m = self.a(0);
+                self.fo("movwf", &m);
+            }
+            let name = format!("mul{n}");
+            self.helpers.insert(name.clone());
+            self.call(&format!("__{name}"));
+            if n == 1 {
+                let m = self.a(0);
+                self.fop("movf", &m, "w");
+            }
+            return;
+        }
         let bo = self.operand(&b);
         self.ev(&a);
         if n == 1 {
@@ -1072,6 +1108,18 @@ impl<'p> G<'p> {
             let a0 = self.a(0);
             self.fop("movf", &a0, "w");
         }
+    }
+
+    /// A paired array load, optionally widened once. No arithmetic or calls can clobber B.
+    fn walk_operand<'e>(&self, e: &'e Ex) -> Option<(&'e Place, u32, bool)> {
+        let x = match &e.k {
+            ExK::Conv(x) if x.w <= e.w => x.as_ref(),
+            _ => e,
+        };
+        let ExK::Load(p) = &x.k else { return None };
+        if p.is_bit() || p.bytes() != (x.w / 8) as u32 { return None; }
+        self.pair_walk_fsr(p)?;
+        Some((p, (x.w / 8) as u32, x.signed))
     }
 
     // ---- conditions --------------------------------------------------------------------------

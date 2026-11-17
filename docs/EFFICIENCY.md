@@ -1299,3 +1299,54 @@ In basil-sim, the four large programs plus `param_result`, `overlay` and
 builds with `--keep-vars`. DSP takes 248589 and 269378 cycles respectively in
 those retained-variable builds; the default storage-optimized DSP run takes
 247757 cycles. These timings are whole-program simulator measurements.
+
+## 26. PIC16 paired multiply loads and byte-wise rotations (2026-11-16)
+
+Paired read-only array walks now load the right multiply operand directly into
+`__B`, including signed and unsigned widening, before loading the left into
+`__A`. This avoids the `__A -> temporary -> __B` staging. Both operands must
+be paired-walk element loads, optionally widened once; arbitrary expressions,
+helper calls and ordinary addressing retain the existing path. Byte results
+are returned through WREG as in the ordinary multiply path. `-O0` is unchanged.
+
+The PIC16 peephole also interleaves `t = a + b; a = b; b = t` byte by byte.
+It preserves all three final objects, WREG and flags, using seven instructions
+per byte instead of eight. Two- and four-byte patterns qualify only with
+nonoverlapping compiler-placed storage in a common reachable bank and no
+intervening control flow, bank selections or protected instructions. Physical
+aliases visible to interrupts or address-taking prevent the rewrite, as does
+`--keep-vars`. This conservative form saves four words in the four-byte
+Fibonacci step, rather than the eight words estimated for a form that would
+also require proving final WREG and flags dead.
+
+Default optimized `bench/large`, PIC16F18346:
+
+| Program | Before (words) | After (words) | Flash bytes saved |
+| --- | ---: | ---: | ---: |
+| a_algo | 911 | 907 | 8 |
+| b_dsp | 1514 | 1500 | 28 |
+| c_text | 1003 | 1003 | 0 |
+| d_ctrl | 859 | 859 | 0 |
+| Total | 4287 | 4269 | 36 |
+
+The direct multiply loads remove sixteen staging instructions in FIR; changed
+RAM placement and bank selections reduce the whole-program saving to fourteen
+words. DSP reported RAM remains 164 bytes. All four PIC18 benchmark sizes are
+unchanged. These are compiler assembly/layout measurements, not hardware results.
+
+`mul_walk_rotate.bas` exercises negative multiply operands, signed widening,
+byte-product wraparound and 48 Fibonacci steps crossing 32-bit overflow.
+The rotation unit test covers bank mismatches, physical overlap, interrupt and
+address-taken aliases, retained variables, labels, skips and protected code.
+Backend checks enforce the DSP size and direct operand loading, including
+fallbacks for volatile arrays, calls, descending loops and conditional bodies.
+
+Validation: all 151 library unit tests and all nine focused PIC16 backend checks
+pass. Optimized storage-enabled simulator runs of `a_algo`, `b_dsp`,
+`two_array_walk` and the new fixture match expectations on PIC16F18346 and PIC18;
+the PIC16 unoptimized runs also pass. The final fixture, including byte wrap,
+passes optimized and `-O0` in basil-sim and optimized with storage optimization
+in MPLAB MDB on PIC16F17146 (4537 cycles in both simulators).
+
+The final `cargo test --release` run passes in full, including all 78 backend
+checks, frontend/lexer checks and doc tests. `git diff --check` is clean.

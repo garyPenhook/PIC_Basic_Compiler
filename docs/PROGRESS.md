@@ -1547,3 +1547,16 @@ words and 247853 to 247757 simulator cycles, with RAM unchanged at 164 bytes.
 All 150 library unit tests and nine PIC16 backend checks pass; optimized and
 `-O0` simulator checks match expected results. Details and limits are in
 `EFFICIENCY.md` sections 23–25.
+
+## PIC16 multiply staging and byte-wise rotations (done 2026-11-16, 0.1.259)
+
+Paired array walks load multiply operands directly into A and B, avoiding a
+temporary round trip. A bank- and alias-checked peephole interleaves Fibonacci
+rotation copies byte by byte while preserving the result objects, WREG and flags.
+PIC16F18346 DSP decreases from 1514 to 1500 words and the algorithm benchmark
+from 911 to 907 words: 36 flash bytes saved across the four large benchmarks,
+with PIC18 sizes unchanged. DSP reported RAM remains 164 bytes.
+
+All 151 library unit tests and 78 backend checks pass, as do frontend and lexer
+checks. The new signed-multiply, byte-wrap and Fibonacci-overflow fixture passes
+basil-sim and MPLAB MDB. Details are in `EFFICIENCY.md` section 26.

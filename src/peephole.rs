@@ -5170,6 +5170,62 @@ fn pass_rotate3(items: &mut Vec<Item>, env: &Env) -> bool {
     false
 }
 
+/// Interleave the PIC16 Fibonacci copies byte by byte. Keep the sum in T and
+/// reload it last, preserving the final WREG and flags as well as all three objects.
+fn pass_rotate3_16(items: &mut Vec<Item>, env: &Env) -> bool {
+    if env.keep_writes { return false; }
+    let keep = protected(items);
+    let taken = addr_taken(items, env);
+    let sym = |s: &str, k: usize| if k == 0 { s.to_string() } else { format!("{s}+{k}") };
+    for i in 0..items.len() {
+        if items[..i].iter().rev().find(|it| !matches!(it, Item::Fence | Item::Comment(_)))
+            .is_some_and(|it| matches!(it, Item::Ins(s) if is_skip(s))) { continue; }
+        for w in [4usize, 2] {
+            let at: Vec<usize> = (i..items.len()).filter(|&j| !matches!(items[j], Item::Fence)).take(8 * w).collect();
+            if at.len() != 8 * w || at.iter().any(|&j| keep[j]) { continue; }
+            let get = |n: usize| match &items[at[n]] {
+                Item::Ins(s) => Some(s.as_str()),
+                _ => None,
+            };
+            let Some((m, o)) = get(0).and_then(parse) else { continue };
+            if m != "movf" || o.len() != 2 || o[1] != "w" { continue; }
+            let a = o[0];
+            let Some((m, o)) = get(1).and_then(parse) else { continue };
+            if m != "movwf" || o.len() != 1 { continue; }
+            let t = o[0];
+            let Some((m, o)) = get(2 * w).and_then(parse) else { continue };
+            if m != "movf" || o.len() != 2 || o[1] != "w" { continue; }
+            let b = o[0];
+            // Require whole named objects, disjoint storage, and one bank. No bank
+            // selections, labels, calls, skips or opaque instructions may intervene.
+            let names = [a, b, t];
+            if names.iter().any(|s| split_off(s).is_none_or(|(_, off)| off != 0) || !env.plain.contains_key(*s)) { continue; }
+            let ranges: Vec<_> = names.iter().map(|s| env.plain[*s]).collect();
+            if ranges.iter().any(|&(addr, size)| size < w as u32 || (addr >> 7 != (addr + w as u32 - 1) >> 7)) { continue; }
+            if (0..3).any(|x| (x+1..3).any(|y| ranges[x].0 < ranges[y].0 + w as u32 && ranges[y].0 < ranges[x].0 + w as u32)) { continue; }
+            let bank = ranges.iter().find(|&&(addr, _)| addr & 0x7f < 0x70).map(|&(addr, _)| addr >> 7);
+            if ranges.iter().any(|&(addr, _)| addr & 0x7f < 0x70 && Some(addr >> 7) != bank) { continue; }
+            if env.shared.iter().chain(taken.iter()).any(|s| env.plain.get(s).is_some_and(|&(addr, size)| ranges.iter().any(|&(r, _)| addr < r + w as u32 && r < addr + size))) { continue; }
+            let mut expected = Vec::new();
+            for k in 0..w { expected.extend([format!("movf {}, w", sym(a, k)), format!("movwf {}", sym(t, k))]); }
+            for k in 0..w { expected.extend([format!("movf {}, w", sym(b, k)), format!("{} {}, f", if k == 0 { "addwf" } else { "addwfc" }, sym(t, k))]); }
+            for (s, d) in [(b, a), (t, b)] {
+                for k in 0..w { expected.extend([format!("movf {}, w", sym(s, k)), format!("movwf {}", sym(d, k))]); }
+            }
+            if expected.iter().enumerate().any(|(n, s)| get(n) != Some(s.as_str())) { continue; }
+            let mut out = Vec::new();
+            for k in 0..w {
+                for s in [format!("movf {}, w", sym(a, k)), format!("{} {}, w", if k == 0 { "addwf" } else { "addwfc" }, sym(b, k)), format!("movwf {}", sym(t, k)), format!("movf {}, w", sym(b, k)), format!("movwf {}", sym(a, k)), format!("movf {}, w", sym(t, k)), format!("movwf {}", sym(b, k))] {
+                    out.push(Item::Ins(s));
+                }
+            }
+            items.splice(i..at[8*w-1]+1, out);
+            return true;
+        }
+    }
+    false
+}
+
 /// One array element already copied into a byte of compiler RAM: `arr(idx + add)` is in `holder`.
 struct Held {
     arr: String,
@@ -5973,6 +6029,7 @@ pub fn optimise16(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_copy_prop(&mut items, env);
         changed |= pass_dead_temp_stores(&mut items, env);
         changed |= pass_retarget16(&mut items, env);
+        changed |= pass_rotate3_16(&mut items, env);
         changed |= pass_wreg(&mut items, env);
         changed |= pass_dead_stores(&mut items, env);
         changed |= pass_empty_banks16(&mut items);
@@ -6009,6 +6066,49 @@ mod tests {
 
     fn ins(t: &str) -> Item {
         Item::Ins(t.to_string())
+    }
+
+    #[test]
+    fn pic16_rotate_interleaves_copies_and_rejects_unsafe_storage() {
+        let mut e = env();
+        for (name, addr) in [("A", 0x20), ("B", 0x24), ("T", 0x28)] {
+            e.plain.insert(name.into(), (addr, 4));
+        }
+        let sym = |s: &str, k| if k == 0 { s.to_string() } else { format!("{s}+{k}") };
+        let mut v = Vec::new();
+        for k in 0..4 { v.extend([ins(&format!("movf {}, w", sym("A", k))), ins(&format!("movwf {}", sym("T", k)))]); }
+        for k in 0..4 { v.extend([ins(&format!("movf {}, w", sym("B", k))), ins(&format!("{} {}, f", if k == 0 { "addwf" } else { "addwfc" }, sym("T", k)))]); }
+        for (s, d) in [("B", "A"), ("T", "B")] {
+            v.push(Item::Fence);
+            for k in 0..4 { v.extend([ins(&format!("movf {}, w", sym(s, k))), ins(&format!("movwf {}", sym(d, k)))]); }
+        }
+        let mut out = v.clone();
+        assert!(pass_rotate3_16(&mut out, &e));
+        assert_eq!(out.len(), 28);
+        assert!(matches!(out.last(), Some(Item::Ins(s)) if s == "movwf B+3"));
+        for mode in ["bank", "overlap", "shared_alias", "taken_alias", "kept", "label", "skip", "protected"] {
+            let mut guarded = env();
+            guarded.plain = e.plain.clone();
+            let mut e = guarded;
+            let mut out = v.clone();
+            match mode {
+                "bank" => { e.plain.insert("B".into(), (0xa4, 4)); }
+                "overlap" => { e.plain.insert("T".into(), (0x22, 4)); }
+                "shared_alias" | "taken_alias" => {
+                    e.plain.insert("ALIAS".into(), (0x25, 1));
+                    if mode == "shared_alias" { e.shared.insert("ALIAS".into()); }
+                    else { out.push(ins("movlw low ALIAS")); }
+                }
+                "kept" => e.keep_writes = true,
+                "label" => out.insert(4, Item::Label("entry".into())),
+                "skip" => { out.insert(0, Item::Fence); out.insert(0, ins("btfsc STATUS, 0")); }
+                "protected" => out.insert(0, Item::Keep(true)),
+                _ => unreachable!(),
+            }
+            let before = out.clone();
+            assert!(!pass_rotate3_16(&mut out, &e), "{mode}");
+            assert_eq!(format!("{out:?}"), format!("{before:?}"), "{mode}");
+        }
     }
 
     /// Runs with some other code reading every test variable, so stores to them stay.

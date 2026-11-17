@@ -1097,7 +1097,7 @@ const P16_PORTABLE: &[&str] = &[
     "absminmax", "boundscheck", "boundscheck_hoist", "minmax_once", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_func", "str_func2", "gosub", "call_stmt", "if_gosub", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_pinio_ref", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings", "lib_format", "lib_onewire",
-    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
+    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "mul_walk_rotate", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
 ];
 
 /// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.
@@ -2049,7 +2049,7 @@ fn pic16_word_array_walks_and_dsp_size() {
     let report = String::from_utf8_lossy(&r.stdout);
     let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
     let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-    assert!(words <= 1514, "{report}");
+    assert!(words <= 1500, "{report}");
     assert!(ram <= 164, "{report}");
     let text = std::fs::read_to_string(&asm).unwrap();
     for name in ["K_LOWPASS__Y", "K_U"] {
@@ -2096,6 +2096,7 @@ fn pic16_two_array_walk_guards() {
         assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
         let text = std::fs::read_to_string(asm).unwrap();
         assert_eq!(text.contains("addfsr FSR1, 2"), walking, "{name}");
+        assert_eq!(text.contains("moviw 0[FSR1]\n    movwf __B0"), walking, "direct multiply operand: {name}");
     }
 }
 
