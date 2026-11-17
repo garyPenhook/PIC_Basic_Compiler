@@ -1169,6 +1169,7 @@ impl<'p> G<'p> {
         let name = match (k, e.signed) {
             (BinKind::Mul, _) => format!("mul{n}"),
             (_, false) if self.tgt.opt && n > 1 && b.as_const().is_some_and(|c| (1..=255).contains(&c)) => format!("divk{n}"),
+            (_, false) if self.tgt.opt && n > 2 && b.as_const().is_some_and(|c| (256..=65535).contains(&c)) => format!("divw{n}"),
             (_, false) => format!("udiv{n}"),
             (_, true) => format!("sdiv{n}"),
         };

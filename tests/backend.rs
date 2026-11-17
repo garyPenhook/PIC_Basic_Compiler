@@ -1097,7 +1097,7 @@ const P16_PORTABLE: &[&str] = &[
     "absminmax", "boundscheck", "boundscheck_hoist", "minmax_once", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_func", "str_func2", "gosub", "call_stmt", "if_gosub", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_pinio_ref", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings", "lib_format", "lib_onewire",
-    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "descending_copy", "mul_walk_rotate", "signed_div_pow2", "signed_div_pow2_shared", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
+    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "descending_copy", "mul_walk_rotate", "signed_div_pow2", "signed_div_pow2_shared", "param_result", "divk_word", "divw_long", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
 ];
 
 /// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.
@@ -2214,6 +2214,36 @@ fn pic16_byte_divisor_and_paired_results() {
             assert!(!text.contains("subwfb"), "byte remainder: {text}");
         } else {
             assert_eq!(text.matches(helper).count(), calls, "{name}: {text}");
+        }
+    }
+}
+
+#[test]
+fn pic16_word_divisor_and_paired_results() {
+    let out = scratch("pic16_word_div_pair");
+    for (name, divisor, signed, flags, helper, calls) in [
+        ("paired", 1023, false, vec![], "divw4", 1),
+        ("max", 65535, false, vec![], "divw4", 1),
+        ("byte", 255, false, vec![], "divk4", 1),
+        ("wide", 65537, false, vec![], "udiv4", 1),
+        ("signed", 1023, true, vec![], "sdiv4", 1),
+        ("unoptimized", 1023, false, vec!["-O0"], "udiv4", 2),
+    ] {
+        let ty = if signed { "LongInt" } else { "LongWord" };
+        let source = format!("Program DP\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim value As {ty}\nVolatile Dim q, r As {ty}\nvalue = {ty}(PORTA) * 5000\nr = value Mod {divisor}\nq = value / {divisor}\n");
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, source).unwrap();
+        let result = Command::new(basil()).arg("-S").args(flags).arg(&src).arg("-o").arg(&asm).output().unwrap();
+        assert!(result.status.success(), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        // A helper with a single caller is inlined by the assembly pass.
+        if helper == "divw4" || helper == "divk4" {
+            assert_eq!(text.matches("movlw 32").count(), calls + 1, "{name}: {text}");
+            assert_eq!(text.contains("rlf __C1, f"), helper == "divw4", "{name}: {text}");
+            assert!(!text.contains("rlf __C2, f"), "{name}: {text}");
+        } else {
+            assert!(text.contains("rlf __C3, f"), "{name}: {text}");
         }
     }
 }

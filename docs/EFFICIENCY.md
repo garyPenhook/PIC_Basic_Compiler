@@ -1527,3 +1527,33 @@ decimal conversions now execute 512 divisions instead of 1024.
 Validation: PIC16F18346 simulator runs of `divk_word` (edge values and divisors
 through 255, including the ninth remainder bit) and `display`; backend guards
 for paired expressions, volatile operands, and unoptimized fallback.
+
+
+## 31. PIC16 LongWord division by a word constant (2026-11-17)
+
+Optimized unsigned LongWord division and `Mod` by constants 256–65535 now use
+`__divw4`. The restoring loop keeps the full 32-bit dividend/quotient but shifts,
+compares and subtracts only a 16-bit remainder. Carry holds the seventeenth bit;
+when set, subtraction is required regardless of the low 16-bit comparison.
+The upper remainder bytes are cleared, preserving zero extension for `Mod` and
+for adjacent paired quotient/remainder expressions in either order. Byte
+constants retain `__divk4`; signed, zero, larger and runtime divisors retain
+the existing paths. Unoptimized builds retain full-width division.
+
+Measured with `bench/embedded/run.py --device 16F18346 sensor display`, using
+identical sources and the helper selection disabled for the immediate baseline:
+
+| Workload | Before cycles | After cycles | Reduction | Before/after flash bytes | RAM bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| sensor | 103234 | 93450 | 9.5% | 602 / 586 | 31 |
+| display | 780076 | 770392 | 1.2% | 704 / 688 | 50 |
+
+Both sinks remain correct (167716 and 474523). The display baseline already
+includes paired decimal division from section 30. These savings require no
+assumption that ADC inputs stay within 0–1023.
+
+Validation: backend selection/fallback and paired-result guards; PIC16 simulator
+execution of `divw_long` under optimized and `-O0` builds, covering zero,
+maximum LongWord dividends, deterministic random values, divisors 256, 257,
+1023, 32767, 32768, 32769 and 65535, and both quotient/remainder orders.
+The existing byte-divisor execution fixture also passes.
