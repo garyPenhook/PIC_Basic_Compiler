@@ -112,6 +112,8 @@ pub(crate) struct G<'p> {
     /// A `For` loop walking a Byte or Word array: (array, loop variable, byte offset, stride). While
     /// it is set FSR0 points at that element and `set_fsr(0, ..)` of it emits nothing.
     pub walk: Option<(VarId, VarId, u32, u32)>,
+    /// Read-only array walkers held in FSR0 and FSR1 for a straight-line loop.
+    pub pair_walk: Vec<(VarId, VarId, u32, u32)>,
     /// Scratch bytes in use in the previous round: the size of the registers a handler saves.
     pub isr_scratch: [u32; 4],
     /// Routines each routine calls, as the previous round found out (a `Save` copies the frames of everything its
@@ -176,6 +178,7 @@ impl<'p> G<'p> {
             isr_end: None,
             flash_used: BTreeSet::new(),
             walk: None,
+            pair_walk: Vec::new(),
             isr_scratch,
             reach: reachability(&prev_calls),
             prev_calls,

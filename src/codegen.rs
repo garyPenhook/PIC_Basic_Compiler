@@ -907,7 +907,7 @@ struct Stream {
 
 /// `p` as the element `arr(iv + k)`, Byte, Word or Long: (array, byte offset into it, k, element size). The index is
 /// the loop Byte, or the loop Byte plus or minus a constant (all in 8 bits), widened and doubled once or twice.
-fn stream_elem(p: &Place, iv: VarId) -> Option<(VarId, u32, i32, u32)> {
+pub(crate) fn stream_elem(p: &Place, iv: VarId) -> Option<(VarId, u32, i32, u32)> {
     let (Base::Var(arr), Some(ix)) = (&p.base, &p.idx) else { return None };
     if p.bit.is_some() || p.dbit.is_some() || !matches!(p.width(), 8 | 16 | 32) {
         return None;
@@ -941,7 +941,7 @@ fn stream_elem(p: &Place, iv: VarId) -> Option<(VarId, u32, i32, u32)> {
 /// The elements `arr(iv + k)` of a loop body as (array, offset, k, size, times named), or `None` when the body is not
 /// one a streaming loop can run: statements are plain assignments to variables or to such elements (and counting or
 /// clearing of variables), with no call, no branch and no element in the right-hand side of `AndAlso`/`OrElse`.
-fn stream_scan(body: &[S], iv: VarId) -> Option<(Vec<(VarId, u32, i32, u32, u32)>, bool)> {
+pub(crate) fn stream_scan(body: &[S], iv: VarId) -> Option<(Vec<(VarId, u32, i32, u32, u32)>, bool)> {
     type Found = Vec<(VarId, u32, i32, u32, u32)>;
     // The FSRs and the registers that reach through them belong to the walkers for the length of the loop.
     fn fsr_reg(p: &Place) -> bool {

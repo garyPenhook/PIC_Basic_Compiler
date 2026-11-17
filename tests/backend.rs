@@ -1097,7 +1097,7 @@ const P16_PORTABLE: &[&str] = &[
     "absminmax", "boundscheck", "boundscheck_hoist", "minmax_once", "arith_byte", "arith_integer", "arith_shortint", "arith_word", "arrays", "bit_packed", "byref", "callopt", "countloop", "events", "events_array_cmp", "events_params",
     "flow", "funcs", "inc", "multidim", "mulzero", "overlay", "reentrant", "review", "rmw", "static_local", "strarray", "str_basic", "str_slice", "str_func", "str_func2", "gosub", "call_stmt", "if_gosub", "str_cat_cmp", "str_cat_assign", "structinit_nested", "agg_result", "agg_params", "agg_byval", "str_num", "forward", "str_slice_ref", "structinit", "structs", "structstr", "tablewalk", "overload",
     "arrays_full", "events_isr", "isr_save", "lib_timer", "lib_timer12", "lib_timer_event", "lib_timer_hw", "lib_lcd", "lib_pinio_ref", "lib_shift", "lib_oled", "lib_aht30", "lib_rtcc", "lib_rtccspi", "lib_strings", "lib_format", "lib_onewire",
-    "loop_free_end", "unary_signext", "table_pair", "array_walk", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
+    "loop_free_end", "unary_signext", "table_pair", "array_walk", "two_array_walk", "param_result", "divk_word", "float_basic", "float_chain", "float_compare", "float_muldiv", "float_pow2", "float_nan_order", "float_denormal_cmp", "lib_floatlib", "lib_floatlib_cmp", "lib_floatlib_conv", "lib_floatlib_edge", "float_negate", "p16_inplace_ops", "local_reuse_calls",
 ];
 
 /// A test program of `tests/exec` for an enhanced mid-range part: its own `Device`, `Config` and `Clock`.
@@ -2049,7 +2049,7 @@ fn pic16_word_array_walks_and_dsp_size() {
     let report = String::from_utf8_lossy(&r.stdout);
     let words: u32 = report.split("Program: ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
     let ram: u32 = report.split("total ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-    assert!(words <= 1525, "{report}");
+    assert!(words <= 1517, "{report}");
     assert!(ram <= 164, "{report}");
 }
 
@@ -2068,5 +2068,29 @@ fn local_storage_reuse_accepts_known_callees_on_both_cores() {
             let text = std::fs::read_to_string(asm).unwrap();
             assert_eq!(!data_addrs(&text).contains_key("REUSE_WORK__B"), shared, "{name} {dev}");
         }
+    }
+}
+
+
+#[test]
+fn pic16_two_array_walk_guards() {
+    let out = scratch("pairwalk");
+    let source = "Program W\nDevice = 16F17146\nClock = 32\nConfig FEXTOSC = OFF, RSTOSC = HFINTOSC_32MHz, WDTE = OFF, LVP = ON\nDim a(8), b(8) As Integer\nDim i As Byte\nVolatile Dim sink As LongInt\nNoInline Sub Touch()\nsink = sink + 1\nEnd Sub\nFor i = 0 To 7\nsink = sink + a(i) * b(i)\nNext\n";
+    for (name, text, flags, walking) in [
+        ("plain", source.to_string(), vec![], true),
+        ("unoptimized", source.to_string(), vec!["-O0"], false),
+        ("volatile", source.replace("Dim a(8)", "Volatile Dim a(8)"), vec![], false),
+        ("call", source.replace("sink = sink + a(i)", "Touch()\nsink = sink + a(i)"), vec![], false),
+        ("descending", source.replace("0 To 7", "7 To 0 Step -1"), vec![], false),
+        ("conditional", source.replace("sink = sink + a(i) * b(i)", "If i <> 3 Then\nsink = sink + a(i) * b(i)\nEnd If"), vec![], false),
+        ("write", source.replace("sink = sink + a(i) * b(i)", "a(i) = b(i)"), vec![], false),
+    ] {
+        let src = out.join(format!("{name}.bas"));
+        let asm = src.with_extension("S");
+        std::fs::write(&src, text).unwrap();
+        let r = Command::new(basil()).arg("-S").args(flags).arg(src).arg("-o").arg(&asm).output().unwrap();
+        assert!(r.status.success(), "{name}: {}", String::from_utf8_lossy(&r.stderr));
+        let text = std::fs::read_to_string(asm).unwrap();
+        assert_eq!(text.contains("addfsr FSR1, 2"), walking, "{name}");
     }
 }

@@ -1118,3 +1118,35 @@ bytes unchanged. Baseline, optimized and `-O0` produce result 133 in basil-sim; 
 4343/4341. This is a focused proof case, not a general firmware percentage claim. Unit checks cover transitive
 callees, mixed-page joins, skip metadata, conditional/counting branches, unknown interrupt entry and moving page
 boundaries; backend checks require consistent debug code and retain necessary cross-page selections.
+
+## 22. PIC16 two-array loop walking (2026-11-16)
+
+The enhanced mid-range back end now keeps two read-only array element addresses in FSR0 and FSR1
+for eligible straight-line `For` loops, including `acc = acc + hist(i) * coef(i)` in the FIR benchmark.
+Each pointer stays at the element's low byte throughout the body and advances by its own element size
+at the loop tail. Byte, Word/Integer and LongWord/LongInt elements may have different strides.
+The existing PIC18 streaming optimization already handles this pattern.
+
+The first implementation requires an unsigned Byte induction variable, constant ascending bounds,
+step +1, and exactly two indexed elements, each named once as `arr(i)`. The body may read the induction
+variable separately. Calls, branches, indirect stores, pointer and flash accesses, address-taking,
+explicit FSR accesses, volatile/by-reference arrays and interrupt-visible induction variables retain
+normal addressing. `-O0` is unchanged. The shared PIC18 scanner supplies the access checks.
+
+PIC16F18346 `bench/large/b_dsp` decreases from **1525 to 1517 words** (16 flash bytes saved), with
+reported RAM unchanged at 164 bytes. The four large benchmarks total **4300 to 4292 words**;
+the other three sizes are unchanged. In basil-sim, without `--keep-vars`, the DSP program decreases
+from **251693 to 247853 cycles** (3840 cycles, 1.53%); with `--keep-vars`, 251949 to 248109.
+These are whole-program measurements, not an isolated FIR timing or a hardware measurement.
+
+`tests/exec/two_array_walk.bas` checks signed products, indices crossing 127/128 and linear RAM-bank
+boundaries, an induction-variable read, zero iterations and mixed Byte/LongInt strides. Backend
+checks require the two-pointer path and fallbacks for calls, volatile arrays, descending loops,
+conditional bodies, indirect stores and `-O0`.
+
+Validation: 145 library unit tests, frontend/lexer tests and doc tests pass. The broad backend run
+passed 76 of 77 checks; its sole failure was this new fixture exceeding the PIC16F15244's 512-byte
+RAM. After reducing the fixture's arrays (retaining the boundary cases), that family-build check
+passes on rerun. All nine PIC16 backend checks pass with the final implementation. The four large
+PIC16 benchmarks pass in basil-sim; the fixture passes on PIC16F18346 and PIC16F15244, at `-O0`,
+and on PIC18. MPLAB MDB also passes the final fixture and the DSP benchmark on PIC16F17146.

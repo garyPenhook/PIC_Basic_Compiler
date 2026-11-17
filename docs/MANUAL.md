@@ -185,7 +185,11 @@ recursive access to the caller's locals retain the reference storage scheme. A c
 when both flash and occupied RAM do not grow. `--keep-vars` disables these storage-removal trials so a
 test can inspect otherwise unused variables; `Volatile` is the usual way to keep an observed result.
 On PIC16, eligible Byte and Word array loops can advance an FSR instead of rebuilding an element address
-on every iteration. Doubled unsigned Byte indices retain the ninth offset bit, including indices 128–255.
+on every iteration. Doubled unsigned Byte indices retain the ninth offset bit, including indices 128–255. Two
+read-only arrays can use FSR0 and FSR1 in a straight-line loop with constant ascending bounds and a
+Byte counter stepping by one. Each indexed element must occur once as `arr(i)`; Byte, Word and Long
+elements may use different strides. Calls, branches, indirect writes and volatile arrays keep normal
+addressing.
 
 ### Program pages and constant tables
 

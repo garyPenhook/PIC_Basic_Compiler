@@ -85,6 +85,13 @@ impl<'p> G<'p> {
         self.ev(&e16);
     }
 
+    /// An element of the two-array loop: its pointer stays at the low byte until the loop tail.
+    pub fn pair_walk_fsr(&self, p: &Place) -> Option<usize> {
+        self.pair_walk.iter().position(|&(arr, iv, off, stride)| {
+            crate::codegen::stream_elem(p, iv) == Some((arr, off, 0, stride))
+        })
+    }
+
     /// Points FSR`n` at the first byte of an indirect place. Uses A when the place has a run-time index.
     pub fn set_fsr(&mut self, n: u32, p: &Place) {
         // The element a walking loop is at: FSR0 is there already.
@@ -568,9 +575,12 @@ impl<'p> G<'p> {
             }
             return;
         } else {
-            self.set_fsr(0, p);
+            let fsr = match self.pair_walk_fsr(p) {
+                Some(fsr) => fsr,
+                None => { self.set_fsr(0, p); 0 }
+            };
             for k in 0..pn {
-                self.ins(format!("moviw {k}[FSR0]"));
+                self.ins(format!("moviw {k}[FSR{fsr}]"));
                 if n > 1 {
                     let a = self.a(k);
                     self.fo("movwf", &a);

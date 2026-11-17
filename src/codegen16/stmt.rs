@@ -615,6 +615,34 @@ impl<'p> G<'p> {
         (!a.by_ref && !a.volatile && arr != iv).then_some((arr, iv, off, start, st.stride))
     }
 
+    /// Two read-only streams. Keep pointers stationary during the body so arithmetic can
+    /// read operands in either order; step both at the common loop tail.
+    fn pair_walk_plan(&self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S]) -> Option<Vec<(VarId, VarId, u32, u32)>> {
+        if !self.tgt.opt || self.walk.is_some() || !self.pair_walk.is_empty() || step != 1
+            || var.width() != 8 || var.signed() || var.indirect() || var.off != 0 || var.bit.is_some() || var.dbit.is_some()
+        {
+            return None;
+        }
+        let Base::Var(iv) = var.base else { return None };
+        let v = &self.p.vars[iv];
+        if v.by_ref || v.volatile || v.bytes != 1 || !crate::opt::interrupt_vars(self.p).is_some_and(|s| !s.contains(&iv)) {
+            return None;
+        }
+        let (start, last) = (from.as_const()?, limit.as_const()?);
+        if start > last || last > 255 || body.iter().any(|s| matches!(&s.st, St::Assign(p, _) if p.indirect())) {
+            return None;
+        }
+        let (found, _) = crate::codegen::stream_scan(body, iv)?;
+        if found.len() != 2 { return None; }
+        let mut plan = Vec::new();
+        for (arr, off, k, stride, count) in found {
+            let a = &self.p.vars[arr];
+            if k != 0 || count != 1 || a.by_ref || a.volatile || arr == iv { return None; }
+            plan.push((arr, iv, off, stride));
+        }
+        Some(plan)
+    }
+
     fn for_loop(&mut self, var: &Place, from: &Ex, limit: &Ex, step: i64, body: &[S], free: bool) {
         let (w, sg) = (var.width(), var.signed());
         let load = |p: &Place| Ex::new(ExK::Load(p.clone()), w, sg);
@@ -635,6 +663,14 @@ impl<'p> G<'p> {
         // A Byte or Word array indexed by the loop variable and nothing else through an FSR: FSR0 walks the array, set once
         // here and stepped with `addfsr` at the end of each pass (see `codegen::walk_block` for what the body may hold).
         let walking = self.walk_plan(var, from, step, body);
+        let pair = if walking.is_none() { self.pair_walk_plan(var, from, limit, step, body) } else { None };
+        if let Some(plan) = &pair {
+            for (fsr, &(arr, _, off, stride)) in plan.iter().enumerate() {
+                let first = Place { base: Base::Var(arr), off: off + from.as_const().unwrap() * stride, idx: None, bit: None, dbit: None, ty: crate::types::BYTE };
+                self.set_fsr(fsr as u32, &first);
+            }
+            self.pair_walk = plan.clone();
+        }
         if let Some((arr, iv, off, start, stride)) = walking {
             let first = Place { base: Base::Var(arr), off: off + start * stride, idx: None, bit: None, dbit: None, ty: crate::types::BYTE };
             self.set_fsr(0, &first);
@@ -648,6 +684,12 @@ impl<'p> G<'p> {
         if let Some((_, _, _, _, stride)) = walking {
             self.walk = None;
             self.ins(format!("addfsr FSR0, {stride}"));
+        }
+        if let Some(plan) = pair {
+            self.pair_walk.clear();
+            for (fsr, (_, _, _, stride)) in plan.into_iter().enumerate() {
+                self.ins(format!("addfsr FSR{fsr}, {stride}"));
+            }
         }
         // Nothing reads the variable after the loop: step first, then go round again unless the limit was just left.
         if free && self.tgt.opt && (step == 1 || step == -1)
