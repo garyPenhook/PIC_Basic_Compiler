@@ -45,7 +45,10 @@ examples/
 
 ## Index
 
+For a first PIC16 program, see [Program a Microchip PIC16 in BASIC](../docs/PIC16-BASIC-TUTORIAL.md).
+
 | Processor | Sensor / part | Program | Modules | Shows |
 |---|---|---|---|---|
+| PIC16F18346 | onchip (LED) | [`onchip/blink.bas`](PIC16F18346/onchip/blink.bas) | none | RC0 LED blink with a 500 ms delay and internal 32 MHz oscillator; beginner tutorial |
 | PIC18F25K22 | aht30, ssd1309 | `aht30/aht30_oled_display.bas` (+ `.stim.toml` for basil-sim) | `intosc`, `i2c`, `aht30`, `oled`, `format` | Temperature and humidity once a second on a 128 x 64 OLED, both on the MSSP1 I2C bus; a sensor error shown as its status code |
 | PIC18F27Q10 | onchip (LED) | `onchip/timer_interrupt_blink.bas` | `intosc`, `timer` | Timer0 overflow interrupt toggling an LED, with the flag cleared in the handler |

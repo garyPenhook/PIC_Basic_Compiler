@@ -14,6 +14,9 @@ execution-time benchmarks.
 · [Examples](examples/)
 · [Benchmarks](docs/BENCHMARKS.md)
 
+New to PIC programming? Follow [Program a Microchip PIC16 in BASIC](docs/PIC16-BASIC-TUTORIAL.md)
+to build an LED blink program, with tool setup, wiring and measured flash, RAM and timing.
+
 Pre-built `basil` for Linux, macOS and Windows (with `lib/`, `devices/` and the docs) is on the
 [releases page](https://github.com/garyPenhook/PIC_Basic_Compiler/releases). Unpack it, put the
 folder's `basil` on your `PATH`, and keep your programs inside that folder or pass `-L` and `--devices`.
