@@ -1182,3 +1182,29 @@ The broad backend run completed all 77 checks: 76 passed; its sole failure was
 the initialized-array size check encountered before the scratch alias fix.
 That check passes on a final targeted rerun with the corrected implementation.
 No other backend failures were reported.
+
+Measured on `bench/large/b_dsp.bas` for PIC18F27Q10, comparing parent
+`7ee02d7` with `8cb788b`, both built with `cargo build --release`:
+
+| Default optimized build | Before | After |
+| --- | ---: | ---: |
+| Flash bytes | 2038 | 2030 |
+| Reported RAM bytes | 145 | 145 |
+| basil-sim cycles to halt | 68227 | 68099 |
+
+The assembly diff removes two `movff` instructions in the inlined Lowpass:
+`__A -> K_LOWPASS__RESULT -> K_Y` becomes `__A -> K_Y`. This saves four
+words and four cycles per loop iteration, or 128 cycles over 32 iterations.
+The result at 0x013 shares storage with `K_PID__E`, which PID overwrites
+immediately afterward.
+
+The FIR-to-PID case still retains both result-to-`K_F` copies. In this build,
+`K_FIR__RESULT` occupies 0x015–0x016, sharing with `K_PID__P` (rather than
+`K_PID__D` in the older R1 notes). Indirect sample reads and Lowpass/PID
+control flow intervene before that overwrite, so the straight-line proof
+does not accept it. The measured saving is from Lowpass, not FIR.
+
+Both default builds halt with `K_SINK=4294933580` (`4C 7C FF FF`). Execution
+checks with the rebuilt current compiler also pass with `--keep-vars`
+(68739 cycles) and `-O0 --keep-vars` (144098 cycles). These are simulator
+measurements of the whole program.
