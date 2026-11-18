@@ -67,3 +67,15 @@ fn lexical_errors_are_reported() {
         assert!(d.has_code("E-LEX"), "{why}");
     }
 }
+
+#[test]
+fn c_style_operators_read_as_word_operators() {
+    for (src, kw) in [("a & b", "and"), ("a && b", "and"), ("a | b", "or"), ("a || b", "or"), ("a ^ b", "xor"), ("~a", "not"), ("!a", "not")] {
+        let (t, d) = toks(src);
+        assert!(!d.has_errors(), "{src}");
+        assert!(strip(t).contains(&Tok::Kw(kw)), "{src}");
+    }
+    let (t, d) = toks("a != b");
+    assert!(!d.has_errors());
+    assert!(strip(t).contains(&Tok::Punct("!=")));
+}

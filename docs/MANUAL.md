@@ -863,7 +863,11 @@ Highest precedence first:
   (`#if not _clock = 64` means `not (_clock = 64)`), and there is no `Xor`. See [Preprocessor](#preprocessor).
 * `And`, `Or`, `Xor`, `Not` are **logical** on Booleans and **bitwise** on integers. Mixing a
   Boolean and a number is an error (`E-MIX`). Conditions short-circuit left to right.
-* There is no `\`, `^`, `&`, `|`, `~`, `<<=` or `Dig`/`?`, `@` bit reverse, `Dcd`/`Ncd`.
+* **C-style spellings.** `&` and `&&` read as `And`, `|` and `||` as `Or`, `^` as `Xor`, and `~` and `!` as
+  `Not`, with the same precedence and typing as the words. `&&` is not a separate operator from `&`: on
+  integers both are bitwise, on Booleans both are logical (so `a && b` on two Bytes is `a And b`, not a
+  truth test).
+* There is no `\`, `<<=` or `Dig`/`?`, `@` bit reverse, `Dcd`/`Ncd`.
 * **Evaluation width.** An integer expression is evaluated at the width of its widest operand or its
   target, whichever is larger, and no wider. `B3 = B1 + B2` is an 8-bit add that wraps; `W = B1 * B2`
   is a full 16-bit product (hardware 8 x 8 multiply). A comparison is evaluated at the wider of its
@@ -11032,8 +11036,8 @@ count, basil names the command for the first error that has such an example.
 
 Mistakes carried over from other languages are named with the spelling used here, and the rest
 of the program is still checked: `Select Case x` (write `Select x`), `Next i` (`Next`), `Else If`
-(`ElseIf`), `End While` (`Wend`), `Exit For` (`Break`), `x += 1`, `x++`, `Let x = 1`, `&&`, `||`,
-`!`, `String * 8` (`String(8)`), `High 1` (`High(1)`), `GoTo 10`, `INTCONbits.GIE` (`INTCON.GIE`)
+(`ElseIf`), `End While` (`Wend`), `Exit For` (`Break`), `x += 1`, `x++`, `Let x = 1`,
+`String * 8` (`String(8)`), `High 1` (`High(1)`), `GoTo 10`, `INTCONbits.GIE` (`INTCON.GIE`)
 and `Clock = 64000000` (`Clock = 64`; the value is in MHz). An unclosed block is reported once,
 at the word that shows it, with a note at the line that opened it; a library routine used
 without its `Include` names the module to include.

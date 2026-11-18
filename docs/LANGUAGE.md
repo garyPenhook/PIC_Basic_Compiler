@@ -218,6 +218,9 @@ Highest first. (SF; matches the reference language's table.)
 | 6 | `And` |
 | 7 | `Or`, `Xor` |
 
+`&` `&&` (`And`), `|` `||` (`Or`), `^` (`Xor`) and `~` `!` (`Not`) are accepted as spellings of the word operators, with the same
+precedence and typing (`&&` and `||` are not distinct from `&` and `|`).
+
 `And/Or/Xor/Not` are **logical** on Boolean operands and **bitwise** on integer operands;
 mixing the two is an error (D11). Only `=` and `<>` apply to strings. Avoid `=` on floats.
 
