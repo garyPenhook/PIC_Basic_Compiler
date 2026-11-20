@@ -637,7 +637,11 @@ function check(doc, typing) {
 
 function taskFor(file, mode) {
   const exe = cfg().get('compilerPath') || 'basil';
-  const args = compilerArgs(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : mode === 'debug' ? ['-g'] : []);
+  // Build products go into output/ beside the source, not into the project root.
+  const outDir = path.join(path.dirname(file), proj.OUTPUT_DIR);
+  const outArgs = mode === 'check' ? [] : ['-o', path.join(proj.OUTPUT_DIR, `${path.basename(file, path.extname(file))}.hex`)];
+  if (mode !== 'check') fs.mkdirSync(outDir, { recursive: true });
+  const args = compilerArgs([...(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : mode === 'debug' ? ['-g'] : []), ...outArgs]);
   const exec = new vscode.ShellExecution(exe, [...args, { value: file, quoting: vscode.ShellQuoting.Strong }], { cwd: path.dirname(file) });
   const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : mode === 'debug' ? 'Debug build' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basil');
   t.group = mode === 'build' || mode === 'debug' ? vscode.TaskGroup.Build : undefined;

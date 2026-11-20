@@ -1757,15 +1757,21 @@ pub fn compact_storage(p: &Program, tgt: &crate::codegen::Target) -> Option<Prog
     reuse_locals(&mut q).then_some(q)
 }
 
-fn opaque_ram(p: &Program, tgt: &crate::codegen::Target) -> bool {
+fn opaque_ram(p: &Program, tgt: &crate::codegen::Target) -> bool { opaque_ram_with(p, tgt, true) }
+
+/// `through_ptr` false ignores pointer-parameter accesses: a caller whose variable never has its address taken
+/// (`scan(..).addr`) cannot be reached through one. A named special-function register is never frame RAM.
+fn opaque_ram_with(p: &Program, tgt: &crate::codegen::Target, through_ptr: bool) -> bool {
     // Absolute RAM and indirect-register accesses may observe a local without naming it,
     // including from an interrupt handler while the leaf routine is running.
-    struct Opaque<'a> { found: bool, tgt: &'a crate::codegen::Target }
+    struct Opaque<'a> { found: bool, tgt: &'a crate::codegen::Target, through_ptr: bool }
     impl Visit for Opaque<'_> {
         fn place(&mut self, p: &Place, _: Acc) {
             match &p.base {
-                Base::Ptr(_) => self.found = true,
+                Base::Ptr(_) => self.found |= self.through_ptr,
                 Base::Abs { addr, name } => {
+                    let sfr = !crate::ir::indirect_sfr(name) && p.idx.is_none() && self.tgt.sfr.get(name.as_str()).is_some_and(|a| a == addr);
+                    if !self.through_ptr && sfr { return; }
                     self.found |= p.idx.is_some() || crate::ir::indirect_sfr(name) || (0..p.bytes()).any(|off| {
                         let a = addr.saturating_add(p.off).saturating_add(off);
                         if let Some(mem) = &self.tgt.pic16 {
@@ -1784,7 +1790,7 @@ fn opaque_ram(p: &Program, tgt: &crate::codegen::Target) -> bool {
             if let ExK::Load(pl) | ExK::Addr(pl) = &e.k { self.place(pl, Acc::Read); }
         }
     }
-    let mut opaque = Opaque { found: false, tgt };
+    let mut opaque = Opaque { found: false, tgt, through_ptr };
     w_block(&mut opaque, &p.main.body);
     for f in &p.funcs { w_block(&mut opaque, &f.body); }
     opaque.found

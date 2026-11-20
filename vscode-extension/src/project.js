@@ -158,11 +158,14 @@ function createProject(dir, { name, device, clockHz, tool = 'Simulator', pack })
   const o = { name, device: d, tool, packName: pack?.pack, packVersion: pack?.packVersion };
   fs.writeFileSync(path.join(dir, '.vscode', 'launch.json'), JSON.stringify(launchJson(o), null, 2) + '\n');
   fs.writeFileSync(path.join(dir, '.vscode', 'tasks.json'), JSON.stringify(tasksJson(source), null, 2) + '\n');
-  fs.writeFileSync(path.join(dir, '.gitignore'), 'dist/\ndap.log\n');
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'dist/\noutput/\ndap.log\n');
   return path.join(dir, source);
 }
 
-/** Copies the build products beside `source` into dist/. Returns the files copied. */
+/** Folder, beside the source, that holds every build product (.hex, .elf, .map, .S, ...). */
+const OUTPUT_DIR = 'output';
+
+/** Copies the build products from output/ (or, for an older build, beside `source`) into dist/. Returns the files copied. */
 function collectArtifacts(source) {
   const dir = path.dirname(source);
   const stem = path.basename(source, path.extname(source));
@@ -170,8 +173,8 @@ function collectArtifacts(source) {
   fs.mkdirSync(dist, { recursive: true });
   const copied = [];
   for (const ext of ['hex', 'elf', 'map']) {
-    const from = path.join(dir, `${stem}.${ext}`);
-    if (!fs.existsSync(from)) continue;
+    const from = [path.join(dir, OUTPUT_DIR, `${stem}.${ext}`), path.join(dir, `${stem}.${ext}`)].find((f) => fs.existsSync(f));
+    if (!from) continue;
     fs.copyFileSync(from, path.join(dist, `${stem}.${ext}`));
     copied.push(`${stem}.${ext}`);
   }
@@ -199,4 +202,4 @@ function updateLaunch(dir, opts) {
   fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n');
 }
 
-module.exports = { SETTINGS, FALLBACK_TOOLS, listDevices, mplabDevice, basilDevice, toolName, parseTools, readSettings, writeSettings, launchConfig, launchJson, tasksJson, starterSource, createProject, collectArtifacts, updateLaunch };
+module.exports = { SETTINGS, FALLBACK_TOOLS, listDevices, mplabDevice, basilDevice, toolName, parseTools, readSettings, writeSettings, launchConfig, launchJson, tasksJson, starterSource, createProject, collectArtifacts, OUTPUT_DIR, updateLaunch };

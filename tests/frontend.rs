@@ -191,3 +191,20 @@ fn explain_examples() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// A project `lib/` holding a byte-identical copy of a built-in module must not make that module load twice:
+/// `oled` (found in the built-in folder) includes the built-in `i2c`, the program includes the copy.
+#[test]
+fn identical_module_copy_is_loaded_once() {
+    let dir = std::env::temp_dir().join(format!("basil_dup_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    std::fs::copy(root().join("lib/i2c.bas"), dir.join("lib/i2c.bas")).unwrap();
+    let main = dir.join("main.bas");
+    std::fs::write(&main, "Device = 18F25K22\nClock = 16\nInclude \"i2c\"\nInclude \"oled\"\nDim x As Byte\nx = 1\n").unwrap();
+    let mut diags = Diagnostics::default();
+    let proj = load(&main, &LoadConfig { lib_dirs: vec![dir.join("lib"), root().join("lib")], defines: vec![], devices_dirs: vec![root().join("devices")], optimise: true }, &mut diags);
+    let copies = proj.units.iter().filter(|u| u.path.file_name().is_some_and(|f| f == "i2c.bas")).count();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(copies, 1, "i2c.bas was loaded {copies} times");
+}

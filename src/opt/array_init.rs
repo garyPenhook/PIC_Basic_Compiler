@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) fn candidate(p: &Program, tgt: &crate::codegen::Target) -> Option<Program> {
-    if !p.vars.iter().any(eligible) || p.c_link() || !p.cfiles.is_empty() || opaque_ram(p, tgt)
+    if !p.vars.iter().any(eligible) || p.c_link() || !p.cfiles.is_empty() || opaque_ram_with(p, tgt, false)
         || p.funcs.iter().any(|f| scan(&f.body).asm) || scan(&p.main.body).asm { return None; }
     let mut q = p.clone();
     let mut changed = false;

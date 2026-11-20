@@ -1932,6 +1932,21 @@ fn initialized_arrays_drop_only_redundant_entry_clears() {
     }
 }
 
+/// The array-clear pass is not blocked by a named SFR access or a pointer parameter elsewhere in the program, and a
+/// local whose element address is passed on keeps its clear.
+#[test]
+fn array_clear_guard_ignores_named_sfrs_and_pointer_parameters() {
+    let out = scratch("arrayguard");
+    let asm = out.join("guard.S");
+    let r = Command::new(basil()).args(["-S"]).arg(root().join("tests/exec/array_init_guard.bas")).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(&asm).unwrap();
+    let filled = text.split("T_FILLED:").nth(1).unwrap().split("T_ESCAPED:").next().unwrap();
+    let escaped = text.split("T_ESCAPED:").nth(1).unwrap();
+    assert!(!filled.contains("clrf POSTINC0"), "{filled}");
+    assert!(escaped.contains("clrf T_ESCAPED__BUF"), "{escaped}");
+}
+
 /// Tables in later pages must not force MOVLP when all code remains in the reset page.
 #[test]
 fn pic16_tables_do_not_force_code_page_selections() {

@@ -41,6 +41,7 @@ pub fn load(main: &Path, cfg: &LoadConfig, diags: &mut Diagnostics) -> Project {
     let mut ld = Loader {
         cfg,
         by_path: HashMap::new(),
+        by_text: HashMap::new(),
         loading: HashSet::new(),
         // `#if` in any file sees the main program's `Clock` and `Device`.
         predef: std::fs::read_to_string(main).map(|t| scan_header(&t)).unwrap_or_default(),
@@ -116,6 +117,9 @@ pub fn load_text(name: &str, text: &str, diags: &mut Diagnostics) -> Project {
 struct Loader<'c> {
     cfg: &'c LoadConfig,
     by_path: HashMap<PathBuf, usize>,
+    /// Loaded files by (file name, text): a copy of a module in another folder, such as a project `lib/` that
+    /// duplicates the built-in one, is the same module and is linked once.
+    by_text: HashMap<(std::ffi::OsString, String), usize>,
     loading: HashSet<PathBuf>,
     predef: Predef,
 }
@@ -137,6 +141,11 @@ impl Loader<'_> {
                 return None;
             }
         };
+        let text_key = (path.file_name().unwrap_or_default().to_os_string(), text.clone());
+        if let Some(&i) = self.by_text.get(&text_key) {
+            self.by_path.insert(canon, i);
+            return Some(i);
+        }
         self.loading.insert(canon.clone());
         let file = proj.sources.add(path.display().to_string(), text.clone());
         // `#define` names are scoped to the file: only the command-line names are shared, so the
@@ -205,6 +214,7 @@ impl Loader<'_> {
         let idx = proj.units.len() - 1;
         // Included indices were assigned before this unit was pushed, so they stay valid.
         self.by_path.insert(canon, idx);
+        self.by_text.insert(text_key, idx);
         Some(idx)
     }
 }
