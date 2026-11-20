@@ -7175,6 +7175,14 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     } else {
         items
     };
+    // Repeated instruction runs into shared blocks (not when speed is asked for, and not in a C link, where the
+    // code is relocated). A run that does not end in a call costs one stack level while it runs, in the main chain
+    // and in each interrupt priority, so those are used only when the device has three levels to spare.
+    let items = if tgt.opt && !p.speed && !p.c_link() {
+        crate::outline::outline(items, stack_levels + 3 <= tgt.hw_stack)
+    } else {
+        items
+    };
     // Variables with storage that no instruction mentions any more.
     let mut unreferenced: Vec<String> = Vec::new();
     if tgt.opt {
@@ -7285,6 +7293,9 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     }
     if let Some(&a) = asmd.labels.get("__STR0") {
         starts.push(("(string literals)".into(), a));
+    }
+    if let Some(&a) = asmd.labels.get("__PL0") {
+        starts.push(("(shared code blocks)".into(), a));
     }
     starts.sort_by_key(|s| s.1);
     let mut func_words = Vec::new();

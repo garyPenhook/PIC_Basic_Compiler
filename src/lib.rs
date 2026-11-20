@@ -15,6 +15,7 @@ pub mod listing;
 pub mod lower;
 pub mod opt;
 pub mod parser;
+pub mod outline;
 pub mod peephole;
 pub mod pp;
 pub mod project;

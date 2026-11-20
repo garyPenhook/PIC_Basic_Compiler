@@ -1561,6 +1561,7 @@ places change:
 |---|---|---|---|
 | `Select`, `On n GoTo`, and `If`/`ElseIf` chains of `x = k` tests | a jump table only when it is smaller than the chain of tests | a jump table also when it costs up to one more word per case value; its time is the same for every value | all |
 | Two branches of a routine that end with the same instructions | the shared end is kept once, and one branch jumps to it (2 extra cycles on that path) | both copies are kept | all |
+| The same run of instructions in several places (argument set-up and a call, the same statement written twice) | the run is kept once in a shared block (`__PLn`) and each place calls it, 2 words and 4 cycles per call; a run that ends in a call jumps to the routine instead and needs no `return`. Not in a `-O0` build, with raw `Asm`, in a cycle-counted delay or in a C link | both copies are kept inline | PIC18 |
 | A `Word` divided by a constant | the divide routine (a constant 3 to 255 uses a shorter byte-divisor routine) | a multiply by the reciprocal, inline, no loop. Not in a `-O0` build | PIC18 |
 | A `Word` or `LongWord` divided by a variable | the divide routine runs its full loop | the routine first checks whether both operands fit in half the width and, if so, runs a loop half as long | PIC18 |
 | A `LongWord` divided by a constant 3 to 255 | the short byte-divisor routine | the general divide routine with its half-width fast path | PIC18 |

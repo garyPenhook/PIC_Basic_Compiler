@@ -568,7 +568,7 @@ Ranked by words recovered across these programs and by how many real programs th
 | 3 | **X4, 16F `EepromWrite` / `EepromRead`** | 75 / 40 words against 48 / 31; mostly closed by item 1, so re-measure after it before doing anything module-specific. |
 | 4 | **X2, 16 × 16 → 32 multiply** | 67 words for `__mul4` against 38; the saving is in any program that multiplies two Words into a LongWord, one helper at a time. |
 | 5 | **X7, RAM** | basil is above XC8 on most programs (49 against 36 in r07). Smaller effect on flash, but every program pays it and the small parts have little RAM. |
-| 6 | **X1, outlining repeated sequences** | A new pass, and the generator repeats statements on purpose, so these programs overstate it. Last, and measured on `bench/large` and the library tests first. |
+| 6 | **X1, outlining repeated sequences** (done for the PIC18 in 0.1.262, `src/outline.rs`: runs of 2 to 48 instructions that repeat are moved into `__PLn` blocks; a run ending in a call becomes a jump, so it costs no stack. Measured on a 28-pin plant-watering program with an OLED: 14 302 to 12 432 bytes, XC8 -O1 12 844, -Os 10 916. Not yet on the 16F) | A new pass, and the generator repeats statements on purpose, so these programs overstate it. Last, and measured on `bench/large` and the library tests first. |
 
 The module reviews (`floatlib` onward) found gaps of the item 1 kind; they are all done now (MODULE-REVIEWS).
 
