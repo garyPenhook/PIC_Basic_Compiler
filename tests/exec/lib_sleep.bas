@@ -5,7 +5,8 @@ Device = 18F27Q10
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 Include "system"
-Dim go As Byte
+' `go` is Volatile: the optimiser must not know it holds 1 after the store and drop the untaken call.
+Volatile Dim go As Byte
 Dim sl_a As Byte
 Dim sl_b As Byte
 go = 1

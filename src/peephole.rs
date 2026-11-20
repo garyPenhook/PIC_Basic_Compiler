@@ -51,6 +51,9 @@ pub struct Env {
     pub zero_abs: bool,
     /// `Optimize = Speed`: no rewrite that saves words at the cost of cycles (`pass_tail_merge`).
     pub speed: bool,
+    /// The program is the whole image: the labels entered from outside the item list (reset, interrupt entries).
+    /// `None` when other code (a C link) may call any routine. Lets `pass_entry_bank` follow the bank into routines.
+    pub closed_entries: Option<Vec<String>>,
 }
 
 impl Env {
@@ -341,8 +344,16 @@ fn effect(t: &str) -> Option<Eff> {
             e.flags_w = ALL;
         }
         "bsf" | "bcf" | "btg" if (2..=3).contains(&ops.len()) => {
-            // A bit of STATUS is a flag: be conservative about which one.
+            // A bit of STATUS is a flag. Bit 0 is C (DS40002214G 7.7.7): `bcf STATUS, 0` before a rotate sets the
+            // carry and nothing else (`btg` reads it too). Any other STATUS bit stays unknown.
             if ops[0].eq_ignore_ascii_case("STATUS") {
+                if ops[1].trim() == "0" && ops.get(2).is_none_or(|a| matches!(a.trim(), "c" | "0" | "a")) {
+                    e.flags_w = C;
+                    if mn == "btg" {
+                        e.flags_r = C;
+                    }
+                    return Some(e);
+                }
                 return None;
             }
             modify(&mut e, ops[0]);
@@ -3832,6 +3843,29 @@ fn local_label(l: &str) -> bool {
 /// routine, a label some raw assembly mentions and anything the analysis cannot follow have an
 /// unknown bank. Gives up without a change when the code has a branch it cannot place.
 fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
+    movlb_flow(items, None)
+}
+
+/// [`pass_redundant_movlb_flow`] across routine entries, run once after every pass that can add or move a bank
+/// selection (`pass_bank_prologue` puts one at the start of a routine, which would change what a callee is
+/// entered with). With `outside` (the labels entered from outside the item list: the reset and interrupt entries)
+/// a routine starts with the meet of the banks at the calls and jumps that reach it, so its own `movlb` goes
+/// when every caller has already selected that bank. A routine named anywhere but as the target of a call or
+/// jump (raw assembly, an address taken in an instruction), one placed straight after an `Org`, and one with no
+/// visible entry at all keep an unknown bank at their start.
+fn pass_entry_bank(items: &mut Vec<Item>, env: &Env) -> bool {
+    let Some(outside) = &env.closed_entries else { return false };
+    let mut changed = false;
+    for _ in 0..4 {
+        if !movlb_flow(items, Some(outside)) {
+            break;
+        }
+        changed = true;
+    }
+    changed
+}
+
+fn movlb_flow(items: &mut Vec<Item>, outside: Option<&Vec<String>>) -> bool {
     let n = items.len();
     let keep = protected(items);
     let mut label_at: HashMap<&str, usize> = HashMap::new();
@@ -3869,8 +3903,54 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
     };
     let mut inb = vec![Bank::Top; n + 1];
     let mut exit: HashMap<usize, Bank> = HashMap::new();
+    // Routine labels whose every entry is a call or jump in the item list (`outside` given): any other mention of
+    // the label in an instruction (an address loaded, a computed jump) is a way in nothing here follows.
+    let mut closed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    if let Some(outside) = outside {
+        let mut mentioned: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut entered: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for it in items.iter() {
+            match it {
+                Item::Call(l) | Item::Br(_, l) => {
+                    entered.insert(l.as_str());
+                }
+                Item::Ins(t) => {
+                    let jump = parse(t).filter(|(m, o)| matches!(m.as_str(), "call" | "rcall" | "bra" | "goto") && o.len() == 1).map(|(_, o)| o[0].to_string());
+                    if let Some(j) = &jump {
+                        if let Some((&l, _)) = label_at.get_key_value(j.as_str()) {
+                            entered.insert(l);
+                        }
+                    }
+                    for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                        if jump.as_deref() != Some(tok) && let Some((&l, _)) = label_at.get_key_value(tok) {
+                            mentioned.insert(l);
+                        }
+                    }
+                }
+                Item::SkipBr(_, l) => {
+                    mentioned.insert(l.as_str());
+                }
+                _ => {}
+            }
+        }
+        for (i, it) in items.iter().enumerate() {
+            let Item::Label(l) = it else { continue };
+            let after_org = (0..i).rev().find(|&k| !matches!(items[k], Item::Comment(_) | Item::Fence | Item::Keep(_))).is_some_and(|k| matches!(items[k], Item::Org(_)));
+            if i > 0
+                && !local_label(l)
+                && !user_label(l)
+                && !named.contains(l.as_str())
+                && !mentioned.contains(l.as_str())
+                && entered.contains(l.as_str())
+                && !outside.iter().any(|o| o == l)
+                && !after_org
+            {
+                closed.insert(i);
+            }
+        }
+    }
     for (i, it) in items.iter().enumerate() {
-        if let Item::Label(l) = it && (!local_label(l) || named.contains(l.as_str())) {
+        if let Item::Label(l) = it && (!local_label(l) || named.contains(l.as_str())) && !closed.contains(&i) {
             inb[i] = Bank::Unknown;
         }
     }
@@ -3915,8 +3995,16 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
             };
             match &items[i] {
                 Item::Comment(_) | Item::Fence | Item::Keep(_) | Item::Label(_) | Item::Fit(_) => {}
-                Item::Call(l) => out = callee(l, &exit),
+                Item::Call(l) => {
+                    if let Some(&k) = label_at.get(l.as_str()) && closed.contains(&k) {
+                        edges.push((k, s));
+                    }
+                    out = callee(l, &exit)
+                }
                 Item::Br(cc, l) => {
+                    if let Some(&k) = label_at.get(l.as_str()) && closed.contains(&k) {
+                        edges.push((k, s));
+                    }
                     match label_at.get(l.as_str()) {
                         Some(&k) if local_label(l) => edges.push((k, s)),
                         Some(&k) if routine[i] != usize::MAX => {
@@ -3953,6 +4041,9 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
                             falls = false;
                         }
                         "bra" | "goto" => {
+                            if let Some(&k) = ops.first().and_then(|o| label_at.get(*o)) && closed.contains(&k) {
+                                edges.push((k, s));
+                            }
                             match ops.first().and_then(|o| label_at.get(*o)) {
                                 Some(&k) if local_label(ops[0]) => edges.push((k, s)),
                                 Some(&k) if routine[i] != usize::MAX => {
@@ -3972,7 +4063,12 @@ fn pass_redundant_movlb_flow(items: &mut Vec<Item>) -> bool {
                             }
                             falls = false;
                         }
-                        "call" | "rcall" => out = ops.first().map_or(Bank::Unknown, |o| callee(o, &exit)),
+                        "call" | "rcall" => {
+                            if let Some(&k) = ops.first().and_then(|o| label_at.get(*o)) && closed.contains(&k) {
+                                edges.push((k, s));
+                            }
+                            out = ops.first().map_or(Bank::Unknown, |o| callee(o, &exit))
+                        }
                         "bz" | "bnz" | "bc" | "bnc" | "bn" | "bnn" | "bov" | "bnov" => match ops.first().and_then(|o| label_at.get(*o)) {
                             Some(&k) => edges.push((k, s)),
                             None => return false,
@@ -4117,6 +4213,40 @@ fn flags_overwritten_first(items: &[Item], from: usize) -> bool {
     false
 }
 
+/// Whether Z at item `at` tells whether `WREG` is zero: walking back on the straight run before it, the last
+/// instruction that writes `WREG` or Z writes both, from the value it puts in `WREG` (a load or an ALU operation
+/// with `WREG` as the destination). With [`w_holds`] it means Z tells whether `sym` is zero.
+fn z_from_w(items: &[Item], at: usize) -> bool {
+    let mut j = at;
+    while j > 0 {
+        j -= 1;
+        match &items[j] {
+            Item::Comment(_) | Item::Fence => {}
+            Item::Br(cc, _) if *cc != Cc::Always => {}
+            Item::Ins(t) => {
+                let Some((mn, ops)) = parse(t) else { return false };
+                if j > 0 && matches!(&items[j - 1], Item::Ins(p) if is_skip(p)) {
+                    return false;
+                }
+                let Some(e) = effect(t) else { return false };
+                if !e.writes.contains(&Loc::W) && e.flags_w & Z == 0 {
+                    continue;
+                }
+                let to_w = ops.get(1).is_some_and(|d| matches!(*d, "w" | "0"));
+                return match mn.as_str() {
+                    "andlw" | "iorlw" | "xorlw" | "addlw" | "sublw" => true,
+                    "movf" | "addwf" | "addwfc" | "subwf" | "subwfb" | "subfwb" | "andwf" | "iorwf" | "xorwf" | "comf" | "incf" | "decf" | "rlcf" | "rrcf" | "rlncf" | "rrncf" => {
+                        to_w && !ops.first().is_some_and(|x| x.eq_ignore_ascii_case("WREG"))
+                    }
+                    _ => false,
+                };
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// Whether `WREG` certainly holds `sym` at item `at`, from the instructions just before it (no label, no
 /// call, nothing that writes `WREG` or `sym` in between).
 fn w_holds(items: &[Item], at: usize, sym: &str) -> bool {
@@ -4151,10 +4281,13 @@ fn w_holds(items: &[Item], at: usize, sym: &str) -> bool {
 }
 
 /// A routine with a one-byte `Result` hands it back in `WREG` as well as in its variable, and the code that
-/// called it does not load it again: `rcall F / movf F__RESULT,w` loses the load when the flags it sets are not
-/// used. A `return` that does not already have the value in `WREG` gets a `movf F__RESULT,w` first, so the
-/// change is made only for a routine whose calls save more than its returns cost. (The variable is still
-/// written, and goes when nothing reads it any more.)
+/// called it does not load it again: `rcall F / movf F__RESULT,w` loses the load. A `return` that does not
+/// already have the value in `WREG` gets a `movf F__RESULT,w` first. A load whose Z (and N) the caller goes on to
+/// test can go too when every `return` also leaves Z telling whether the value is zero: `return` changes no
+/// flag (DS40002214G Table 45-1), so the routine's last `movf` (or an ALU operation into `WREG`) sets them as the
+/// load did. A `return` without that gets the `movf` as well. Whichever choice saves the most is made, and only
+/// when the calls save more than the returns cost. (The variable is still written, and goes when nothing reads
+/// it any more.)
 fn pass_w_return(items: &mut Vec<Item>, env: &Env) -> bool {
     let mut changed = false;
     for (rt, sym) in &env.byte_results {
@@ -4199,8 +4332,11 @@ fn pass_w_return(items: &mut Vec<Item>, env: &Env) -> bool {
             continue;
         }
         let missing: Vec<usize> = returns.iter().copied().filter(|&k| !w_holds(items, k, sym)).collect();
-        // The loads after calls that can go.
+        // Returns where W holds the value but Z may not tell about it.
+        let no_z: Vec<usize> = returns.iter().copied().filter(|&k| w_holds(items, k, sym) && !z_from_w(items, k)).collect();
+        // The loads after calls that can go: `loads` whatever follows, `flag_loads` those whose flags are read.
         let mut loads = Vec::new();
+        let mut flag_loads = Vec::new();
         for c in 0..items.len() {
             if !matches!(&items[c], Item::Call(l) if l == rt) || keep[c] {
                 continue;
@@ -4212,14 +4348,26 @@ fn pass_w_return(items: &mut Vec<Item>, env: &Env) -> bool {
             let Some(Item::Ins(t)) = items.get(d) else { continue };
             let Some((m, ops)) = parse(t) else { continue };
             let is_load = m == "movf" && ops.len() == 3 && ops[0] == sym && matches!(ops[1], "w" | "0") && matches!(ops[2], "c" | "0");
-            if is_load && !keep[d] && flags_overwritten_first(items, d + 1) {
-                loads.push(d);
+            if is_load && !keep[d] {
+                if flags_overwritten_first(items, d + 1) {
+                    loads.push(d);
+                } else {
+                    flag_loads.push(d);
+                }
             }
         }
-        if loads.len() <= missing.len() {
+        // Without the flags: drop `loads`, add `missing`. With them: drop both kinds, add `missing` and `no_z`.
+        let plain_gain = loads.len() as i64 - missing.len() as i64;
+        let flag_gain = (loads.len() + flag_loads.len()) as i64 - (missing.len() + no_z.len()) as i64;
+        if plain_gain <= 0 && flag_gain <= 0 {
             continue;
         }
-        let mut edits: Vec<(usize, bool)> = loads.iter().map(|&d| (d, false)).chain(missing.iter().map(|&k| (k, true))).collect();
+        let mut insert_at = missing.clone();
+        if flag_gain > plain_gain {
+            loads.extend(flag_loads);
+            insert_at.extend(no_z);
+        }
+        let mut edits: Vec<(usize, bool)> = loads.iter().map(|&d| (d, false)).chain(insert_at.iter().map(|&k| (k, true))).collect();
         edits.sort_by(|a, b| b.0.cmp(&a.0));
         for (k, insert) in edits {
             if insert {
@@ -6194,6 +6342,8 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
             }
         }
     }
+    // Bank selections at routine entries, once nothing else adds or moves one.
+    pass_entry_bank(&mut items, env);
     // Last of all: the dead-store passes above take `WREG` to be dead at a `return`, so they must not run
     // after this one, which makes the result in `WREG` something callers depend on.
     pass_w_return(&mut items, env);
@@ -6287,7 +6437,7 @@ mod tests {
         plain.insert("X".to_string(), (0x10, 2));
         plain.insert("Y".to_string(), (0x12, 2));
         plain.insert("Z".to_string(), (0x14, 2));
-        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default(), zero_abs: false, speed: false }
+        Env { plain, access: (0x00, 0x60), access_sfr: (0x60, 0x100), keep_writes: false, reg_calls: vec!["REG".into()], byte_results: vec![], shared: Default::default(), zero_abs: false, speed: false, closed_entries: None }
     }
 
     fn ins(t: &str) -> Item {

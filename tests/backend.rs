@@ -1767,8 +1767,9 @@ fn write_only_globals_get_no_ram_and_counted_loops_share_their_variable() {
     let s = asm_of(&d, "wo", wo, &[]);
     assert!(!s.contains("T_A equ"), "{s}");
     assert!(asm_of(&d, "wo_keep", wo, &["--keep-vars"]).contains("T_A equ"));
-    // A loop variable that is read afterwards is its own counter: no hidden byte.
-    let rd = "Dim a, k, r As Byte\nDim q As PORTB\nFor a = 1 To 5\n    k = k + 1\nNext\nq = a + k\n";
+    // A loop variable that is read afterwards is its own counter: no hidden byte. (`a = q` first: with the loop's
+    // final store its only one, `a` would read as that constant afterwards and not be read at all.)
+    let rd = "Dim a, k, r As Byte\nDim q As PORTB\na = q\nFor a = 1 To 5\n    k = k + 1\nNext\nq = a + k\n";
     let s = asm_of(&d, "rd", rd, &[]);
     assert!(!s.contains("__H"), "{s}");
     // The count must not be seen by a handler: a variable an interrupt routine reads keeps a hidden counter.

@@ -509,6 +509,38 @@ fn fold_all(p: &mut Program) {
     }
 }
 
+/// Routines whose frames a `Save` copies: the routines it names and those called inside its block, with everything
+/// they call. The passes that propagate into parameters leave these alone (a saved frame is copied as it stands).
+fn saved_funcs(p: &Program) -> HashSet<FuncId> {
+    struct Saves(HashSet<FuncId>);
+    impl Visit for Saves {
+        fn stmt(&mut self, s: &S) {
+            if let St::Save { items, body, .. } = &s.st {
+                for i in items {
+                    if let SaveIt::Func(f) = i {
+                        self.0.insert(*f);
+                    }
+                }
+                self.0.extend(scan(body).sites.into_keys());
+            }
+        }
+    }
+    let mut sv = Saves(HashSet::new());
+    for b in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut sv, b);
+    }
+    let mut seen = sv.0;
+    let mut todo: Vec<FuncId> = seen.iter().copied().collect();
+    while let Some(f) = todo.pop() {
+        for g in scan(&p.funcs[f].body).sites.into_keys() {
+            if seen.insert(g) {
+                todo.push(g);
+            }
+        }
+    }
+    seen
+}
+
 /// Parameters every caller sets to one constant, and the routine only reads, become constants.
 fn propagate_params(p: &mut Program) -> bool {
     let mut all = Facts::default();
@@ -524,9 +556,10 @@ fn propagate_params(p: &mut Program) -> bool {
     }
     // Entered from outside the call graph the pass sees: handlers, and routines C calls.
     let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).collect();
+    let saved = saved_funcs(p);
     let mut changed = false;
     for fi in 0..p.funcs.len() {
-        if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || all.save_func {
+        if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || saved.contains(&fi) {
             continue;
         }
         let Some(sites) = all.sites.get(&fi) else { continue };
@@ -577,6 +610,94 @@ fn propagate_params(p: &mut Program) -> bool {
     changed
 }
 
+/// A `ByRef` parameter that every call sets to the address of the same global (`Aht30Measure(t, rh)`, or a routine
+/// that passes its own `ByRef` parameter on once that one is settled) names the global directly: the pointer and its
+/// copies go, and accesses through FSR0 become direct ones. Only a global: other passes take a routine's own locals
+/// to change only in that routine or through an address they can see. The rewrite is kept only when nothing in the
+/// routine mentions the parameter afterwards (`drop_dead` then removes the arguments).
+fn propagate_ref_params(p: &mut Program) -> bool {
+    let mut all = Facts::default();
+    let mut per: Vec<Facts> = Vec::new();
+    for f in &p.funcs {
+        per.push(scan(&f.body));
+    }
+    for (_, body) in all_bodies(p) {
+        w_block(&mut all, body);
+    }
+    for f in &per {
+        all.addr.extend(f.addr.iter());
+    }
+    // Handlers, C and raw assembly (`reachable_otherwise`) call routines with arguments this pass does not see.
+    let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).chain(reachable_otherwise(p)).collect();
+    let saved = saved_funcs(p);
+    let mut changed = false;
+    for fi in 0..p.funcs.len() {
+        let func = &p.funcs[fi];
+        if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || saved.contains(&fi) || func.reg || func.ext {
+            continue;
+        }
+        let Some(sites) = all.sites.get(&fi) else { continue };
+        if sites.is_empty() {
+            continue;
+        }
+        for &pv in &p.funcs[fi].params.clone() {
+            let var = &p.vars[pv];
+            // (Stores through the pointer, and its address passed on as `Addr(Ptr(pv))`, are what the rewrite turns
+            // into the global; a store to the pointer itself or its own address is still there afterwards.)
+            if var.kind != VarKind::Param || !var.by_ref || var.volatile || matches!(var.ty, Ty::Str(_)) {
+                continue;
+            }
+            // The one address every call passes.
+            let mut target: Option<Ex> = None;
+            let mut ok = true;
+            for site in sites {
+                let arg = site.iter().find(|(pl, _)| matches!(pl.base, Base::Var(v) if v == pv) && pl.off == 0 && pl.bit.is_none() && pl.idx.is_none());
+                match arg {
+                    Some((_, e @ Ex { k: ExK::Addr(a), .. }))
+                        if a.idx.is_none() && a.bit.is_none() && a.dbit.is_none()
+                            && matches!(a.base, Base::Var(g) if p.vars[g].kind == VarKind::Global && !p.vars[g].by_ref) =>
+                    {
+                        match &target {
+                            None => target = Some(e.clone()),
+                            Some(t) if t == e => {}
+                            _ => ok = false,
+                        }
+                    }
+                    _ => ok = false,
+                }
+                if !ok {
+                    break;
+                }
+            }
+            let Some(target) = target.filter(|_| ok) else { continue };
+            let ExK::Addr(tp) = &target.k else { continue };
+            let (Base::Var(g), base_off) = (tp.base.clone(), tp.off) else { continue };
+            let mut body = p.funcs[fi].body.clone();
+            let retarget = |pl: &mut Place| {
+                if pl.base == Base::Ptr(pv) {
+                    pl.base = Base::Var(g);
+                    pl.off += base_off;
+                }
+            };
+            m_block(&mut body, &mut |e: &mut Ex| match &mut e.k {
+                ExK::Load(pl) if pl.base == Base::Var(pv) && pl.off == 0 && pl.bit.is_none() && pl.idx.is_none() && pl.dbit.is_none() && e.w == target.w => {
+                    *e = target.clone();
+                }
+                ExK::Load(pl) | ExK::Addr(pl) => retarget(pl),
+                _ => {}
+            });
+            stmt_places(&mut body, &mut |pl: &mut Place| retarget(pl), &mut |_| {});
+            let after = scan(&body);
+            if after.read.contains(&pv) || after.written.contains(&pv) || after.addr.contains(&pv) || after.raw.contains(&pv) || after.ptr_stmt.contains(&pv) || after.ptr_written.contains(&pv) {
+                continue;
+            }
+            p.funcs[fi].body = body;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// A `ByRef` string parameter that every caller sets to a string literal (and the routine only
 /// reads) becomes a Word offset into one table of those literals in program memory: no RAM
 /// copies, and the routine reads the text with `TBLRD`.
@@ -602,9 +723,10 @@ fn specialize_literals(p: &mut Program) -> bool {
     }
     // Entered from outside the call graph the pass sees: handlers, and routines C calls.
     let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).chain(p.exports.iter().map(|e| e.func)).collect();
+    let saved = saved_funcs(p);
     let mut changed = false;
     for fi in 0..p.funcs.len() {
-        if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || all.save_func {
+        if isr.contains(&fi) || all.faddr.contains(&fi) || per[fi].asm || saved.contains(&fi) {
             continue;
         }
         let Some(sites) = all.sites.get(&fi) else { continue };
@@ -1325,6 +1447,224 @@ fn global_value_sets(p: &mut Program) -> bool {
     changed
 }
 
+/// A statement that may leave its routine (`Return`, also inside a block).
+fn may_return(s: &S) -> bool {
+    matches!(s.st, St::Return) || sub_blocks_of(&s.st).into_iter().any(|b| b.iter().any(may_return))
+}
+
+/// [`global_value_sets`] after the variable is first set. Start-up gives a global its `init` (or 0), and a module's
+/// own state often keeps it there only until its set-up routine runs: `mode = 1` in `OledInitI2c`, `ready = True` in
+/// `I2cInit`. Code that runs only after that store cannot see the start-up value, so its `If mode = 0 Then Exit`
+/// checks (in every `oled` routine) are decided by the values stores write.
+///
+/// The settling point is the first top-level statement of the main program that stores a constant into the variable,
+/// itself or in a routine it calls (a top-level store of that routine with nothing before it that can return). Code
+/// after it runs later: the main program's later statements, the routine's statements after the store, and every
+/// routine all of whose calls are in such code (not a handler, not one C, raw assembly or an address can reach). In
+/// that code a variable only ever set to one constant reads as that constant, and a comparison that comes out the same
+/// for every stored value is decided. Same limits as `global_value_sets`, and nothing when the main program or the
+/// routine has labels a `Goto` could jump to (statement order would not be the order they run in).
+fn global_values_after_init(p: &mut Program) -> bool {
+    if p.c_link() || !p.cfiles.is_empty() || crate::ir::has_jump_target(&p.main.body) {
+        return false;
+    }
+    let reach = reachable_funcs(p);
+    let other = reachable_otherwise(p);
+    let isr: HashSet<FuncId> = p.isrs.iter().map(|(f, _)| *f).collect();
+    // The values each store writes (the start-up value is not one of them).
+    let mut written: HashMap<VarId, HashSet<u32>> = HashMap::new();
+    for (i, v) in p.vars.iter().enumerate() {
+        let scalar = matches!(v.ty, Ty::Int(8 | 16 | 32, _) | Ty::Bool) && v.bytes * 8 == match v.ty {
+            Ty::Int(w, _) => w as u32,
+            _ => 8,
+        };
+        if v.kind == VarKind::Global && v.owner.is_none() && scalar && !v.volatile && !v.by_ref {
+            written.insert(i, HashSet::new());
+        }
+    }
+    let mut all = Facts::default();
+    let mut lines: Vec<&String> = Vec::new();
+    for b in p.funcs.iter().enumerate().filter(|(i, _)| reach.contains(i)).map(|(_, f)| &f.body).chain(std::iter::once(&p.main.body)) {
+        w_block(&mut all, b);
+        collect_asm(b, &mut lines);
+        value_writes(b, &p.vars, &mut written);
+    }
+    for f in &p.funcs {
+        all.addr.extend(scan(&f.body).addr);
+    }
+    let in_asm: HashSet<&str> = lines.iter().flat_map(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))).collect();
+    written.retain(|v, set| !set.is_empty() && set.len() <= 16 && !all.addr.contains(v) && !in_asm.contains(p.vars[*v].asm.as_str()));
+    // (A `Save` of a routine's frame restores that routine's locals, never a global; a saved global is dropped by
+    // `value_writes`.)
+    if written.is_empty() {
+        return false;
+    }
+    let store_of = |st: &S, v: VarId, vars: &[Var]| match &st.st {
+        St::Assign(pl, e) => whole_var(pl, vars) == Some(v) && e.as_const().is_some() && e.w == pl.width(),
+        St::Clear(pl) => whole_var(pl, vars) == Some(v),
+        _ => false,
+    };
+    let mut changed = false;
+    let mut vars_sorted: Vec<VarId> = written.keys().copied().collect();
+    vars_sorted.sort_unstable();
+    for v in vars_sorted {
+        let set = written[&v].clone();
+        // The settling point: (main statement, and the routine with its store when the store is in one).
+        let mut settle: Option<(usize, Option<(FuncId, usize)>)> = None;
+        for (s, st) in p.main.body.iter().enumerate() {
+            if store_of(st, v, &p.vars) {
+                settle = Some((s, None));
+                break;
+            }
+            // The routines the statement always calls: itself a call, or a call in the value it stores or in the
+            // first condition it tests (not on the right of `AndAlso` / `OrElse`, which may be skipped).
+            fn always(e: &Ex, out: &mut Vec<FuncId>) {
+                match &e.k {
+                    ExK::Call(f, args) => {
+                        for (_, a) in args {
+                            always(a, out);
+                        }
+                        out.push(*f);
+                    }
+                    ExK::AndAlso(a, _) | ExK::OrElse(a, _) => always(a, out),
+                    ExK::Bin(_, a, b) | ExK::Cmp(_, a, b) => {
+                        always(a, out);
+                        always(b, out);
+                    }
+                    ExK::Neg(x) | ExK::Com(x) | ExK::Conv(x) | ExK::NotB(x) | ExK::Abs(x) => always(x, out),
+                    _ => {}
+                }
+            }
+            let mut callees: Vec<FuncId> = Vec::new();
+            match &st.st {
+                St::Call(f, args) => {
+                    for (_, a) in args {
+                        always(a, &mut callees);
+                    }
+                    callees.push(*f);
+                }
+                St::Assign(_, e) => always(e, &mut callees),
+                St::If(arms, _) => {
+                    if let Some((c, _)) = arms.first() {
+                        always(c, &mut callees);
+                    }
+                }
+                St::While(c, _) => always(c, &mut callees),
+                _ => {}
+            }
+            let mut hit: Option<(FuncId, usize)> = None;
+            for &f in &callees {
+                let body = &p.funcs[f].body;
+                if isr.contains(&f) || p.funcs[f].ext || p.funcs[f].reg || crate::ir::has_jump_target(body) {
+                    continue;
+                }
+                if let Some(w) = body.iter().position(|x| store_of(x, v, &p.vars))
+                    && !body[..w].iter().any(may_return)
+                {
+                    hit = Some((f, w));
+                    break;
+                }
+            }
+            if let Some(h) = hit {
+                settle = Some((s, Some(h)));
+                break;
+            }
+        }
+        let Some((s, inner)) = settle else { continue };
+        // Routines whose every call is in code that runs after the settling point: the largest such set.
+        let init_f = inner.map(|x| x.0);
+        let mut late: HashSet<FuncId> = (0..p.funcs.len())
+            .filter(|f| reach.contains(f) && !isr.contains(f) && !other.contains(f) && Some(*f) != init_f && !p.funcs[*f].ext && !p.funcs[*f].reg)
+            .collect();
+        loop {
+            let mut ok: HashSet<FuncId> = late.clone();
+            // Each call site and whether it is in late code.
+            let note = |b: &[S], is_late: bool, ok: &mut HashSet<FuncId>| {
+                let calls = scan(b).sites;
+                if !is_late {
+                    for f in calls.keys() {
+                        ok.remove(f);
+                    }
+                }
+            };
+            for (i, st) in p.main.body.iter().enumerate() {
+                note(std::slice::from_ref(st), i > s, &mut ok);
+            }
+            for f in 0..p.funcs.len() {
+                if !reach.contains(&f) {
+                    continue;
+                }
+                if Some(f) == init_f {
+                    let w = inner.unwrap().1;
+                    for (j, st) in p.funcs[f].body.iter().enumerate() {
+                        note(std::slice::from_ref(st), j > w, &mut ok);
+                    }
+                } else {
+                    let l = late.contains(&f);
+                    note(&p.funcs[f].body, l, &mut ok);
+                }
+            }
+            if ok == late {
+                break;
+            }
+            late = ok;
+        }
+        let vars = p.vars.clone();
+        let single = (set.len() == 1).then(|| *set.iter().next().unwrap());
+        let mut hit = false;
+        let mut decide = |e: &mut Ex| {
+            if let (Some(k), ExK::Load(pl)) = (single, &e.k)
+                && whole_var(pl, &vars) == Some(v)
+                && e.w == pl.width()
+            {
+                *e = Ex::konst(k, e.w, e.signed);
+                hit = true;
+                return;
+            }
+            let ExK::Cmp(op, a, b) = &e.k else { return };
+            let (x, c, op) = match (&a.k, b.as_const()) {
+                (ExK::Load(_), Some(c)) => (a, c, *op),
+                _ => match (&b.k, a.as_const()) {
+                    (ExK::Load(_), Some(c)) => (b, c, op.swap()),
+                    _ => return,
+                },
+            };
+            let ExK::Load(pl) = &x.k else { return };
+            if whole_var(pl, &vars) != Some(v) || x.w != pl.width() || a.w != b.w {
+                return;
+            }
+            let signed = a.signed || b.signed;
+            let mut res = set.iter().map(|&val| {
+                let mut t = Ex::new(ExK::Cmp(op, Box::new(Ex::konst(val, x.w, signed)), Box::new(Ex::konst(c, x.w, signed))), e.w, e.signed);
+                fold(&mut t);
+                t.as_const()
+            });
+            let first = res.next().unwrap();
+            if first.is_some() && res.all(|r| r == first) {
+                *e = Ex::konst(first.unwrap(), e.w, e.signed);
+                hit = true;
+            }
+        };
+        if p.main.body.len() > s + 1 {
+            m_block(&mut p.main.body[s + 1..], &mut decide);
+        }
+        if let Some((f, w)) = inner && p.funcs[f].body.len() > w + 1 {
+            m_block(&mut p.funcs[f].body[w + 1..], &mut decide);
+        }
+        for f in &late {
+            m_block(&mut p.funcs[*f].body, &mut decide);
+        }
+        changed |= hit;
+    }
+    if changed {
+        for (_, body) in all_bodies(p) {
+            m_block(body, &mut fold);
+            prune_const_ifs(body);
+        }
+    }
+    changed
+}
+
 /// An expression with no side effects whose value is not needed once its store is dropped.
 fn pure(e: &Ex) -> bool {
     match &e.k {
@@ -1350,14 +1690,12 @@ fn drop_dead(p: &mut Program) -> bool {
             main_asm |= owner.is_none();
         }
         all.read.extend(f.read);
-        all.save_func |= f.save_func;
     }
-    if all.save_func {
-        return false;
-    }
+    // A `Save` copies the frames of the routines it reaches as they stand: their variables stay.
+    let saved = saved_funcs(p);
     let dead = |vars: &[Var], v: VarId| {
         let var = &vars[v];
-        !var.volatile && matches!(var.kind, VarKind::Local | VarKind::Param | VarKind::Hidden) && var.owner.map_or(!main_asm, |o| !pinned.contains(&o)) && !all.read.contains(&v)
+        !var.volatile && matches!(var.kind, VarKind::Local | VarKind::Param | VarKind::Hidden) && var.owner.map_or(!main_asm, |o| !pinned.contains(&o) && !saved.contains(&o)) && !all.read.contains(&v)
     };
     let vars = p.vars.clone();
     let mut changed = false;
@@ -1665,16 +2003,13 @@ pub fn without_write_only(p: &Program, names: &HashSet<String>) -> Option<Progra
         let f = scan(body);
         all.read.extend(f.read);
         all.addr.extend(f.addr);
-        all.save_func |= f.save_func;
         let mut lines: Vec<&String> = Vec::new();
         collect_asm(body, &mut lines);
         for l in lines {
             in_asm.extend(l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(str::to_string));
         }
     }
-    if all.save_func {
-        return None;
-    }
+    // (Globals only: a `Save` of a routine copies that routine's frame, and a global it lists counts as read.)
     let vars = q.vars.clone();
     let dead = |v: VarId| {
         let var = &vars[v];
@@ -1744,6 +2079,142 @@ pub(crate) fn preserves_page_zero(p: &Program, tgt: &crate::codegen::Target) -> 
 }
 
 mod array_init;
+
+/// A routine called once, as a statement of its caller, that is handed one of the caller's own variables
+/// (`Digits(n)` inside `FmtDec`, `OledGoto(line)` inside `OledTextGoto`) uses that variable as its parameter when the
+/// caller does not read it again: the copy into the parameter goes, and so does the parameter's RAM. Run as a storage
+/// trial after every pass that takes a routine's locals to be named only by that routine (the callee now reads and
+/// writes one of its caller's). Not when the call is inside a loop, which would reach the read again.
+pub fn coalesce_params(p: &Program, _tgt: &crate::codegen::Target) -> Option<Program> {
+    let mut q = p.clone();
+    let mut all = Facts::default();
+    let mut per: Vec<Facts> = Vec::new();
+    for f in &q.funcs {
+        per.push(scan(&f.body));
+    }
+    for (_, body) in all_bodies(&mut q) {
+        w_block(&mut all, body);
+    }
+    for f in &per {
+        all.addr.extend(f.addr.iter());
+    }
+    let saved = saved_funcs(&q);
+    // Entered from outside the calls this pass sees: handlers, C, raw assembly (`reachable_otherwise`), and the
+    // routines a `Save` copies.
+    let outside: HashSet<FuncId> = q.isrs.iter().map(|(f, _)| *f).chain(q.exports.iter().map(|e| e.func)).chain(saved.iter().copied()).chain(reachable_otherwise(&q)).collect();
+    // A variable another routine's parameter has become: renaming it in its own turn would leave that routine
+    // naming a variable nothing sets any more (`Digits` reading `FmtDec`'s `n` after `n` became the caller's `w`).
+    let mut targets: HashSet<VarId> = HashSet::new();
+    let mut changed = false;
+    for g in 0..q.funcs.len() {
+        let gf = &q.funcs[g];
+        if outside.contains(&g) || all.faddr.contains(&g) || per[g].asm || gf.reg || gf.ext {
+            continue;
+        }
+        let Some(sites) = all.sites.get(&g) else { continue };
+        if sites.len() != 1 {
+            continue;
+        }
+        // The one caller and its top-level statement (one without blocks of its own) that makes the call, perhaps
+        // as an argument of another call (`Close(Pad(Digits(n), width, fill))`).
+        struct Find {
+            g: FuncId,
+            args: Option<Vec<(Place, Ex)>>,
+        }
+        impl Visit for Find {
+            fn call(&mut self, f: FuncId, a: &[(Place, Ex)]) {
+                if f == self.g {
+                    self.args = Some(a.to_vec());
+                }
+            }
+        }
+        let mut found: Option<(FuncId, usize, Vec<(Place, Ex)>)> = None;
+        for fi in 0..q.funcs.len() {
+            if fi == g {
+                continue;
+            }
+            for (k, st) in q.funcs[fi].body.iter().enumerate() {
+                if !sub_blocks_of(&st.st).is_empty() {
+                    continue;
+                }
+                let mut fd = Find { g, args: None };
+                w_block(&mut fd, std::slice::from_ref(st));
+                if let Some(a) = fd.args {
+                    found = Some((fi, k, a));
+                }
+            }
+        }
+        let Some((fi, k, args)) = found else { continue };
+        let ff = &q.funcs[fi];
+        if outside.contains(&fi) || per[fi].asm || ff.reg || ff.ext || crate::ir::has_jump_target(&ff.body) {
+            continue;
+        }
+        // Reads of a variable in the calling statement: the argument must be the only one, so nothing in the
+        // statement sees the variable after the callee has changed it.
+        struct Reads(VarId, u32);
+        impl Visit for Reads {
+            fn ex(&mut self, e: &Ex) {
+                if let ExK::Load(pl) | ExK::Addr(pl) = &e.k && matches!(pl.base, Base::Var(v) | Base::Ptr(v) if v == self.0) {
+                    self.1 += 1;
+                }
+            }
+            fn place(&mut self, pl: &Place, a: Acc) {
+                if a != Acc::Write && matches!(pl.base, Base::Var(v) | Base::Ptr(v) if v == self.0) {
+                    self.1 += 1;
+                }
+            }
+        }
+        let after = scan(&ff.body[k + 1..]);
+        let mut renames: Vec<(VarId, VarId)> = Vec::new();
+        for (ai, (pl, e)) in args.iter().enumerate() {
+            let Base::Var(pv) = pl.base else { continue };
+            let ExK::Load(src) = &e.k else { continue };
+            let Base::Var(qv) = src.base else { continue };
+            let (pvar, qvar) = (&q.vars[pv], &q.vars[qv]);
+            let whole = |x: &Place, n: u32| x.off == 0 && x.bit.is_none() && x.idx.is_none() && x.dbit.is_none() && x.bytes() == n;
+            let _ = ai;
+            let mut rd = Reads(qv, 0);
+            w_block(&mut rd, std::slice::from_ref(&ff.body[k]));
+            let other_args_read = rd.1 != 1;
+            if pvar.kind != VarKind::Param || pvar.owner != Some(g) || pvar.by_ref || pvar.volatile || all.addr.contains(&pv) || q.funcs[g].result == Some(pv)
+                || !matches!(qvar.kind, VarKind::Param | VarKind::Local) || qvar.owner != Some(fi) || qvar.by_ref || qvar.volatile || all.addr.contains(&qv) || ff.result == Some(qv)
+                || pvar.ty != qvar.ty || pvar.bytes != qvar.bytes || !whole(pl, pvar.bytes) || !whole(src, qvar.bytes) || e.w as u32 != qvar.bytes * 8
+                || after.read.contains(&qv) || after.written.contains(&qv) || other_args_read || renames.iter().any(|r| r.1 == qv)
+                || targets.contains(&pv)
+            {
+                continue;
+            }
+            renames.push((pv, qv));
+        }
+        if renames.is_empty() {
+            continue;
+        }
+        targets.extend(renames.iter().map(|r| r.1));
+        for &(pv, qv) in &renames {
+            let ren = |pl: &mut Place| {
+                if pl.base == Base::Var(pv) {
+                    pl.base = Base::Var(qv);
+                }
+            };
+            m_block(&mut q.funcs[g].body, &mut |e: &mut Ex| {
+                if let ExK::Load(pl) | ExK::Addr(pl) = &mut e.k {
+                    ren(pl);
+                }
+            });
+            stmt_places(&mut q.funcs[g].body, &mut |pl: &mut Place| ren(pl), &mut |_| {});
+            q.funcs[g].params.retain(|&x| x != pv);
+        }
+        each_call(&mut q.funcs[fi].body[k..k + 1], &mut |f: &mut FuncId, a: &mut Vec<(Place, Ex)>| {
+            if *f == g {
+                a.retain(|(pl, _)| !renames.iter().any(|r| pl.base == Base::Var(r.0)));
+            }
+        });
+        // Statements of the callee were rescanned per routine above; recompute before the next routine.
+        per[g] = scan(&q.funcs[g].body);
+        changed = true;
+    }
+    changed.then_some(q)
+}
 
 /// A size-checked candidate without redundant entry clears of private local arrays.
 pub fn without_array_clears(p: &Program, tgt: &crate::codegen::Target) -> Option<Program> {
@@ -2669,6 +3140,8 @@ fn site_key(args: &[(Place, Ex)], spec: &[(VarId, u32)], mask: u32) -> Vec<(usiz
 struct SpecCtx {
     all: Facts,
     other: HashSet<FuncId>,
+    /// Routines a `Save` copies the frame of (`saved_funcs`): not copied.
+    saved: HashSet<FuncId>,
 }
 
 fn spec_ctx(p: &Program) -> SpecCtx {
@@ -2676,7 +3149,7 @@ fn spec_ctx(p: &Program) -> SpecCtx {
     for body in p.funcs.iter().map(|f| &f.body).chain(std::iter::once(&p.main.body)) {
         w_block(&mut all, body);
     }
-    SpecCtx { all, other: reachable_otherwise(p) }
+    SpecCtx { all, other: reachable_otherwise(p), saved: saved_funcs(p) }
 }
 
 /// Gives every group of calls of `f` that pass the same constants their own copy of `f`, so that
@@ -2689,7 +3162,7 @@ fn specialize_func(p: &mut Program, f: FuncId, mask: u32, tried: Option<&mut Has
     let mut shape = Shape::default();
     w_block(&mut shape, &p.funcs[f].body);
     let func = &p.funcs[f];
-    if func.reg || func.ext || func.no_inline || fa.asm || fa.save_func || all.save_func || shape.save || p.isrs.iter().any(|(i, _)| *i == f) || ctx.other.contains(&f) {
+    if func.reg || func.ext || func.no_inline || fa.asm || fa.save_func || ctx.saved.contains(&f) || shape.save || p.isrs.iter().any(|(i, _)| *i == f) || ctx.other.contains(&f) {
         return false;
     }
     // Parameters whose value a copy can fix: read-only ByVal scalars.
@@ -3053,10 +3526,12 @@ fn optimize_core(p: &mut Program) {
         let mut changed = range_checks(p);
         changed |= propagate_params(p);
         changed |= specialize_literals(p);
+        changed |= propagate_ref_params(p);
         fold_all(p);
         changed |= const_result_calls(p);
         changed |= propagate_locals(p);
         changed |= global_value_sets(p);
+        changed |= global_values_after_init(p);
         changed |= drop_dead(p);
         if !changed {
             break;

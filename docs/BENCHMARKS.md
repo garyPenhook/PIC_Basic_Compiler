@@ -1,5 +1,10 @@
 # Benchmarks
 
+**Read this first.** Every program in `bench/` was written in this repository, and the code generator was then
+tuned against those same programs, so the tables below show where that tuning works. They do not predict the size of
+other firmware. A real ported application measured very differently: see
+[A real application versus XC8](#a-real-application-versus-xc8-2026-11-20) at the end.
+
 For common small-PIC application workloads, use the separate
 [embedded benchmark suite](../bench/embedded/README.md): ADC threshold control,
 debounced inputs and cooperative timers, UART command frames, and LCD decimal
@@ -448,3 +453,34 @@ With that already-failing timer fixture excluded, all 120 remaining PIC16 execut
 optimized and `-O0` builds. The new Word-array and call-storage fixtures also pass with storage trials enabled.
 The manual's optimisation section and its regenerated PDF cover both reset-page elimination and guarded
 multipage tracking, including assembly/alias fallbacks and inspection commands.
+
+## A real application versus XC8 (2026-11-20)
+
+A plant-watering controller ported from an Arduino sketch (not written in this repository, not used to tune the
+compiler): PIC18F27Q10 at 16 MHz, SSD1309 OLED and AHT30 on MSSP1 I2C, rotary encoder on interrupt-on-change,
+ADC soil sensor, EEPROM settings, Timer0 milliseconds with `Save(0, Timer0Service)` in the handler, a 1 KB frame
+buffer. A hand-written XC8 C port of the same program sits beside it. XC8 v4.00 with PIC18F-Q_DFP 1.31.492; flash
+from the XC8 memory summary and basil's word count times two. The C port was last edited before the final BASIC
+edit, so the two may not do exactly the same work.
+
+| Build | Flash | RAM |
+| --- | ---: | ---: |
+| basil 0.1.263 | 9026 B | 1225 B |
+| basil 0.1.264 | 8120 B | 1225 B |
+| XC8 `-Os` | 10916 B | 1217 B |
+| XC8 `-O2` | 12852 B | 1217 B |
+
+Most of the 0.1.264 saving (758 of 906 bytes) came from one cause the benchmark programs never exercise: any
+`Save(…, Routine)` in an interrupt handler switched off constant-argument propagation, dead-store removal and the
+other parameter passes for the whole program. They now leave only the routines a `Save` copies alone. The rest:
+Access Bank placement by uses per byte (an 84-byte string-literal image no longer takes it from the hot scalars),
+the cheapest split of the start-up clear, entry bank selections every caller has already made, byte results whose
+reload goes even when its flags are tested, `ByRef` parameters that always receive the same global, a called-once
+helper's parameter sharing its caller's dead variable, module state settled by its set-up routine (`If mode = 0
+Then Exit` in every `oled` routine), and the carry clear before a rotate no longer stopping copy forwarding.
+
+The `examples/PIC18F25K22/aht30` program went from 2556 to 2292 bytes (no C port). Across the 46 programs of the
+size check (this application, the examples, `bench/large`, `bench/embedded`, `bench/modules` and the PIC18 library
+tests) the total fell 3.3%, almost all of it in the two real programs; the repository's own benchmarks moved by
+0–2% each. Both real programs give the same readings, display and I2C traffic in basil-sim as before.
+

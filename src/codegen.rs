@@ -345,7 +345,13 @@ pub fn plan_layout(objs: &[Obj], tgt: &Target, indep: &[Vec<bool>]) -> Result<La
         }
     }
     let mut order: Vec<usize> = (0..objs.len()).filter(|&i| !objs[i].force_access && objs[i].bytes > 0).collect();
-    order.sort_by(|&x, &y| objs[y].weight.cmp(&objs[x].weight).then(x.cmp(&y)));
+    // Densest first: uses per byte, so a large object (the string-literal image, a buffer) used a few times does
+    // not take the Access Bank from many small, often used variables (cross-multiplied, no division).
+    order.sort_by(|&x, &y| {
+        let dx = objs[x].weight as u128 * objs[y].bytes as u128;
+        let dy = objs[y].weight as u128 * objs[x].bytes as u128;
+        dy.cmp(&dx).then(objs[y].weight.cmp(&objs[x].weight)).then(x.cmp(&y))
+    });
     let mut banks: Vec<Region> = tgt.ram.iter().map(|&(lo, hi)| Region { lo, hi, placed: Vec::new() }).collect();
     // Hot objects go into the Access Bank while it has room; the rest are banked. Either way an
     // object may sit on top of a frame that is never live at the same time.
@@ -6807,20 +6813,35 @@ impl<'p> Gen<'p> {
                 _ => blocks.push((s, e)),
             }
         }
-        let mut spans: Vec<(u32, u32)> = Vec::new();
-        for (a, b) in all {
-            if let Some(l) = spans.last_mut() {
-                // Also across bytes nobody owns, when this program is the whole image (no linked C code) and the
-                // span stays inside one block of data RAM: they hold nothing, so they may be zeroed as well.
-                let free_ram = !self.p.c_link() && blocks.iter().any(|&(s, e)| s <= l.0 && b <= e);
-                let inside = own.iter().any(|&(s, e)| s <= l.0 && b <= e) || free_ram;
-                if inside && cost(b - l.0) <= cost(l.1 - l.0) + cost(b - a) {
-                    l.1 = b;
-                    continue;
+        // Runs `i..=j` of `all` may be cleared as one span when the bytes between them are this program's own storage,
+        // or bytes nobody owns when this program is the whole image (no linked C code) and the span stays inside one
+        // block of data RAM: they hold nothing, so they may be zeroed as well.
+        let c_link = self.p.c_link();
+        let joinable = |lo: u32, hi: u32| own.iter().any(|&(s, e)| s <= lo && hi <= e) || (!c_link && blocks.iter().any(|&(s, e)| s <= lo && hi <= e));
+        // The cheapest split into spans (a few `clrf` before a loop are often cheaper folded into it, which a
+        // left-to-right merge of neighbours does not see): best[j] is the cost of clearing the first j runs.
+        let n = all.len();
+        let mut best: Vec<(u32, usize)> = vec![(0, 0); n + 1];
+        for j in 1..=n {
+            best[j] = (u32::MAX, j - 1);
+            for i in (0..j).rev() {
+                if i < j - 1 && !joinable(all[i].0, all[j - 1].1) {
+                    break;
+                }
+                let c = best[i].0.saturating_add(cost(all[j - 1].1 - all[i].0));
+                if c < best[j].0 {
+                    best[j] = (c, i);
                 }
             }
-            spans.push((a, b));
         }
+        let mut spans: Vec<(u32, u32)> = Vec::new();
+        let mut j = n;
+        while j > 0 {
+            let i = best[j].1;
+            spans.push((all[i].0, all[j - 1].1));
+            j = i;
+        }
+        spans.reverse();
         for (a, b) in spans {
             self.zero_range(a, b - a);
         }
@@ -6988,7 +7009,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
     let mut storage = None;
-    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears] {
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears, crate::opt::coalesce_params] {
         if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
             let candidate = generate_base(&q, tgt);
             if candidate.errors.is_empty() && candidate.out.words <= g.out.words
@@ -7147,7 +7168,13 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
             None => plain.keys().cloned().collect(),
         };
-        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect(), shared, zero_abs: p.isrs.is_empty() && !p.c_link(), speed: p.speed })
+        // Entered from outside the item list: reset, the interrupt vectors and handlers. A C link may call anything.
+        let closed_entries = (!p.c_link()).then(|| {
+            let mut v: Vec<String> = ["__reset", "__ISR_H", "__ISR_L", "__v_hi", "__v_lo"].iter().map(|s| s.to_string()).collect();
+            v.extend(p.isrs.iter().map(|(f, _)| p.funcs[*f].asm.clone()));
+            v
+        });
+        crate::peephole::optimise(items, &crate::peephole::Env { plain, access: tgt.access, access_sfr: tgt.access_sfr, keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: p.funcs.iter().filter(|f| !f.reg && !f.ext).filter_map(|f| f.result.filter(|&v| p.vars[v].bytes == 1 && !p.vars[v].volatile && !p.vars[v].by_ref).map(|v| (f.asm.clone(), p.vars[v].asm.clone()))).collect(), shared, zero_abs: p.isrs.is_empty() && !p.c_link(), speed: p.speed, closed_entries })
     } else {
         items
     };
@@ -7291,8 +7318,11 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             starts.push((format!("__{h}"), a));
         }
     }
-    if let Some(&a) = asmd.labels.get("__STR0") {
-        starts.push(("(string literals)".into(), a));
+    // String literals and constant tables (fonts, `Const` arrays, the string-literal image) follow the code:
+    // one entry, so their bytes are not counted in the routine placed just before them.
+    let data_at = std::iter::once("__STR0".to_string()).chain(p.flash.iter().map(|f| f.asm.clone())).filter_map(|l| asmd.labels.get(&l).copied()).min();
+    if let Some(a) = data_at {
+        starts.push(("(string literals and constant tables)".into(), a));
     }
     if let Some(&a) = asmd.labels.get("__PL0") {
         starts.push(("(shared code blocks)".into(), a));

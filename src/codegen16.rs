@@ -538,7 +538,7 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) ->
             Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
             None => plain.keys().cloned().collect(),
         };
-        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![], shared, zero_abs: false, speed: p.speed });
+        let items = crate::peephole::optimise16(items, &crate::peephole::Env { plain, access: (0, 0), access_sfr: (0, 0), keep_writes: tgt.keep_vars, reg_calls: p.funcs.iter().filter(|f| f.reg).map(|f| f.asm.clone()).collect(), byte_results: vec![], shared, zero_abs: false, speed: p.speed, closed_entries: None });
         opt::drop_redundant_movlb(items)
     } else {
         items
@@ -594,6 +594,14 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) ->
         if let Some(&a) = asmd.labels.get(&format!("__{h}")) {
             starts.push((format!("__{h}"), a));
         }
+    }
+    // String literals and constant tables follow the code: one entry, not part of the routine before them.
+    let data_at = std::iter::once("__STR0".to_string()).chain(p.flash.iter().map(|f| f.asm.clone())).filter_map(|l| asmd.labels.get(&l).copied()).min();
+    if let Some(a) = data_at {
+        starts.push(("(string literals and constant tables)".into(), a));
+    }
+    if let Some(&a) = asmd.labels.get("__PL0") {
+        starts.push(("(shared code blocks)".into(), a));
     }
     starts.sort_by_key(|s| s.1);
     let mut func_words = Vec::new();
