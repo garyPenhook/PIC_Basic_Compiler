@@ -1071,6 +1071,29 @@ fn dead_from(items: &[Item], from: usize, depth: u8, mut w: bool, mut needed: u8
     false
 }
 
+/// The branch condition equal to `btfsc`/`btfss` of a STATUS flag bit followed by `bra` (one word instead of two):
+/// `btfsc STATUS, 0` runs the branch when C is set, `btfss` when it is clear. DC (bit 1) has no conditional branch.
+fn status_cc(bit_text: &str, branch_when_set: bool) -> Option<Cc> {
+    let (_, rest) = bit_text.trim().split_once(char::is_whitespace)?;
+    let mut parts = rest.split(',').map(str::trim);
+    if parts.next()? != "STATUS" {
+        return None;
+    }
+    let bit = parts.next()?;
+    let cc = match (bit, branch_when_set) {
+        ("0", true) => Cc::C,
+        ("0", false) => Cc::Nc,
+        ("2", true) => Cc::Z,
+        ("2", false) => Cc::Nz,
+        ("3", true) => Cc::Ov,
+        ("3", false) => Cc::Nov,
+        ("4", true) => Cc::N,
+        ("4", false) => Cc::Nn,
+        _ => return None,
+    };
+    Some(cc)
+}
+
 /// A bit test turned into a Boolean and compared (`movlw 0 ; btfsc R,b ; movlw 1 ; xorlw K ; bnz L`)
 /// becomes the bit-skip branch itself (`btfsc R,b ; bra L`), when nothing reads `WREG` or the flags
 /// on either path.
@@ -1165,8 +1188,12 @@ fn match_bit_branch(items: &[Item], i: usize, keep: &[bool]) -> Option<(usize, V
     if let Some(b) = bank {
         new.push(b);
     }
-    new.push(Item::Ins(format!("{mn} {rest}")));
-    new.push(Item::Br(Cc::Always, target.clone()));
+    if let Some(cc) = status_cc(&bit_text, bit_when_taken) {
+        new.push(Item::Br(cc, target.clone()));
+    } else {
+        new.push(Item::Ins(format!("{mn} {rest}")));
+        new.push(Item::Br(Cc::Always, target.clone()));
+    }
     Some((k + 4 - i, new))
 }
 
@@ -1288,32 +1315,7 @@ fn match_bool_thread(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Opti
     if !dead_paths(items, end, false, Z | N) || !dead_paths(items, target_at + 1, false, Z | N) {
         return None;
     }
-    // Nothing else reads `R` (writes elsewhere do not count): then neither the store nor the value in `WREG`
-    // is needed, provided `WREG` is dead at both destinations.
-    let ident = |t: &str, name: &str| t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| w == name);
-    let used = items.iter().enumerate().any(|(n, it)| {
-        if (i..end).contains(&n) {
-            return false;
-        }
-        match it {
-            Item::Ins(t) => {
-                if matches!(parse(t), Some((m, o)) if m == "movwf" && o.first() == Some(&sym)) {
-                    return false;
-                }
-                ident(t, sym)
-            }
-            Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => ident(t, sym),
-            Item::SkipBr(ins, t) => ident(ins, sym) || ident(t, sym),
-            _ => false,
-        }
-    });
-    let droppable = !env.keep_writes
-        && sym.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).count() == 1
-        && env.is_plain(sym)
-        && !sym.starts_with("__")
-        && !used
-        && dead_paths(items, end, true, 0)
-        && dead_paths(items, target_at + 1, true, 0);
+    let droppable = bool_store_droppable(items, sym, i..end, end, target_at, env);
     let first = |v: u8| -> Vec<Item> {
         if droppable { vec![] } else { vec![Item::Ins(format!("movlw {v}")), store.clone()] }
     };
@@ -1329,6 +1331,136 @@ fn match_bool_thread(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Opti
         new.extend(first(b));
         new.push(Item::Br(Cc::Always, target.clone()));
         new.push(Item::Label(rest));
+    }
+    Some((end - i, new))
+}
+
+/// Whether the store of a Boolean to `sym`, made only to be tested at once, can go with the value in `WREG`: nothing
+/// else reads `sym` (writes elsewhere do not count) and `WREG` is dead at both destinations (the fall-through at
+/// `end` and the label after `target_at`). `own` is the item range of the sequence itself.
+fn bool_store_droppable(items: &[Item], sym: &str, own: std::ops::Range<usize>, end: usize, target_at: usize, env: &Env) -> bool {
+    let ident = |t: &str, name: &str| t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| w == name);
+    let used = items.iter().enumerate().any(|(n, it)| {
+        if own.contains(&n) {
+            return false;
+        }
+        match it {
+            Item::Ins(t) => {
+                if matches!(parse(t), Some((m, o)) if m == "movwf" && o.first() == Some(&sym)) {
+                    return false;
+                }
+                ident(t, sym)
+            }
+            Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => ident(t, sym),
+            Item::SkipBr(ins, t) => ident(ins, sym) || ident(t, sym),
+            _ => false,
+        }
+    });
+    !env.keep_writes
+        && sym.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).count() == 1
+        && env.is_plain(sym)
+        && !sym.starts_with("__")
+        && !used
+        && dead_paths(items, end, true, 0)
+        && dead_paths(items, target_at + 1, true, 0)
+}
+
+/// A flag or bit turned into a Boolean, stored, and tested at once
+/// (`movlw 0 ; btfsc X ; movlw 1 ; movwf R ; movf R, w ; bnz L`) becomes the bit-skip branch itself
+/// (`btfsc X ; bra L`), when nothing else reads `R` and neither `WREG` nor the flags are read on either path.
+fn pass_flag_branch(items: &mut Vec<Item>, env: &Env) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    let mut keep = protected(items);
+    while i < items.len() {
+        if let Some((n, new)) = match_flag_branch(items, i, &keep, env) {
+            items.splice(i..i + n, new);
+            keep = protected(items);
+            changed = true;
+        }
+        i += 1;
+    }
+    changed
+}
+
+fn match_flag_branch(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Option<(usize, Vec<Item>)> {
+    let ins = |k: usize| -> Option<(String, Vec<&str>)> {
+        match items.get(k)? {
+            Item::Ins(t) if !keep[k] => parse(t),
+            _ => None,
+        }
+    };
+    let (m, o) = ins(i)?;
+    if m != "movlw" || o.len() != 1 || parse_lit(o[0]) != Some(0) {
+        return None;
+    }
+    let mut k = i + 1;
+    let mut bank = None;
+    if matches!(ins(k), Some((m, _)) if m == "movlb") {
+        bank = Some(items[k].clone());
+        k += 1;
+    }
+    let (skip, _) = ins(k)?;
+    if skip != "btfsc" && skip != "btfss" {
+        return None;
+    }
+    let Item::Ins(bit_text) = &items[k] else { return None };
+    // The instruction after a skip is flagged protected; look at it directly.
+    let (m, o) = match items.get(k + 1)? {
+        Item::Ins(t) => parse(t)?,
+        _ => return None,
+    };
+    if m != "movlw" || o.len() != 1 || parse_lit(o[0]) != Some(1) {
+        return None;
+    }
+    let (m, o) = ins(k + 2)?;
+    if m != "movwf" || o.is_empty() {
+        return None;
+    }
+    let sym = o[0];
+    // Statement ends and comments may sit between the store and the test.
+    let mut r = k + 3;
+    while matches!(items.get(r), Some(Item::Fence | Item::Comment(_))) {
+        r += 1;
+    }
+    let (m, o) = ins(r)?;
+    if m != "movf" || o.len() < 2 || o[0] != sym || o[1] != "w" {
+        return None;
+    }
+    let mut e = r + 1;
+    if matches!(ins(e), Some((m, o)) if (m == "iorlw" || m == "xorlw") && o.len() == 1 && parse_lit(o[0]) == Some(0)) {
+        e += 1;
+    }
+    let Item::Br(cc, target) = items.get(e)? else { return None };
+    if keep[e] || keep[i] || keep[k] {
+        return None;
+    }
+    let nonzero_taken = match cc {
+        Cc::Nz => true,
+        Cc::Z => false,
+        _ => return None,
+    };
+    let end = e + 1;
+    let target_at = items.iter().position(|x| matches!(x, Item::Label(l) if l == target))?;
+    if !dead_paths(items, end, false, Z | N) || !dead_paths(items, target_at + 1, false, Z | N) {
+        return None;
+    }
+    if !bool_store_droppable(items, sym, i..end, end, target_at, env) {
+        return None;
+    }
+    // W is the bit (btfsc) or its complement (btfss); the branch runs when the bit is `bit_when_taken`.
+    let bit_when_taken = (skip == "btfsc") == nonzero_taken;
+    let mn = if bit_when_taken { "btfsc" } else { "btfss" };
+    let rest = bit_text.trim().split_once(char::is_whitespace)?.1.to_string();
+    let mut new = Vec::new();
+    if let Some(b) = bank {
+        new.push(b);
+    }
+    if let Some(cc) = status_cc(bit_text, bit_when_taken) {
+        new.push(Item::Br(cc, target.clone()));
+    } else {
+        new.push(Item::Ins(format!("{mn} {rest}")));
+        new.push(Item::Br(Cc::Always, target.clone()));
     }
     Some((end - i, new))
 }
@@ -6019,6 +6151,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         changed |= pass_warg(&mut items);
         changed |= pass_bit_branch(&mut items);
         changed |= pass_bool_thread(&mut items, env);
+        changed |= pass_flag_branch(&mut items, env);
         changed |= pass_jump_thread(&mut items);
         changed |= pass_skip_over_branch(&mut items);
         changed |= pass_branch_to_next(&mut items);
@@ -6752,6 +6885,25 @@ mod tests {
         let mut s2 = s.clone();
         s2[8] = ins("addwf X, f, c");
         assert_eq!(run(&s2)[0], "movlw 0");
+    }
+
+    #[test]
+    fn a_flag_stored_as_a_boolean_and_tested_is_one_conditional_branch() {
+        // `IsDigit(c)` in a `While`: the carry made a Boolean, stored to a result nobody else reads, and tested.
+        let tail = vec![Item::Label("T".into()), ins("movlw 6"), ins("movwf POSTINC0, c"), Item::Fence];
+        let mk = |b: &str, br: Cc| {
+            let mut v = vec![ins("movlw 0"), ins(b), ins("movlw 1"), ins("movwf Z, c"), Item::Fence, Item::Fence, ins("movf Z, w, c"), Item::Br(br, "T".into()), ins("movlw 5"), ins("movwf POSTINC0, c")];
+            v.extend(tail.clone());
+            v
+        };
+        // Carry set and non-zero: `bc`; the clear-test and the zero-branch flip it.
+        assert_eq!(&run(&mk("btfsc STATUS, 0, c", Cc::Nz))[..1], ["brC T"]);
+        assert_eq!(&run(&mk("btfsc STATUS, 0, c", Cc::Z))[..1], ["brNc T"]);
+        assert_eq!(&run(&mk("btfss STATUS, 0, c", Cc::Nz))[..1], ["brNc T"]);
+        // A reader of Z elsewhere keeps the Boolean.
+        let mut v = mk("btfsc STATUS, 0, c", Cc::Nz);
+        v.push(ins("movf Z, w, c"));
+        assert_eq!(run(&v)[0], "movlw 0");
     }
 
     /// `btfsc Q ; <A=1 / B=0 Boolean> ; movwf X ; movf X,w ; bz T ; <rest>`: the five lines of the Boolean build.
