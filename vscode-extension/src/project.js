@@ -172,9 +172,12 @@ function collectArtifacts(source) {
   const dist = path.join(dir, 'dist');
   fs.mkdirSync(dist, { recursive: true });
   const copied = [];
+  // Only a build that predates output/ leaves its products beside the source; once output/ holds this program's
+  // .hex, a .elf or .map beside the source is stale and must not be copied.
+  const base = fs.existsSync(path.join(dir, OUTPUT_DIR, `${stem}.hex`)) ? path.join(dir, OUTPUT_DIR) : dir;
   for (const ext of ['hex', 'elf', 'map']) {
-    const from = [path.join(dir, OUTPUT_DIR, `${stem}.${ext}`), path.join(dir, `${stem}.${ext}`)].find((f) => fs.existsSync(f));
-    if (!from) continue;
+    const from = path.join(base, `${stem}.${ext}`);
+    if (!fs.existsSync(from)) continue;
     fs.copyFileSync(from, path.join(dist, `${stem}.${ext}`));
     copied.push(`${stem}.${ext}`);
   }

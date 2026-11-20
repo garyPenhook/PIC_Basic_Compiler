@@ -224,6 +224,11 @@ console.log('ok');
   fs.writeFileSync(path.join(target, 'Blink.hex'), ':00000001FF\n');
   assert.deepStrictEqual(proj.collectArtifacts(src), ['Blink.hex']);
   assert.ok(fs.existsSync(path.join(target, 'dist/Blink.hex')));
+  // A .elf beside the source is stale once output/ holds this program's build.
+  fs.writeFileSync(path.join(target, 'Blink.elf'), 'stale');
+  fs.mkdirSync(path.join(target, 'output'), { recursive: true });
+  fs.writeFileSync(path.join(target, 'output/Blink.hex'), ':00000001FF\n');
+  assert.deepStrictEqual(proj.collectArtifacts(src), ['Blink.hex']);
   fs.rmSync(dir, { recursive: true, force: true });
 }
 console.log('project ok');

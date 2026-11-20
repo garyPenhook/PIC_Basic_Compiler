@@ -370,6 +370,13 @@ fn main() -> ExitCode {
     let stem = hex.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
     let asm_path = if !program.c_link() { hex.with_extension("S") } else { hex.with_file_name(format!("{stem}_basil.S")) };
     let map_path = hex.with_extension("map");
+    // A build into a folder that does not exist yet (`-o output/x.hex`) makes the folder; a check never does.
+    if let Some(parent) = hex.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("basil: cannot make {}: {e}", parent.display());
+            return ExitCode::from(1);
+        }
+    }
     if let Err(e) = std::fs::write(&asm_path, &generated.out.text) {
         eprintln!("basil: cannot write {}: {e}", asm_path.display());
         return ExitCode::from(1);

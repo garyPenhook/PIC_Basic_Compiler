@@ -125,6 +125,35 @@ struct Loader<'c> {
 }
 
 impl Loader<'_> {
+    /// Looks for module file `fname` next to the including file, then in the library folders. The name must match
+    /// the file's case exactly, also on a case-insensitive file system (Windows, macOS), so a program builds the
+    /// same everywhere.
+    fn find_include(&self, dir: &Path, fname: &str) -> Option<PathBuf> {
+        std::iter::once(dir).chain(self.cfg.lib_dirs.iter().map(PathBuf::as_path)).find_map(|d| {
+            let cand = d.join(fname);
+            let exact = || std::fs::read_dir(d).is_ok_and(|rd| rd.flatten().any(|e| e.file_name().to_str() == Some(fname)));
+            (cand.is_file() && exact()).then_some(cand)
+        })
+    }
+
+    /// Whether loaded unit `i`, if it sat in `dir`, would include the very modules it already includes.
+    fn includes_match(&self, proj: &Project, i: usize, dir: &Path) -> bool {
+        let u = &proj.units[i];
+        // The implicit Float module is found beside the file too; an extra include means one was added.
+        if u.includes.len() != u.unit.includes.len() {
+            return false;
+        }
+        let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        u.unit.includes.iter().all(|inc| {
+            let Some(cand) = self.find_include(dir, &format!("{}.bas", inc.name)) else { return false };
+            let cand = canon(&cand);
+            u.includes.iter().any(|&k| {
+                let have = canon(&proj.units[k].path);
+                have == cand || (have.file_name() == cand.file_name() && matches!((std::fs::read_to_string(&have), std::fs::read_to_string(&cand)), (Ok(a), Ok(b)) if a == b))
+            })
+        })
+    }
+
     fn load_file(&mut self, proj: &mut Project, diags: &mut Diagnostics, path: &Path, at: Span) -> Option<usize> {
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if let Some(&i) = self.by_path.get(&canon) {
@@ -143,8 +172,12 @@ impl Loader<'_> {
         };
         let text_key = (path.file_name().unwrap_or_default().to_os_string(), text.clone());
         if let Some(&i) = self.by_text.get(&text_key) {
-            self.by_path.insert(canon, i);
-            return Some(i);
+            // Same text is the same module only if its includes resolve, from this folder, to the same modules.
+            let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            if self.includes_match(proj, i, &dir) {
+                self.by_path.insert(canon, i);
+                return Some(i);
+            }
         }
         self.loading.insert(canon.clone());
         let file = proj.sources.add(path.display().to_string(), text.clone());
@@ -167,18 +200,8 @@ impl Loader<'_> {
             }
         }
         for inc in &unit.includes {
-            let mut found = None;
             let fname = format!("{}.bas", inc.name);
-            for d in std::iter::once(&dir).chain(self.cfg.lib_dirs.iter()) {
-                let cand = d.join(&fname);
-                // The name must match the file's case exactly, also on a case-insensitive file
-                // system (Windows, macOS), so a program builds the same everywhere.
-                let exact = || std::fs::read_dir(d).is_ok_and(|rd| rd.flatten().any(|e| e.file_name().to_str() == Some(fname.as_str())));
-                if cand.is_file() && exact() {
-                    found = Some(cand);
-                    break;
-                }
-            }
+            let found = self.find_include(&dir, &fname);
             match found {
                 None => {
                     let mut names: Vec<String> = std::iter::once(&dir)

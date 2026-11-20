@@ -208,3 +208,23 @@ fn identical_module_copy_is_loaded_once() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(copies, 1, "i2c.bas was loaded {copies} times");
 }
+
+/// Two files with the same name and text whose includes resolve to different modules are not the same module.
+#[test]
+fn same_text_module_with_different_includes_is_loaded_twice() {
+    let dir = std::env::temp_dir().join(format!("basil_dup2_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for d in ["a", "b"] {
+        std::fs::create_dir_all(dir.join(d)).unwrap();
+        std::fs::write(dir.join(d).join("mid.bas"), "Module mid\nInclude \"leaf\"\nEnd Module\n").unwrap();
+    }
+    std::fs::write(dir.join("a/leaf.bas"), "Module leaf\nDim la As Byte\nEnd Module\n").unwrap();
+    std::fs::write(dir.join("b/leaf.bas"), "Module leaf\nDim lb As Byte\nEnd Module\n").unwrap();
+    std::fs::write(dir.join("b/wrap.bas"), "Module wrap\nInclude \"mid\"\nEnd Module\n").unwrap();
+    std::fs::write(dir.join("a/main.bas"), "Device = 18F25K22\nClock = 16\nInclude \"mid\"\nInclude \"wrap\"\n").unwrap();
+    let mut diags = Diagnostics::default();
+    let proj = load(&dir.join("a/main.bas"), &LoadConfig { lib_dirs: vec![dir.join("b"), root().join("lib")], defines: vec![], devices_dirs: vec![root().join("devices")], optimise: true }, &mut diags);
+    let mids = proj.units.iter().filter(|u| u.path.file_name().is_some_and(|f| f == "mid.bas")).count();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(mids, 2, "mid.bas copies with different leaf modules were merged");
+}
