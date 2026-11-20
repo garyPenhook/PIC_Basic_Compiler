@@ -1,8 +1,10 @@
-' expect: LD_R1=1 LD_CON0=160 LD_CON1=66 LD_SSA_OK=1 LD_DSA_OK=1 LD_SSZL=8 LD_DSZL=8 LD_SSZH=0 LD_DONE=0 LD_AGAIN=0 LD_BAD0=0 LD_BAD1=0 LD_BAD2=0 LD_BAD3=0 LD_BAD4=1 LD_LOCK=1 LD_SEL=1 LD_STP=0
-' DMA library on the PIC18F16Q41. Plain MDB does not model the DMA engine (DGO stays set and no byte moves; lib_dma_move.bas runs the DMA model),
-' so the test checks what DmaCopy leaves in channel 2's registers: addresses, sizes of 8, DMAnCON1 = 42h
+' expect: LD_R1=1 LD_CON0=160 LD_CON1=66 LD_SSA_OK=1 LD_DSA_OK=1 LD_SSZL=200 LD_DSZL=200 LD_SSZH=0 LD_DONE=0 LD_AGAIN=0 LD_BAD0=0 LD_BAD1=0 LD_BAD2=0 LD_BAD3=0 LD_BAD4=1 LD_LOCK=1 LD_SEL=1 LD_STP=0
+' DMA library on the PIC18F16Q41. The test checks what DmaCopy leaves in channel 2's registers: addresses, sizes of 200, DMAnCON1 = 42h
 ' (both pointers increment, SFR/GPR source), EN and DGO set (A0h), PRLOCKED set. A second copy on the busy channel
 ' is refused, and a channel outside 1..4, a count of 0 and a count above 4095 are refused.
+' A copy of 200 bytes (about 400 cycles) is still running when the checks and the second call below happen, so the busy channel is
+' refused in basil-sim, which models the engine, and in MDB, which never finishes a transfer. XIP (DMAnCON0 bit 0, set while a byte is
+' between its read and its write) depends on timing, so it is masked.
 ' The simulator does not overlay the registers by DMASELECT, so a second channel cannot be checked.
 ' Data movement is not checked: not yet run on a real part.
 Program Ld
@@ -10,8 +12,8 @@ Device = 18F16Q41
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 Include "dma"
-Dim s(8) As Byte
-Dim d(8) As Byte
+Dim s(200) As Byte
+Dim d(200) As Byte
 Dim r1 As Byte
 Dim con0 As Byte
 Dim con1 As Byte
@@ -31,9 +33,9 @@ Dim lock As Byte
 Dim sel As Byte
 Dim stp As Byte
 Dim a As Word
-r1 = Dma.DmaCopy(2, @s, @d, 8)
+r1 = Dma.DmaCopy(2, @s, @d, 200)
 done = Dma.DmaDone(2)
-con0 = DMAnCON0
+con0 = DMAnCON0 And 254
 con1 = DMAnCON1
 a = @s
 ssa_ok = 0

@@ -1,13 +1,13 @@
-' expect: LDE_R=1 LDE_CON0=160 LDE_CON1=90 LDE_SSAU=0 LDE_SSAH=0 LDE_SSAL=16 LDE_SSZL=4 LDE_DSA_OK=1 LDE_BAD1=0 LDE_BAD2=0 LDE_BAD3=0 LDE_R2=1 LDE_SSAH2=1 LDE_SSAL2=252
-' DmaCopyEeprom on the PIC18F16Q41 (512 bytes of EEPROM; the simulator does not model the engine): DMAnCON1 = 5Ah
-' (SMR = 11, both pointers increment), source offset 16, 4 bytes. A busy channel, an offset past the end, a copy
+' expect: LDE_R=1 LDE_CON0=160 LDE_CON1=90 LDE_SSAU=0 LDE_SSAH=0 LDE_SSAL=16 LDE_SSZL=200 LDE_DSA_OK=1 LDE_BAD1=0 LDE_BAD2=0 LDE_BAD3=0 LDE_R2=1 LDE_SSAH2=1 LDE_SSAL2=252
+' DmaCopyEeprom on the PIC18F16Q41 (512 bytes of EEPROM): DMAnCON1 = 5Ah
+' (SMR = 11, both pointers increment), source offset 16, 200 bytes, so the channel is still busy for the second call (XIP, DMAnCON0 bit 0, is masked as it depends on timing). A busy channel, an offset past the end, a copy
 ' running off the end (508 + 5) and a count of 0 are refused; 508 + 4 is accepted. Data movement: not run on a real part.
 Program Lde
 Device = 18F16Q41
 Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 Include "dma"
-Dim d(8) As Byte
+Dim d(200) As Byte
 Dim r As Byte
 Dim con0 As Byte
 Dim con1 As Byte
@@ -23,8 +23,8 @@ Dim r2 As Byte
 Dim ssah2 As Byte
 Dim ssal2 As Byte
 Dim w As Word
-r = Dma.DmaCopyEeprom(1, 16, @d, 4)
-con0 = DMAnCON0
+r = Dma.DmaCopyEeprom(1, 16, @d, 200)
+con0 = DMAnCON0 And 254
 con1 = DMAnCON1
 ssau = DMAnSSAU
 ssah = DMAnSSAH

@@ -1,5 +1,5 @@
-' expect: LDF_R=1 LDF_CON0=160 LDF_CON1=74 LDF_SSAU=0 LDF_SSA_OK=1 LDF_DSA_OK=1 LDF_SSZL=5 LDF_DSZL=5 LDF_BAD=0 LDF_HI=1 LDF_CON1H=74 LDF_SSAUH=1
-' DmaCopyFlash on the PIC18F16Q41 (the simulator does not model the engine): checks DMAnCON1 = 4Ah (flash source,
+' expect: LDF_R=1 LDF_CON0=160 LDF_CON1=74 LDF_SSAU=0 LDF_SSA_OK=1 LDF_DSA_OK=1 LDF_SSZL=200 LDF_DSZL=200 LDF_BAD=0 LDF_HI=1 LDF_CON1H=74 LDF_SSAUH=1
+' DmaCopyFlash on the PIC18F16Q41 (200 bytes, so the channel is still busy for the second call; XIP, DMAnCON0 bit 0, is masked as it depends on timing): checks DMAnCON1 = 4Ah (flash source,
 ' both pointers increment), the 22-bit source address taken from @table, the destination and the sizes. A second call
 ' on the busy channel is refused. Then a made-up flash address 0x01_2345 checks that bits 23:16 reach DMAnSSAU.
 ' Data movement: not run on a real part.
@@ -9,7 +9,7 @@ Clock = 64
 Config FEXTOSC = OFF, RSTOSC = HFINTOSC_64MHZ, WDTE = OFF, LVP = ON
 Include "dma"
 Const tbl(5) As Byte = (1, 2, 3, 4, 5)
-Dim d(5) As Byte
+Dim d(200) As Byte
 Dim r As Byte
 Dim con0 As Byte
 Dim con1 As Byte
@@ -24,8 +24,8 @@ Dim con1h As Byte
 Dim ssauh As Byte
 Dim a As LongWord
 Dim w As Word
-r = Dma.DmaCopyFlash(1, @tbl, @d, 5)
-con0 = DMAnCON0
+r = Dma.DmaCopyFlash(1, @tbl, @d, 200)
+con0 = DMAnCON0 And 254
 con1 = DMAnCON1
 ssau = DMAnSSAU
 a = @tbl
@@ -40,7 +40,7 @@ If DMAnDSAL = Byte(w) And DMAnDSAH = Byte(w >> 8) Then
 End If
 sszl = DMAnSSZL
 dszl = DMAnDSZL
-bad = Dma.DmaCopyFlash(1, @tbl, @d, 5)
+bad = Dma.DmaCopyFlash(1, @tbl, @d, 200)
 Dma.DmaStop(1)
 hi = Dma.DmaCopyFlash(1, 74565, @d, 5)
 con1h = DMAnCON1
