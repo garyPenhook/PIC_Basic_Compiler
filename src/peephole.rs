@@ -1250,6 +1250,35 @@ fn status_cc(bit_text: &str, branch_when_set: bool) -> Option<Cc> {
     Some(cc)
 }
 
+/// `movff X, Y ; movf Y, w` (3 words) is `movf X, w ; movwf Y` (2): `WREG` and `Y` get the same value, and Z and N come
+/// from the same byte. Only for compiler-placed bytes in the Access Bank (no SFR is read back or read an extra time), and
+/// not for a `movff` that a skip guards or that sits in a kept block.
+fn pass_movff_reload(items: &mut Vec<Item>, env: &Env) -> bool {
+    let keep = protected(items);
+    let mut changed = false;
+    for i in 0..items.len().saturating_sub(1) {
+        if keep[i] || keep[i + 1] {
+            continue;
+        }
+        let (Item::Ins(a), Item::Ins(b)) = (&items[i], &items[i + 1]) else { continue };
+        let Some((m, o)) = parse(a) else { continue };
+        if m != "movff" || o.len() != 2 {
+            continue;
+        }
+        let (x, y) = (o[0].to_string(), o[1].to_string());
+        if !matches!(parse(b), Some((m, o)) if m == "movf" && o.len() == 3 && o[0] == y && o[1] == "w" && o[2] == "c") {
+            continue;
+        }
+        if x == y || !env.is_access(&x) || !env.is_access(&y) || is_indirect(&x) || is_indirect(&y) {
+            continue;
+        }
+        items[i] = Item::Ins(format!("movf {x}, w, c"));
+        items[i + 1] = Item::Ins(format!("movwf {y}, c"));
+        changed = true;
+    }
+    changed
+}
+
 /// `<op into WREG> ; movlw 0 ; btfss STATUS, 2 ; movlw 1`, a non-zero test made a Boolean (`Result = (v And m) <> 0`):
 /// when Z tells whether `WREG` is zero, the skip is taken only with `WREG` already 0, so the `movlw 0` is not needed.
 /// `movlw` changes no flag, so `WREG` and the flags come out the same on both paths.
@@ -6599,6 +6628,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         run_pass!(changed, ver, settled, slot, pass_bool_thread(&mut items, env));
         run_pass!(changed, ver, settled, slot, pass_flag_branch(&mut items, env));
         run_pass!(changed, ver, settled, slot, pass_bool_nonzero(&mut items));
+        run_pass!(changed, ver, settled, slot, pass_movff_reload(&mut items, env));
         run_pass!(changed, ver, settled, slot, pass_jump_thread(&mut items));
         run_pass!(changed, ver, settled, slot, pass_skip_over_branch(&mut items));
         run_pass!(changed, ver, settled, slot, pass_branch_to_next(&mut items));
@@ -7095,6 +7125,15 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_then_its_reload_is_a_load_and_a_store() {
+        let r = run(&[ins("movff X, Y"), ins("movf Y, w, c"), ins("movwf POSTINC0, c"), ins("movf Y, w, c"), ins("movwf POSTINC0, c")]);
+        assert!(!r.iter().any(|t| t.starts_with("movff")), "{r:?}");
+        // A special register is not read back: the store to it stays as written.
+        let r = run(&[ins("movff X, LATB"), ins("movf LATB, w, c"), ins("movwf POSTINC0, c")]);
+        assert!(r.contains(&"movff X, LATB".to_string()), "{r:?}");
+    }
+
+    #[test]
     fn copy_back_after_a_store_goes() {
         let r = run(&[ins("movff __A0, X"), ins("movff __A1, X+1"), ins("movff X, __A0"), ins("movff X+1, __A1"), ins("addwf Y, f, c")]);
         assert_eq!(r.iter().filter(|t| t.starts_with("movff")).count(), 2, "{r:?}");
@@ -7106,7 +7145,8 @@ mod tests {
         let r = run(&[ins("movff __A0, X"), ins("movwf POSTINC0, c"), ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
         assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
         let r = run(&[ins("movff __A0, X"), Item::Br(Cc::Z, "_L9".into()), Item::Label("_L9".into()), ins("movff X, __A0"), ins("movf __A0, w, c"), ins("movwf Y, c")]);
-        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c"), "{r:?}");
+        // `pass_movff_reload` makes the copy back `movf X, w / movwf __A0`; once the branch and label go, `X` is `__A0`.
+        assert!(r.iter().any(|t| t == "movff X, __A0" || t == "movf X, w, c" || t == "movwf __A0, c"), "{r:?}");
     }
 
     #[test]
