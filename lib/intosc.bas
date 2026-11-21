@@ -113,11 +113,11 @@ Private Function IntioPrimary() As Boolean
     Result = (c And 14) = 8
 End Function
 
-' Waits, bounded, for HFIOFS and, with the PLL, PLLRDY.
+' Waits, bounded (59904 polls: the count stops when its high byte reaches 234), for HFIOFS and, with the PLL, PLLRDY.
 Private Sub WaitSettle(ByVal pll As Boolean)
     Dim n As Word
     n = 0
-    While (OSCCON.HFIOFS = 0 Or (pll And OSCCON2.PLLRDY = 0)) And n < 60000
+    While (OSCCON.HFIOFS = 0 Or (pll And OSCCON2.PLLRDY = 0)) And n.Byte1 < 234
         Inc(n)
     Wend
 End Sub
@@ -305,7 +305,7 @@ Const ClockDiv As Byte = 0
 Private Sub WaitSettle()
     Dim n As Word
     n = 0
-    While OSCSTAT.HFOR = 0 And (OSCCON And 16) = 0 And n < 60000
+    While OSCSTAT.HFOR = 0 And (OSCCON And 16) = 0 And n.Byte1 < 234
         Inc(n)
     Wend
 End Sub
@@ -321,7 +321,7 @@ End Function
 Private Sub WaitSettle()
     Dim n As Word
     n = 0
-    While OSCSTAT.HFOR = 0 And OnHf() And n < 60000
+    While OSCSTAT.HFOR = 0 And OnHf() And n.Byte1 < 234
         Inc(n)
     Wend
 End Sub
@@ -334,7 +334,7 @@ Const NoscHf As Byte = 96
 Private Sub WaitSettle()
     Dim n As Word
     n = 0
-    While (OSCCON3.ORDY = 0 Or OSCSTAT.HFOR = 0) And n < 60000
+    While (OSCCON3.ORDY = 0 Or OSCSTAT.HFOR = 0) And n.Byte1 < 234
         Inc(n)
     Wend
 End Sub

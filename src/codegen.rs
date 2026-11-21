@@ -834,6 +834,9 @@ struct Gen<'p> {
     save_max: Vec<u32>,
     /// While generating a handler: the label of its return sequence.
     isr_end: Option<String>,
+    /// While generating a handler that returns with `RETFIE, FAST` on a vectored interrupt controller: FSR0..2,
+    /// PRODL/H and PCLATH/U come back from the hardware shadow set, so no `Save` in it copies them.
+    isr_hw_ctx: bool,
     /// `Save` blocks being generated: loop depth at entry and the code that restores them.
     save_stack: Vec<(usize, Vec<String>)>,
     /// Routines with one Byte parameter, called only by plain calls: the argument travels in WREG.
@@ -1154,6 +1157,7 @@ impl<'p> Gen<'p> {
             hranges: Vec::new(),
             save_max: vec![0; p.n_saves + p.isrs.len()],
             isr_end: None,
+            isr_hw_ctx: false,
             save_stack: Vec::new(),
             warg: Self::warg_set(p, tgt),
             reach: Self::reach_sets(p),
@@ -5388,6 +5392,16 @@ impl<'p> Gen<'p> {
             let in_isr = self.isr_end.is_some();
             let mut callees = BTreeSet::new();
             stmt_calls(body, &mut callees);
+            // A routine named in an `Asm` block is reached as well.
+            let mut lines = Vec::new();
+            crate::opt::collect_asm(body, &mut lines);
+            for l in lines {
+                for tok in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|t| !t.is_empty()) {
+                    if let Some(f) = self.p.funcs.iter().position(|f| f.asm == tok) {
+                        callees.insert(f);
+                    }
+                }
+            }
             let closure = |roots: &BTreeSet<FuncId>| {
                 let mut all: BTreeSet<FuncId> = BTreeSet::new();
                 let mut stack: Vec<FuncId> = roots.iter().copied().collect();
@@ -5405,13 +5419,21 @@ impl<'p> Gen<'p> {
                 }
             }
             let mut regs = Regs::default();
-            if items.contains(&SaveIt::Regs) {
-                let scr = [0, 1, 2, 3].map(|r| layout.size[self.obj_scratch(r)]);
-                regs = Regs::full(scr);
-            } else if in_isr {
+            if in_isr {
+                // The handler's entry code already saves the registers its own code uses (this block's statements
+                // and the helpers they call included), so the block adds those of the routines it reaches, which
+                // is all that `0` could add here too.
                 for f in closure(&callees) {
                     regs.merge(&facts.regs[f]);
                 }
+                if self.isr_hw_ctx {
+                    regs.fsr = 0;
+                    regs.prod = 0;
+                    regs.pclat = false;
+                }
+            } else if items.contains(&SaveIt::Regs) {
+                let scr = [0, 1, 2, 3].map(|r| layout.size[self.obj_scratch(r)]);
+                regs = Regs::full(scr);
             }
             syms.extend(regs.syms());
             // Memory, by address so that overlaid frames are copied once.
@@ -5496,8 +5518,10 @@ impl<'p> Gen<'p> {
         self.emit_ctx(&save);
         let end = format!("__isr_end{j}");
         self.isr_end = Some(end.clone());
+        self.isr_hw_ctx = shadow && self.tgt.hw_context;
         self.block(&func.body);
         self.isr_end = None;
+        self.isr_hw_ctx = false;
         self.label(&end);
         self.emit_ctx(&restore);
         self.ins(if shadow { "retfie f" } else { "retfie" });

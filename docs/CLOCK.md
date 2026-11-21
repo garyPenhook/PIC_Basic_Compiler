@@ -124,7 +124,7 @@ handler (it is not reentrant, and the library timing it would affect is the prog
    order; this one keeps the clock from ever running faster than the faster of the old and the
    new setting.
 3. Waits for `OSCCON3.ORDY = 1` ("the current clock is the one NOSC specifies", [5.6.3]) and
-   `OSCSTAT.HFOR = 1` (HFINTOSC ready, [5.6.4]). Each wait is bounded (60000 polls in all) so a part
+   `OSCSTAT.HFOR = 1` (HFINTOSC ready, [5.6.4]). Each wait is bounded (59904 polls in all) so a part
    that never answers cannot hang the program.
 4. Reads `OSCCON2` and `OSCFRQ` back to compare.
 

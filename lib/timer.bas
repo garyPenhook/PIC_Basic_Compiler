@@ -515,8 +515,9 @@ Public Sub Timer0Ack()
     T0Take()
 End Sub
 
+' Leaves the flag alone: Timer0Start has cleared it, and the hardware may set it again at any moment. To drop an
+' overflow that happened while the interrupt was off, call Timer0Ack first.
 Public Sub Timer0EnableInterrupt()
-    Tmr0If = 0
     Tmr0Ie = 1
 End Sub
 
@@ -740,8 +741,9 @@ Public Sub Timer1Ack()
     Tmr1If = 0
 End Sub
 
+' Leaves the flag alone: Timer1Start has cleared it, and the hardware may set it again at any moment. To drop an
+' overflow that happened while the interrupt was off, call Timer1Ack first.
 Public Sub Timer1EnableInterrupt()
-    Tmr1If = 0
     Tmr1Ie = 1
 End Sub
 
@@ -836,8 +838,9 @@ Public Sub Timer2Ack()
     Tmr2If = 0
 End Sub
 
+' Leaves the flag alone: Timer2Start has cleared it, and the hardware may set it again at any moment. To drop an
+' overflow that happened while the interrupt was off, call Timer2Ack first.
 Public Sub Timer2EnableInterrupt()
-    Tmr2If = 0
     Tmr2Ie = 1
 End Sub
 

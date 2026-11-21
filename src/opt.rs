@@ -1982,7 +1982,7 @@ pub fn reachable_otherwise(p: &Program) -> HashSet<FuncId> {
     out
 }
 
-fn collect_asm<'a>(b: &'a [S], out: &mut Vec<&'a String>) {
+pub(crate) fn collect_asm<'a>(b: &'a [S], out: &mut Vec<&'a String>) {
     for s in b {
         if let St::Asm(ls) = &s.st {
             out.extend(ls.iter());

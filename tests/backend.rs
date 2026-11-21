@@ -145,6 +145,42 @@ fn float_work_in_a_handler_must_go_through_save() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 }
 
+/// `Save(0, …)` in a PIC18 handler copies only the registers the routines it reaches use: the handler's entry
+/// code saves those of its own statements, and `RETFIE, FAST` brings back WREG, STATUS and BSR (and, on a
+/// vectored interrupt controller, FSR0..2, PRODL/H and PCLATH/U).
+#[test]
+fn save_zero_in_a_handler_copies_only_what_its_routines_use() {
+    if !have_pic_as() {
+        return;
+    }
+    let out = scratch("savezero");
+    let handler = |asm: &str| -> String {
+        let s = asm.find("__ISR_H:").unwrap();
+        let e = s + asm[s..].find("retfie").unwrap();
+        asm[s..e].lines().filter(|l| !l.starts_with("#line")).collect::<Vec<_>>().join("\n")
+    };
+    // A routine that changes only BSR and a flag: nothing to save.
+    let asm = asm_of(&out, "ack", "Sub Ack()\n PIR0.5 = 0\nEnd Sub\nInterrupt Tick()\n Save(0, Ack)\n  Ack()\n Restore\n LATB.0 = 1\nEnd Interrupt\nEnable(Tick)\n", &[]);
+    assert!(!handler(&asm).contains("movff"), "{}", handler(&asm));
+    // An array read and a multiply use FSR0 and PROD, which are saved; FSR1, TBLPTR and TABLAT are not.
+    let body = "Dim tbl(8) As Byte\nDim i As Byte\nDim r As Word\nSub Work(ByVal k As Byte)\n r = tbl(k) * k\nEnd Sub\nInterrupt Tick()\n Save(0, Work)\n  Work(i)\n Restore\nEnd Interrupt\nEnable(Tick)\nWhile True\n tbl(i) = i\n Inc(i)\nWend\n";
+    let h = handler(&asm_of(&out, "work", body, &[]));
+    for r in ["FSR0L, __SAV0", "PRODL, __SAV0", "PRODH, __SAV0"] {
+        assert!(h.contains(r), "{r} not saved:\n{h}");
+    }
+    for r in ["FSR1L", "TBLPTRL", "TABLAT"] {
+        assert!(!h.contains(r), "{r} saved:\n{h}");
+    }
+    // The Q41's shadow set restores FSR0 and PROD itself [DS40002214G p.121].
+    let src = out.join("q41.bas");
+    std::fs::write(&src, format!("Program T\nDevice = 18F16Q41\nClock = 16\n{body}")).unwrap();
+    let r = Command::new(basil()).arg("-S").arg(&src).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let h = handler(&std::fs::read_to_string(out.join("q41.S")).unwrap());
+    assert!(!h.contains("FSR0L, __SAV0") && !h.contains("PRODL, __SAV0") && h.contains("movff"), "{h}");
+    std::fs::remove_dir_all(&out).ok();
+}
+
 #[test]
 fn string_fields_and_elements_picked_at_run_time_build() {
     let out = scratch("structidx");

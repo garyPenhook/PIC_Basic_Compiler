@@ -1073,6 +1073,12 @@ registers (including `FSR0` and `FSR1`). A routine item saves that routine's sto
 everything it calls**. Inside a handler the compiler also adds the storage of every routine the
 block calls, so the usual form is `Save(0, Routine)` around a call to `Routine`.
 
+On the PIC18, `0` inside a handler copies only the working registers that the routines the block
+reaches actually use. The handler's entry code already saves the ones its own statements use, and
+`RETFIE, FAST` brings back `WREG`, `STATUS` and `BSR` (and, on parts with the vectored interrupt
+controller, `FSR0`–`FSR2`, `PRODL/H` and `PCLATH/U`). A block around a routine that only clears a
+flag therefore costs nothing.
+
 ```basic
 Dim total As Word
 Function Cube(ByVal v As Byte) As LongWord
@@ -10470,8 +10476,9 @@ Enable(Tick)
 ```basic
 Timer0EnableInterrupt()
 ```
-**Overview** Clears the Timer0 flag and sets its interrupt enable (`PIE0.TMR0IE` on the PIC18F27Q10). Global interrupts
-are enabled separately with `Enable`.
+**Overview** Sets the Timer0 interrupt enable (`PIE0.TMR0IE` on the PIC18F27Q10). Global interrupts are enabled
+separately with `Enable`. The flag is left alone: `Timer0Start` has already cleared it. To drop an overflow that
+happened while the interrupt was off, call `Timer0Ack` first.
 
 **Example**
 ```basic
@@ -10767,8 +10774,9 @@ Timer1Stop()
 ```basic
 Timer1EnableInterrupt()
 ```
-**Overview** Clears the Timer1 flag and sets its interrupt enable (`PIE4.TMR1IE` on the PIC18F27Q10). Global interrupts are
-enabled separately with `Enable`.
+**Overview** Sets the Timer1 interrupt enable (`PIE4.TMR1IE` on the PIC18F27Q10). Global interrupts are enabled
+separately with `Enable`. The flag is left alone: the `Timer1Start` routines have already cleared it. To drop an
+overflow that happened while the interrupt was off, call `Timer1Ack` first.
 
 **Example**
 ```basic
@@ -10949,8 +10957,9 @@ Timer2Stop()
 ```basic
 Timer2EnableInterrupt()
 ```
-**Overview** Clears the Timer2 flag and sets its interrupt enable (`PIE4.TMR2IE` on the PIC18F27Q10). Global interrupts are
-enabled separately with `Enable`.
+**Overview** Sets the Timer2 interrupt enable (`PIE4.TMR2IE` on the PIC18F27Q10). Global interrupts are enabled
+separately with `Enable`. The flag is left alone: the `Timer2Start` routines have already cleared it. To drop an
+overflow that happened while the interrupt was off, call `Timer2Ack` first.
 
 **Example**
 ```basic
