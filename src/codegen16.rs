@@ -367,7 +367,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
     let mut storage = None;
-    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears] {
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears, crate::opt::coalesce_copies] {
         if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
             let candidate = generate_base(&q, tgt);
             if candidate.errors.is_empty() && candidate.out.words <= g.out.words
@@ -584,7 +584,12 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) ->
         text.push_str(&format!(";SYM {k} 0x{:04X}\n", v));
     }
     text.push_str("    END __reset\n");
-    let mut starts: Vec<(String, u32)> = vec![("(start-up and program body)".into(), 0)];
+    // The program body starts at `__reset`; handlers placed before it (and the vectors) are entries of their own, so the
+    // body is not counted in the routine that happens to come first.
+    let mut starts: Vec<(String, u32)> = match asmd.labels.get("__reset") {
+        Some(&r) if r > 0 => vec![("(reset and interrupt vectors)".into(), 0), ("(start-up and program body)".into(), r)],
+        _ => vec![("(start-up and program body)".into(), 0)],
+    };
     for f in &p.funcs {
         if let Some(&a) = asmd.labels.get(&f.asm) {
             starts.push((f.asm.clone(), a));

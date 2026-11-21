@@ -6828,7 +6828,8 @@ impl<'p> Gen<'p> {
             }
         }
         let own = joined;
-        let cost = |len: u32| if len <= 4 { len } else { 4 + 2 * len.div_ceil(255) };
+        // Words of `zero_range`: one `clrf` a byte, `lfsr` and one counted loop, or `lfsr` and the loop to an end address.
+        let cost = |len: u32| if len <= 4 { len } else if len <= 255 { 6 } else { 9 };
         // The blocks of data RAM: the Access Bank's RAM half and the banked RAM, joined where they touch.
         let mut blocks: Vec<(u32, u32)> = vec![self.tgt.access];
         for &(s, e) in &self.tgt.ram {
@@ -6886,8 +6887,23 @@ impl<'p> Gen<'p> {
             }
             return;
         }
-        let mut left = len;
         self.ins(format!("lfsr 0, 0x{addr:03X}"));
+        // Past one chunk, a single loop that runs until FSR0 reaches the end is shorter than a chunk loop per 255
+        // bytes (7 words after the `lfsr` against 4 a chunk), at one more cycle a byte.
+        if len > 255 {
+            let end = addr + len;
+            let l = self.fresh();
+            self.label(&l);
+            self.ins("clrf POSTINC0, c");
+            self.ins(format!("movlw 0x{:02X}", end & 0xFF));
+            self.ins("cpfseq FSR0L, c");
+            self.br(Cc::Always, &l);
+            self.ins(format!("movlw 0x{:02X}", (end >> 8) & 0xFF));
+            self.ins("cpfseq FSR0H, c");
+            self.br(Cc::Always, &l);
+            return;
+        }
+        let mut left = len;
         while left > 0 {
             let chunk = left.min(255);
             self.ins(format!("movlw {chunk}"));
@@ -7050,7 +7066,7 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
     let mut g = generate_base(p, tgt);
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars { return g; }
     let mut storage = None;
-    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears, crate::opt::coalesce_params] {
+    for pass in [crate::opt::without_dead_updates as fn(&Program, &Target) -> Option<Program>, crate::opt::compact_storage, crate::opt::without_array_clears, crate::opt::coalesce_copies, crate::opt::coalesce_params] {
         if let Some(q) = pass(storage.as_ref().unwrap_or(p), tgt) {
             let candidate = generate_base(&q, tgt);
             if candidate.errors.is_empty() && candidate.out.words <= g.out.words
@@ -7347,7 +7363,12 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     }
     text.push_str(if c_link { "    END\n" } else { "    END __reset\n" });
     // Function sizes from label positions.
-    let mut starts: Vec<(String, u32)> = vec![("(start-up and program body)".into(), 0)];
+    // The program body starts at `__reset`; handlers placed before it (and the vectors) are entries of their own, so the
+    // body is not counted in the routine that happens to come first.
+    let mut starts: Vec<(String, u32)> = match asmd.labels.get("__reset") {
+        Some(&r) if r > 0 => vec![("(reset and interrupt vectors)".into(), 0), ("(start-up and program body)".into(), r)],
+        _ => vec![("(start-up and program body)".into(), 0)],
+    };
     for f in &p.funcs {
         if let Some(&a) = asmd.labels.get(&f.asm) {
             starts.push((f.asm.clone(), a));

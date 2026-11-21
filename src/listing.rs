@@ -143,6 +143,10 @@ pub fn listing(asm: &str, lookup: &dyn Fn(&str, u32) -> Option<String>) -> Strin
             if let Some(b) = pending_banner.take() {
                 routines.push((b.clone(), pc));
                 rows.push(Row::Banner(b));
+            } else if name == "__reset" && pc > 0 {
+                // Handlers placed before the start-up code: the program body is its own entry, not part of the last of them.
+                routines[0].0 = "(reset and interrupt vectors)".into();
+                routines.push(("(start-up and program body)".into(), pc));
             } else if !name.starts_with("_L") && !name.starts_with("__skip") && !name.starts_with("__") {
                 routines.push((name.to_string(), pc));
             }

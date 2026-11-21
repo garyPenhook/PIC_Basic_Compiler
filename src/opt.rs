@@ -975,6 +975,8 @@ enum Flow {
     Next,
     Break,
     Continue,
+    /// `Return` (`Exit` in a routine), when the run is of a whole routine body.
+    Ret,
 }
 
 /// Compile-time run of a statement list over constant locals (see [`fold_loop`]).
@@ -984,6 +986,8 @@ struct Sim<'a> {
     vars: &'a [Var],
     tracked: &'a dyn Fn(VarId) -> bool,
     fuel: u32,
+    /// The statements are a whole routine body, so a `Return` ends the run.
+    ret_ok: bool,
 }
 
 impl Sim<'_> {
@@ -1026,7 +1030,12 @@ impl Sim<'_> {
                         return Some(f);
                     }
                 }
-                St::While(c, body) => self.looping(c, body)?,
+                St::While(c, body) => {
+                    if self.looping(c, body)? == Flow::Ret {
+                        return Some(Flow::Ret);
+                    }
+                }
+                St::Return if self.ret_ok => return Some(Flow::Ret),
                 St::Break => return Some(Flow::Break),
                 St::Continue => return Some(Flow::Continue),
                 _ => return None,
@@ -1035,14 +1044,17 @@ impl Sim<'_> {
         Some(Flow::Next)
     }
 
-    fn looping(&mut self, c: &Ex, body: &[S]) -> Option<()> {
+    /// Runs a `While`: `Flow::Ret` when its body returned, else `Flow::Next`.
+    fn looping(&mut self, c: &Ex, body: &[S]) -> Option<Flow> {
         loop {
             self.fuel = self.fuel.checked_sub(1)?;
             if eval_known(c, &self.env, self.vars)? == 0 {
-                return Some(());
+                return Some(Flow::Next);
             }
-            if self.block(body)? == Flow::Break {
-                return Some(());
+            match self.block(body)? {
+                Flow::Break => return Some(Flow::Next),
+                Flow::Ret => return Some(Flow::Ret),
+                Flow::Next | Flow::Continue => {}
             }
         }
     }
@@ -1053,8 +1065,10 @@ impl Sim<'_> {
 /// runs no pass), so `I2cInit` finds its baud divider at compile time instead of adding in a loop.
 /// Gives up (None) for anything it cannot follow, or for a loop that needs more than a few thousand steps.
 fn fold_loop(c: &Ex, body: &[S], known: &HashMap<VarId, u32>, vars: &[Var], tracked: &dyn Fn(VarId) -> bool, span: crate::diag::Span) -> Option<Vec<S>> {
-    let mut sim = Sim { env: known.clone(), written: Vec::new(), vars, tracked, fuel: 20_000 };
-    sim.looping(c, body)?;
+    let mut sim = Sim { env: known.clone(), written: Vec::new(), vars, tracked, fuel: 20_000, ret_ok: false };
+    if sim.looping(c, body)? != Flow::Next {
+        return None;
+    }
     let out = sim
         .written
         .iter()
@@ -1065,6 +1079,77 @@ fn fold_loop(c: &Ex, body: &[S], known: &HashMap<VarId, u32>, vars: &[Var], trac
         })
         .collect();
     Some(out)
+}
+
+/// A call with constant arguments of a routine that only computes (its body reads and writes nothing but its own
+/// parameters, locals and `Result`, with `If`, `While` and `Exit`) is run by the compiler and becomes its value:
+/// `PinOk(19)` in `I2cInit` is `True`, so the pin check folds away and the stores after it are no longer behind an
+/// `Exit`. Anything the run cannot follow (another call, a device register, a global, a loop of more than a few
+/// thousand steps) leaves the call as it is.
+fn eval_pure_calls(p: &mut Program) -> bool {
+    let vars = p.vars.clone();
+    let mut bodies: HashMap<FuncId, Vec<S>> = HashMap::new();
+    for (i, f) in p.funcs.iter().enumerate() {
+        let Some(r) = f.result else { continue };
+        if f.reg || f.ext || p.isrs.iter().any(|(h, _)| *h == i) || p.exports.iter().any(|e| e.func == i || e.thunk == i) || p.ext_funcs.contains(&i) {
+            continue;
+        }
+        let own = |v: VarId| vars[v].owner == Some(i) && !vars[v].volatile && !vars[v].by_ref;
+        if !own(r) || !f.params.iter().all(|&v| own(v) && vars[v].kind == VarKind::Param) || crate::ir::has_jump_target(&f.body) || scan(&f.body).asm {
+            continue;
+        }
+        bodies.insert(i, f.body.clone());
+    }
+    if bodies.is_empty() {
+        return false;
+    }
+    let params: HashMap<FuncId, (Vec<VarId>, VarId)> = bodies.keys().map(|&f| (f, (p.funcs[f].params.clone(), p.funcs[f].result.unwrap()))).collect();
+    let mut memo: HashMap<(FuncId, Vec<u32>), Option<u32>> = HashMap::new();
+    let mut changed = false;
+    let mut run = |f: FuncId, args: &[(Place, Ex)]| -> Option<u32> {
+        let (ps, r) = &params[&f];
+        let mut env: HashMap<VarId, u32> = HashMap::new();
+        for (pl, e) in args {
+            let v = whole_var(pl, &vars)?;
+            if !ps.contains(&v) || e.w != pl.width() {
+                return None;
+            }
+            env.insert(v, e.as_const()? & mask(pl.width()));
+        }
+        if ps.iter().any(|v| !env.contains_key(v)) {
+            return None;
+        }
+        let key = (f, ps.iter().map(|v| env[v]).collect::<Vec<_>>());
+        if let Some(v) = memo.get(&key) {
+            return *v;
+        }
+        for (v, var) in vars.iter().enumerate() {
+            if var.owner == Some(f) && var.kind == VarKind::Local && let Some(k) = var.init {
+                env.insert(v, k & mask((var.bytes * 8).min(32) as u8));
+            }
+        }
+        let tracked = |v: VarId| vars[v].owner == Some(f) && !vars[v].volatile && !vars[v].by_ref && matches!(vars[v].kind, VarKind::Local | VarKind::Param | VarKind::Result | VarKind::Hidden);
+        let mut sim = Sim { env, written: Vec::new(), vars: &vars, tracked: &tracked, fuel: 20_000, ret_ok: true };
+        let out = match sim.block(&bodies[&f]) {
+            Some(Flow::Next | Flow::Ret) => sim.env.get(r).copied(),
+            _ => None,
+        };
+        memo.insert(key, out);
+        out
+    };
+    for (_, body) in all_bodies(p) {
+        m_block(body, &mut |e: &mut Ex| {
+            if let ExK::Call(f, args) = &e.k
+                && params.contains_key(f)
+                && e.w as u32 == vars[params[f].1].bytes * 8
+                && let Some(v) = run(*f, args)
+            {
+                *e = Ex::konst(v, e.w, e.signed);
+                changed = true;
+            }
+        });
+    }
+    changed
 }
 
 /// Constants held in a routine's own locals flow forward through the routine's top-level statements:
@@ -2212,6 +2297,96 @@ pub fn coalesce_params(p: &Program, _tgt: &crate::codegen::Target) -> Option<Pro
         // Statements of the callee were rescanned per routine above; recompute before the next routine.
         per[g] = scan(&q.funcs[g].body);
         changed = true;
+    }
+    changed.then_some(q)
+}
+
+/// A local that a top-level statement of its routine sets from a `ByVal` parameter (`code = Byte(ch)` at the top of
+/// `PutCh`), where that is the parameter's only mention and nothing before it mentions the local, can live in the
+/// parameter: the parameter's value is not needed after the copy, and the local's not before it. The copy goes (a
+/// `movff` per byte, or a store and reload of `WREG`), and so does the local's RAM. Not in a routine with jump
+/// targets (a `Goto` back would run the copy again) or raw assembly, nor for variables whose address is taken or
+/// that a `Save` copies. Run as a storage trial, kept only when the program does not grow.
+pub fn coalesce_copies(p: &Program, _tgt: &crate::codegen::Target) -> Option<Program> {
+    let mut q = p.clone();
+    let mut all = Facts::default();
+    for (_, body) in all_bodies(&mut q) {
+        w_block(&mut all, body);
+    }
+    let saved = saved_funcs(&q);
+    // Mentions of `v` (reads, writes, address) in `b`.
+    struct Count(VarId, u32);
+    impl Visit for Count {
+        fn ex(&mut self, e: &Ex) {
+            if let ExK::Load(pl) | ExK::Addr(pl) = &e.k && matches!(pl.base, Base::Var(v) | Base::Ptr(v) if v == self.0) {
+                self.1 += 1;
+            }
+        }
+        fn place(&mut self, pl: &Place, _: Acc) {
+            if matches!(pl.base, Base::Var(v) | Base::Ptr(v) if v == self.0) {
+                self.1 += 1;
+            }
+        }
+        fn stmt(&mut self, s: &S) {
+            if let St::Save { items, .. } = &s.st && items.iter().any(|i| *i == SaveIt::Var(self.0)) {
+                self.1 += 1;
+            }
+        }
+    }
+    let mentions = |b: &[S], v: VarId| {
+        let mut c = Count(v, 0);
+        w_block(&mut c, b);
+        c.1
+    };
+    let whole = |x: &Place, n: u32| x.off == 0 && x.bit.is_none() && x.idx.is_none() && x.dbit.is_none() && x.bytes() == n;
+    let same_kind = |a: &Ty, b: &Ty| a == b || matches!((a, b), (Ty::Char, Ty::Int(8, false)) | (Ty::Int(8, false), Ty::Char));
+    let mut changed = false;
+    for f in 0..q.funcs.len() {
+        let ff = &q.funcs[f];
+        if saved.contains(&f) || ff.reg || ff.ext || scan(&ff.body).asm || crate::ir::has_jump_target(&ff.body) {
+            continue;
+        }
+        let mut t = 0;
+        while t < q.funcs[f].body.len() {
+            let body = &q.funcs[f].body;
+            let found = (|| {
+                let St::Assign(dst, e) = &body[t].st else { return None };
+                let Base::Var(l) = dst.base else { return None };
+                let inner = match &e.k {
+                    ExK::Conv(x) if x.w == e.w => x.as_ref(),
+                    _ => e,
+                };
+                let ExK::Load(src) = &inner.k else { return None };
+                let Base::Var(pv) = src.base else { return None };
+                let (lv, pvar) = (&q.vars[l], &q.vars[pv]);
+                let ok = lv.kind == VarKind::Local && lv.owner == Some(f) && !lv.by_ref && !lv.volatile && lv.init.is_none()
+                    && pvar.kind == VarKind::Param && pvar.owner == Some(f) && !pvar.by_ref && !pvar.volatile
+                    && q.funcs[f].result != Some(l) && q.funcs[f].result != Some(pv)
+                    && !all.addr.contains(&l) && !all.addr.contains(&pv)
+                    && lv.bytes == pvar.bytes && same_kind(&lv.ty, &pvar.ty) && e.w as u32 == lv.bytes * 8
+                    && whole(dst, lv.bytes) && whole(src, pvar.bytes)
+                    && mentions(body, pv) == 1 && mentions(&body[..t], l) == 0;
+                ok.then_some((l, pv))
+            })();
+            let Some((l, pv)) = found else {
+                t += 1;
+                continue;
+            };
+            let ren = |pl: &mut Place| {
+                if pl.base == Base::Var(l) {
+                    pl.base = Base::Var(pv);
+                }
+            };
+            let body = &mut q.funcs[f].body;
+            body.remove(t);
+            m_block(body, &mut |e: &mut Ex| {
+                if let ExK::Load(pl) | ExK::Addr(pl) = &mut e.k {
+                    ren(pl);
+                }
+            });
+            stmt_places(body, &mut |pl: &mut Place| ren(pl), &mut |_| {});
+            changed = true;
+        }
     }
     changed.then_some(q)
 }
@@ -3575,6 +3750,7 @@ fn optimize_core(p: &mut Program) {
         changed |= propagate_ref_params(p);
         fold_all(p);
         changed |= const_result_calls(p);
+        changed |= eval_pure_calls(p);
         changed |= propagate_locals(p);
         changed |= global_value_sets(p);
         changed |= global_values_after_init(p);

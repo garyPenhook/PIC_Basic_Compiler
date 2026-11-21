@@ -1250,6 +1250,43 @@ fn status_cc(bit_text: &str, branch_when_set: bool) -> Option<Cc> {
     Some(cc)
 }
 
+/// `<op into WREG> ; movlw 0 ; btfss STATUS, 2 ; movlw 1`, a non-zero test made a Boolean (`Result = (v And m) <> 0`):
+/// when Z tells whether `WREG` is zero, the skip is taken only with `WREG` already 0, so the `movlw 0` is not needed.
+/// `movlw` changes no flag, so `WREG` and the flags come out the same on both paths.
+fn pass_bool_nonzero(items: &mut Vec<Item>) -> bool {
+    let keep = protected(items);
+    let mut gone = Vec::new();
+    for i in 1..items.len().saturating_sub(2) {
+        let (Item::Ins(a), Item::Ins(b), Item::Ins(c)) = (&items[i], &items[i + 1], &items[i + 2]) else { continue };
+        if keep[i] || keep[i + 1] {
+            continue;
+        }
+        let lit = |t: &str| parse(t).filter(|(m, o)| m == "movlw" && o.len() == 1).and_then(|(_, o)| parse_lit(o[0]));
+        if lit(a) != Some(0) || !matches!(lit(c), Some(v) if v != 0) {
+            continue;
+        }
+        if !matches!(parse(b), Some((m, o)) if m == "btfss" && o.len() >= 2 && o[0] == "STATUS" && o[1] == "2") {
+            continue;
+        }
+        // A store tested at once is `pass_flag_branch`'s pattern, which needs the `movlw 0` and saves more.
+        let tested = matches!(items.get(i + 3), Some(Item::Ins(t)) if parse(t).is_some_and(|(m, o)| m == "movwf" && !o.is_empty() && {
+            let sym = o[0];
+            let mut r = i + 4;
+            while matches!(items.get(r), Some(Item::Fence | Item::Comment(_))) {
+                r += 1;
+            }
+            matches!(items.get(r), Some(Item::Ins(u)) if parse(u).is_some_and(|(m, o)| m == "movf" && o.first() == Some(&sym)))
+        }));
+        if !tested && z_from_w(items, i) {
+            gone.push(i);
+        }
+    }
+    for &i in gone.iter().rev() {
+        items.remove(i);
+    }
+    !gone.is_empty()
+}
+
 /// A bit test turned into a Boolean and compared (`movlw 0 ; btfsc R,b ; movlw 1 ; xorlw K ; bnz L`)
 /// becomes the bit-skip branch itself (`btfsc R,b ; bra L`), when nothing reads `WREG` or the flags
 /// on either path.
@@ -1580,11 +1617,12 @@ fn match_flag_branch(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Opti
         r += 1;
     }
     let (m, o) = ins(r)?;
-    if m != "movf" || o.len() < 2 || o[0] != sym || o[1] != "w" {
+    // `movf R, f` tests it too (`If good Then`), and leaves the same `WREG`.
+    if m != "movf" || o.len() < 2 || o[0] != sym || (o[1] != "w" && o[1] != "f") {
         return None;
     }
     let mut e = r + 1;
-    if matches!(ins(e), Some((m, o)) if (m == "iorlw" || m == "xorlw") && o.len() == 1 && parse_lit(o[0]) == Some(0)) {
+    if o[1] == "w" && matches!(ins(e), Some((m, o)) if (m == "iorlw" || m == "xorlw") && o.len() == 1 && parse_lit(o[0]) == Some(0)) {
         e += 1;
     }
     let Item::Br(cc, target) = items.get(e)? else { return None };
@@ -1601,11 +1639,22 @@ fn match_flag_branch(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Opti
     if !dead_paths(items, end, false, Z | N) || !dead_paths(items, target_at + 1, false, Z | N) {
         return None;
     }
-    if !bool_store_droppable(items, sym, i..end, end, target_at, env) {
-        return None;
-    }
     // W is the bit (btfsc) or its complement (btfss); the branch runs when the bit is `bit_when_taken`.
     let bit_when_taken = (skip == "btfsc") == nonzero_taken;
+    if !bool_store_droppable(items, sym, i..end, end, target_at, env) {
+        // The Boolean is read again later (`good = (x = k)` then `If good`, and `good = False` in a loop), so it is
+        // still made and stored; but a STATUS bit is untouched by `movlw`, `movlb` and `movwf`, so the branch can test
+        // it in place of the reload. `WREG` holds the Boolean on both paths as before; only the flags differ, and
+        // both destinations ignore them. Only for compiler-placed RAM nothing else can change in between (not `Volatile`, not
+        // an SFR, not seen by a handler): the reload would otherwise read what is there now, not what was stored.
+        if !env.is_plain(sym) || split_off(sym).is_none_or(|(n, _)| env.shared.contains(n)) {
+            return None;
+        }
+        let cc = status_cc(bit_text, bit_when_taken)?;
+        let mut new: Vec<Item> = items[i..=k + 2].to_vec();
+        new.push(Item::Br(cc, target.clone()));
+        return Some((end - i, new));
+    }
     let mn = if bit_when_taken { "btfsc" } else { "btfss" };
     let rest = bit_text.trim().split_once(char::is_whitespace)?.1.to_string();
     let mut new = Vec::new();
@@ -6549,6 +6598,7 @@ pub fn optimise(mut items: Vec<Item>, env: &Env) -> Vec<Item> {
         run_pass!(changed, ver, settled, slot, pass_bit_branch(&mut items));
         run_pass!(changed, ver, settled, slot, pass_bool_thread(&mut items, env));
         run_pass!(changed, ver, settled, slot, pass_flag_branch(&mut items, env));
+        run_pass!(changed, ver, settled, slot, pass_bool_nonzero(&mut items));
         run_pass!(changed, ver, settled, slot, pass_jump_thread(&mut items));
         run_pass!(changed, ver, settled, slot, pass_skip_over_branch(&mut items));
         run_pass!(changed, ver, settled, slot, pass_branch_to_next(&mut items));

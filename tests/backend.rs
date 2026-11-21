@@ -452,6 +452,29 @@ fn exec_programs_in_simulator() {
     }
 }
 
+/// `tests/exec/copy_fold.bas` without `--keep-vars`, so the storage trials run (`opt::coalesce_copies` among them): `PutCh`'s `code`
+/// lives in its parameter, the 600-byte start-up clear is one loop to an end address, and constant calls of the computing routines
+/// are folded. The program's results are `Volatile`, so the simulator run still sees them.
+#[test]
+fn copies_and_constant_calls_fold() {
+    let out = scratch("copyfold");
+    let src = root().join("tests/exec/copy_fold.bas");
+    let asm = out.join("copy_fold.S");
+    let r = Command::new(basil()).arg("-S").arg(&src).arg("-o").arg(&asm).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(&asm).unwrap();
+    assert!(!text.contains("CF_PUTCH__CODE"), "the copy of ch stays:\n{text}");
+    assert!(text.contains("cpfseq FSR0H, c") && !text.contains("decfsz WREG"), "start-up clear:\n{text}");
+    // Tri(10) = 55 is stored as a constant; Tri(cf_k) stays a (now inlined) loop.
+    assert!(text.contains("movlw 0x37"), "Tri(10) is not folded:\n{text}");
+    if std::env::var("BASIL_MDB").is_err() {
+        return;
+    }
+    let r = Command::new("python3").arg(root().join("scripts/exec-test.py")).arg("--no-keep-vars").arg("--basil").arg(basil()).arg(&src).output().unwrap();
+    let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+    assert!(r.status.success(), "{text}");
+}
+
 /// The RTCC drivers (`rtcc`, `rtccspi`) against software models of the chips: the folder holds test doubles for `I2c`, `Spi` and
 /// `Pinio` next to the programs, and symlinks to the modules under test, so the programs run the real driver logic. Optimised, and as the
 /// `-O0` reference build.
