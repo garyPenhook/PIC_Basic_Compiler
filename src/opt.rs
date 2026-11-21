@@ -1085,13 +1085,14 @@ fn fold_loop(c: &Ex, body: &[S], known: &HashMap<VarId, u32>, vars: &[Var], trac
 /// parameters, locals and `Result`, with `If`, `While` and `Exit`) is run by the compiler and becomes its value:
 /// `PinOk(19)` in `I2cInit` is `True`, so the pin check folds away and the stores after it are no longer behind an
 /// `Exit`. Anything the run cannot follow (another call, a device register, a global, a loop of more than a few
-/// thousand steps) leaves the call as it is.
+/// thousand steps), or a `NoInline` routine, leaves the call as it is.
 fn eval_pure_calls(p: &mut Program) -> bool {
     let vars = p.vars.clone();
     let mut bodies: HashMap<FuncId, Vec<S>> = HashMap::new();
     for (i, f) in p.funcs.iter().enumerate() {
         let Some(r) = f.result else { continue };
-        if f.reg || f.ext || p.isrs.iter().any(|(h, _)| *h == i) || p.exports.iter().any(|e| e.func == i || e.thunk == i) || p.ext_funcs.contains(&i) {
+        // `NoInline` keeps the call as written (as in `const_result_calls`).
+        if f.reg || f.ext || f.no_inline || p.isrs.iter().any(|(h, _)| *h == i) || p.exports.iter().any(|e| e.func == i || e.thunk == i) || p.ext_funcs.contains(&i) {
             continue;
         }
         let own = |v: VarId| vars[v].owner == Some(i) && !vars[v].volatile && !vars[v].by_ref;
