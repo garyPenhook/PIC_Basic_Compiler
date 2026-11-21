@@ -87,7 +87,22 @@ fn classify(it: &Item) -> Option<(Kind, String)> {
     }
 }
 
-fn tokenise(items: &[Item], ids: &mut HashMap<String, u32>) -> Vec<Tok> {
+/// What [`tokenise`] needs of one item, worked out once: the kind, the id of its text and its size in words for
+/// an item that may be part of a run.
+type Class = Option<(Kind, u32, u32)>;
+
+fn class_of(it: &Item, ids: &mut HashMap<String, u32>) -> Class {
+    let (kind, text) = classify(it)?;
+    let next = ids.len() as u32;
+    let id = *ids.entry(text).or_insert(next);
+    let words = match it {
+        Item::Ins(t) => words_of(t),
+        _ => 2,
+    };
+    Some((kind, id, words))
+}
+
+fn tokenise(items: &[Item], cls: &[Class]) -> Vec<Tok> {
     let mut toks: Vec<Tok> = Vec::new();
     let mut run = 0usize;
     let mut guarded = 0u32;
@@ -110,15 +125,9 @@ fn tokenise(items: &[Item], ids: &mut HashMap<String, u32>) -> Vec<Tok> {
             run += 1;
             continue;
         }
-        match classify(it) {
-            Some((kind, text)) => {
-                let next = ids.len() as u32;
-                let id = *ids.entry(text).or_insert(next);
+        match cls[i] {
+            Some((kind, id, words)) => {
                 let after_skip = items[..i].iter().rev().find(|x| !matches!(x, Item::Comment(_) | Item::Fence | Item::Label(_))).is_some_and(is_skip);
-                let words = match it {
-                    Item::Ins(t) => words_of(t),
-                    _ => 2,
-                };
                 toks.push(Tok { id, item: i, words, kind, after_skip, run });
                 // A tail call ends the run: nothing after it may join a run that includes it.
                 if kind == Kind::Tail {
@@ -131,8 +140,49 @@ fn tokenise(items: &[Item], ids: &mut HashMap<String, u32>) -> Vec<Tok> {
     toks
 }
 
-fn mix(h: u64, id: u32) -> u64 {
-    (h ^ (id as u64 + 0x9E37_79B9_7F4A_7C15)).wrapping_mul(0x0000_0100_0000_01B3).rotate_left(23)
+/// Every run of 2 to [`MAX_LEN`] tokens that may become a block and occurs at two or more starts: its length and
+/// its starts, in order. A run cannot start after a skip or with a tail call, stays inside one straight run of
+/// tokens and ends at a tail call; a run ending in a skip is not one, nor (without `allow_plain`) one that does not
+/// end in a call. Found by extending only the groups of starts that still agree, token by token, instead of
+/// recording every run at every start.
+fn repeated_runs(toks: &[Tok], allow_plain: bool) -> Vec<(usize, Vec<usize>)> {
+    let n = toks.len();
+    let mut out = Vec::new();
+    // (length so far, starts whose first `length` tokens are the same), only groups of two or more.
+    let mut work: Vec<(usize, Vec<usize>)> = Vec::new();
+    {
+        let mut first: Vec<(u32, usize)> = (0..n).filter(|&s| !toks[s].after_skip && toks[s].kind != Kind::Tail).map(|s| (toks[s].id, s)).collect();
+        first.sort_unstable();
+        for g in first.chunk_by(|a, b| a.0 == b.0) {
+            if g.len() >= 2 {
+                work.push((1, g.iter().map(|&(_, s)| s).collect()));
+            }
+        }
+    }
+    let mut next: Vec<(u32, usize)> = Vec::new();
+    while let Some((len, starts)) = work.pop() {
+        // The token before is the same in every start of the group: a tail call ends the run.
+        if len >= MAX_LEN || toks[starts[0] + len - 1].kind == Kind::Tail {
+            continue;
+        }
+        next.clear();
+        next.extend(starts.iter().filter(|&&s| s + len < n && toks[s + len].run == toks[s].run).map(|&s| (toks[s + len].id, s)));
+        next.sort_unstable();
+        for g in next.chunk_by(|a, b| a.0 == b.0) {
+            if g.len() < 2 {
+                continue;
+            }
+            let group: Vec<usize> = g.iter().map(|&(_, s)| s).collect();
+            let s = group[0];
+            let t = &toks[s + len];
+            let valid = if t.kind == Kind::Tail { toks[s + len - 1].kind != Kind::Skip } else { t.kind != Kind::Skip && allow_plain };
+            if valid {
+                out.push((len + 1, group.clone()));
+            }
+            work.push((len + 1, group));
+        }
+    }
+    out
 }
 
 /// Replaces repeated runs by calls to shared blocks. `allow_plain` lets runs that do not end in a call cost a
@@ -142,54 +192,21 @@ pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
     let mut cur = items.clone();
     let mut ids: HashMap<String, u32> = HashMap::new();
     let mut bodies: Vec<(String, Vec<Item>)> = Vec::new();
+    let mut cls: Vec<Class> = cur.iter().map(|it| class_of(it, &mut ids)).collect();
     loop {
-        let toks = tokenise(&cur, &mut ids);
-        let mut cands: HashMap<(u64, usize), Vec<usize>> = HashMap::new();
-        for s in 0..toks.len() {
-            if toks[s].after_skip {
-                continue;
-            }
-            let mut h = 0u64;
-            for k in 0..MAX_LEN.min(toks.len() - s) {
-                let t = &toks[s + k];
-                if t.run != toks[s].run {
-                    break;
-                }
-                h = mix(h, t.id);
-                if k == 0 {
-                    // A single instruction is never worth a call.
-                    if t.kind == Kind::Tail {
-                        break;
-                    }
-                    continue;
-                }
-                let tail = t.kind == Kind::Tail;
-                let valid = if tail { toks[s + k - 1].kind != Kind::Skip } else { t.kind != Kind::Skip && allow_plain };
-                if valid {
-                    cands.entry((h, k + 1)).or_default().push(s);
-                }
-                if tail {
-                    break;
-                }
-            }
-        }
+        let toks = tokenise(&cur, &cls);
+        let cands = repeated_runs(&toks, allow_plain);
         // The best run: most words saved, counting a call as two words and a `return` as one.
-        let mut best: Option<(i64, (u64, usize), Vec<usize>)> = None;
-        for (key, starts) in &cands {
-            if starts.len() < 2 {
-                continue;
-            }
-            let len = key.1;
+        let mut best: Option<(i64, usize, Vec<usize>)> = None;
+        for (len, starts) in &cands {
+            let len = *len;
             let first = starts[0];
             let w: i64 = toks[first..first + len].iter().map(|t| t.words as i64).sum();
             let tail = toks[first + len - 1].kind == Kind::Tail;
-            // Greedy, non-overlapping, and really equal (not just the same hash).
+            // Greedy and non-overlapping (the starts of a group are equal runs).
             let mut picked: Vec<usize> = Vec::new();
             for &s in starts {
-                if picked.last().is_some_and(|&p| s < p + len) {
-                    continue;
-                }
-                if (0..len).all(|k| toks[s + k].id == toks[first + k].id) {
+                if picked.last().is_none_or(|&p| s >= p + len) {
                     picked.push(s);
                 }
             }
@@ -197,12 +214,11 @@ pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
             let gain = n * (w - 2) - (w + if tail { 0 } else { 1 });
             // Ties go to the longer run, then to the one that starts first, so the output does not depend on the
             // order the map is walked in.
-            if gain > 0 && best.as_ref().is_none_or(|b| (gain, len, std::cmp::Reverse(picked[0])) > (b.0, b.1.1, std::cmp::Reverse(b.2[0]))) {
-                best = Some((gain, *key, picked));
+            if gain > 0 && best.as_ref().is_none_or(|b| (gain, len, std::cmp::Reverse(picked[0])) > (b.0, b.1, std::cmp::Reverse(b.2[0]))) {
+                best = Some((gain, len, picked));
             }
         }
-        let Some((_, key, picked)) = best else { break };
-        let len = key.1;
+        let Some((_, len, picked)) = best else { break };
         let name = format!("__PL{}", bodies.len());
         // The body from the first occurrence.
         let first = picked[0];
@@ -223,22 +239,29 @@ pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
             start_of.insert(toks[s].item, toks[s + len - 1].item);
         }
         let mut out: Vec<Item> = Vec::with_capacity(cur.len());
+        let mut out_cls: Vec<Class> = Vec::with_capacity(cur.len());
+        let call = Item::Call(name.clone());
+        let call_cls = class_of(&call, &mut ids);
         let mut i = 0;
         while i < cur.len() {
             if let Some(&end) = start_of.get(&i) {
                 for it in &cur[i..=end] {
                     if matches!(it, Item::Comment(t) if t.starts_with("#line ")) {
                         out.push(it.clone());
+                        out_cls.push(None);
                     }
                 }
-                out.push(Item::Call(name.clone()));
+                out.push(call.clone());
+                out_cls.push(call_cls);
                 i = end + 1;
             } else {
                 out.push(cur[i].clone());
+                out_cls.push(cls[i]);
                 i += 1;
             }
         }
         cur = out;
+        cls = out_cls;
     }
     if bodies.is_empty() {
         return items;

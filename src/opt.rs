@@ -3378,8 +3378,44 @@ fn spec_builds(weight: usize) -> u32 {
     (9_000 / weight.max(1)).clamp(4, 12) as u32
 }
 
+/// The size of every program in `qs`, in order, each built on a thread of its own: the trial builds are independent
+/// and the slowest part of a compile.
+fn sizes(qs: &[&Program], size: &Size) -> Vec<Option<u32>> {
+    // No more threads than the machine has processors: in batches of that many.
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if qs.len() <= 1 || cpus == 1 {
+        return qs.iter().map(|q| size(q)).collect();
+    }
+    if qs.len() > cpus {
+        return qs.chunks(cpus).flat_map(|c| sizes(c, size)).collect();
+    }
+    std::thread::scope(|sc| {
+        let handles: Vec<_> = qs
+            .iter()
+            .map(|&q| {
+                // Code generation recurses on the expression trees: a stack as roomy as the main thread's, not the
+                // small default of a spawned thread.
+                std::thread::Builder::new().stack_size(64 << 20).spawn_scoped(sc, move || size(q))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .zip(qs)
+            .map(|(h, q)| match h {
+                Ok(h) => h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+                // No thread to be had: built here.
+                Err(_) => size(q),
+            })
+            .collect()
+    })
+}
+
+/// The words of a built program, `None` when it does not build; called from several threads at once.
+type Size<'a> = dyn Fn(&Program) -> Option<u32> + Sync + 'a;
+
 /// One routine at a time: a copy is kept when the built program shrinks. Returns the smallest program reached.
-fn specialize_greedy(start: Program, start_w: u32, size: &dyn Fn(&Program) -> Option<u32>, builds: &std::cell::Cell<u32>, max_builds: u32, debug: bool) -> (u32, Program) {
+/// `builds` counts the trial builds made, at most `max_builds`.
+fn specialize_greedy(start: Program, start_w: u32, size: &Size, builds: &mut u32, max_builds: u32, debug: bool) -> (u32, Program) {
     let mut cur = start;
     let mut cur_w = start_w;
     for _round in 0..3 {
@@ -3390,9 +3426,10 @@ fn specialize_greedy(start: Program, start_w: u32, size: &dyn Fn(&Program) -> Op
             let mut masks: Vec<u32> = vec![u32::MAX];
             masks.extend((0..4).map(|i| 1u32 << i));
             let mut tried: HashSet<Vec<Vec<usize>>> = HashSet::new();
-            let mut pick: Option<(u32, Program)> = None;
+            // The candidates are made one after the other (each split of the calls is tried once), then built together.
+            let mut qs: Vec<(u32, Program)> = Vec::new();
             for mask in masks {
-                if builds.get() >= max_builds {
+                if *builds + qs.len() as u32 >= max_builds {
                     break;
                 }
                 // Worked out without touching the program; only a split of the calls not seen yet is built.
@@ -3404,7 +3441,12 @@ fn specialize_greedy(start: Program, start_w: u32, size: &dyn Fn(&Program) -> Op
                     continue;
                 }
                 optimize_core(&mut q);
-                let sz = size(&q);
+                qs.push((mask, q));
+            }
+            *builds += qs.len() as u32;
+            let szs = sizes(&qs.iter().map(|(_, q)| q).collect::<Vec<_>>(), size);
+            let mut pick: Option<(u32, Program)> = None;
+            for ((mask, q), sz) in qs.into_iter().zip(szs) {
                 if debug {
                     eprintln!("spec {} mask {mask}: {sz:?} words (now {cur_w})", cur.funcs[f].asm);
                 }
@@ -3421,7 +3463,7 @@ fn specialize_greedy(start: Program, start_w: u32, size: &dyn Fn(&Program) -> Op
                 improved = true;
             }
         }
-        if !improved || builds.get() >= max_builds {
+        if !improved || *builds >= max_builds {
             break;
         }
     }
@@ -3432,7 +3474,7 @@ fn specialize_greedy(start: Program, start_w: u32, size: &dyn Fn(&Program) -> Op
 /// `None` when it does not build). One goes routine by routine and keeps a copy when the program shrinks. The other
 /// gives copies to every routine called with differing constants, callers first, until nothing is left to copy: a
 /// copy of a caller often only pays once its callees have copies too, which the first way never sees.
-fn specialize_best(p: &mut Program, size: &dyn Fn(&Program) -> Option<u32>) {
+fn specialize_best(p: &mut Program, size: &Size) {
     // Nothing to try, or a program too big to try on: no trial build is made at all.
     let weight = ir_weight(p);
     let debug = std::env::var("BASIL_SPEC_DEBUG").is_ok();
@@ -3448,27 +3490,14 @@ fn specialize_best(p: &mut Program, size: &dyn Fn(&Program) -> Option<u32>) {
         return;
     }
     // Sizes are of the finished program: the settling passes run on a copy.
-    let builds = std::cell::Cell::new(0u32);
     let measure = |q: &Program| {
-        builds.set(builds.get() + 1);
         let mut r = q.clone();
         optimize_post(&mut r);
         size(&r)
     };
-    let size: &dyn Fn(&Program) -> Option<u32> = &measure;
-    let Some(base) = size(p) else { return };
-    let max_builds = spec_builds(weight);
-    let mut best = base;
-    let mut winner: Option<Program> = None;
+    let size: &Size = &measure;
 
-    // One at a time, from the program as it is.
-    let (w, q) = specialize_greedy(p.clone(), base, size, &builds, max_builds, debug);
-    if w < best {
-        best = w;
-        winner = Some(q);
-    }
-
-    // Everything at once.
+    // Everything at once (made here so that it is built together with the program as it is).
     let mut all = p.clone();
     let limit = all.funcs.len() * 3 + 50;
     for _ in 0..4 {
@@ -3488,19 +3517,36 @@ fn specialize_best(p: &mut Program, size: &dyn Fn(&Program) -> Option<u32>) {
         }
         optimize_core(&mut all);
     }
-    if let Some(aw) = size(&all) {
+    // (When the program as it is does not build, the build of everything at once is thrown away.)
+    let [base, all_w] = sizes(&[p, &all], size)[..] else { unreachable!() };
+    let Some(base) = base else { return };
+    let mut builds = 1u32;
+    let max_builds = spec_builds(weight);
+    let mut best = base;
+    let mut winner: Option<Program> = None;
+
+    // One at a time, from the program as it is.
+    let (w, q) = specialize_greedy(p.clone(), base, size, &mut builds, max_builds, debug);
+    if w < best {
+        best = w;
+        winner = Some(q);
+    }
+
+    // The build of everything at once counts after the first way's builds, as if made then.
+    builds += 1;
+    if let Some(aw) = all_w {
         if debug {
             eprintln!("spec all at once: {aw} words (best {best})");
         }
         // Whatever budget is left goes to one-at-a-time copies on top of it.
-        let (w2, q2) = specialize_greedy(all, aw, size, &builds, max_builds, debug);
+        let (w2, q2) = specialize_greedy(all, aw, size, &mut builds, max_builds, debug);
         if w2 < best {
             best = w2;
             winner = Some(q2);
         }
     }
     if debug {
-        eprintln!("spec result: {best} words (was {base}), {} trial builds", builds.get());
+        eprintln!("spec result: {best} words (was {base}), {builds} trial builds");
     }
     if let Some(w) = winner {
         *p = w;
@@ -3514,7 +3560,7 @@ pub fn optimize(p: &mut Program) {
 
 /// `optimize`, with calls that pass constants given copies of their routine where `size` (words of the generated
 /// program, `None` when it does not build) says that is smaller (see `specialize_best`).
-pub fn optimize_sized(p: &mut Program, size: &dyn Fn(&Program) -> Option<u32>) {
+pub fn optimize_sized(p: &mut Program, size: &(dyn Fn(&Program) -> Option<u32> + Sync)) {
     optimize_core(p);
     specialize_best(p, size);
     optimize_post(p);

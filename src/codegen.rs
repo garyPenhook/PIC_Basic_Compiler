@@ -6889,24 +6889,41 @@ pub(crate) fn inlinable_ranges(p: &Program, isr_mask: &[bool], ranges: &[(FuncId
 pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usize)>) -> Vec<Item> {
     let mut serial = 0;
     'again: loop {
+        // For every routine label: the items calling it, and whether anything else names it (a branch, or a token
+        // of an instruction or `Asm` line). One walk over the items, made again after each inline.
+        let mut refs: HashMap<&str, (Vec<usize>, bool)> = ranges.iter().map(|(l, _, _)| (l.as_str(), (Vec::new(), false))).collect();
+        for (i, it) in items.iter().enumerate() {
+            match it {
+                Item::Call(t) => {
+                    if let Some(r) = refs.get_mut(t.as_str()) {
+                        r.0.push(i);
+                    }
+                }
+                Item::Br(_, t) | Item::SkipBr(_, t) => {
+                    if let Some(r) = refs.get_mut(t.as_str()) {
+                        r.1 = true;
+                    }
+                }
+                Item::Ins(t) | Item::Raw(t) => {
+                    for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                        if let Some(r) = refs.get_mut(tok) {
+                            r.1 = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         for r in 0..ranges.len() {
             let (label, s, e) = ranges[r].clone();
             if !matches!(items.get(s), Some(Item::Label(l)) if *l == label) {
                 continue;
             }
-            let mut calls = Vec::new();
-            let mut other = 0;
-            for (i, it) in items.iter().enumerate() {
-                match it {
-                    Item::Call(t) if *t == label => calls.push(i),
-                    Item::Br(_, t) if *t == label => other += 1,
-                    Item::Ins(t) | Item::Raw(t) if t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == label) => other += 1,
-                    _ => {}
-                }
-            }
-            if calls.len() != 1 || other > 0 || (s..e).contains(&calls[0]) {
+            let (calls, other) = &refs[label.as_str()];
+            if calls.len() != 1 || *other || (s..e).contains(&calls[0]) {
                 continue;
             }
+            let calls = calls.clone();
             let body = &items[s + 1..e];
             if body.iter().any(|it| matches!(it, Item::Raw(_) | Item::Org(_) | Item::Data(_))) {
                 continue;
