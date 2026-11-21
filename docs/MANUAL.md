@@ -255,7 +255,7 @@ in terms of the BASIC source:
   ends, is recorded as a function with an empty range, so a debugger can stop there. The locals of a routine
   the compiler inlined into its one caller are listed with the globals as `Routine.name`. Several routines may share RAM
   addresses, so only the variables of the routine being stopped in are meaningful.
-* **Symbols.** Each variable is also a real ELF symbol (`BLINK_TICKS`, the assembly name), and a global is
+* **Symbols.** Each variable is also an absolute ELF symbol (`BLINK_TICKS`, the assembly name), and a global is
   also known by its BASIC name (`ticks`), so command-line debuggers can find it.
 
 `-g` changes nothing in the generated code: the hex file is byte-identical with and without it (checked

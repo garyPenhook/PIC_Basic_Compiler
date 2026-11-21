@@ -702,8 +702,10 @@ fn debug_flag_maps_code_to_basic_lines_without_changing_the_hex() {
     let asm_plain = std::fs::read_to_string(dir.join("plain.S")).unwrap();
     run(&["-S", "-g"], "dbg.hex");
     let asm_dbg = std::fs::read_to_string(dir.join("dbg.S")).unwrap();
-    assert!(!asm_plain.contains("#line ") && !asm_plain.contains("PSECT dbg"));
-    assert!(asm_dbg.contains("PSECT dbg"), "no variable symbols");
+    let data = |s: &str| s[..s.find("PSECT code,").unwrap()].to_string();
+    assert!(!asm_plain.contains("#line ") && !data(&asm_plain).contains("GLOBAL "));
+    assert!(data(&asm_dbg).contains("GLOBAL "), "no variable symbols");
+    assert!(!asm_dbg.contains("PSECT dbg"), "variables must stay absolute `equ`s so pic-as sizes movff as without -g");
     assert!(asm_dbg.lines().any(|l| l.starts_with("#line ") && l.contains("dbg.bas")), "no #line for the program");
     // Only the code differs in nothing but `#line` lines; `-g` also names the variables as symbols.
     let strip = |s: &str| s[s.find("PSECT code,").unwrap()..].lines().filter(|l| !l.starts_with("#line ")).collect::<Vec<_>>().join("\n");

@@ -7290,13 +7290,12 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             }
             let note = if i < nvars { format!("  ; {} ({} byte{})", p.vars[i].name, o.bytes, if o.bytes == 1 { "" } else { "s" }) } else { String::new() };
             if i < nvars && o.bytes > 0 && !tgt.debug_files.is_empty() {
-                // A real symbol (not an `equ`), so the debugger can show the variable by name; a global
-                // also answers to its BASIC name, which the DWARF entry describes.
-                // Share one overlay psect: sibling frames can occupy the same RAM. Separate
-                // absolute psects make pic-as fail with error 1314 when their storage overlaps.
+                // Still an `equ`, so `pic-as` sees an absolute address and sizes `movff` as in a build without
+                // `-g`; `GLOBAL` puts the name in the ELF symbol table, so the debugger can show the variable
+                // by name. A global also answers to its BASIC name, which the DWARF entry describes.
                 let basic = &p.vars[i].name;
-                let alias = if matches!(p.vars[i].kind, VarKind::Global) && debug_names.get(&basic.to_ascii_lowercase()) == Some(&1) && *basic != o.name && !matches!(basic.to_ascii_lowercase().as_str(), "a" | "b" | "c" | "f" | "w" | "z" | "n" | "ov" | "dc" | "wreg" | "fast" | "access" | "banked") && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic}:\n") } else { String::new() };
-                text.push_str(&format!("PSECT dbg,class=RAM,space=1,abs,ovrld,delta=1,noexec\n    ORG 0x{a:03X}\nGLOBAL {n}\n{n}:\n{alias}DS {}{note}\n", o.bytes, n = o.name, alias = alias));
+                let alias = if matches!(p.vars[i].kind, VarKind::Global) && debug_names.get(&basic.to_ascii_lowercase()) == Some(&1) && *basic != o.name && !matches!(basic.to_ascii_lowercase().as_str(), "a" | "b" | "c" | "f" | "w" | "z" | "n" | "ov" | "dc" | "wreg" | "fast" | "access" | "banked") && basic.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !basic.starts_with(|c: char| c.is_ascii_digit()) { format!("GLOBAL {basic}\n{basic} equ 0x{a:03X}\n") } else { String::new() };
+                text.push_str(&format!("GLOBAL {n}\n{n} equ 0x{a:03X}{note}\n{alias}", n = o.name, alias = alias));
                 continue;
             }
             text.push_str(&format!("{} equ 0x{:03X}{}\n", o.name, a, note));
