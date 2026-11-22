@@ -840,7 +840,9 @@ modules take pin and channel numbers as arguments, so this was most of the gap t
   parameters fixed, then each of the first four alone) and all at once, builds the program, and keeps the smallest
   (including the program as it was). Sizes include the hardware-stack check of the real build. The number of trial
   builds is at most 12 and falls with the size of the program; programs with an IR of more than 4000 nodes, or with
-  nothing to copy, are not touched. `BASIL_SPEC_DEBUG=1` prints each trial.
+  nothing to copy, are not touched. `BASIL_SPEC_DEBUG=1` prints each trial. The trials run up to 3 at a time
+  (`BASIL_JOBS` sets how many), and the winning trial's build is the final build: it is the same program built for
+  the same target, so it is not built again (0.1.273).
 
 **Measured** (`docs/BENCHMARKS.md`): `bench/large` 6010 to 5756 bytes (PIC18; `b_dsp` 2292 to 2038), 4617 to 4539 words
 (16F); the peripheral-module programs 5460 to 5208 bytes (now 2% under XC8 `-Os`); library tests up to a third smaller (`lib_spi` 547 to 357 words).

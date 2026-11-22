@@ -123,6 +123,11 @@ basil [--check] [--explain CODE] [-S] [--report] [-O0] [-g] [-o OUT.hex] [-D NAM
 | `--version`, `-V` | Print the version. |
 | `--help`, `-h` | Print the option summary and exit. |
 
+The optimiser decides some changes by building the program each way and keeping the smaller one (see
+`docs/EFFICIENCY.md`). Those trial builds run up to 3 at a time, or as many as the machine has processors if that is
+fewer; `BASIL_JOBS=N` (a whole number of 1 or more; anything else is ignored) sets how many. More is not always
+faster: a machine that lowers its clock when most of its cores are busy can finish them later.
+
 Paths can be kept in a settings file, `~/.config/basil/config` (`$XDG_CONFIG_HOME/basil/config`, or
 `%APPDATA%\basil\config` on Windows), so they need not be typed each time:
 

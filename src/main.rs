@@ -48,6 +48,9 @@ options:
   -V, --version   print the version and exit
   -h, --help      print this help and exit
 
+The optimiser's trial builds run up to 3 at a time (fewer on a machine with fewer
+processors); $BASIL_JOBS=N sets how many.
+
 Tool paths can also be kept in ~/.config/basil/config (%APPDATA%\\basil\\config on Windows)
 as `pic-as = PATH`, `xc8-cc = PATH`, `dfp = DIR` and `packs = DIR` lines; flags and
 environment variables win over it.
@@ -315,13 +318,15 @@ fn main() -> ExitCode {
         }
         target
     });
+    // The build of the final program when the size trials already made it.
+    let mut built = None;
     if optimise && let Some(p) = &mut program {
         if let Some(t) = &target {
             // Calls that pass constants may get their own copy of the routine; kept only where the program shrinks
             // and still builds (no errors, and the hardware return stack is deep enough).
-            basil::opt::optimize_sized(p, &|q| {
+            built = basil::opt::optimize_sized(p, &|q| {
                 let g = generate(q, t);
-                if g.errors.is_empty() && g.stack_levels <= t.hw_stack { Some(g.out.words) } else { None }
+                if g.errors.is_empty() && g.stack_levels <= t.hw_stack { Some((g.out.words, g)) } else { None }
             });
         } else {
             basil::opt::optimize(p);
@@ -330,7 +335,8 @@ fn main() -> ExitCode {
     let mut generated = None;
     if let Some(p) = &program {
         let target = target.as_ref().unwrap();
-        let g = generate(p, target);
+        // A trial build was of this very program with this same target, so it is the build; otherwise build it now.
+        let g = built.unwrap_or_else(|| generate(p, target));
         for (span, msg) in &g.errors {
             let code = if msg.starts_with("out of data RAM") {
                 "E-RAM"
