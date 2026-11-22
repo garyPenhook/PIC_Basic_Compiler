@@ -19,6 +19,8 @@ Dim te As Byte
 Dim get As Byte
 Dim ad As Byte
 count = Pinio.PinCount
+' PinOk(40) is folded to False at compile time, so the store below goes; this one keeps the symbol for the harness.
+badp = 0
 If Pinio.PinOk(30) Then
     okd = 1
 End If
