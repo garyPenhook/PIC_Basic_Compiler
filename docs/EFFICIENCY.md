@@ -839,7 +839,9 @@ modules take pin and channel numbers as arguments, so this was most of the gap t
 * `specialize_best` decides by building, not by guessing: it makes the copies one routine at a time (all constant
   parameters fixed, then each of the first four alone) and all at once, builds the program, and keeps the smallest
   (including the program as it was). Sizes include the hardware-stack check of the real build. The number of trial
-  builds is at most 12 and falls with the size of the program; programs with an IR of more than 4000 nodes, or with
+  builds that decide is at most 12 and falls with the size of the program (since 0.1.274 the trials of the next
+  routines are built ahead, and when a copy is kept up to `BASIL_JOBS` - 1 of those builds are thrown away without
+  counting); programs with an IR of more than 4000 nodes, or with
   nothing to copy, are not touched. `BASIL_SPEC_DEBUG=1` prints each trial. The trials run up to 3 at a time
   (`BASIL_JOBS` sets how many), and the winning trial's build is the final build: it is the same program built for
   the same target, so it is not built again (0.1.273).
@@ -1593,3 +1595,26 @@ code in basil-sim, alternating paired assignment orders across 32 images. All
 provides an independent decimal-counter reference. All 15 PIC16 backend tests
 pass, covering selection and signed, width and optimization fallbacks; existing
 `divk_word` and `div_mod_share` simulator fixtures pass as well.
+
+## 33. Compile time (2026-11-22, 0.1.273 to 0.1.276)
+
+The size trials (`specialize_best` and the storage trials in `generate`) build the program many times: for
+temp_humidity (PIC18F16Q41, 3960 words) one compile made 36 full code generations and peephole runs, and 81% of the
+time was the peephole passes, a third of it splitting instruction text again and again. None of the changes below
+changes the output: the assembly and hex of every program in `tests/exec*`, `bench/large`, `bench/modules`,
+`examples` and both temp_humidity sources are byte-identical to the build before each change.
+
+* 0.1.273: the winning trial's build is the final build (it is the same program for the same target), and the
+  trials run at most 3 at a time (`BASIL_JOBS`).
+* 0.1.274: `specialize_greedy` makes the trials of the routines after the current one ahead and builds them in waves,
+  deciding each routine in order as before; a kept copy throws the trials made after it away, built or not (fewer than
+  `BASIL_JOBS` builds; `BASIL_SPEC_DEBUG` reports them), and makes them again.
+* 0.1.275: `inline_single_calls` works out what each item names once instead of after every inline; `outline` moves
+  items instead of copying them; the back end's maps and sets use an FxHash (`src/fxhash.rs`) instead of SipHash.
+* 0.1.276: an `Item::Ins` (and `Item::Raw`) keeps where its mnemonic and operands lie in its text (`Ins`,
+  `peephole::Split`), so `parse`, `split_mn`, `effect` and `is_skip` no longer split it each time; `contains_ci`
+  compares only where the first byte matches.
+
+**Measured** on a six-core machine, full builds (pic-as included), best of three: temp_humidity 11.8 s (0.1.272) to
+5.7 s; the PIC18F27Q10 version 11.1 s to 6.1 s; the aht30 example 3.2 s to 1.7 s. Instructions executed for the aht30
+example (callgrind, `BASIL_JOBS=1`): 30.3 G (0.1.274), 27.2 G (0.1.275), 20.7 G (0.1.276).

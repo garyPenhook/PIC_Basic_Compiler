@@ -3712,7 +3712,14 @@ fn specialize_greedy<B: Send>(start: Program, start_w: u32, start_b: B, size: &S
                         cur = q;
                         cur_b = b;
                         improved = true;
-                        // The trials still waiting were made for the program before this copy.
+                        // The trials still waiting were made for the program before this copy: thrown away, also those
+                        // already built (fewer than `jobs`, the rest of the wave). They do not count as trial builds.
+                        if debug {
+                            let dropped: usize = waiting.iter().map(|t| t.built.len()).sum();
+                            if dropped > 0 {
+                                eprintln!("spec: {dropped} trial build(s) made ahead dropped");
+                            }
+                        }
                         continue 'from;
                     }
                 }

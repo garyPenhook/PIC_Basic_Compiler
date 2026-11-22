@@ -11,7 +11,7 @@
 //! addresses, hottest objects first into the Access Bank; the second run emits final code with
 //! exact bank-select decisions.
 
-use crate::asm::{Assembled, Cc, Item, assemble, words_of, words_of16};
+use crate::asm::{Assembled, Cc, Ins, Item, assemble, words_of, words_of16};
 use crate::diag::Span;
 use crate::ir::*;
 use crate::fxhash::{HashMap, HashSet};
@@ -216,7 +216,7 @@ pub(crate) fn add_table_stubs(items: &mut Vec<Item>, table: usize, table_end: us
         if let Item::Ins(t) = it
             && let Some(s) = stubs.iter().find(|s| t.ends_with(&format!(" {}", s.1)))
         {
-            *t = format!("bra {}", s.0);
+            *t = Ins::new(format!("bra {}", s.0));
         }
     }
     let code: Vec<Item> = stubs.iter().flat_map(|(stub, target)| [Item::Label(stub.clone()), Item::Br(Cc::Always, target.clone())]).collect();
@@ -764,8 +764,8 @@ fn widen_movff(items: Vec<Item>, at: &HashMap<String, u32>) -> Vec<Item> {
     items
         .into_iter()
         .map(|it| match it {
-            Item::Ins(t) => Item::Ins(wide(&t).unwrap_or(t)),
-            Item::Raw(t) => Item::Raw(wide(&t).unwrap_or(t)),
+            Item::Ins(t) => Item::Ins(wide(&t).map(Ins::new).unwrap_or(t)),
+            Item::Raw(t) => Item::Raw(wide(&t).map(Ins::new).unwrap_or(t)),
             other => other,
         })
         .collect()
@@ -1300,7 +1300,7 @@ impl<'p> Gen<'p> {
     // ---- emission primitives ----------------------------------------------------------
 
     fn ins(&mut self, s: impl Into<String>) {
-        self.items.push(Item::Ins(s.into()));
+        self.items.push(Item::Ins(Ins::new(s.into())));
     }
 
     fn label(&mut self, l: &str) {
@@ -5299,7 +5299,7 @@ impl<'p> Gen<'p> {
                     }
                 }
                 for l in lines {
-                    self.items.push(Item::Raw(l.clone()));
+                    self.items.push(Item::Raw(Ins::new(l.clone())));
                 }
                 self.bsr = None;
             }
@@ -6652,7 +6652,7 @@ fn run_pass<'p>(p: &'p Program, tgt: &'p Target, layout: Option<&'p Layout>, fac
     // places a `goto` there as well.
     if !p.isrs.is_empty() {
         let vic = g.tgt.hw_context;
-        let jump = |label: &str| if vic { Item::Ins(format!("goto {label}")) } else { Item::Br(Cc::Always, label.into()) };
+        let jump = |label: &str| if vic { Item::Ins(Ins::new(format!("goto {label}"))) } else { Item::Br(Cc::Always, label.into()) };
         g.items.push(Item::Br(Cc::Always, "__reset".into()));
         let hi = p.isrs.iter().position(|x| x.1 != Level::Low);
         let lo = p.isrs.iter().position(|x| x.1 == Level::Low);
@@ -7022,7 +7022,7 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
                         jumps = true;
                     }
                 } else if let Some(k_lit) = retlw(it) {
-                    inl.push(Item::Ins(format!("movlw {k_lit}")));
+                    inl.push(Item::Ins(Ins::new(format!("movlw {k_lit}"))));
                     if Some(k) != last {
                         inl.push(Item::Br(Cc::Always, end.clone()));
                         jumps = true;
@@ -7131,7 +7131,8 @@ fn note_symbols<'a>(items: &'a [Item], names: &HashSet<&'a str>, seen: &mut Hash
     };
     for it in items {
         match it {
-            Item::Ins(t) | Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => note(t),
+            Item::Ins(t) | Item::Raw(t) => note(t),
+            Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => note(t),
             Item::SkipBr(a, b) => {
                 note(a);
                 note(b);

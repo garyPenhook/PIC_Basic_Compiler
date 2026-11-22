@@ -2,7 +2,7 @@
 
 use super::expr::{fit, fsr_addr};
 use super::*;
-use crate::asm::Cc;
+use crate::asm::{Cc, Ins};
 
 impl<'p> G<'p> {
     pub fn block(&mut self, b: &[S]) {
@@ -292,7 +292,7 @@ impl<'p> G<'p> {
                             self.scr(r, u32::from(tok.as_bytes()[3] - b'0'));
                         }
                     }
-                    self.items.push(Item::Raw(l.clone()));
+                    self.items.push(Item::Raw(Ins::new(l.clone())));
                 }
                 self.bsr = None;
             }
@@ -1289,13 +1289,13 @@ impl<'p> G<'p> {
         self.items.push(Item::Label(step));
         self.fop("incfsz", &a0, "f");
         if byte {
-            self.items.push(Item::Ins(format!("bra {lp}")));
+            self.items.push(Item::Ins(Ins::new(format!("bra {lp}"))));
         } else {
             let back = self.fresh();
-            self.items.push(Item::Ins(format!("bra {back}")));
+            self.items.push(Item::Ins(Ins::new(format!("bra {back}"))));
             self.fop("incfsz", &a1, "f");
             self.items.push(Item::Label(back));
-            self.items.push(Item::Ins(format!("bra {lp}")));
+            self.items.push(Item::Ins(Ins::new(format!("bra {lp}"))));
         }
         self.items.push(Item::Keep(false));
     }
@@ -1332,8 +1332,8 @@ impl<'p> G<'p> {
             }
             let l = self.fresh();
             self.items.push(Item::Label(l.clone()));
-            self.items.push(Item::Ins(format!("decfsz {}, f", ctr.text())));
-            self.items.push(Item::Ins(format!("bra {l}")));
+            self.items.push(Item::Ins(Ins::new(format!("decfsz {}, f", ctr.text()))));
+            self.items.push(Item::Ins(Ins::new(format!("bra {l}"))));
             self.emit_cycles(n - used, first);
             return;
         }
@@ -1347,8 +1347,8 @@ impl<'p> G<'p> {
         let l = self.fresh();
         self.items.push(Item::Label(l.clone()));
         self.emit_cycles(p, first + 1);
-        self.items.push(Item::Ins(format!("decfsz {}, f", ctr.text())));
-        self.items.push(Item::Ins(format!("bra {l}")));
+        self.items.push(Item::Ins(Ins::new(format!("decfsz {}, f", ctr.text()))));
+        self.items.push(Item::Ins(Ins::new(format!("bra {l}"))));
         self.emit_cycles(n - used, first);
     }
 

@@ -236,6 +236,7 @@ pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
         // Rebuild: each occurrence becomes `call name`, keeping its line markers. The occurrences (first and last
         // item) are in order and do not overlap; the items are moved, not copied.
         let occ: Vec<(usize, usize)> = picked.iter().map(|&s| (toks[s].item, toks[s + len - 1].item)).collect();
+        debug_assert!(occ.iter().all(|o| o.0 <= o.1) && occ.windows(2).all(|w| w[0].1 < w[1].0), "occurrences out of order: {occ:?}");
         let mut out: Vec<Item> = Vec::with_capacity(cur.len());
         let mut out_cls: Vec<Class> = Vec::with_capacity(cur.len());
         let call = Item::Call(name.clone());
@@ -266,6 +267,7 @@ pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
                 inside = None;
             }
         }
+        debug_assert!(next_occ.peek().is_none() && inside.is_none(), "an occurrence was not replaced");
         cur = out;
         cls = out_cls;
     }
@@ -284,7 +286,7 @@ mod tests {
     use super::*;
 
     fn ins(s: &str) -> Item {
-        Item::Ins(s.to_string())
+        Item::Ins(s.into())
     }
 
     fn site(v: u8) -> Vec<Item> {

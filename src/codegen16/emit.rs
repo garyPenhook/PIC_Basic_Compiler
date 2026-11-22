@@ -1,11 +1,11 @@
 //! Instruction emitters: banking, memory operands, bytes moved through WREG.
 
 use super::*;
-use crate::asm::Cc;
+use crate::asm::{Cc, Ins};
 
 impl<'p> G<'p> {
     pub fn ins(&mut self, s: impl Into<String>) {
-        self.items.push(Item::Ins(s.into()));
+        self.items.push(Item::Ins(Ins::new(s.into())));
     }
 
     pub fn label(&mut self, l: &str) {

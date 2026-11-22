@@ -49,11 +49,125 @@ impl Cc {
     }
 }
 
+/// The text of an instruction (or of an `Asm` line), with where its mnemonic and operands lie in it, worked out once
+/// when it is made: the peephole passes split every instruction many times over (see [`crate::peephole::Split`]).
+/// The text cannot be changed in place, so the two always agree; a changed instruction is a new `Ins`. Reads as a
+/// `str`.
+#[derive(Clone)]
+pub struct Ins {
+    text: String,
+    split: crate::peephole::Split,
+}
+
+impl Ins {
+    pub fn new(text: String) -> Ins {
+        let split = crate::peephole::Split::of(&text);
+        Ins { text, split }
+    }
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+    pub fn into_string(self) -> String {
+        self.text
+    }
+    pub(crate) fn split_info(&self) -> &crate::peephole::Split {
+        &self.split
+    }
+}
+
+impl From<String> for Ins {
+    fn from(text: String) -> Ins {
+        Ins::new(text)
+    }
+}
+
+impl From<&str> for Ins {
+    fn from(text: &str) -> Ins {
+        Ins::new(text.to_string())
+    }
+}
+
+impl From<&String> for Ins {
+    fn from(text: &String) -> Ins {
+        Ins::new(text.clone())
+    }
+}
+
+impl From<Ins> for String {
+    fn from(i: Ins) -> String {
+        i.text
+    }
+}
+
+impl std::ops::Deref for Ins {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl AsRef<str> for Ins {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::borrow::Borrow<str> for Ins {
+    fn borrow(&self) -> &str {
+        &self.text
+    }
+}
+
+impl PartialEq for Ins {
+    fn eq(&self, o: &Ins) -> bool {
+        self.text == o.text
+    }
+}
+
+impl Eq for Ins {}
+
+impl std::hash::Hash for Ins {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.text.hash(h)
+    }
+}
+
+impl PartialEq<str> for Ins {
+    fn eq(&self, o: &str) -> bool {
+        self.text == o
+    }
+}
+
+impl PartialEq<&str> for Ins {
+    fn eq(&self, o: &&str) -> bool {
+        self.text == *o
+    }
+}
+
+impl PartialEq<String> for Ins {
+    fn eq(&self, o: &String) -> bool {
+        self.text == *o
+    }
+}
+
+impl std::fmt::Debug for Ins {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.text, f)
+    }
+}
+
+impl std::fmt::Display for Ins {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // As a `String` formats: width, fill and precision apply.
+        f.pad(&self.text)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Item {
     Label(String),
     /// One instruction, fully written (`movwf X, c`).
-    Ins(String),
+    Ins(Ins),
     /// A branch to a label: `bra`/`bcc`, or the long form when out of range.
     Br(Cc, String),
     /// `rcall` or `call`.
@@ -62,7 +176,7 @@ pub enum Item {
     /// the instruction does not skip. Written as one item because the branch can be one word (`bra`) or several.
     SkipBr(String, String),
     /// Lines from an `Asm` block, passed through.
-    Raw(String),
+    Raw(Ins),
     Comment(String),
     /// End of a statement: no value is carried in `WREG` or the scratch registers past it. Emits
     /// nothing; the peephole pass reads it.

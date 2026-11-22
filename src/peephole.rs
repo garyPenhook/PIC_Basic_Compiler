@@ -28,7 +28,7 @@
 //! loop that polls such a variable starts with a label, which ends the run. The scratch registers
 //! the pass deletes stores to are saved by every handler that uses them.
 
-use crate::asm::{Cc, Item};
+use crate::asm::{Cc, Ins, Item};
 use crate::fxhash::{HashMap, HashSet};
 
 /// What the pass may assume about symbols.
@@ -318,12 +318,18 @@ fn trim_ws(s: &str) -> &str {
 /// Whether `t` contains `needle` (lower case ASCII) in any case: `t.to_ascii_lowercase().contains(needle)`
 /// without the copy.
 fn contains_ci(t: &str, needle: &str) -> bool {
-    let n = needle.as_bytes();
-    t.as_bytes().windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+    let (t, n) = (t.as_bytes(), needle.as_bytes());
+    let Some((&first, rest)) = n.split_first() else { return true };
+    if t.len() < n.len() {
+        return false;
+    }
+    // Only where the first byte matches is the rest compared (`fsr_flow` asks this of every instruction, eight times).
+    let first = first.to_ascii_lowercase();
+    (0..=t.len() - n.len()).any(|i| t[i].to_ascii_lowercase() == first && t[i + 1..i + n.len()].eq_ignore_ascii_case(rest))
 }
 
 /// The mnemonic as written and the text after it (not trimmed), or `None` for no instruction.
-fn split_mn(t: &str) -> Option<(&str, &str)> {
+fn split_mn_text(t: &str) -> Option<(&str, &str)> {
     let t = trim_ws(t);
     if t.is_empty() || t.starts_with(';') || t.ends_with(':') {
         return None;
@@ -340,10 +346,144 @@ fn split_mn(t: &str) -> Option<(&str, &str)> {
 }
 
 /// Splits `mnemonic op, op, ...`.
-fn parse(t: &str) -> Option<(Mn<'_>, Ops<'_>)> {
-    let (mn, rest) = split_mn(t)?;
+fn parse_text(t: &str) -> Option<(Mn<'_>, Ops<'_>)> {
+    let (mn, rest) = split_mn_text(t)?;
     let mn = if mn.bytes().any(|b| b.is_ascii_uppercase()) { std::borrow::Cow::Owned(mn.to_ascii_lowercase()) } else { std::borrow::Cow::Borrowed(mn) };
     Some((Mn(mn), Ops::split(trim_ws(rest))))
+}
+
+/// What [`split_mn_text`] and [`parse_text`] give for the text of an [`Ins`], as byte ranges of the text: worked out
+/// once when the `Ins` is made ([`Split::of`]), so that [`split_mn`] and [`parse`] need not split it again. Kept only
+/// when [`parse_text`] answers with parts of the text itself: a lower-case mnemonic (a copy is made otherwise), no more
+/// than [`Ops::INLINE`] operands (a list is made otherwise) and no more than 255 bytes; any other text is split each
+/// time, by the same functions.
+#[derive(Clone, Copy, Debug)]
+pub struct Split {
+    state: SplitState,
+    mn: (u8, u8),
+    rest: (u8, u8),
+    n: u8,
+    ops: [(u8, u8); Ops::INLINE],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SplitState {
+    /// No instruction: `split_mn_text` gives `None`.
+    None,
+    /// The ranges hold.
+    Kept,
+    /// Not kept: split each time.
+    Each,
+}
+
+impl Split {
+    pub(crate) fn of(text: &str) -> Split {
+        let each = Split { state: SplitState::Each, mn: (0, 0), rest: (0, 0), n: 0, ops: [(0, 0); Ops::INLINE] };
+        if text.len() > 255 {
+            return each;
+        }
+        let Some((mn, rest)) = split_mn_text(text) else { return Split { state: SplitState::None, ..each } };
+        if mn.bytes().any(|b| b.is_ascii_uppercase()) {
+            return each;
+        }
+        let Ops::Inline(a, n) = Ops::split(trim_ws(rest)) else { return each };
+        // Every non-empty part is a slice of `text`; an empty one may be a literal `""`, and any empty range reads the same.
+        let base = text.as_ptr() as usize;
+        let at = |s: &str| -> (u8, u8) {
+            if s.is_empty() {
+                return (0, 0);
+            }
+            let a = s.as_ptr() as usize - base;
+            (a as u8, (a + s.len()) as u8)
+        };
+        let mut ops = [(0, 0); Ops::INLINE];
+        for k in 0..n {
+            ops[k] = at(a[k]);
+        }
+        let s = Split { state: SplitState::Kept, mn: at(mn), rest: at(rest), n: n as u8, ops };
+        debug_assert!(s.kept_split_mn(text) == Some((mn, rest)) && s.kept_ops(text).as_slice() == &a[..n]);
+        s
+    }
+    fn range(r: (u8, u8)) -> std::ops::Range<usize> {
+        r.0 as usize..r.1 as usize
+    }
+    fn kept_split_mn<'a>(&self, text: &'a str) -> Option<(&'a str, &'a str)> {
+        Some((&text[Split::range(self.mn)], &text[Split::range(self.rest)]))
+    }
+    fn kept_ops<'a>(&self, text: &'a str) -> Vec<&'a str> {
+        self.ops[..self.n as usize].iter().map(|&r| &text[Split::range(r)]).collect()
+    }
+}
+
+/// Instruction text for [`split_mn`], [`parse`] and the helpers built on them: an [`Ins`] answers from its [`Split`],
+/// any other text is split.
+trait Text {
+    fn text(&self) -> &str;
+    fn kept(&self) -> Option<&Split> {
+        None
+    }
+}
+
+impl Text for str {
+    fn text(&self) -> &str {
+        self
+    }
+}
+
+impl Text for String {
+    fn text(&self) -> &str {
+        self
+    }
+}
+
+impl Text for Ins {
+    fn text(&self) -> &str {
+        self.as_str()
+    }
+    fn kept(&self) -> Option<&Split> {
+        Some(self.split_info())
+    }
+}
+
+impl<T: Text + ?Sized> Text for &T {
+    fn text(&self) -> &str {
+        (**self).text()
+    }
+    fn kept(&self) -> Option<&Split> {
+        (**self).kept()
+    }
+}
+
+/// The mnemonic as written and the text after it (not trimmed), or `None` for no instruction.
+fn split_mn<T: Text + ?Sized>(t: &T) -> Option<(&str, &str)> {
+    let text = t.text();
+    if let Some(s) = t.kept() {
+        match s.state {
+            SplitState::None => return None,
+            SplitState::Kept => return s.kept_split_mn(text),
+            SplitState::Each => {}
+        }
+    }
+    split_mn_text(text)
+}
+
+/// Splits `mnemonic op, op, ...`.
+fn parse<T: Text + ?Sized>(t: &T) -> Option<(Mn<'_>, Ops<'_>)> {
+    let text = t.text();
+    if let Some(s) = t.kept() {
+        match s.state {
+            SplitState::None => return None,
+            SplitState::Kept => {
+                let mut a = [""; Ops::INLINE];
+                for (k, &r) in s.ops[..s.n as usize].iter().enumerate() {
+                    a[k] = &text[Split::range(r)];
+                }
+                return Some((Mn(std::borrow::Cow::Borrowed(&text[Split::range(s.mn)])), Ops::Inline(a, s.n as usize)));
+            }
+            SplitState::Each => {}
+        }
+    }
+    parse_text(text)
 }
 
 thread_local! {
@@ -362,7 +502,7 @@ fn zflags() -> u8 {
 
 /// The effect of an instruction, or `None` when it is control flow or unknown: the caller then
 /// forgets everything it knew.
-fn effect(t: &str) -> Option<Eff> {
+fn effect<T: Text + ?Sized>(t: &T) -> Option<Eff> {
     if core16() {
         return effect16(t);
     }
@@ -522,7 +662,7 @@ fn effect(t: &str) -> Option<Eff> {
 
 /// [`effect`] for the enhanced mid-range core: no access bit, no N or OV, and the flags each instruction really
 /// sets (a flag claimed written that is not would let a pass delete the instruction that does set it).
-fn effect16(t: &str) -> Option<Eff> {
+fn effect16<T: Text + ?Sized>(t: &T) -> Option<Eff> {
     let (mn, ops) = parse(t)?;
     if ops.iter().any(|o| looks_scratch(o) && scratch(o).is_none()) {
         return None;
@@ -922,7 +1062,7 @@ fn pass_zero_load(items: &mut [Item]) -> bool {
                         && loc(o2[0]) == Some(Loc::S(r))
                     {
                         if !flags_live(items, j, e.flags_w) {
-                            items[j] = Item::Ins("movlw 0".to_string());
+                            items[j] = Item::Ins(Ins::new("movlw 0".to_string()));
                             changed = true;
                         }
                         break;
@@ -1123,7 +1263,10 @@ fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
                 }
                 used.extend(idents(t));
             }
-            Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => {
+            Item::Raw(t) => {
+                used.extend(idents(t));
+            }
+            Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => {
                 used.extend(idents(t));
             }
             // The skip instruction reads or counts a variable.
@@ -1272,8 +1415,8 @@ fn pass_movff_reload(items: &mut Vec<Item>, env: &Env) -> bool {
         if x == y || !env.is_access(&x) || !env.is_access(&y) || is_indirect(&x) || is_indirect(&y) {
             continue;
         }
-        items[i] = Item::Ins(format!("movf {x}, w, c"));
-        items[i + 1] = Item::Ins(format!("movwf {y}, c"));
+        items[i] = Item::Ins(Ins::new(format!("movf {x}, w, c")));
+        items[i + 1] = Item::Ins(Ins::new(format!("movwf {y}, c")));
         changed = true;
     }
     changed
@@ -1413,7 +1556,7 @@ fn match_bit_branch(items: &[Item], i: usize, keep: &[bool]) -> Option<(usize, V
     if let Some(cc) = status_cc(&bit_text, bit_when_taken) {
         new.push(Item::Br(cc, target.clone()));
     } else {
-        new.push(Item::Ins(format!("{mn} {rest}")));
+        new.push(Item::Ins(Ins::new(format!("{mn} {rest}"))));
         new.push(Item::Br(Cc::Always, target.clone()));
     }
     Some((k + 4 - i, new))
@@ -1539,7 +1682,7 @@ fn match_bool_thread(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Opti
     }
     let droppable = bool_store_droppable(items, sym, i..end, end, target_at, env);
     let first = |v: u8| -> Vec<Item> {
-        if droppable { vec![] } else { vec![Item::Ins(format!("movlw {v}")), store.clone()] }
+        if droppable { vec![] } else { vec![Item::Ins(Ins::new(format!("movlw {v}"))), store.clone()] }
     };
     let mut new = first(a);
     if taken(a) {
@@ -1573,7 +1716,8 @@ fn bool_store_droppable(items: &[Item], sym: &str, own: std::ops::Range<usize>, 
                 }
                 ident(t, sym)
             }
-            Item::Raw(t) | Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => ident(t, sym),
+            Item::Raw(t) => ident(t, sym),
+            Item::Label(t) | Item::Call(t) | Item::Br(_, t) | Item::Comment(t) => ident(t, sym),
             Item::SkipBr(ins, t) => ident(ins, sym) || ident(t, sym),
             _ => false,
         }
@@ -1693,7 +1837,7 @@ fn match_flag_branch(items: &[Item], i: usize, keep: &[bool], env: &Env) -> Opti
     if let Some(cc) = status_cc(bit_text, bit_when_taken) {
         new.push(Item::Br(cc, target.clone()));
     } else {
-        new.push(Item::Ins(format!("{mn} {rest}")));
+        new.push(Item::Ins(Ins::new(format!("{mn} {rest}"))));
         new.push(Item::Br(Cc::Always, target.clone()));
     }
     Some((end - i, new))
@@ -1779,7 +1923,7 @@ fn skip_over_branch_once(items: &mut Vec<Item>) -> bool {
             "btfss" => "btfsc",
             _ => continue,
         };
-        let new = Item::Ins(format!("{inverted} {}", o.join(", ")));
+        let new = Item::Ins(Ins::new(format!("{inverted} {}", o.join(", "))));
         let l2 = l2.clone();
         items.splice(i..i + 3, [new, Item::Br(Cc::Always, l2)]);
         return true;
@@ -2112,7 +2256,7 @@ fn pass_incdec_test(items: &mut Vec<Item>) -> bool {
     }
     let changed = !edits.is_empty();
     for (i, j, t) in edits.into_iter().rev() {
-        items[i] = Item::Ins(t);
+        items[i] = Item::Ins(Ins::new(t));
         items.remove(j);
     }
     changed
@@ -2138,7 +2282,7 @@ fn pass_incdec_w(items: &mut [Item], env: &Env) -> bool {
             continue;
         }
         let k = if mb == "incf" { "0x01" } else { "0xFF" };
-        items[j] = Item::Ins(format!("addlw {k}"));
+        items[j] = Item::Ins(Ins::new(format!("addlw {k}")));
         changed = true;
     }
     changed
@@ -2220,7 +2364,7 @@ fn pass_small(items: &mut Vec<Item>, env: &Env) -> bool {
     edits.sort_by_key(|e| e.0);
     for (i, t) in edits.into_iter().rev() {
         match t {
-            Some(t) => items[i] = Item::Ins(t),
+            Some(t) => items[i] = Item::Ins(Ins::new(t)),
             None => {
                 items.remove(i);
             }
@@ -2244,7 +2388,7 @@ fn pass_branch_to_return(items: &mut [Item]) -> bool {
             k += 1;
         }
         if matches!(items.get(k), Some(Item::Ins(t)) if t.trim() == "return") && !keep[k] {
-            items[i] = Item::Ins("return".to_string());
+            items[i] = Item::Ins(Ins::new("return".to_string()));
             changed = true;
         }
     }
@@ -2386,7 +2530,7 @@ fn pass_shared_compare(items: &mut Vec<Item>, env: &Env) -> bool {
         if !dead_paths(items, x + 2, false, C | OV) || !dead_paths(items, m_at, true, ALL) || !dead_paths(items, q + 2, true, ALL) {
             continue;
         }
-        items[x] = Item::Ins(format!("subwf {k}, w, {acc}"));
+        items[x] = Item::Ins(Ins::new(format!("subwf {k}, w, {acc}")));
         items[q] = Item::Br(cc, mlab);
         let mut gone = s2;
         gone.push(q + 1);
@@ -2424,7 +2568,7 @@ fn pass_cpfs_held(items: &mut Vec<Item>, env: &Env) -> bool {
             continue;
         }
         let l = l.clone();
-        items[i] = Item::Ins(format!("cpfsgt {}, {}", o0[0], o0[2]));
+        items[i] = Item::Ins(Ins::new(format!("cpfsgt {}, {}", o0[0], o0[2])));
         items[i + 1] = Item::Br(Cc::Always, l);
         items.remove(i + 2);
         return true;
@@ -2878,7 +3022,7 @@ fn pass_forward_unary(items: &mut [Item], env: &Env) -> bool {
                         && o[0] == t
                     {
                         if dead_paths(items, j + 1, false, e0.flags_w & !e.flags_w) {
-                            items[j] = Item::Ins(make.clone());
+                            items[j] = Item::Ins(Ins::new(make.clone()));
                             changed = true;
                             j += 1;
                             continue;
@@ -2935,7 +3079,7 @@ fn addr_taken(items: &[Item], env: &Env) -> HashSet<String> {
 
 /// The file operands instruction `t` writes, or `None` when the instruction is not one of the plain data forms
 /// (control flow, an unknown mnemonic). `PRODL`/`PRODH` and `TABLAT` are listed for the instructions that load them.
-fn written_files(t: &str) -> Option<Vec<String>> {
+fn written_files<T: Text + ?Sized>(t: &T) -> Option<Vec<String>> {
     let (mn, o) = parse(t)?;
     let first = || o.first().map(|x| vec![x.to_string()]);
     match mn.as_str() {
@@ -3147,7 +3291,7 @@ fn pass_retarget_build(items: &mut Vec<Item>, env: &Env) -> bool {
             let Item::Ins(u) = &items[w] else { continue };
             let (wm, wo) = parse(u).unwrap();
             let new: Vec<String> = wo.iter().map(|o| if is_source(o) { d.clone() } else { o.to_string() }).collect();
-            items[w] = Item::Ins(format!("{wm} {}", new.join(", ")));
+            items[w] = Item::Ins(Ins::new(format!("{wm} {}", new.join(", "))));
         }
         dead[j] = true;
     }
@@ -3194,7 +3338,8 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
     let mut named: HashMap<String, Vec<usize>> = HashMap::default();
     for (i, it) in items.iter().enumerate() {
         let t = match it {
-            Item::Ins(t) | Item::Raw(t) | Item::Call(t) | Item::Br(_, t) => t.as_str(),
+            Item::Ins(t) | Item::Raw(t) => t.as_str(),
+            Item::Call(t) | Item::Br(_, t) => t.as_str(),
             Item::SkipBr(a, _) => a.as_str(),
             _ => continue,
         };
@@ -3418,10 +3563,10 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
                 Some((env.addr(&sb).unwrap() >> 7, env.addr(ops[h]).unwrap() >> 7))
             } else { None };
             new[h] = sb;
-            let replacement = Item::Ins(format!("{mn} {}", new.join(", ")));
+            let replacement = Item::Ins(Ins::new(format!("{mn} {}", new.join(", "))));
             if let Some((source_bank, old_bank)) = banks {
-                items.splice(i..=i, [Item::Ins(format!("movlb {source_bank}")), replacement,
-                    Item::Ins(format!("movlb {old_bank}"))]);
+                items.splice(i..=i, [Item::Ins(Ins::new(format!("movlb {source_bank}"))), replacement,
+                    Item::Ins(Ins::new(format!("movlb {old_bank}")))]);
             } else { items[i] = replacement; }
         }
         // With `--keep-vars` the copies stay (the variable keeps its value); nothing reads them any more.
@@ -3613,7 +3758,7 @@ fn pass_dead_loads(items: &mut Vec<Item>, env: &Env) -> bool {
     let changed = dead.iter().any(|&d| d) || !edits.is_empty();
     for (i, t) in edits {
         if !dead[i] {
-            items[i] = Item::Ins(t);
+            items[i] = Item::Ins(Ins::new(t));
         }
     }
     if dead.iter().any(|&d| d) {
@@ -3680,7 +3825,7 @@ fn pass_fold_postinc(items: &mut Vec<Item>) -> bool {
         }
         let mut new: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
         new[at[0]] = "POSTINC0".into();
-        items[k] = Item::Ins(format!("{mn} {}", new.join(", ")));
+        items[k] = Item::Ins(Ins::new(format!("{mn} {}", new.join(", "))));
         items.remove(j);
         changed = true;
         // `keep` is indexed by the old positions.
@@ -3771,7 +3916,7 @@ fn pass_mask_fold(items: &mut Vec<Item>, env: &Env) -> bool {
     edits.sort_by_key(|e| e.0);
     for (i, t) in edits.into_iter().rev() {
         match t {
-            Some(t) => items[i] = Item::Ins(t),
+            Some(t) => items[i] = Item::Ins(Ins::new(t)),
             None => {
                 items.remove(i);
             }
@@ -4077,7 +4222,7 @@ fn jump_table(items: &[Item], i: usize) -> Option<Vec<usize>> {
 }
 
 /// `movf PCL, w`: reading PCL copies the upper program counter bytes to PCLATH and PCLATU (PIC18).
-fn is_pcl_latch(t: &str) -> bool {
+fn is_pcl_latch<T: Text + ?Sized>(t: &T) -> bool {
     matches!(parse(t), Some((m, o)) if m == "movf" && o.len() >= 2 && o[0].eq_ignore_ascii_case("PCL") && o[1].eq_ignore_ascii_case("w"))
 }
 
@@ -4469,7 +4614,7 @@ fn pass_bank_prologue(items: &mut Vec<Item>) -> bool {
             continue;
         };
         let mut trial = items.clone();
-        trial.insert(r + 1, Item::Ins(format!("movlb {k}")));
+        trial.insert(r + 1, Item::Ins(Ins::new(format!("movlb {k}"))));
         let mut guard = 0;
         while pass_redundant_movlb_flow(&mut trial) && guard < 4 {
             guard += 1;
@@ -4670,7 +4815,7 @@ fn pass_w_return(items: &mut Vec<Item>, env: &Env) -> bool {
         edits.sort_by(|a, b| b.0.cmp(&a.0));
         for (k, insert) in edits {
             if insert {
-                items.insert(k, Item::Ins(format!("movf {sym}, w, c")));
+                items.insert(k, Item::Ins(Ins::new(format!("movf {sym}, w, c"))));
             } else {
                 items.remove(k);
             }
@@ -4741,7 +4886,7 @@ fn pass_xor_chain(items: &mut Vec<Item>, env: &Env) -> bool {
         }
         links.sort_by_key(|x| std::cmp::Reverse(x.0));
         for (lp, k) in links {
-            items[lp + 2] = Item::Ins(format!("xorlw 0x{k:02X}"));
+            items[lp + 2] = Item::Ins(Ins::new(format!("xorlw 0x{k:02X}")));
             items.remove(lp + 1);
         }
         return true;
@@ -5204,7 +5349,7 @@ fn pass_forward16(items: &mut [Item], env: &Env) -> bool {
     }
     let changed = !edits.is_empty();
     for (i, t) in edits {
-        items[i] = Item::Ins(t);
+        items[i] = Item::Ins(Ins::new(t));
     }
     changed
 }
@@ -5321,7 +5466,7 @@ fn pass_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
     }
     let changed = dead.iter().any(|&x| x);
     for (i, t) in edits {
-        items[i] = Item::Ins(t);
+        items[i] = Item::Ins(Ins::new(t));
     }
     if changed {
         let mut k = 0;
@@ -5414,10 +5559,10 @@ fn pass_result_retarget16(items: &mut Vec<Item>, env: &Env) -> bool {
             let Item::Ins(u) = &items[m] else { unreachable!() };
             let (mn, ops) = parse(u).unwrap();
             let new: Vec<_> = ops.iter().map(|o| if *o == source { d.as_str() } else { *o }).collect();
-            let replacement = Item::Ins(format!("{mn} {}", new.join(", ")));
+            let replacement = Item::Ins(Ins::new(format!("{mn} {}", new.join(", "))));
             if switch {
-                items.splice(m..=m, [Item::Ins(format!("movlb {}", da >> 7)), replacement,
-                    Item::Ins(format!("movlb {}", sa >> 7))]);
+                items.splice(m..=m, [Item::Ins(Ins::new(format!("movlb {}", da >> 7))), replacement,
+                    Item::Ins(Ins::new(format!("movlb {}", sa >> 7)))]);
             } else { items[m] = replacement; }
         }
         return true;
@@ -5554,7 +5699,7 @@ fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
 }
 
 /// The RAM byte a pure store writes: `clrf X`, `setf X`, `movwf X` or `movff s, X` (the instruction does not read `X`).
-fn pure_store_target(t: &str, env: &Env) -> Option<String> {
+fn pure_store_target<T: Text + ?Sized>(t: &T, env: &Env) -> Option<String> {
     let (m, o) = parse(t)?;
     let d = match (m.as_str(), o.len()) {
         ("clrf" | "setf" | "movwf", 1..=2) => o[0].trim(),
@@ -5703,7 +5848,7 @@ fn pass_stage_store(items: &mut Vec<Item>, env: &Env) -> bool {
             i += 1;
             continue;
         }
-        items[j] = Item::Ins(format!("movff {x}, {dst}"));
+        items[j] = Item::Ins(Ins::new(format!("movff {x}, {dst}")));
         items.drain(i..i + used);
         keep = protected(items);
         changed = true;
@@ -5819,7 +5964,8 @@ fn pass_rotate3(items: &mut Vec<Item>, env: &Env) -> bool {
             let mentions = items
                 .iter()
                 .map(|it| match it {
-                    Item::Ins(s) | Item::Raw(s) | Item::Label(s) | Item::Call(s) | Item::Br(_, s) | Item::Comment(s) => s.as_str(),
+                    Item::Ins(s) | Item::Raw(s) => s.as_str(),
+                    Item::Label(s) | Item::Call(s) | Item::Br(_, s) | Item::Comment(s) => s.as_str(),
                     Item::SkipBr(a, _) => a.as_str(),
                     _ => "",
                 })
@@ -5832,10 +5978,10 @@ fn pass_rotate3(items: &mut Vec<Item>, env: &Env) -> bool {
             let mut out = Vec::new();
             for k in 0..w {
                 let (xs, ss) = (sym(&d.0, d.1 + k), sym(&s.0, s.1 + k));
-                out.push(Item::Ins(format!("movf {xs}, w, c")));
-                out.push(Item::Ins(format!("{} {ss}, w, c", if k == 0 { "addwf" } else { "addwfc" })));
-                out.push(Item::Ins(format!("movff {ss}, {xs}")));
-                out.push(Item::Ins(format!("movwf {ss}, c")));
+                out.push(Item::Ins(Ins::new(format!("movf {xs}, w, c"))));
+                out.push(Item::Ins(Ins::new(format!("{} {ss}, w, c", if k == 0 { "addwf" } else { "addwfc" }))));
+                out.push(Item::Ins(Ins::new(format!("movff {ss}, {xs}"))));
+                out.push(Item::Ins(Ins::new(format!("movwf {ss}, c"))));
             }
             let end = at(5 * w_us - 1) + 1;
             let fence = matches!(items.get(end), Some(Item::Fence));
@@ -5893,7 +6039,7 @@ fn pass_rotate3_16(items: &mut Vec<Item>, env: &Env) -> bool {
             let mut out = Vec::new();
             for k in 0..w {
                 for s in [format!("movf {}, w", sym(a, k)), format!("{} {}, w", if k == 0 { "addwf" } else { "addwfc" }, sym(b, k)), format!("movwf {}", sym(t, k)), format!("movf {}, w", sym(b, k)), format!("movwf {}", sym(a, k)), format!("movf {}, w", sym(t, k)), format!("movwf {}", sym(b, k))] {
-                    out.push(Item::Ins(s));
+                    out.push(Item::Ins(Ins::new(s)));
                 }
             }
             items.splice(i..at[8*w-1]+1, out);
@@ -5992,7 +6138,7 @@ fn pass_load_reuse(items: &mut Vec<Item>, env: &Env) -> bool {
             let flags_ok = add.is_empty() || !flags_live(items, rd, C | OV);
             if let (Some(r), true) = (hit, flags_ok) {
                 // Replace the load; keep the `lfsr` unless FSR0 is dead after it.
-                out.push(Item::Ins(format!("movf {r}, w, c")));
+                out.push(Item::Ins(Ins::new(format!("movf {r}, w, c"))));
                 if !fsr0_dead_after(items, rd) {
                     out.push(items[lf].clone());
                 }
@@ -6148,7 +6294,7 @@ fn pass_sum_share(items: &mut Vec<Item>, env: &Env) -> bool {
 }
 
 /// Instructions that leave `WREG` alone.
-fn keeps_w(t: &str) -> bool {
+fn keeps_w<T: Text + ?Sized>(t: &T) -> bool {
     let Some((mn, ops)) = parse(t) else { return false };
     match mn.as_str() {
         "nop" | "movlb" | "movwf" | "movff" | "clrf" | "setf" | "bsf" | "bcf" | "btg" | "btfss" | "btfsc" | "tblrd*" | "tblrd*+" | "tblrd*-" | "tblrd+*" | "lfsr" | "bra" | "bz" | "bnz" | "bc" | "bnc" | "bn" | "bnn" | "bov" | "bnov" => true,
@@ -6312,7 +6458,7 @@ fn pass_forward(items: &mut [Item], env: &Env) -> bool {
         let Some(s) = src else { continue };
         let mut new_ops: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
         new_ops[idx] = s;
-        items[j] = Item::Ins(format!("{mn} {}", new_ops.join(", ")));
+        items[j] = Item::Ins(Ins::new(format!("{mn} {}", new_ops.join(", "))));
         changed = true;
     }
     changed
@@ -6382,7 +6528,7 @@ fn pass_retarget(items: &mut Vec<Item>, env: &Env) -> bool {
         }
         let Item::Ins(u) = &items[k] else { continue };
         let (_, o) = parse(u).unwrap();
-        items[k] = Item::Ins(format!("movff {}, {}", o[0], dst));
+        items[k] = Item::Ins(Ins::new(format!("movff {}, {}", o[0], dst)));
         dead[j] = true;
     }
     let changed = dead.iter().any(|&d| d);
@@ -6396,7 +6542,7 @@ fn pass_retarget(items: &mut Vec<Item>, env: &Env) -> bool {
     changed
 }
 
-fn is_skip(t: &str) -> bool {
+fn is_skip<T: Text + ?Sized>(t: &T) -> bool {
     // Only the mnemonic is needed (`protected` asks this of every item, in nearly every pass).
     split_mn(t).is_some_and(|(m, _)| ["btfsc", "btfss", "decfsz", "dcfsnz", "incfsz", "infsnz", "tstfsz", "cpfseq", "cpfsgt", "cpfslt"].iter().any(|k| m.eq_ignore_ascii_case(k)))
 }
@@ -6472,7 +6618,7 @@ fn div_prep(items: &[Item], c: usize, n: u8, bn: u8, env: &Env) -> Option<(usize
             }
         }
         reads.extend(e.rmem);
-        text.push(t.clone());
+        text.push(t.to_string());
     }
     let (n, bn) = (n as usize, bn as usize);
     ((0..n).all(|i| set[i]) && (0..bn).all(|i| set[4 + i])).then_some((start, text, reads))
@@ -6571,7 +6717,7 @@ pub fn narrow_highword(items: Vec<Item>) -> Vec<Item> {
                 if c.trim() == "movlw 0" && d.trim().replace("  ", " ") == format!("addwfc {name}, f, c"));
             let n = if carry { 4 } else { 2 };
             if neutral(items.get(i + n)) {
-                out.push(Item::Ins(format!("clrf {x}")));
+                out.push(Item::Ins(Ins::new(format!("clrf {x}"))));
                 i += n;
                 continue;
             }
@@ -6765,6 +6911,29 @@ mod tests {
     use super::*;
     use crate::asm::Cc;
 
+    #[test]
+    fn contains_ci_is_a_lower_case_contains() {
+        let texts = ["", "f", "movwf FSR0L, c", "MOVFF PCLATH, x", "lfsr 1, buf", "addwf PCL, f, c", "movf POSTINC0, w", "pc", "ffsr", "xFsR", "inc0inc1", "decf DEC2x"];
+        for t in texts {
+            for n in ["fsr", "pcl", "inc0", "dec0", "inc1", "dec1", "inc2", "dec2", "f", "pc"] {
+                assert_eq!(contains_ci(t, n), t.to_ascii_lowercase().contains(n), "{t:?} {n:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn kept_splits_answer_as_the_text_does() {
+        let lines = ["movwf X, c", "  movf  A , w , c ", "nop", "return", "LABEL:", "; comment", "", "   ", "MOVWF X, c", "db 1, 2, 3, 4, 5",
+            "movff a,b", "bsf\tPORTA, 1, c", "movlw 'é'", "addwf PCL, f", "movlw  ,", "lfsr 1, buf+3"];
+        for l in lines {
+            let i = Ins::from(l);
+            assert_eq!(split_mn(&i), split_mn_text(l), "{l:?}");
+            let (a, b) = (parse(&i), parse_text(l));
+            assert_eq!(a.as_ref().map(|(m, o)| (m.clone(), o.to_vec())), b.as_ref().map(|(m, o)| (m.clone(), o.to_vec())), "{l:?}");
+            assert_eq!(is_skip(&i), is_skip(l), "{l:?}");
+        }
+    }
+
     fn env() -> Env {
         let mut plain = HashMap::default();
         plain.insert("__A0".to_string(), (0x00, 4));
@@ -6778,7 +6947,7 @@ mod tests {
     }
 
     fn ins(t: &str) -> Item {
-        Item::Ins(t.to_string())
+        Item::Ins(Ins::new(t.to_string()))
     }
 
     #[test]
@@ -6835,7 +7004,7 @@ mod tests {
         optimise(src.to_vec(), &env())
             .iter()
             .map(|i| match i {
-                Item::Ins(t) => t.clone(),
+                Item::Ins(t) => t.to_string(),
                 Item::Label(l) => format!("{l}:"),
                 Item::Br(cc, l) => format!("br{cc:?} {l}"),
                 Item::Fence => "--".into(),
@@ -7322,7 +7491,7 @@ mod tests {
     fn texts(v: &[Item]) -> Vec<String> {
         v.iter()
             .map(|i| match i {
-                Item::Ins(t) => t.clone(),
+                Item::Ins(t) => t.to_string(),
                 Item::Label(l) => format!("{l}:"),
                 Item::Br(cc, l) => format!("br{cc:?} {l}"),
                 Item::Fence => "--".into(),
@@ -7460,7 +7629,7 @@ mod tests {
         let mut s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movf X, w, c"), ins("movwf Y, c"), Item::Fence]);
         for it in s.iter_mut() {
             if let Item::Ins(t) = it {
-                *t = t.replace("movwf X, c", "movwf X+1, c");
+                *t = Ins::new(t.replace("movwf X, c", "movwf X+1, c"));
             }
         }
         let r = run_alone(&s);
@@ -7472,7 +7641,7 @@ mod tests {
         let mut s = bool_seq(vec![ins("movlw 5"), ins("movwf Y, c")], vec![ins("movlw 6"), ins("movwf Y, c"), Item::Fence]);
         for it in s.iter_mut() {
             if let Item::Ins(t) = it {
-                *t = t.replace("movwf X, c", "movwf X+1, c").replace("movf X, w, c", "movf X+1, w, c");
+                *t = Ins::new(t.replace("movwf X, c", "movwf X+1, c").replace("movf X, w, c", "movf X+1, w, c"));
             }
         }
         let r = run_alone(&s);
@@ -7704,7 +7873,7 @@ mod tests {
         optimise16(src.to_vec(), &env())
             .iter()
             .map(|i| match i {
-                Item::Ins(t) => t.clone(),
+                Item::Ins(t) => t.to_string(),
                 Item::Label(l) => format!("{l}:"),
                 Item::Br(cc, l) => format!("br{cc:?} {l}"),
                 Item::SkipBr(t, l) => format!("{t} -> {l}"),
@@ -7822,7 +7991,7 @@ mod tests {
         optimise16(src.to_vec(), &e)
             .iter()
             .map(|i| match i {
-                Item::Ins(t) => t.clone(),
+                Item::Ins(t) => t.to_string(),
                 Item::Fence => "--".into(),
                 _ => "?".into(),
             })
@@ -7998,7 +8167,7 @@ mod tests {
         optimise(all, &w_env())
             .iter()
             .map(|i| match i {
-                Item::Ins(t) => t.clone(),
+                Item::Ins(t) => t.to_string(),
                 Item::Label(l) => format!("{l}:"),
                 Item::Br(cc, l) => format!("br{cc:?} {l}"),
                 Item::Call(l) => format!("call {l}"),
@@ -8067,7 +8236,7 @@ mod tests {
         e.plain.insert("U".into(), (0x120, 1));
         e.keep_writes = true;
         let src = [ins("movlb 2"), ins("movf U, w"), ins("movlb 0"), ins("movwf T"), ins("movlw 3"), ins("movwf X"), ins("movf T, w"), ins("addwf X, f"), Item::Fence];
-        let r: Vec<String> = optimise16(src.to_vec(), &e).iter().filter_map(|i| if let Item::Ins(t) = i { Some(t.clone()) } else { None }).collect();
+        let r: Vec<String> = optimise16(src.to_vec(), &e).iter().filter_map(|i| if let Item::Ins(t) = i { Some(t.to_string()) } else { None }).collect();
         assert!(r.windows(4).any(|w| w == ["movlb 2", "movf U, w", "movlb 0", "addwf X, f"]), "{r:?}");
     }
 
@@ -8100,7 +8269,7 @@ mod tests {
         optimise(src.to_vec(), e)
             .iter()
             .map(|i| match i {
-                Item::Ins(t) => t.clone(),
+                Item::Ins(t) => t.to_string(),
                 Item::Label(l) => format!("{l}:"),
                 Item::Br(cc, l) => format!("br{cc:?} {l}"),
                 Item::Call(l) => format!("call {l}"),
