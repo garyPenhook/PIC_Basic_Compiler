@@ -5,7 +5,7 @@
 //! become `goto`/`call` (and an inverted skip for conditional branches). The sizes are exact, so
 //! the relaxation reaches the smallest consistent assignment (PLAN §7A.3 priority 5).
 
-use std::collections::HashMap;
+use crate::fxhash::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cc {
@@ -141,7 +141,7 @@ pub fn assemble(items: &[Item], start: u32) -> Assembled {
     let mut forms = vec![Form::Short; items.len()];
     // `nop`s each `Fit` puts in front of its items. They only grow, so the layout settles.
     let mut pads = vec![0u32; items.len()];
-    let mut labels: HashMap<String, u32> = HashMap::new();
+    let mut labels: HashMap<String, u32> = HashMap::default();
     loop {
         labels.clear();
         let mut pc = start;
@@ -370,7 +370,7 @@ fn assemble16_inner(items: &[Item], start: u32, multipage: bool, tracking: bool)
     let mut pages = vec![multipage; items.len()];
     let mut rounds = 0;
     let mut long = vec![false; items.len()];
-    let mut labels: HashMap<String, u32> = HashMap::new();
+    let mut labels: HashMap<String, u32> = HashMap::default();
     loop {
         rounds += 1;
         if tracking && rounds > 64 { return assemble16_inner(items, start, multipage, false); }

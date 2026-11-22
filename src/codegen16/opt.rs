@@ -1,7 +1,7 @@
 //! Clean-up passes over the generated item list.
 
 use crate::asm::{Cc, Item};
-use std::collections::HashMap;
+use crate::fxhash::HashMap;
 
 /// What is known about BSR at a point of the code.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,7 +35,7 @@ fn movlb_of(t: &str) -> Option<u32> {
 /// selected); a label that assembly text or a call can reach, and every handler, starts with BSR unknown.
 pub fn drop_redundant_movlb(items: Vec<Item>) -> Vec<Item> {
     let n = items.len();
-    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    let mut label_at: HashMap<&str, usize> = HashMap::default();
     for (i, it) in items.iter().enumerate() {
         if let Item::Label(l) = it {
             label_at.insert(l.as_str(), i);

@@ -23,7 +23,8 @@ use crate::asm::{Assembled, Cc, Item, assemble16};
 use crate::codegen::{Generated, Layout, Obj, Output, Target, independent};
 use crate::diag::Span;
 use crate::ir::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use crate::fxhash::{HashMap, HashSet};
+use std::collections::BTreeSet;
 
 const SCRATCH: [&str; 4] = ["A", "B", "C", "D"];
 
@@ -303,7 +304,7 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
             })
             .collect()
     }
-    let mut bodies: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut bodies: HashMap<String, (usize, usize)> = HashMap::default();
     for (f, s, e) in &g.ranges {
         bodies.insert(g.p.funcs[*f].asm.clone(), (*s, *e));
     }
@@ -345,7 +346,7 @@ fn stack_depth(g: &G, items: &[Item]) -> u32 {
         memo.insert(name.to_string(), d);
         d
     }
-    let mut memo = HashMap::new();
+    let mut memo = HashMap::default();
     let pos = |l: &str| items.iter().position(|i| matches!(i, Item::Label(x) if x == l));
     let main = match (pos("__reset"), pos("__halt")) {
         (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0) + gosub_levels(items, s, e, &bodies),
@@ -385,7 +386,7 @@ fn generate_base(p: &Program, tgt: &Target) -> Generated {
     if !g.errors.is_empty() || !tgt.opt || tgt.keep_vars {
         return g;
     }
-    let names: HashSet<String> = p.vars.iter().filter(|v| v.kind == VarKind::Global).map(|v| v.asm.clone()).collect();
+    let names: std::collections::HashSet<String> = p.vars.iter().filter(|v| v.kind == VarKind::Global).map(|v| v.asm.clone()).collect();
     if let Some(p2) = crate::opt::without_write_only(p, &names) {
         let g2 = generate_inner(&p2, tgt);
         if g2.errors.is_empty() && g2.out.words <= g.out.words {
@@ -441,7 +442,7 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) ->
         None
     };
     if let Some(msg) = unsupported {
-        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors: vec![(Span::default(), msg.to_string())], debug: Default::default() }, false);
+        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::default(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors: vec![(Span::default(), msg.to_string())], debug: Default::default() }, false);
     }
     let (g1, items1) = run_pass(p, tgt, None, [0; 4], vec![BTreeSet::new(); nf + 1], pow2_div);
     let pow2_div_used = g1.pow2_div_used;
@@ -522,11 +523,11 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) ->
     }
     let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
-        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() }, pow2_div_used);
+        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::default(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() }, pow2_div_used);
     };
     let items = if tgt.opt {
         let items = crate::codegen::inline_single_calls(items, ranges);
-        let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
+        let mut plain: HashMap<String, (u32, u32)> = HashMap::default();
         for (i, o) in objs.iter().enumerate() {
             if let Some(a) = layout.addr[i] && !(i < nvars && p.vars[i].volatile) {
                 let name = if i >= nvars && i < nvars + 4 { format!("__{}0", SCRATCH[i - nvars]) } else { o.name.clone() };
@@ -534,7 +535,7 @@ fn generate_placed(p: &Program, tgt: &Target, affinity: bool, pow2_div: bool) ->
             }
         }
         // Variables another flow of control can see; with raw assembly in a handler, every variable.
-        let shared: std::collections::HashSet<String> = match crate::opt::interrupt_vars(p) {
+        let shared: HashSet<String> = match crate::opt::interrupt_vars(p) {
             Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
             None => plain.keys().cloned().collect(),
         };

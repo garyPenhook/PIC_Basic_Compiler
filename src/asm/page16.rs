@@ -1,7 +1,7 @@
 //! Page-bit flow for generated CALL/GOTO selections. The caller excludes latch observers,
 //! opaque control flow and computed transfers before enabling this analysis.
 use super::{Cc, Item};
-use std::collections::HashMap;
+use crate::fxhash::HashMap;
 
 fn mnemonic(text: &str) -> String {
     text.split_whitespace().next().unwrap_or("").to_ascii_lowercase()
@@ -30,7 +30,7 @@ fn selected(it: &Item, long: bool) -> bool {
 
 pub(super) fn selections(items: &[Item], long: &[bool], labels: &HashMap<String, u32>) -> Vec<bool> {
     let n = items.len();
-    let mut index = HashMap::new();
+    let mut index = HashMap::default();
     for (i, it) in items.iter().enumerate() {
         match it {
             Item::Label(l) => {

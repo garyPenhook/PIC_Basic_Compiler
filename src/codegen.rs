@@ -14,7 +14,8 @@
 use crate::asm::{Assembled, Cc, Item, assemble, words_of, words_of16};
 use crate::diag::Span;
 use crate::ir::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use crate::fxhash::{HashMap, HashSet};
+use std::collections::BTreeSet;
 
 // ---- layout ------------------------------------------------------------------------------
 
@@ -523,7 +524,7 @@ fn scan_range(items: &[Item], s: usize, e: usize) -> (Regs, Vec<String>) {
 }
 
 fn compute_facts(g: &Gen, items: &[Item]) -> Facts {
-    let mut helpers: HashMap<String, (Regs, Vec<String>)> = HashMap::new();
+    let mut helpers: HashMap<String, (Regs, Vec<String>)> = HashMap::default();
     for (name, s, e) in &g.hranges {
         helpers.insert(name.clone(), scan_range(items, *s, *e));
     }
@@ -6528,7 +6529,7 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
         }
         v
     }
-    let mut bodies: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut bodies: HashMap<String, (usize, usize)> = HashMap::default();
     for (f, s, e) in &g.ranges {
         if !g.p.isrs.iter().any(|x| x.0 == *f) {
             bodies.insert(g.p.funcs[*f].asm.clone(), (*s, *e));
@@ -6572,7 +6573,7 @@ fn stack_depth(g: &Gen, items: &[Item]) -> u32 {
         memo.insert(name.to_string(), d);
         d
     }
-    let mut memo = HashMap::new();
+    let mut memo = HashMap::default();
     let pos = |l: &str| items.iter().position(|i| matches!(i, Item::Label(x) if x == l));
     let main = match (pos("__reset"), pos("__halt")) {
         (Some(s), Some(e)) if s < e => callees(items, s, e).iter().map(|c| 1 + depth(c, items, &bodies, &mut memo, &mut Vec::new())).max().unwrap_or(0) + gosub_levels(items, s, e, &bodies),
@@ -6620,7 +6621,7 @@ pub struct Generated {
 
 /// Count occupied physical RAM bytes, including overlapping routine frames only once.
 pub(crate) fn occupied_ram(g: &Generated, pic16: bool) -> usize {
-    let mut bytes = HashSet::new();
+    let mut bytes = HashSet::default();
     for (i, o) in g.objs.iter().enumerate() {
         if let Some(a) = g.layout.addr[i] {
             for off in 0..o.bytes {
@@ -6923,35 +6924,48 @@ pub(crate) fn inlinable_ranges(p: &Program, isr_mask: &[bool], ranges: &[(FuncId
     ranges.iter().filter(|(f, _, _)| !isr_mask[*f] && !p.funcs[*f].no_inline).map(|(f, s, e)| (p.funcs[*f].asm.clone(), *s, *e)).collect()
 }
 
+/// The routine labels (by number, see `inline_single_calls`) one item names: the one it calls, and the ones it names
+/// otherwise (a branch to it, or a token of an instruction or `Asm` line). The tokens of the instruction of a
+/// `SkipBr` are not looked at, only its branch.
+#[derive(Clone, Default)]
+struct Names {
+    call: Option<usize>,
+    other: Vec<usize>,
+}
+
+fn names_of(it: &Item, label_no: &HashMap<String, usize>) -> Names {
+    match it {
+        Item::Call(t) => Names { call: label_no.get(t.as_str()).copied(), other: Vec::new() },
+        Item::Br(_, t) | Item::SkipBr(_, t) => Names { call: None, other: label_no.get(t.as_str()).copied().into_iter().collect() },
+        Item::Ins(t) | Item::Raw(t) => Names { call: None, other: t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter_map(|tok| label_no.get(tok).copied()).collect() },
+        _ => Names::default(),
+    }
+}
+
 /// A routine called from exactly one place, and from nowhere else (not by address, not by a jump),
 /// is moved into the call: the `rcall` and the `return` go. Its `return`s other than the last
 /// become jumps to the end. `ranges` are the routines' item ranges (label first).
 pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String, usize, usize)>) -> Vec<Item> {
+    // The routine labels by number (a label named by two ranges is one entry, as it was one key of the map).
+    let mut label_no: HashMap<String, usize> = HashMap::default();
+    for (l, _, _) in &ranges {
+        let n = label_no.len();
+        label_no.entry(l.clone()).or_insert(n);
+    }
+    // What each item names (see `Names`), worked out once per item and moved with it: the walk that is made again
+    // after each inline then reads these instead of splitting every instruction into tokens again.
+    let mut named: Vec<Names> = items.iter().map(|it| names_of(it, &label_no)).collect();
     let mut serial = 0;
     'again: loop {
         // For every routine label: the items calling it, and whether anything else names it (a branch, or a token
         // of an instruction or `Asm` line). One walk over the items, made again after each inline.
-        let mut refs: HashMap<&str, (Vec<usize>, bool)> = ranges.iter().map(|(l, _, _)| (l.as_str(), (Vec::new(), false))).collect();
-        for (i, it) in items.iter().enumerate() {
-            match it {
-                Item::Call(t) => {
-                    if let Some(r) = refs.get_mut(t.as_str()) {
-                        r.0.push(i);
-                    }
-                }
-                Item::Br(_, t) | Item::SkipBr(_, t) => {
-                    if let Some(r) = refs.get_mut(t.as_str()) {
-                        r.1 = true;
-                    }
-                }
-                Item::Ins(t) | Item::Raw(t) => {
-                    for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
-                        if let Some(r) = refs.get_mut(tok) {
-                            r.1 = true;
-                        }
-                    }
-                }
-                _ => {}
+        let mut refs: Vec<(Vec<usize>, bool)> = vec![(Vec::new(), false); label_no.len()];
+        for (i, n) in named.iter().enumerate() {
+            if let Some(l) = n.call {
+                refs[l].0.push(i);
+            }
+            for &l in &n.other {
+                refs[l].1 = true;
             }
         }
         for r in 0..ranges.len() {
@@ -6959,7 +6973,7 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
             if !matches!(items.get(s), Some(Item::Label(l)) if *l == label) {
                 continue;
             }
-            let (calls, other) = &refs[label.as_str()];
+            let (calls, other) = &refs[label_no[&label]];
             if calls.len() != 1 || *other || (s..e).contains(&calls[0]) {
                 continue;
             }
@@ -7030,16 +7044,19 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
             });
             let mut map = vec![0usize; items.len() + 1];
             let mut out: Vec<Item> = Vec::with_capacity(items.len());
-            for (i, it) in std::mem::take(&mut items).into_iter().enumerate() {
+            let mut out_named: Vec<Names> = Vec::with_capacity(items.len());
+            for (i, (it, n)) in std::mem::take(&mut items).into_iter().zip(std::mem::take(&mut named)).enumerate() {
                 map[i] = out.len();
                 if (from..e).contains(&i) {
                     continue;
                 }
                 if i == c {
+                    out_named.extend(inl.iter().chain(resume.iter()).map(|x| names_of(x, &label_no)));
                     out.extend(inl.iter().cloned());
                     out.extend(resume.clone());
                 } else {
                     out.push(it);
+                    out_named.push(n);
                 }
             }
             let last_ix = map.len() - 1;
@@ -7050,6 +7067,7 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
                 rg.2 = map[rg.2];
             }
             items = out;
+            named = out_named;
             continue 'again;
         }
         return items;
@@ -7084,7 +7102,7 @@ fn generate_base(p: &Program, tgt: &Target) -> Generated {
     if unreferenced.is_empty() || !g.errors.is_empty() || !tgt.opt || tgt.keep_vars {
         return fits_flash(g, tgt);
     }
-    let names: HashSet<String> = unreferenced.into_iter().collect();
+    let names: std::collections::HashSet<String> = unreferenced.into_iter().collect();
     if let Some(p2) = crate::opt::without_write_only(p, &names) {
         let (g2, _) = generate_inner(&p2, tgt);
         if g2.errors.is_empty() && g2.out.words <= g.out.words {
@@ -7204,11 +7222,11 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     }
     let Some((objs, layout, items, helpers, stack_levels, ranges)) = result else {
         errors.push((Span::default(), "internal: data layout did not settle".into()));
-        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::new(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() }, Vec::new());
+        return (Generated { out: Output { text: String::new(), words: 0, labels: HashMap::default(), func_words: vec![] }, stack_levels: 0, objs: vec![], layout: Layout::default(), errors, debug: Default::default() }, Vec::new());
     };
     let items = if tgt.opt {
         let items = inline_single_calls(items, ranges);
-        let mut plain: HashMap<String, (u32, u32)> = HashMap::new();
+        let mut plain: HashMap<String, (u32, u32)> = HashMap::default();
         for (i, o) in objs.iter().enumerate() {
             if let Some(a) = layout.addr[i] && !(i < nvars && p.vars[i].volatile) {
                 let name = if i >= nvars && i < nvars + 4 { format!("__{}0", SCRATCH[i - nvars]) } else { o.name.clone() };
@@ -7221,7 +7239,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
             }
         }
         // Variables another flow of control can see; with raw assembly in a handler, every variable.
-        let shared: std::collections::HashSet<String> = match crate::opt::interrupt_vars(p) {
+        let shared: HashSet<String> = match crate::opt::interrupt_vars(p) {
             Some(vs) => objs.iter().enumerate().filter(|(i, _)| *i < nvars && vs.contains(i)).map(|(_, o)| o.name.clone()).collect(),
             None => plain.keys().cloned().collect(),
         };
@@ -7272,7 +7290,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     if tgt.opt {
         let cand: Vec<usize> = (0..nvars).filter(|&i| layout.addr[i].is_some() && objs[i].bytes > 0 && p.vars[i].kind == VarKind::Global && !p.vars[i].volatile && !p.vars[i].by_ref).collect();
         let names: HashSet<&str> = cand.iter().map(|&i| p.vars[i].asm.as_str()).collect();
-        let mut seen: HashSet<&str> = HashSet::new();
+        let mut seen: HashSet<&str> = HashSet::default();
         note_symbols(&items, &names, &mut seen);
         unreferenced = cand.iter().map(|&i| p.vars[i].asm.clone()).filter(|n| !seen.contains(n.as_str())).collect();
     }
@@ -7287,7 +7305,7 @@ fn generate_inner(p: &Program, tgt: &Target) -> (Generated, Vec<String>) {
     text.push_str("\n; ---- data (addresses chosen by the compiler)\n");
     // BASIC aliases are unqualified, so only expose names that identify one stored global.
     // Library modules can each have private globals such as `ready` or `lastStatus`.
-    let mut debug_names = HashMap::<String, usize>::new();
+    let mut debug_names = HashMap::<String, usize>::default();
     if !tgt.debug_files.is_empty() {
         for (i, v) in p.vars.iter().enumerate() {
             if v.kind == VarKind::Global && objs[i].bytes > 0 && layout.addr[i].is_some() {

@@ -9,6 +9,7 @@ pub mod dwarf;
 pub mod driver;
 pub mod embedded;
 pub mod explain;
+pub mod fxhash;
 pub mod ir;
 pub mod lexer;
 pub mod listing;

@@ -8,7 +8,8 @@
 
 use crate::codegen::{Layout, Obj, Pic16Mem};
 use crate::asm::Item;
-use std::collections::{BTreeMap, HashMap};
+use crate::fxhash::HashMap;
+use std::collections::BTreeMap;
 
 const BLOCK: u32 = 80;
 
@@ -173,7 +174,7 @@ mod tests {
         ["movf A, w", "movwf __A0", "movlw 1", "movwf C+1"].map(|s| Item::Ins(s.into())).to_vec()
     }
     fn check(objs: &[Obj], layout: &Layout, mem: &Pic16Mem, indep: &[Vec<bool>]) {
-        let mut occupied: HashMap<u32, usize> = HashMap::new();
+        let mut occupied: HashMap<u32, usize> = HashMap::default();
         for (i, o) in objs.iter().enumerate() {
             let Some(start) = layout.addr[i] else { continue };
             for off in 0..o.bytes {

@@ -20,7 +20,7 @@
 //! whole call instead of one instruction.
 
 use crate::asm::{assemble, words_of, Cc, Item};
-use std::collections::HashMap;
+use crate::fxhash::HashMap;
 
 /// Longest run, in instructions, that is looked for.
 const MAX_LEN: usize = 48;
@@ -190,7 +190,7 @@ fn repeated_runs(toks: &[Tok], allow_plain: bool) -> Vec<(usize, Vec<usize>)> {
 pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
     let before = assemble(&items, 0).words;
     let mut cur = items.clone();
-    let mut ids: HashMap<String, u32> = HashMap::new();
+    let mut ids: HashMap<String, u32> = HashMap::default();
     let mut bodies: Vec<(String, Vec<Item>)> = Vec::new();
     let mut cls: Vec<Class> = cur.iter().map(|it| class_of(it, &mut ids)).collect();
     loop {
@@ -233,31 +233,37 @@ pub fn outline(items: Vec<Item>, allow_plain: bool) -> Vec<Item> {
             body.push(Item::Ins("return".into()));
         }
         bodies.push((name.clone(), body));
-        // Rebuild: each occurrence becomes `call name`, keeping its line markers.
-        let mut start_of: HashMap<usize, usize> = HashMap::new();
-        for &s in &picked {
-            start_of.insert(toks[s].item, toks[s + len - 1].item);
-        }
+        // Rebuild: each occurrence becomes `call name`, keeping its line markers. The occurrences (first and last
+        // item) are in order and do not overlap; the items are moved, not copied.
+        let occ: Vec<(usize, usize)> = picked.iter().map(|&s| (toks[s].item, toks[s + len - 1].item)).collect();
         let mut out: Vec<Item> = Vec::with_capacity(cur.len());
         let mut out_cls: Vec<Class> = Vec::with_capacity(cur.len());
         let call = Item::Call(name.clone());
         let call_cls = class_of(&call, &mut ids);
-        let mut i = 0;
-        while i < cur.len() {
-            if let Some(&end) = start_of.get(&i) {
-                for it in &cur[i..=end] {
-                    if matches!(it, Item::Comment(t) if t.starts_with("#line ")) {
-                        out.push(it.clone());
-                        out_cls.push(None);
-                    }
-                }
+        let mut next_occ = occ.iter().peekable();
+        // The last item of the occurrence being replaced.
+        let mut inside: Option<usize> = None;
+        for (i, it) in std::mem::take(&mut cur).into_iter().enumerate() {
+            if inside.is_none()
+                && let Some(&&(start, end)) = next_occ.peek()
+                && start == i
+            {
+                next_occ.next();
+                inside = Some(end);
+            }
+            let Some(end) = inside else {
+                out.push(it);
+                out_cls.push(cls[i]);
+                continue;
+            };
+            if matches!(&it, Item::Comment(t) if t.starts_with("#line ")) {
+                out.push(it);
+                out_cls.push(None);
+            }
+            if i == end {
                 out.push(call.clone());
                 out_cls.push(call_cls);
-                i = end + 1;
-            } else {
-                out.push(cur[i].clone());
-                out_cls.push(cls[i]);
-                i += 1;
+                inside = None;
             }
         }
         cur = out;

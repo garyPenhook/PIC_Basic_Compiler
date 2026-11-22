@@ -29,7 +29,7 @@
 //! the pass deletes stores to are saved by every handler that uses them.
 
 use crate::asm::{Cc, Item};
-use std::collections::HashMap;
+use crate::fxhash::{HashMap, HashSet};
 
 /// What the pass may assume about symbols.
 pub struct Env {
@@ -45,7 +45,7 @@ pub struct Env {
     /// Routines with a one-byte `Result`: (label, the result's symbol).
     pub byte_results: Vec<(String, String)>,
     /// Variables an interrupt handler (or a routine C calls) can see: no pass may park a half-computed value in one.
-    pub shared: std::collections::HashSet<String>,
+    pub shared: HashSet<String>,
     /// The program has no interrupt handler and no linked C code, so nothing can observe a variable between its start-up
     /// clear and its first store: `pass_overwritten_store` may then delete a start-up `clrf 0xNNN` that the first store overwrites.
     pub zero_abs: bool,
@@ -689,7 +689,7 @@ fn cc_flags(cc: Cc) -> u8 {
 fn dead_paths(items: &[Item], from: usize, w: bool, need: u8) -> bool {
     let label_at = |target: &str| items.iter().position(|x| matches!(x, Item::Label(l) if l == target));
     let mut work = vec![(from, w, need)];
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::default();
     let mut budget = 200usize;
     while let Some((mut k, mut w, mut need)) = work.pop() {
         if !seen.insert((k, w, need)) {
@@ -1099,8 +1099,8 @@ fn pass_write_only(items: &mut Vec<Item>, env: &Env) -> bool {
         t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|s| !s.is_empty())
     }
     let keep = protected(items);
-    let mut stores: HashMap<&str, Vec<usize>> = HashMap::new();
-    let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut stores: HashMap<&str, Vec<usize>> = HashMap::default();
+    let mut used: HashSet<&str> = HashSet::default();
     for (i, it) in items.iter().enumerate() {
         match it {
             Item::Ins(t) => {
@@ -1711,7 +1711,7 @@ fn pass_jump_thread(items: &mut Vec<Item>) -> bool {
             inside
         })
         .collect();
-    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    let mut label_at: HashMap<&str, usize> = HashMap::default();
     for (k, it) in items.iter().enumerate() {
         if let Item::Label(l) = it {
             label_at.insert(l.as_str(), k);
@@ -1948,7 +1948,7 @@ fn pass_halt_loop(items: &mut Vec<Item>) -> bool {
 /// Drops the compiler's own `_L` labels that nothing names. They only split straight runs of
 /// code, which stops the other passes at them.
 fn pass_unused_labels(items: &mut Vec<Item>) -> bool {
-    let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut used: HashSet<&str> = HashSet::default();
     for it in items.iter() {
         match it {
             Item::Br(_, t) | Item::SkipBr(_, t) | Item::Call(t) => {
@@ -1965,7 +1965,7 @@ fn pass_unused_labels(items: &mut Vec<Item>) -> bool {
         }
     }
     let before = items.len();
-    let used: std::collections::HashSet<String> = used.into_iter().map(String::from).collect();
+    let used: HashSet<String> = used.into_iter().map(String::from).collect();
     items.retain(|it| !matches!(it, Item::Label(l) if l.starts_with("_L") && !used.contains(l)));
     items.len() != before
 }
@@ -2157,7 +2157,7 @@ fn pass_small(items: &mut Vec<Item>, env: &Env) -> bool {
     let real: Vec<usize> = (0..items.len()).filter(|&i| !matches!(items[i], Item::Comment(_))).collect();
     let is_w = |d: Option<&&str>| d.is_some_and(|d| matches!(*d, "w" | "0"));
     let mut edits: Vec<(usize, Option<String>)> = Vec::new();
-    let mut busy = std::collections::HashSet::new();
+    let mut busy = HashSet::default();
     for (n, &i) in real.iter().enumerate() {
         let Some(&j) = real.get(n + 1) else { break };
         let (Item::Ins(a), Item::Ins(b)) = (&items[i], &items[j]) else { continue };
@@ -2446,7 +2446,7 @@ enum F {
 /// numbers; `None` when the code has a branch it cannot place.
 fn fsr_flow(items: &[Item]) -> Option<(Vec<[F; 3]>, Vec<String>)> {
     let n = items.len();
-    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    let mut label_at: HashMap<&str, usize> = HashMap::default();
     for (i, it) in items.iter().enumerate() {
         if let Item::Label(l) = it {
             label_at.insert(l.as_str(), i);
@@ -2454,7 +2454,7 @@ fn fsr_flow(items: &[Item]) -> Option<(Vec<[F; 3]>, Vec<String>)> {
     }
     let is_branch = |m: &str| matches!(m, "bra" | "goto" | "bz" | "bnz" | "bc" | "bnc" | "bn" | "bnn" | "bov" | "bnov");
     // A label named by anything but a branch can be entered from anywhere.
-    let mut named: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut named: HashSet<&str> = HashSet::default();
     for it in items.iter() {
         let t = match it {
             Item::Raw(t) => t,
@@ -2497,7 +2497,7 @@ fn fsr_flow(items: &[Item]) -> Option<(Vec<[F; 3]>, Vec<String>)> {
         bail: bool,
     }
     let mut addrs: Vec<String> = Vec::new();
-    let mut addr_ix: HashMap<String, u32> = HashMap::new();
+    let mut addr_ix: HashMap<String, u32> = HashMap::default();
     let steps: Vec<Step> = items
         .iter()
         .enumerate()
@@ -2711,7 +2711,7 @@ fn pass_same_load(items: &mut Vec<Item>, env: &Env) -> bool {
     };
     let Some((flow, addrs)) = fsr_flow(items) else { return false };
     // The address as the first `lfsr` that loads it writes it, by its lower-case form.
-    let mut first_lfsr: HashMap<String, String> = HashMap::new();
+    let mut first_lfsr: HashMap<String, String> = HashMap::default();
     for it in items.iter() {
         if let Item::Ins(t) = it && let Some((m, o)) = parse(t) && m == "lfsr" && o.len() == 2 {
             first_lfsr.entry(o[1].to_ascii_lowercase()).or_insert_with(|| o[1].to_string());
@@ -2904,8 +2904,8 @@ fn pass_forward_unary(items: &mut [Item], env: &Env) -> bool {
 /// The variables whose address the program takes: named in raw assembly, in an `lfsr` or a literal instruction
 /// (`movlw low(X)`), or inside an expression. Only these can be reached through an FSR; any other compiler-placed
 /// variable is read and written by name alone.
-fn addr_taken(items: &[Item], env: &Env) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
+fn addr_taken(items: &[Item], env: &Env) -> HashSet<String> {
+    let mut out = HashSet::default();
     let mut add = |t: &str| {
         for id in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|x| !x.is_empty()) {
             if env.plain.contains_key(id) {
@@ -2956,7 +2956,7 @@ fn written_files(t: &str) -> Option<Vec<String>> {
 /// A revisited loop needs no second scan: its exits are checked by the first
 /// visit. Falling out of the list, returns and unknown code fail the proof.
 fn result_overwritten(items: &[Item], from: usize, source: &str, env: &Env,
-    taken: &std::collections::HashSet<String>) -> bool {
+    taken: &HashSet<String>) -> bool {
     let Some(address) = env.addr(source) else { return false };
     // Taking the address of any overlapping object exposes this byte too.
     let indirect = taken.iter().any(|n| env.plain.get(n)
@@ -3191,7 +3191,7 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
     }
     let keep = protected(items);
     // Every item that names a symbol.
-    let mut named: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut named: HashMap<String, Vec<usize>> = HashMap::default();
     for (i, it) in items.iter().enumerate() {
         let t = match it {
             Item::Ins(t) | Item::Raw(t) | Item::Call(t) | Item::Br(_, t) => t.as_str(),
@@ -3219,7 +3219,7 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
             continue;
         }
         // Classify every mention: a copy into a byte of the variable, or a pure read of one.
-        let mut defs: HashMap<String, (usize, String)> = HashMap::new(); // D byte -> (item, source byte)
+        let mut defs: HashMap<String, (usize, String)> = HashMap::default(); // D byte -> (item, source byte)
         let mut reads: Vec<(usize, usize)> = Vec::new(); // (item, operand index)
         let mut ok = true;
         for &i in at {
@@ -3323,9 +3323,9 @@ fn copy_prop_one(items: &mut Vec<Item>, env: &Env) -> bool {
         if srcs.iter().any(|sb| split_off(sb).is_some_and(|(n, _)| n == base.as_str()) || defs.keys().any(|d| same_byte(env, d, sb))) {
             continue;
         }
-        let def_items: std::collections::HashSet<usize> = defs.values().map(|d| d.0).collect();
+        let def_items: HashSet<usize> = defs.values().map(|d| d.0).collect();
         // A store through an FSR can change a source only when the program takes the address of its variable.
-        let exposed = |byte: &str, names: &std::collections::HashSet<String>| {
+        let exposed = |byte: &str, names: &HashSet<String>| {
             env.addr(byte).is_none_or(|address| names.iter().any(|n| env.plain.get(n)
                 .is_some_and(|&(a, size)| address >= a && address - a < size)))
         };
@@ -3948,7 +3948,7 @@ fn quiet_sfr(sym: &str, env: &Env) -> bool {
 /// or `movlw k / movwf` in the same straight run already gave that value is not touched again.
 fn pass_known_sfr_bits(items: &mut Vec<Item>, env: &Env) -> bool {
     let keep = protected(items);
-    let mut known: HashMap<String, u8> = HashMap::new();
+    let mut known: HashMap<String, u8> = HashMap::default();
     let mut w: Option<u8> = None;
     let mut dead = vec![false; items.len()];
     for (i, it) in items.iter().enumerate() {
@@ -4125,14 +4125,14 @@ fn pass_entry_bank(items: &mut Vec<Item>, env: &Env) -> bool {
 fn movlb_flow(items: &mut Vec<Item>, outside: Option<&Vec<String>>) -> bool {
     let n = items.len();
     let keep = protected(items);
-    let mut label_at: HashMap<&str, usize> = HashMap::new();
+    let mut label_at: HashMap<&str, usize> = HashMap::default();
     for (i, it) in items.iter().enumerate() {
         if let Item::Label(l) = it {
             label_at.insert(l.as_str(), i);
         }
     }
     // Labels that raw assembly (or an instruction written as text) names can be entered from anywhere.
-    let mut named: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut named: HashSet<&str> = HashSet::default();
     for it in items.iter() {
         if let Item::Raw(t) = it {
             for tok in t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
@@ -4161,10 +4161,10 @@ fn movlb_flow(items: &mut Vec<Item>, outside: Option<&Vec<String>>) -> bool {
     let mut inb = vec![Bank::Top; n + 1];
     // Routine labels whose every entry is a call or jump in the item list (`outside` given): any other mention of
     // the label in an instruction (an address loaded, a computed jump) is a way in nothing here follows.
-    let mut closed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut closed: HashSet<usize> = HashSet::default();
     if let Some(outside) = outside {
-        let mut mentioned: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        let mut entered: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut mentioned: HashSet<&str> = HashSet::default();
+        let mut entered: HashSet<&str> = HashSet::default();
         for it in items.iter() {
             match it {
                 Item::Call(l) | Item::Br(_, l) => {
@@ -4457,7 +4457,7 @@ fn pass_bank_prologue(items: &mut Vec<Item>) -> bool {
             continue;
         }
         let end = (r + 1..items.len()).find(|&k| matches!(&items[k], Item::Label(l) if !local_label(l))).unwrap_or(items.len());
-        let mut tally: HashMap<String, usize> = HashMap::new();
+        let mut tally: HashMap<String, usize> = HashMap::default();
         for it in &items[r..end] {
             if let Item::Ins(t) = it && let Some(("movlb", ops)) = parse(t).as_ref().map(|(m, o)| (m.as_str(), o)) && let Some(k) = ops.first() {
                 *tally.entry(k.to_string()).or_default() += 1;
@@ -5457,7 +5457,7 @@ fn pass_dead_temp_stores(items: &mut Vec<Item>, env: &Env) -> bool {
 fn byte_dead_paths(items: &[Item], from: usize, sym: &str, env: &Env) -> bool {
     let label_at = |target: &str| items.iter().position(|x| matches!(x, Item::Label(l) if l == target));
     let mut work = vec![from];
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::default();
     let mut budget = 3000usize;
     while let Some(mut k) = work.pop() {
         if !seen.insert(k) {
@@ -6766,7 +6766,7 @@ mod tests {
     use crate::asm::Cc;
 
     fn env() -> Env {
-        let mut plain = HashMap::new();
+        let mut plain = HashMap::default();
         plain.insert("__A0".to_string(), (0x00, 4));
         plain.insert("__B0".to_string(), (0x04, 4));
         plain.insert("__C0".to_string(), (0x08, 4));

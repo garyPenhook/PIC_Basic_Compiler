@@ -30,7 +30,7 @@ pub fn target_of(dev: &Device) -> Target {
             _ => ram.push((start, g.end)),
         }
     }
-    let sfr: std::collections::HashMap<String, u32> = dev.sfr.iter().map(|s| (s.name.clone(), s.addr)).collect();
+    let sfr: crate::fxhash::HashMap<String, u32> = dev.sfr.iter().map(|s| (s.name.clone(), s.addr)).collect();
     let hw_context = sfr.contains_key("SHADCON");
     let data_top = dev.memory.data.gpr.iter().map(|g| g.end).chain(dev.memory.data.sfr.iter().map(|r| r.end)).max().unwrap_or(0);
     let acc = &dev.memory.data.access_sfr;
