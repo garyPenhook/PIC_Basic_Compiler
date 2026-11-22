@@ -18,7 +18,7 @@
 
 use crate::ir::*;
 use crate::types::{Ty, WORD};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Acc {
@@ -3606,57 +3606,119 @@ fn sizes<B: Send>(qs: &[&Program], size: &Size<B>) -> Vec<Option<(u32, B)>> {
 /// threads at once.
 type Size<'a, B> = dyn Fn(&Program) -> Option<(u32, B)> + Sync + 'a;
 
+/// The trial programs for routine `f` of `cur`: all constant parameters fixed, then each of the first four alone (the
+/// smallest built one wins), each split of the calls once. No more than `max_builds` trial builds in all, `planned`
+/// of them already counted. `cur` is not changed.
+fn spec_trials(cur: &mut Program, f: FuncId, ctx: &SpecCtx, planned: u32, max_builds: u32) -> Vec<(u32, Program)> {
+    let mut masks: Vec<u32> = vec![u32::MAX];
+    masks.extend((0..4).map(|i| 1u32 << i));
+    let mut tried: HashSet<Vec<Vec<usize>>> = HashSet::new();
+    let mut qs: Vec<(u32, Program)> = Vec::new();
+    for mask in masks {
+        if planned + qs.len() as u32 >= max_builds {
+            break;
+        }
+        // Worked out without touching the program; only a split of the calls not seen yet is built.
+        if !specialize_func(cur, f, mask, Some(&mut tried), ctx, true) {
+            continue;
+        }
+        let mut q = cur.clone();
+        if !specialize_func(&mut q, f, mask, Some(&mut tried), ctx, false) {
+            continue;
+        }
+        optimize_core(&mut q);
+        qs.push((mask, q));
+    }
+    qs
+}
+
+/// The trials of one routine (`spec_trials`) and the builds of as many of them as are made so far, in order.
+struct Trials<B> {
+    f: FuncId,
+    made: Vec<(u32, Program)>,
+    built: Vec<Option<(u32, B)>>,
+}
+
 /// One routine at a time: a copy is kept when the built program shrinks. Returns the smallest program reached, its
 /// words and its build (`start_b`, the build of `start`, when nothing shrank). `builds` counts the trial builds made,
 /// at most `max_builds`.
+///
+/// The routines are decided in order, each against the program as the ones before it left it. Their trials are made
+/// ahead, as they would be if no copy before them is kept, and built a wave of `trial_jobs` at a time, so that the
+/// trials of the next routines are built together with the last ones of this one. A routine is decided as soon as all
+/// its trials are built; when a copy is kept, the program has changed, so the trials made after it are thrown away
+/// (and not counted) and made again. The decisions, and the builds counted, are those of one routine at a time.
 fn specialize_greedy<B: Send>(start: Program, start_w: u32, start_b: B, size: &Size<B>, builds: &mut u32, max_builds: u32, debug: bool) -> (u32, Program, B) {
     let mut cur = start;
     let mut cur_w = start_w;
     let mut cur_b = start_b;
+    let jobs = trial_jobs();
     for _round in 0..3 {
         let mut improved = false;
-        let mut ctx = spec_ctx(&cur);
-        for f in spec_candidates(&cur) {
-            // All constant parameters fixed, then each of the first four alone: the smallest result wins.
-            let mut masks: Vec<u32> = vec![u32::MAX];
-            masks.extend((0..4).map(|i| 1u32 << i));
-            let mut tried: HashSet<Vec<Vec<usize>>> = HashSet::new();
-            // The candidates are made one after the other (each split of the calls is tried once), then built together.
-            let mut qs: Vec<(u32, Program)> = Vec::new();
-            for mask in masks {
-                if *builds + qs.len() as u32 >= max_builds {
-                    break;
+        let cands = spec_candidates(&cur);
+        // `cands[..next]` are decided.
+        let mut next = 0;
+        'from: while next < cands.len() {
+            let ctx = spec_ctx(&cur);
+            // Trials made for `cands[next..made_to]`, counting builds as if every one before them were made.
+            let mut planned = *builds;
+            let mut made_to = next;
+            let mut waiting: VecDeque<Trials<B>> = VecDeque::new();
+            loop {
+                // Enough trials made to fill a wave, or every routine left made.
+                while made_to < cands.len() && waiting.iter().map(|t| t.made.len() - t.built.len()).sum::<usize>() < jobs {
+                    let f = cands[made_to];
+                    let made = spec_trials(&mut cur, f, &ctx, planned, max_builds);
+                    planned += made.len() as u32;
+                    waiting.push_back(Trials { f, made, built: Vec::new() });
+                    made_to += 1;
                 }
-                // Worked out without touching the program; only a split of the calls not seen yet is built.
-                if !specialize_func(&mut cur, f, mask, Some(&mut tried), &ctx, true) {
-                    continue;
+                // The first trials not built yet, in order.
+                let wave: Vec<usize> = waiting.iter().enumerate().flat_map(|(g, t)| std::iter::repeat_n(g, t.made.len() - t.built.len())).take(jobs).collect();
+                if !wave.is_empty() {
+                    let got = {
+                        let mut at: Vec<usize> = waiting.iter().map(|t| t.built.len()).collect();
+                        let progs: Vec<&Program> = wave
+                            .iter()
+                            .map(|&g| {
+                                at[g] += 1;
+                                &waiting[g].made[at[g] - 1].1
+                            })
+                            .collect();
+                        sizes(&progs, size)
+                    };
+                    for (g, r) in wave.into_iter().zip(got) {
+                        waiting[g].built.push(r);
+                    }
                 }
-                let mut q = cur.clone();
-                if !specialize_func(&mut q, f, mask, Some(&mut tried), &ctx, false) {
-                    continue;
+                // Every routine whose trials are all built, in order.
+                while waiting.front().is_some_and(|t| t.built.len() == t.made.len()) {
+                    let Some(t) = waiting.pop_front() else { unreachable!() };
+                    next += 1;
+                    *builds += t.made.len() as u32;
+                    let mut pick: Option<(u32, Program, B)> = None;
+                    for ((mask, q), sz) in t.made.into_iter().zip(t.built) {
+                        if debug {
+                            eprintln!("spec {} mask {mask}: {:?} words (now {cur_w})", cur.funcs[t.f].asm, sz.as_ref().map(|(w, _)| *w));
+                        }
+                        if let Some((w, b)) = sz
+                            && w < pick.as_ref().map_or(cur_w, |(pw, _, _)| *pw)
+                        {
+                            pick = Some((w, q, b));
+                        }
+                    }
+                    if let Some((w, q, b)) = pick {
+                        cur_w = w;
+                        cur = q;
+                        cur_b = b;
+                        improved = true;
+                        // The trials still waiting were made for the program before this copy.
+                        continue 'from;
+                    }
                 }
-                optimize_core(&mut q);
-                qs.push((mask, q));
-            }
-            *builds += qs.len() as u32;
-            let szs = sizes(&qs.iter().map(|(_, q)| q).collect::<Vec<_>>(), size);
-            let mut pick: Option<(u32, Program, B)> = None;
-            for ((mask, q), sz) in qs.into_iter().zip(szs) {
-                if debug {
-                    eprintln!("spec {} mask {mask}: {:?} words (now {cur_w})", cur.funcs[f].asm, sz.as_ref().map(|(w, _)| *w));
+                if waiting.is_empty() && made_to == cands.len() {
+                    break 'from;
                 }
-                if let Some((w, b)) = sz
-                    && w < pick.as_ref().map_or(cur_w, |(pw, _, _)| *pw)
-                {
-                    pick = Some((w, q, b));
-                }
-            }
-            if let Some((w, q, b)) = pick {
-                cur_w = w;
-                cur = q;
-                cur_b = b;
-                ctx = spec_ctx(&cur);
-                improved = true;
             }
         }
         if !improved || *builds >= max_builds {
