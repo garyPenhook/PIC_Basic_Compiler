@@ -2,6 +2,7 @@
 
 pub mod asm;
 pub mod ast;
+pub mod cycles;
 pub mod codegen;
 pub mod codegen16;
 pub mod diag;
