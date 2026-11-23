@@ -104,3 +104,20 @@ uses both ranges (`in_access` in `src/codegen.rs`).
 
 The 04/05/14/15 errata sheet lists the same items under other numbers (and "ADC offset error specification
 lowered in ECH, ECM and ECL modes" for revision E0), ES-B p.2.
+
+## 8. Instruction cycles
+
+One instruction cycle is four oscillator periods. The skip rows read "1–4" in the table: one cycle when
+the skip does not happen, then one more cycle for the skipped word that is fetched and thrown away, plus
+one for each extra word of the instruction it skips. `src/cycles.rs` holds the same table in code.
+
+| Fact | Source |
+|---|---|
+| ✔ Byte-, bit-, literal and inherent instructions (`ADDWF`…`XORWF`, `BCF`, `BSF`, `BTG`, `ADDLW`…`XORLW`, `MOVLB`, `MOVLW`, `MULWF`, `MULLW`, `ADDFSR`, `SUBFSR`, `NOP`, `PUSH`, `POP`, `DAW`, `CLRWDT`, `RESET`, `SLEEP`): 1 cycle | DS-A Table 45-2 p.805, p.807 |
+| ✔ Skips (`CPFSEQ/GT/LT`, `DECFSZ`, `DCFSNZ`, `INCFSZ`, `INFSNZ`, `TSTFSZ`, `BTFSC`, `BTFSS`): 1–4 cycles | DS-A p.805–806 |
+| ✔ Conditional branches (`BC BN BNC BNN BNOV BNZ BOV BZ`): 1 not taken, 2 taken | DS-A p.806 |
+| ✔ `BRA`, `RCALL`, `CALL`, `CALLW`, `GOTO`, `RETURN`, `RETFIE`, `RETLW`: 2 cycles | DS-A p.806–807 |
+| ✔ `MOVFF`, `LFSR`: 2 cycles; `MOVFFL`: 3 cycles | DS-A p.805, p.807 |
+| ✔ `TBLRD*`, `TBLRD*+`, `TBLRD*-`, `TBLRD+*`: 2 cycles (`TBLWT` likewise, DS-A p.808) | DS-A p.807 |
+| ✔ Extended set (needs `XINST = 1`): `MOVSF` 2 cycles, 2 words; `MOVSS` 2 cycles, 2 words; `MOVSFL` 3 cycles, 3 words; `ADDULNK`, `SUBULNK` 2 cycles; `PUSHL` 1 cycle | DS-A Table 45-3 p.866, p.867–869 |
+| ✔ Words: `MOVFF`, `CALL`, `GOTO`, `LFSR`, `MOVSF`, `MOVSS` take 2; `MOVFFL`, `MOVSFL` take 3 | DS-A p.805–807, p.866 |

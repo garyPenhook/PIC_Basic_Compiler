@@ -10,11 +10,13 @@
 //! * [`Core::Pic18`], the PIC18 of the K22 (DS40001412H p.364-365) and the Q10 (DS40002043F p.626-629): `bra`, `rcall`,
 //!   `call`, `goto`, `return`, `retfie`, `retlw`, `movff`, `lfsr` and the table reads and writes take two cycles; a
 //!   conditional branch one, two when taken; a skip one, two over a one-word instruction, three over a two-word one.
-//! * [`Core::Pic18Q41`] (DS40002214G p.805-807, p.819): as above, and `movffl` takes three cycles, `callw` two, and a
-//!   skip over a three-word instruction (`movffl`) takes four.
+//! * [`Core::Pic18Q41`] (DS40002214G p.805-807, p.819; extended set p.866-869): as above, and `movffl` and `movsfl`
+//!   take three cycles, `callw`, `movsf`, `movss`, `addulnk` and `subulnk` two, `pushl` one, and a skip over a
+//!   three-word instruction (`movffl`, `movsfl`) takes four.
 //!
-//! `movsf` and `movss` (Q41) are not in the table: their cycle counts were not read, so [`cost`] gives `None` for them
-//! and a caller must treat the instruction as unknown, not as one cycle.
+//! A byte instruction that stores into `PCL` (`addwf PCL, f`) takes two cycles on every PIC18 (the program counter changes).
+//!
+//! An instruction the table does not list gives `None` from [`cost`]; a caller must treat it as unknown, not as one cycle.
 
 /// The instruction timing a part follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +65,27 @@ pub fn cost(core: Core, text: &str, skipped_words: u32) -> Option<Cost> {
     let mn = t.split_whitespace().next()?.to_ascii_lowercase();
     match core {
         Core::Pic16e => cost16(&mn),
+        Core::Pic18 | Core::Pic18Q41 if writes_pcl(t, &mn) => Some(Cost::flat(2)),
         Core::Pic18 | Core::Pic18Q41 => cost18(core, &mn, skipped_words),
+    }
+}
+
+/// A byte instruction that stores into `PCL` (`addwf PCL, f`, `movwf PCL`): the program counter changes, so it takes two
+/// cycles (DS40002043F p.626 note 2; DS40002214G p.808 note 2; `addwf PCL, f` in basil's dense `Select` takes two in
+/// basil-sim).
+fn writes_pcl(text: &str, mn: &str) -> bool {
+    let rest = text.trim_start()[mn.len()..].trim_start();
+    let mut ops = rest.split(',').map(str::trim);
+    if !ops.next().is_some_and(|f| f.eq_ignore_ascii_case("PCL")) {
+        return false;
+    }
+    match mn {
+        "movwf" => true,
+        "addwf" | "addwfc" | "andwf" | "comf" | "decf" | "incf" | "iorwf" | "rlcf" | "rlncf" | "rrcf" | "rrncf" | "subfwb" | "subwf" | "subwfb" | "swapf" | "xorwf" => {
+            ops.next().is_some_and(|d| d.eq_ignore_ascii_case("f") || d == "1")
+        }
+        "clrf" | "setf" | "negf" => true,
+        _ => false,
     }
 }
 
@@ -90,7 +112,9 @@ fn cost18(core: Core, mn: &str, skipped_words: u32) -> Option<Cost> {
         "bra" | "rcall" | "call" | "goto" | "return" | "retfie" | "retlw" | "movff" | "lfsr" | "tblrd" | "tblwt" => Cost::flat(2),
         m if m.starts_with("tblrd") || m.starts_with("tblwt") => Cost::flat(2),
         "callw" if core == Core::Pic18Q41 => Cost::flat(2),
-        "movffl" if core == Core::Pic18Q41 => Cost::flat(3),
+        "movffl" | "movsfl" if core == Core::Pic18Q41 => Cost::flat(3),
+        "movsf" | "movss" | "addulnk" | "subulnk" if core == Core::Pic18Q41 => Cost::flat(2),
+        "pushl" if core == Core::Pic18Q41 => Cost::flat(1),
         "bc" | "bn" | "bnc" | "bnn" | "bnov" | "bnz" | "bov" | "bz" => Cost { fall: 1, taken: 2 },
         // A skip fetches the word after it and throws it away; a two-word (three-word) instruction takes one (two) more.
         "btfsc" | "btfss" | "cpfseq" | "cpfsgt" | "cpfslt" | "decfsz" | "dcfsnz" | "incfsz" | "infsnz" | "tstfsz" => Cost { fall: 1, taken: 1 + skipped_words.clamp(1, 3) },
@@ -221,16 +245,31 @@ mod tests {
     }
 
     #[test]
+    fn a_store_into_pcl_takes_two_cycles() {
+        assert_eq!(c(Core::Pic18, "addwf PCL, f, c", 1), (2, 2));
+        assert_eq!(c(Core::Pic18Q41, "addwf PCL, f, c", 1), (2, 2));
+        assert_eq!(c(Core::Pic18, "movwf PCL, c", 1), (2, 2));
+        assert_eq!(c(Core::Pic18, "addwf PCL, w, c", 1), (1, 1));
+        assert_eq!(c(Core::Pic18, "movf PCL, w, c", 1), (1, 1));
+        assert_eq!(c(Core::Pic18, "addwf x, f, c", 1), (1, 1));
+    }
+
+    #[test]
     fn q41_extras_are_not_on_the_older_cores() {
         assert_eq!(c(Core::Pic18Q41, "movffl a, b", 1), (3, 3));
         assert!(cost(Core::Pic18, "movffl a, b", 1).is_none());
         assert!(cost(Core::Pic18, "callw", 1).is_none());
         assert_eq!(c(Core::Pic18Q41, "callw", 1), (2, 2));
+        assert_eq!(c(Core::Pic18Q41, "movsf [1], 2", 1), (2, 2));
+        assert_eq!(c(Core::Pic18Q41, "movss [1], [2]", 1), (2, 2));
+        assert_eq!(c(Core::Pic18Q41, "movsfl [1], 2", 1), (3, 3));
+        assert_eq!(c(Core::Pic18Q41, "pushl 4", 1), (1, 1));
+        assert!(cost(Core::Pic18, "movsf [1], 2", 1).is_none());
     }
 
     #[test]
     fn unknown_and_non_instructions_are_none() {
-        assert!(cost(Core::Pic18Q41, "movsf [1], 2", 1).is_none());
+        assert!(cost(Core::Pic18Q41, "foo [1], 2", 1).is_none());
         assert!(cost(Core::Pic16e, "L1:", 1).is_none());
         assert!(cost(Core::Pic16e, "; comment", 1).is_none());
         assert!(cost(Core::Pic16e, "", 1).is_none());
