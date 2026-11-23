@@ -106,6 +106,72 @@ fn is_18_one_cycle(mn: &str) -> bool {
     )
 }
 
+/// A static cycle count of one routine in the assembly text: every instruction counted once, so a loop counts as a
+/// single pass. Not a run-time figure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Static {
+    /// The instructions counted.
+    pub ins: u32,
+    /// Cycles with every branch and skip falling through.
+    pub straight: u32,
+    /// Cycles with every branch and skip taken.
+    pub taken: u32,
+    /// Instructions the table does not know (counted as nothing).
+    pub unknown: u32,
+}
+
+/// The mnemonic of an assembly line that is an instruction, `None` for a label, directive, data or comment.
+fn instruction(line: &str) -> Option<&str> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with(';') || t.starts_with('#') || t.ends_with(':') || t.contains(" equ ") {
+        return None;
+    }
+    let mn = t.split_whitespace().next()?;
+    let low = mn.to_ascii_lowercase();
+    if matches!(low.as_str(), "db" | "dw" | "org" | "psect" | "global" | "config" | "ds" | "align" | "end" | "extrn") {
+        return None;
+    }
+    Some(t)
+}
+
+/// Static cycles per routine for the code in `asm` (the text of the `.S` file). A routine runs from one label that is
+/// not local (`_L...`) to the next; the result is keyed by that label. `words` is the size of an instruction in words
+/// (what a skip passes over).
+pub fn per_routine(core: Core, asm: &str, words: &dyn Fn(&str) -> u32) -> Vec<(String, Static)> {
+    let mut out: Vec<(String, Static)> = Vec::new();
+    let mut in_code = false;
+    let lines: Vec<&str> = asm.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if !in_code {
+            in_code = t.starts_with("PSECT code,") || t.starts_with("PSECT basilcode,");
+            continue;
+        }
+        if let Some(label) = t.strip_suffix(':')
+            && !label.contains(char::is_whitespace)
+            && !label.starts_with("_L")
+        {
+            out.push((label.to_string(), Static::default()));
+            continue;
+        }
+        let Some(ins) = instruction(line) else { continue };
+        if out.is_empty() {
+            out.push((String::new(), Static::default()));
+        }
+        let next = lines[i + 1..].iter().find_map(|l| instruction(l)).map_or(1, words);
+        let r = &mut out.last_mut().unwrap().1;
+        match cost(core, ins, next) {
+            Some(k) => {
+                r.ins += 1;
+                r.straight += k.fall;
+                r.taken += k.taken;
+            }
+            None => r.unknown += 1,
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +234,17 @@ mod tests {
         assert!(cost(Core::Pic16e, "L1:", 1).is_none());
         assert!(cost(Core::Pic16e, "; comment", 1).is_none());
         assert!(cost(Core::Pic16e, "", 1).is_none());
+    }
+
+    #[test]
+    fn static_cycles_per_routine() {
+        let asm = "; basil output\nPSECT code,class=CODE,abs,delta=1\n__reset:\n    movlw 3\n_L1:\n    decfsz WREG, f, c\n    bra _L1\n    return\nF:\n    btfss PORTA, 0, c\n    goto X\n    nop\n    foo 1\n";
+        let r = per_routine(Core::Pic18, asm, &crate::asm::words_of);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "__reset");
+        // movlw 1 + decfsz 1 (2 taken over a one-word `bra`) + bra 2 + return 2.
+        assert_eq!(r[0].1, Static { ins: 4, straight: 6, taken: 7, unknown: 0 });
+        // btfss over a two-word `goto`: 1 straight, 3 taken; goto 2; nop 1; `foo` unknown.
+        assert_eq!(r[1].1, Static { ins: 3, straight: 4, taken: 6, unknown: 1 });
     }
 }

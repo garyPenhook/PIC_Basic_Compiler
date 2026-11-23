@@ -218,9 +218,17 @@ pub fn usage_summary(dev: &Device, g: &Generated, color: bool) -> String {
 
 pub fn report(dev: &Device, p: &Program, g: &Generated) -> String {
     let mut s = String::new();
-    s.push_str(&format!("Program: {} words ({} bytes)\n", g.out.words, g.out.words * 2));
+    s.push_str(&format!("Program: {} words ({} bytes); cycles are one static pass over each routine, not a run time\n", g.out.words, g.out.words * 2));
+    // Static cycles per routine: every instruction once, so a loop counts as one pass (see `cycles::per_routine`).
+    let pic16 = dev.device.family == "pic16e";
+    let cy = crate::cycles::Core::of_device(&dev.device.name).map(|c| crate::cycles::per_routine(c, &g.out.text, &|t| if pic16 { crate::asm::words_of16(t) } else { crate::asm::words_of(t) }));
     for (n, w) in &g.out.func_words {
-        s.push_str(&format!("  {:6} words  {n}\n", w));
+        let label = if n == "(start-up and program body)" { "__reset" } else { n.as_str() };
+        let note = cy.as_ref().and_then(|r| r.iter().find(|(l, _)| l == label)).map(|(_, c)| {
+            let unk = if c.unknown > 0 { format!(", {} not counted", c.unknown) } else { String::new() };
+            if c.taken != c.straight { format!("  [{}..{} cycles{unk}]", c.straight, c.taken) } else { format!("  [{} cycles{unk}]", c.straight) }
+        });
+        s.push_str(&format!("  {:6} words  {n}{}\n", w, note.unwrap_or_default()));
     }
     let nv = p.vars.len();
     s.push_str("Data RAM:\n");
