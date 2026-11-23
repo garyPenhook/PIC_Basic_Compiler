@@ -119,6 +119,22 @@ function launchConfig({ name, device, packName, packVersion, tool = 'Simulator',
   return c;
 }
 
+/** The basil-sim debug configuration (picsim's `basil-sim-dap`, the "Basil PIC Simulator Debugger" extension): the -O0 ELF/HEX in
+ *  dist/, the part without its PIC prefix, and the program's board file (`<name>.stim.toml`) when there is one. */
+function simLaunchConfig({ name, device, program, stimulus, cwd }) {
+  const c = {
+    type: 'basil-sim',
+    request: 'launch',
+    name: 'PIC BASIC: Debug in simulator',
+    program: program || `\${workspaceFolder}/dist/${name}.hex`,
+    device: basilDevice(device),
+    stopOnEntry: true,
+  };
+  if (stimulus) c.stimulus = stimulus;
+  if (cwd) c.cwd = cwd;
+  return c;
+}
+
 function launchJson(opts) {
   return { version: '0.2.0', configurations: [launchConfig(opts)] };
 }
@@ -205,4 +221,4 @@ function updateLaunch(dir, opts) {
   fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n');
 }
 
-module.exports = { SETTINGS, FALLBACK_TOOLS, listDevices, mplabDevice, basilDevice, toolName, parseTools, readSettings, writeSettings, launchConfig, launchJson, tasksJson, starterSource, createProject, collectArtifacts, OUTPUT_DIR, updateLaunch };
+module.exports = { SETTINGS, FALLBACK_TOOLS, listDevices, mplabDevice, basilDevice, toolName, parseTools, readSettings, writeSettings, launchConfig, simLaunchConfig, launchJson, tasksJson, starterSource, createProject, collectArtifacts, OUTPUT_DIR, updateLaunch };

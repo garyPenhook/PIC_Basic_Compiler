@@ -221,6 +221,16 @@ console.log('ok');
   assert.ok(!('serial' in l3) && !('interface' in l3));
   const prog = proj.launchConfig({ name: 'Blink', device: '18F27Q10', tool: 'Snap', programOnly: true });
   assert.ok(prog.noDebug && /\.hex$/.test(prog.program) && !('stopOnEntry' in prog));
+  const sim = proj.simLaunchConfig({ name: 'Blink', device: 'PIC18F27Q10', stimulus: '/w/Blink.stim.toml' });
+  assert.deepStrictEqual([sim.type, sim.device, sim.program, sim.stopOnEntry, sim.stimulus], ['basil-sim', '18F27Q10', '${workspaceFolder}/dist/Blink.hex', true, '/w/Blink.stim.toml']);
+  assert.ok(!('stimulus' in proj.simLaunchConfig({ name: 'Blink', device: '16F17146' })));
+  // The MPLAB entry stays the one updateLaunch keeps in step; a basil-sim entry beside it is left alone.
+  const lj = path.join(target, '.vscode/launch.json');
+  const withSim = JSON.parse(fs.readFileSync(lj, 'utf8'));
+  withSim.configurations.push(sim);
+  fs.writeFileSync(lj, JSON.stringify(withSim));
+  proj.updateLaunch(target, { name: 'Blink', device: '18F27Q10', tool: 'Simulator' });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(lj, 'utf8')).configurations.map((c) => c.type), ['mplab-core-da', 'basil-sim']);
   fs.writeFileSync(path.join(target, 'Blink.hex'), ':00000001FF\n');
   assert.deepStrictEqual(proj.collectArtifacts(src), ['Blink.hex']);
   assert.ok(fs.existsSync(path.join(target, 'dist/Blink.hex')));

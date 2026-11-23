@@ -972,6 +972,26 @@ fn i2c_hardware_driver_in_simulator() {
     }
 }
 
+/// Editor debugging: `scripts/test_dap.py` builds a small program with `-g -O0` and drives picsim's `basil-sim-dap` over the Debug
+/// Adapter Protocol on a PIC18 and a PIC16 part (breakpoint on a BASIC line, call stack, globals and parameters by name and type,
+/// continue / next). Opt-in like the other simulator tests: `BASIL_SIM=1` (or `BASIL_MDB=1`), with `basil-sim-dap` built in
+/// `../picsim` (or named in `BASIL_SIM_DAP`).
+#[test]
+fn debug_adapter_session_in_simulator() {
+    if std::env::var("BASIL_SIM").is_err() && std::env::var("BASIL_MDB").is_err() {
+        eprintln!("set BASIL_SIM=1 (or BASIL_MDB=1) to run the debug adapter test");
+        return;
+    }
+    let r = Command::new("python3")
+        .arg(root().join("scripts/test_dap.py"))
+        .env("BASIL", basil())
+        .env("BASIL_LIB", root().join("lib"))
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+    assert!(r.status.success(), "{text}");
+}
+
 /// With `BASIL_MDB=1` the programs that touch no peripheral, and the PIC18-Q41 library tests, run on the
 /// simulator's `PIC18F16Q41`.
 #[test]

@@ -639,10 +639,10 @@ function taskFor(file, mode) {
   const exe = cfg().get('compilerPath') || 'basil';
   // Build products go into output/ beside the source, not into the project root.
   const outArgs = mode === 'check' ? [] : ['-o', path.join(proj.OUTPUT_DIR, `${path.basename(file, path.extname(file))}.hex`)];
-  const args = compilerArgs([...(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : mode === 'debug' ? ['-g'] : []), ...outArgs]);
+  const args = compilerArgs([...(mode === 'check' ? ['--check'] : mode === 'report' ? ['--report'] : mode === 'debug' ? ['-g'] : mode === 'simdebug' ? ['-g', '-O0', '--keep-vars'] : []), ...outArgs]);
   const exec = new vscode.ShellExecution(exe, [...args, { value: file, quoting: vscode.ShellQuoting.Strong }], { cwd: path.dirname(file) });
-  const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : mode === 'debug' ? 'Debug build' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basil');
-  t.group = mode === 'build' || mode === 'debug' ? vscode.TaskGroup.Build : undefined;
+  const t = new vscode.Task({ type: 'picbasic', file, mode }, vscode.TaskScope.Workspace, `${mode === 'check' ? 'Check' : mode === 'report' ? 'Report' : mode === 'debug' ? 'Debug build' : mode === 'simdebug' ? 'Simulator debug build' : 'Build'} ${path.basename(file)}`, 'picbasic', exec, '$basil');
+  t.group = mode === 'build' || mode === 'debug' || mode === 'simdebug' ? vscode.TaskGroup.Build : undefined;
   return t;
 }
 
@@ -792,7 +792,8 @@ async function selectTool() {
 
 /** Runs the build task, then copies the hex/elf/map into dist/. Resolves true on success. */
 let building = false;
-async function buildProject(debug) {
+async function buildProject(kind) {
+  const mode = kind === true ? 'debug' : kind === false ? 'build' : kind;
   if (building) {
     vscode.window.showWarningMessage('PIC BASIC: a build is already running.');
     return false;
@@ -801,16 +802,17 @@ async function buildProject(debug) {
   if (!p) return false;
   building = true;
   try {
-    return await runBuild(p, debug);
+    return await runBuild(p, mode);
   } finally {
     building = false;
   }
 }
 
-async function runBuild(p, debug) {
+async function runBuild(p, mode) {
+  const debug = mode !== 'build';
   const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === p.file);
   if (doc) await doc.save();
-  const task = taskFor(p.file, debug ? 'debug' : 'build');
+  const task = taskFor(p.file, mode);
   let sub;
   const ended = new Promise((resolve) => {
     sub = vscode.tasks.onDidEndTaskProcess((e) => {
@@ -848,6 +850,27 @@ async function programDevice() {
   const dev = packOf(p.device);
   const cfgLaunch = proj.launchConfig({ name: p.name, device: p.device, tool: prog.tool, serial: prog.serial, packName: dev && dev.pack, packVersion: dev && dev.packVersion, program: path.join(p.dir, 'dist', `${p.name}.hex`), programOnly: true });
   await vscode.debug.startDebugging(undefined, cfgLaunch);
+}
+
+const SIM_DEBUGGER = 'basil-local.basil-picsim-debug';
+
+/** Builds with `-g -O0 --keep-vars` (routine boundaries and every variable kept) and debugs the result in picsim's basil-sim. */
+async function debugInSimulator() {
+  if (!vscode.extensions.getExtension(SIM_DEBUGGER)) {
+    vscode.window.showErrorMessage('PIC BASIC: the "Basil PIC Simulator Debugger" extension is not installed (build its VSIX with picsim/scripts/package-vscode.py and set basilSim.adapterPath to basil-sim-dap).');
+    return;
+  }
+  const p = activeProject();
+  if (!p) return;
+  if (!p.device) {
+    vscode.window.showErrorMessage('PIC BASIC: the program has no Device line.');
+    return;
+  }
+  if (!(await buildProject('simdebug'))) return;
+  const stim = path.join(p.dir, `${p.name}.stim.toml`);
+  const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(p.file));
+  const conf = proj.simLaunchConfig({ name: p.name, device: p.device, program: path.join(p.dir, 'dist', `${p.name}.hex`), stimulus: fs.existsSync(stim) ? stim : undefined, cwd: p.dir });
+  await vscode.debug.startDebugging(folder, conf);
 }
 
 function activate(ctx) {
@@ -897,6 +920,7 @@ function activate(ctx) {
   reg(vscode.commands.registerCommand('picbasic.selectTool', selectTool));
   reg(vscode.commands.registerCommand('picbasic.buildRelease', () => buildProject(false)));
   reg(vscode.commands.registerCommand('picbasic.buildDebug', () => buildProject(true)));
+  reg(vscode.commands.registerCommand('picbasic.debugSimulator', debugInSimulator));
   reg(vscode.commands.registerCommand('picbasic.program', programDevice));
   reg(vscode.commands.registerCommand('picbasic.showOutput', () => output.show()));
   reg(vscode.tasks.registerTaskProvider('picbasic', {

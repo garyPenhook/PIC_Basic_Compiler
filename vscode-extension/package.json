@@ -2,7 +2,7 @@
   "name": "picbasic",
   "displayName": "PIC BASIC (basil)",
   "description": "Language support for the basil PIC BASIC compiler: highlighting, keyword case correction, formatting, diagnostics, navigation and build tasks.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "garypenhook",
   "license": "UNLICENSED",
   "engines": {
@@ -35,6 +35,11 @@
         "language": "picbasic",
         "scopeName": "source.picbasic",
         "path": "./syntaxes/picbasic.tmLanguage.json"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "picbasic"
       }
     ],
     "snippets": [
@@ -94,6 +99,12 @@
         "icon": "$(debug-alt)"
       },
       {
+        "command": "picbasic.debugSimulator",
+        "title": "Debug in Simulator (basil-sim)",
+        "category": "PIC BASIC",
+        "icon": "$(debug-start)"
+      },
+      {
         "command": "picbasic.program",
         "title": "Program Device (F8)",
         "category": "PIC BASIC",
@@ -116,6 +127,11 @@
           "command": "picbasic.buildDebug",
           "when": "resourceLangId == picbasic",
           "group": "navigation@2"
+        },
+        {
+          "command": "picbasic.debugSimulator",
+          "when": "resourceLangId == picbasic",
+          "group": "navigation@2.5"
         },
         {
           "command": "picbasic.program",

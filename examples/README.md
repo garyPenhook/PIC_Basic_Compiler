@@ -29,7 +29,8 @@ examples/
   external parts goes in the folder of the main one, and its header lists the others.
 * The same idea on another processor is its own program in that processor's folder.
 * A program that has been run in basil-sim keeps its board next to it (`<program>.stim.toml`: the simulated
-  sensors and displays), with the command line in the file's first lines.
+  sensors and displays), with the command line in the file's first lines. The editor command *PIC BASIC: Debug in Simulator* picks that file up
+  automatically, so an example can be stepped through with its board attached.
 
 ## How an example is written
 

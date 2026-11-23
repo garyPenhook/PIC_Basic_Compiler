@@ -41,10 +41,25 @@ Build, Build Debug, Program and Select Programmer/Debugger on `.bas` files.
 | Select Programmer/Debugger | | Simulator, or a PICkit / ICD / Snap the MPLAB extension reports as connected (a fixed list if none is). Stored in `picbasic.json` and `launch.json`. |
 | Build (F7) | F7 | `basil`, then copies `.hex`, `.elf` and `.map` into `dist/`. |
 | Build Debug (Ctrl+F7) | Ctrl+F7 | `basil -g`, then the same copy. |
+| Debug in Simulator (basil-sim) | | `basil -g -O0 --keep-vars`, copies to `dist/`, then debugs in picsim's `basil-sim-dap` (needs the *Basil PIC Simulator Debugger* extension). Passes `<program>.stim.toml` as the board when it exists. |
 | Program Device (F8) | F8 | Builds, then programs `dist/<name>.hex` through the MPLAB extension with the selected tool. Refuses the simulator. |
 | Show Build Output | | Opens the output channel. |
 
 F7, Ctrl+F7 and F8 apply while a `.bas` file is active. A second build is refused while one is running.
+
+### Debugging in the Basil simulator
+
+*Debug in Simulator (basil-sim)* builds at `-O0` and starts a session on picsim's `basil-sim-dap`: breakpoints on `.bas` lines,
+stepping, call stack and variables by name and type, all simulated. Install the *Basil PIC Simulator Debugger* VSIX
+(`picsim/scripts/package-vscode.py`) and set `basilSim.adapterPath`. A hand-written entry looks like
+
+```json
+{ "type": "basil-sim", "request": "launch", "name": "Debug in simulator",
+  "program": "${workspaceFolder}/dist/main.hex", "device": "18F27Q10", "stopOnEntry": true }
+```
+
+Add `"stimulus": "<file>.stim.toml"` to drive pins, serial receive and the ADC. See *Debugging in the editor with
+`basil-sim-dap`* in `docs/MANUAL.md`.
 
 ### Debugging
 

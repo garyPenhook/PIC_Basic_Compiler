@@ -298,6 +298,37 @@ basil-sim prog.hex --trace 1000-1100 --trace-regs WREG,STATUS   # every instruct
   minutes in `mdb`); the PIC16 parts and anything the model does not cover run in `mdb` (`--engine mdb`).
 * Its own manual is `picsim/docs/MANUAL.md` (options, the stimulus file, what is modelled).
 
+### Debugging in the editor with `basil-sim-dap`
+
+The `picsim` workspace also builds `basil-sim-dap`, a Debug Adapter Protocol server, so VS Code can set breakpoints on `.bas`
+lines, step, show the call stack and read variables by name and type against the simulated part, with no hardware. It is
+simulation only: nothing here talks to a programmer or a chip.
+
+1. Build it once: `cargo build --release --workspace` in `picsim`, then `python3 scripts/package-vscode.py` and install the
+   VSIX it writes (**Extensions: Install from VSIX**). Set `basilSim.adapterPath` to the path of `basil-sim-dap`.
+2. In a `.bas` file run **PIC BASIC: Debug in Simulator (basil-sim)**. It builds with `basil -g -O0 --keep-vars`, copies
+   `.hex` and `.elf` to `dist/`, and starts a session on the `Device` of the program, stopped at reset. If
+   `<program>.stim.toml` sits beside the source it is passed as the stimulus (the board: pins, serial receive, ADC,
+   OLED); examples keep theirs next to the program (see `examples/README.md`).
+3. Or write the configuration yourself, in `.vscode/launch.json`:
+
+```json
+{ "type": "basil-sim", "request": "launch", "name": "Debug in simulator",
+  "program": "${workspaceFolder}/dist/main.hex", "device": "18F27Q10",
+  "stimulus": "${workspaceFolder}/main.stim.toml", "stopOnEntry": true }
+```
+
+* Build at `-O0`. The optimiser merges lines and inlines routines, so at `-O1` and above a breakpoint can land on a
+  neighbouring line and a routine may have no frame of its own. `-g` itself does not change the generated code.
+* The stack shows library routines and your own `Sub`s by name. The main program has no routine name, only the address.
+* At a program's end (`__halt`) the session stays stopped so variables can be read; a `Terminate` loop is a running loop,
+  so use Pause.
+* Cycle counts are the simulator's. They follow the data sheets and agree with `mdb` on the test suite, not with silicon;
+  a peripheral without a model is plain storage (the same caveat as `basil-sim`).
+* `scripts/test_dap.py` (`BASIL_SIM=1 cargo test --release --test backend debug_adapter_session_in_simulator`) drives the
+  adapter through a breakpoint, call stack, variable reads and stepping on a PIC18 and a PIC16 part.
+* Debugging on the chip itself is a separate route, through the MPLAB extension (`mplab-core-da`, see `vscode-extension/README.md`).
+
 ### Debugging with the MPLAB X simulator (`mdb`)
 
 Put these lines in `cmds.txt`:
