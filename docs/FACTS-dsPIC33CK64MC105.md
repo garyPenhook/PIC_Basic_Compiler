@@ -71,7 +71,12 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   `Config FCKSM = CSECMD` is needed (the erased value 1x disables clock switching [Register 28-5 p.416]). A PLL is left through plain FRC before its dividers change [DS 9.1 p.152].
   Checked in the simulator: the registers and COSC/LOCK after start-up at 100 MHz, SetClock(200) and SetClock(8), and the refusal of an unknown speed (`tests/exec_dspic/lib_intosc.bas`);
   the clock was not measured on a pin. The multi-bit fields (`COSC`, `FRCDIV`) are masked by hand because the back end has no multi-bit field access yet.
-* Not done: `system`, `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+* `system`, chosen with `#if _has(PLLFBD)`: the Reset flags are the active-high bits of `RCON` [DS Register 6-1 p.79]; a watchdog time-out in Sleep or Idle wakes the part and sets `WDTO` without a Reset
+  [DS70005250C 6.1.1 p.15], so cause 4 needs `SLEEP` and `IDLE` clear. `SysClockHz` computes FOSC from `OSCCON.COSC`, `CLKDIV` and `PLLFBD`/`PLLDIV` (FRC taken as 8 MHz). Sleep is `pwrsav #0`
+  [DS70000157G]. `Snooze` and `Sleep(seconds)` use the Sleep-mode watchdog, whose period is 2^`SLPDIV` ms and is fixed by `Config SWDTPS` [DS70005250C Table 3-1 p.13, DS Register 28-19 p.432].
+  Checked in the simulator: the cause after power-on (1, with POR and BOR set), the cleared flags, the wake codes, `SysClockHz` = 100 MHz after `intosc` and `SysClockOk` (`tests/exec_dspic/lib_system.bas`).
+  **Not run in the simulator:** the timed sleeps; MDB does not wake the part from a watchdog Sleep (the program stays in `pwrsav`), so `lib_system_sleep.bas` only assembles and links them.
+* Not done: `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
 
 ## Not yet generated
 
