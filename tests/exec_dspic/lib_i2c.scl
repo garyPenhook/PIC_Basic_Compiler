@@ -1,0 +1,10 @@
+// Pull-ups on the two bus lines: SDA = RB8 (pin 24) and SCL = RB9 (pin 25) read high while the part releases them (a low driven by the part wins).
+testbench for "dsPIC33CK64MC105" is
+   begin
+      process is
+         begin
+            RB8 <= '1';
+            RB9 <= '1';
+            wait;
+      end process;
+   end testbench;

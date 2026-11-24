@@ -17,26 +17,38 @@ Include "pinio"
 ' bit for 15 us). Each slot is 75 to 79 us measured, which the bus allows (60 to 120). The interrupt enable is also held
 ' low from the release of a reset to its presence sample. A failed OwInit leaves the module without a pin.
 
-#if _core = "pic18"
+#if _has(PLLFBD)
+#if _Clock < 32
+#error "onewire needs a Clock of at least 32 MHz on the dsPIC33CK64MC105 (at 16 MIPS the pin switch and call are most of a 3 us read pulse)"
+#endif
+' dsPIC33CK64MC105: the instruction cycle is FOSC / 2. SwCyc = 31, measured in the MPLAB X simulator with the stopwatch between the TRISB writes of OdLow and OdRelease (`tests/exec_dspic/lib_onewire.bas`): a write 1 slot at 100 MHz
+' held the line low 181 cycles, 150 of them the delay of 3 us; a write 0 slot 3134 cycles for 62 us (3100); a slot of 75 us.
+Private Const SwCyc = 31
+Private Const ClkPerCyc = 2
+#elseif _core = "pic18"
 #if _Clock < 16
 #error "onewire needs a Clock of at least 16 MHz on a PIC18 (at 4 MIPS the pin switch and call are most of a 3 us read pulse)"
 #endif
 ' Instruction cycles from the TRIS write that pulls the line low to the first delay, and from the end of a delay to the
 ' TRIS write that lets it go, with the call and return of the pin routines.
 Private Const SwCyc = 16
+Private Const ClkPerCyc = 4
 #else
 #if _Clock < 32
 #error "onewire needs a Clock of at least 32 MHz on a PIC16"
 #endif
 Private Const SwCyc = 16
+Private Const ClkPerCyc = 4
 #endif
 
-' Microseconds that `SwCyc` instruction cycles take, rounded, at the build's Clock (4 clocks to a cycle).
-Private Const SwUs = Word((SwCyc * 4 + _Clock / 2) / _Clock)
+' Microseconds that `SwCyc` instruction cycles take, rounded, at the build's Clock (4 clocks to a cycle, 2 on the dsPIC33).
+Private Const SwUs = Word((SwCyc * ClkPerCyc + _Clock / 2) / _Clock)
 
 ' The global interrupt enable: bit 7 of INTCON (GIE, or GIE/GIEH with priorities), of INTCON0 on the PIC18-Q41
 ' [DS40002043F 15.13.1, DS40002343F 12.10.1, DS40002214G 11.13.1].
-#if _has(INTCON0)
+#if _has(PLLFBD)
+Private Dim Gie As INTCON2.15
+#elseif _has(INTCON0)
 Private Dim Gie As INTCON0.7
 #else
 Private Dim Gie As INTCON.7

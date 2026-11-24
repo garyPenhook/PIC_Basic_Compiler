@@ -24,6 +24,10 @@ Module I2c
 ' I2cReadRegs / I2cWriteRegs / I2cProbe (data in I2cBuf) only: the peripheral counts the bytes of a transfer, so the step routines
 ' below do not exist in that mode (see the hardware section after the software host). The block routines also exist for the step
 ' routines of the other backends, and status 5 is a byte count outside 1..8.
+' dsPIC33CK64MC105 (DS70005399D; chosen with `#if _has(PLLFBD)`, ahead of the MSSP tests): the software host of the PIC18F0x/1xQ41 below, over any two digital pins, because the part's I2C1 and I2C2 modules (I2CxCONL, I2CxSTAT, I2CxTRN
+' [Registers 17-1 to 17-3 p.313 to 316]) would be used one fixed pin pair at a time (SCL1/SDA1 on RB8/RB9, ASCL1/ASDA1 on RC8/RC9 [Table 5 p.8]) and the pins here are free. The pins are numbered as in `Pinio` on this part: port * 16 + bit
+' (RA0 = 0, RB0 = 16, RC0 = 32, RD0 = 48), the pins the 48-pin part has (RA0..RA4, RB0..RB15, RC0..RC13, RD1, RD8, RD10, RD13). SCL and SDA are open drain through TRISx with the latch bit 0, so the bus needs external pull-ups; `hz` is
+' 2000..400000 and the real clock is lower, much lower on a slow `Clock`. The hardware I2C modules are not used; their errata (DS80000910C items 2 and 3) do not apply.
 ' PIC18F0x/1xQ41 (chosen with `#if _has(I2C1CON0)`): the same routines and status codes, driven in software on
 ' two ordinary pins instead of the I2C1 peripheral. Reason: I2C1 counts the bytes of a transfer in hardware
 ' (I2C1CNT; Stop or Restart by itself, DS40002214G 36.4.2.7) and its host acknowledges a received byte before
@@ -46,17 +50,108 @@ Module I2c
 ' PIC16F152xx (DS40002195E chapters 18 and 25; chosen with `_has(ADCON1.PREF)`): the same MSSP1 host [SSPM = 1000, SSP1ADD 0..2 not valid], the pins numbered as on the PIC16F183xx, `RxyPPS` 07h = SCL1 and 08h = SDA1
 ' [Table 18-2 p.148], SSP1IF and BCL1IF in PIR1 bits 1 and 2 [12.9.6]. Silicon erratum 1.4.1 (DS80000918K, all revisions: Start and Stop flags can be set when I2C is enabled) does not matter here, as on the PIC16F17126/46:
 ' SCIE and PCIE stay 0 (SSP1CON3 = 0), SSP1IF is cleared before each step, and the S and P bits are never read.
-#if _has(I2C1CON0)
+#if _has(I2C1CON0) Or _has(PLLFBD)
 #if Not _i2chw
 Dim sclPort As Byte
+#if _has(PLLFBD)
+Dim sclMask As Word
+#else
 Dim sclMask As Byte
+#endif
 Dim sdaPort As Byte
+#if _has(PLLFBD)
+Dim sdaMask As Word
+#else
 Dim sdaMask As Byte
+#endif
 Dim halfUs As Byte
 #endif
 Dim ready As Boolean
 Dim lastStatus As Byte
 
+#if _has(PLLFBD)
+' The pins each port has, one bit each: RA0..RA4; RB0..RB15; RC0..RC13; RD1, RD8, RD10, RD13.
+Const PinMask(4) As Word = ($001F, $FFFF, $3FFF, $2502)
+
+' TRIS bit set: the pin is released (an input, pulled up outside).
+Sub Release(ByVal port As Byte, ByVal m As Word)
+    Select port
+    Case 0
+        TRISA = TRISA Or m
+    Case 1
+        TRISB = TRISB Or m
+    Case 2
+        TRISC = TRISC Or m
+    Else
+        TRISD = TRISD Or m
+    EndSelect
+End Sub
+
+' TRIS bit clear with the latch bit 0: the pin pulls the line low.
+Sub PullLow(ByVal port As Byte, ByVal m As Word)
+    Dim n As Word
+    n = m Xor $FFFF
+    Select port
+    Case 0
+        TRISA = TRISA And n
+    Case 1
+        TRISB = TRISB And n
+    Case 2
+        TRISC = TRISC And n
+    Else
+        TRISD = TRISD And n
+    EndSelect
+End Sub
+
+Function Level(ByVal port As Byte, ByVal m As Word) As Boolean
+    Dim v As Word
+    Select port
+    Case 0
+        v = PORTA
+    Case 1
+        v = PORTB
+    Case 2
+        v = PORTC
+    Else
+        v = PORTD
+    EndSelect
+    Result = (v And m) <> 0
+End Function
+
+' Latch bit 0 and a digital pin, released.
+Sub PinSetup(ByVal port As Byte, ByVal m As Word)
+    Dim n As Word
+    n = m Xor $FFFF
+    Select port
+    Case 0
+        LATA = LATA And n
+        ANSELA = ANSELA And n
+    Case 1
+        LATB = LATB And n
+        ANSELB = ANSELB And n
+    Case 2
+        LATC = LATC And n
+        ANSELC = ANSELC And n
+    Else
+        LATD = LATD And n
+        ANSELD = ANSELD And n
+    EndSelect
+    Release(port, m)
+End Sub
+
+' The bit of the pin in its port.
+Function PinBit(ByVal pin As Byte) As Word
+    Result = 1
+    Result = Result << (pin And 15)
+End Function
+
+Function PinOk(ByVal pin As Byte) As Boolean
+    Result = False
+    If pin < 64 Then
+        Result = (PinMask(pin >> 4) And PinBit(pin)) <> 0
+    End If
+End Function
+#else
 ' TRIS bit set: the pin is released (an input, pulled up outside).
 Sub Release(ByVal port As Byte, ByVal m As Byte)
     If port = 0 Then
@@ -132,6 +227,8 @@ Function PinOk(ByVal pin As Byte) As Boolean
 #endif
 End Function
 
+#endif
+
 #if Not _i2chw
 Sub Half()
     DelayUS(halfUs)
@@ -170,10 +267,17 @@ Public Function I2cInit(ByVal hz As LongWord, ByVal scl As Byte, ByVal sda As By
     End If
     h = (500000 + hz - 1) / hz
     halfUs = Byte(h)
+#if _has(PLLFBD)
+    sclPort = scl >> 4
+    sclMask = PinBit(scl)
+    sdaPort = sda >> 4
+    sdaMask = PinBit(sda)
+#else
     sclPort = scl >> 3
     sclMask = 1 << (scl And 7)
     sdaPort = sda >> 3
     sdaMask = 1 << (sda And 7)
+#endif
     PinSetup(sclPort, sclMask)
     PinSetup(sdaPort, sdaMask)
     ready = True
@@ -183,12 +287,21 @@ End Function
 
 ' Gives both pins back as plain inputs (the pins given to I2cInit).
 Public Sub I2cOff(ByVal scl As Byte, ByVal sda As Byte)
+#if _has(PLLFBD)
+    If PinOk(scl) Then
+        Release(scl >> 4, PinBit(scl))
+    End If
+    If PinOk(sda) Then
+        Release(sda >> 4, PinBit(sda))
+    End If
+#else
     If PinOk(scl) Then
         Release(scl >> 3, 1 << (scl And 7))
     End If
     If PinOk(sda) Then
         Release(sda >> 3, 1 << (sda And 7))
     End If
+#endif
     ready = False
 End Sub
 

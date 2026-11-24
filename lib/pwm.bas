@@ -70,7 +70,294 @@ Include "pinio"
 ' CCP4 and CCP5 have no polarity bit (0). PSTRxCON keeps its reset value (STRxA = 1, the PWM on PxA) [Register 14-7 p.203]. Erratum 7
 ' (DS80000498K, 25/45K22 A2 and A3): the PWM clock selection of CCP3..CCP5 is cross-wired with CCP2's; all channels use Timer2 here, so it
 ' does not matter. The other errata list nothing for the CCP.
-#if _has(PSTR1CON)
+' dsPIC33CK64MC105 (DS70005399D chapter 11, the high-resolution PWM, and DS70005320E; chosen with `#if _has(PG1CONL)`): four channels, channel n = PWM generator PGn in independent edge mode (MODSEL = 000), self-triggered (SOCS = 0000, TRGMOD = 0),
+' outputs PMOD = 01 (independent), so PWMxH and PWMxL carry the same waveform [Registers 11-12 p.190, 11-13 p.191 to 192, 11-16 p.196; DS70005320E 4.2.2.1 p.60 to 61, 4.2.4.1 p.79]. The pins are fixed [Table 5 p.8]: channel 1 PWM1H = RB14 (pin 30) or PWM1L =
+' RB15 (31); channel 2 PWM2H = RB12 (28) or PWM2L = RB13 (29); channel 3 PWM3H = RB10 (26) or PWM3L = RB11 (27); channel 4 PWM4H = RD1 (49) or, through PPS, any remappable pin of ports B, C and D (RPORx code 34 = PWM4H [Table 8-7 p.117]; the PPS
+' signal and the RD1 pin are driven together [11.3 p.178]). The pin numbers are those of `Pinio` on this part (port * 16 + bit). PWM4L is not offered. All channels share one frequency: the generator clock is the master clock FOSC (PCLKCON.MCLKSEL = 00,
+' PGxCONL.CLKSEL = 01) or, below FOSC / 65535 / 33, FOSC divided by 2, 4, 8 or 16 (CLKSEL = 10, PCLKCON.DIVSEL) [Registers 11-1 p.179, 11-12]. Frequency and duty (standard resolution, the fine edge placement is not in this family [11.0 p.177]):
+' f = F(PGx_clk) / (PGxPER + 1) and PGxDC = (PGxPER + 1) * duty [DS70005320E 4.1.2 p.56], so PwmSteps = PGxPER + 1 and a duty of PwmSteps is 100 % (PGxDC >= PGxPER gives a full-width pulse [4.2.2.1 p.61]). The smallest period is
+' PGxPER = 0x20 (a frequency of at most FOSC / 33) and the smallest active or inactive pulse is 8 counts, so a duty of 1..7 steps or PwmSteps - 7 .. PwmSteps - 1 gives no usable pulse [Table 4-2 p.60]. The duty is double buffered: PwmDuty writes PGxDC and
+' sets UPDREQ (PGxSTAT bit 3), and the generator takes it at the start of its next cycle (UPDMOD = 000) [Registers 11-13, 11-14 p.193]. The generator is configured while PGxCONL.ON = 0 and then switched on, as the manual says (changing configuration with ON = 1 is
+' not recommended [11.4 p.178]); so PwmInvert (POLH, POLL of PGxIOCONH) restarts a running channel. Unlock: the part resets with PCLKCON.LOCK = 0 and the module leaves it so. **The data sheet's table MP10 gives 450 to 500 MHz as the PWM input frequency [Table 31-24 p.464]
+' (the clock of the high-resolution mode); this module uses FOSC, at most 200 MHz, which the registers allow but that table does not cover. It was not run on a part.** The silicon errata (DS80000910C) list one item for the PWM time base capture, which is not used.
+#if _has(PG1CONL)
+Dim steps As Word
+Dim per As Word
+Dim divsel As Byte
+Dim clksel As Byte
+' A running channel has its pin number plus one in pins, an idle one 0; nact counts the running channels.
+Dim nact As Byte
+Dim freq As LongWord
+Dim pins(4) As Byte
+Dim polv(4) As Byte
+Dim role(4) As Byte
+Dim ready As Boolean
+Dim gCh As Byte
+Dim gOff As Byte
+Dim gVal As Word
+Dim rIdx As Byte
+Dim rShift As Byte
+Dim rCode As Byte
+
+' Writes `v` to the register at offset `off` of generator `ch` (1..4): the generators are 54 bytes apart from PG1CONL (0x32A), CONL +0, CONH +2, STAT +4, IOCONL +6, IOCONH +8, PHASE +34, DC +36, PER +40.
+Sub PgPut(ByVal ch As Byte, ByVal off As Byte, ByVal v As Word)
+    gCh = ch - 1
+    gOff = off
+    gVal = v
+    Asm
+        mov #PWM_GCH, w3
+        mov.b [w3], w0
+        ze w0, w0
+        mov #54, w1
+        mul.uu w0, w1, w0
+        mov #810, w1
+        add w0, w1, w1
+        mov #PWM_GOFF, w3
+        mov.b [w3], w2
+        ze w2, w2
+        add w1, w2, w1
+        mov #PWM_GVAL, w3
+        mov [w3], w2
+        mov w2, [w1]
+    End Asm
+End Sub
+
+' Puts the PPS output `code` (0 = none) on a pin of ports B, C or D: its RPORx field (RPn = pin + 16; RPOR0 at 0xD80, two pins a word, low byte for an even RPn; the pins of port D are RPOR15 and RPOR16).
+Sub SetOut(ByVal pin As Byte, ByVal code As Byte)
+    Dim rp As Byte
+    rp = pin + 16
+    If rp < 62 Then
+        rIdx = (rp - 32) >> 1
+        rShift = (rp And 1) << 3
+    Else
+        rIdx = 15
+        rShift = 0
+        If rp = 72 Or rp = 77 Then
+            rShift = 8
+        End If
+        If rp >= 74 Then
+            rIdx = 16
+        End If
+    End If
+    rCode = code
+    Asm
+        mov #PWM_RIDX, w3
+        mov.b [w3], w0
+        ze w0, w0
+        add w0, w0, w0
+        mov #0xD80, w1
+        add w0, w1, w1
+        mov #PWM_RSHIFT, w3
+        mov.b [w3], w2
+        ze w2, w2
+        mov #PWM_RCODE, w3
+        mov.b [w3], w3
+        ze w3, w3
+        sl w3, w2, w3
+        mov #0x3F, w0
+        sl w0, w2, w0
+        com w0, w0
+        mov [w1], w2
+        and w2, w0, w2
+        ior w2, w3, w2
+        mov w2, [w1]
+    End Asm
+End Sub
+
+' 1 when `pin` is the PWMxH output of channel `ch`, 2 for PWMxL, 0 when the channel cannot use the pin.
+Function PinRole(ByVal ch As Byte, ByVal pin As Byte) As Byte
+    Result = 0
+    Select ch
+    Case 1
+        If pin = 30 Then
+            Result = 1
+        ElseIf pin = 31 Then
+            Result = 2
+        End If
+    Case 2
+        If pin = 28 Then
+            Result = 1
+        ElseIf pin = 29 Then
+            Result = 2
+        End If
+    Case 3
+        If pin = 26 Then
+            Result = 1
+        ElseIf pin = 27 Then
+            Result = 2
+        End If
+    Case 4
+        If pin >= 16 And Pinio.PinOk(pin) Then
+            Result = 1
+        End If
+    EndSelect
+End Function
+
+' Chooses the generator clock and PGxPER for `hz` (1..6000000) and returns 1, or 0 when it cannot be reached (a period under 33 or over 65535 clocks even divided by 16) or a channel is running (the period is shared). Nothing is started before PwmStart.
+' n = round(F / hz) clocks of FOSC, then of FOSC / 2, / 4, / 8, / 16 until n is at most 65535.
+Public Function PwmInit(ByVal hz As LongWord) As Byte
+    Dim f As LongWord
+    Dim n As LongWord
+    Dim e As Byte
+    Result = 0
+    If nact <> 0 Or hz = 0 Then
+        Exit
+    End If
+    f = LongWord(_Clock * 1000000)
+    e = 0
+    n = (f + (hz >> 1)) / hz
+    While n > 65535 And e < 4
+        Inc(e)
+        n = ((f >> e) + (hz >> 1)) / hz
+    Wend
+    If n >= 33 And n <= 65535 Then
+        steps = Word(n)
+        per = steps - 1
+        freq = (f >> e) / n
+        If e = 0 Then
+            clksel = 1
+            divsel = 0
+        Else
+            clksel = 2
+            divsel = e - 1
+        End If
+        ready = True
+        Result = 1
+    End If
+End Function
+
+' The achieved frequency in Hz (0 before a successful PwmInit).
+Public Function PwmFrequency() As LongWord
+    Result = 0
+    If ready Then
+        Result = freq
+    End If
+End Function
+
+' Number of duty cycle steps in one period: PGxPER + 1 (a duty of PwmSteps is 100 %).
+Public Function PwmSteps() As Word
+    Result = 0
+    If ready Then
+        Result = steps
+    End If
+End Function
+
+' Configures generator `ch` (off) from its pin, polarity, period and `duty`, and switches it on.
+Sub Setup(ByVal ch As Byte, ByVal duty As Word)
+    Dim io As Word
+    PgPut(ch, 0, 0)
+    PgPut(ch, 2, 0)
+    PgPut(ch, 6, 0)
+    io = $10
+    If role(ch - 1) = 1 Then
+        io = io Or 8
+    Else
+        io = io Or 4
+    End If
+    If polv(ch - 1) <> 0 Then
+        io = io Or 3
+    End If
+    PgPut(ch, 8, io)
+    PgPut(ch, 34, 0)
+    PgPut(ch, 40, per)
+    PgPut(ch, 36, duty)
+    PCLKCON = Word(divsel) << 4
+    PgPut(ch, 0, $8000 Or (Word(clksel) << 3))
+End Sub
+
+' Stops a channel: the generator is switched off, it lets go of the pin (PEN = 0, the PPS output removed) and the pin becomes an input again.
+Public Sub PwmStop(ByVal ch As Byte)
+    If ch >= 1 And ch <= 4 Then
+        If pins(ch - 1) <> 0 Then
+            PgPut(ch, 0, 0)
+            PgPut(ch, 8, 0)
+            If ch = 4 Then
+                SetOut(pins(3) - 1, 0)
+            End If
+            Pinio.PinInput(pins(ch - 1) - 1)
+            pins(ch - 1) = 0
+            Dec(nact)
+        End If
+    End If
+End Sub
+
+' Starts a channel (1..4) on a pin (see the header) at `duty` steps of PwmSteps. Returns 0 (and does nothing) without a successful PwmInit, for a channel or pin that cannot be used, or for a pin already used by another running channel;
+' a running channel is restarted.
+Public Function PwmStart(ByVal ch As Byte, ByVal pin As Byte, ByVal duty As Word) As Byte
+    Dim c As Byte
+    Dim r As Byte
+    Result = 0
+    If Not ready Or ch < 1 Or ch > 4 Then
+        Exit
+    End If
+    r = PinRole(ch, pin)
+    If r = 0 Then
+        Exit
+    End If
+    c = 4
+    While c > 0
+        If c <> ch And pins(c - 1) = pin + 1 Then
+            Exit
+        End If
+        Dec(c)
+    Wend
+    If pins(ch - 1) <> 0 Then
+        PwmStop(ch)
+    End If
+    If duty > steps Then
+        duty = steps
+    End If
+    role(ch - 1) = r
+    Pinio.PinOutput(pin)
+    If ch = 4 Then
+        SetOut(pin, 34)
+    End If
+    Setup(ch, duty)
+    pins(ch - 1) = pin + 1
+    Inc(nact)
+    Result = 1
+End Function
+
+' Duty cycle in steps (0..PwmSteps); no effect on a stopped channel. It takes effect at the start of the next period.
+Public Sub PwmDuty(ByVal ch As Byte, ByVal duty As Word)
+    If ch >= 1 And ch <= 4 Then
+        If pins(ch - 1) <> 0 Then
+            If duty > steps Then
+                duty = steps
+            End If
+            PgPut(ch, 36, duty)
+            PgPut(ch, 4, 8)
+        End If
+    End If
+End Sub
+
+' Duty cycle as a percentage 0..100 of the period (rounded down to a step).
+Public Sub PwmPercent(ByVal ch As Byte, ByVal pct As Byte)
+    Dim d As LongWord
+    If pct > 100 Then
+        pct = 100
+    End If
+    d = LongWord(pct) * steps / 100
+    PwmDuty(ch, Word(d))
+End Sub
+
+' Output polarity (POLH, POLL of PGxIOCONH): inverted = low true. The configuration may only change with the generator off, so on a running channel this restarts it: the output stops for a moment and its period begins again. Returns 1, or 0 for a channel above 4.
+Public Function PwmInvert(ByVal ch As Byte, ByVal inverted As Boolean) As Byte
+    Result = 1
+    If ch < 1 Or ch > 4 Then
+        Result = 0
+        Exit
+    End If
+    If inverted Then
+        polv(ch - 1) = 1
+    Else
+        polv(ch - 1) = 0
+    End If
+    If pins(ch - 1) <> 0 Then
+        Setup(ch, steps)
+    End If
+End Function
+#elseif _has(PSTR1CON)
 Dim Tmr2If As PIR1.1
 Dim steps As Word
 Dim period As Byte

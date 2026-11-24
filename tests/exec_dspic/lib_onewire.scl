@@ -1,0 +1,9 @@
+// The 1-Wire line is RB0 (pin 16) with its pull-up: high while the part lets go of it (the part's low wins).
+testbench for "dsPIC33CK64MC105" is
+   begin
+      process is
+         begin
+            RB0 <= '1';
+            wait;
+      end process;
+   end testbench;

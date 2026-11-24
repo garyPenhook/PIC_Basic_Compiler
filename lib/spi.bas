@@ -57,7 +57,180 @@ Include "pinio"
 ' with CKE = 0 (modes 1 and 3) BF rises half an SCK period early, so a write to SSPxBUF right after it can collide (WCOL). The module uses
 ' both work-arounds of method 1: after a transfer in those modes it waits one SCK period before it returns, and a write that sets WCOL is
 ' repeated.
-#if _has(SSP1CON1) And Not _has(SSP1CLKPPS)
+' dsPIC33CK64MC105 (DS70005399D chapter 16, DS70005136B; chosen with `#if _has(PLLFBD)`): SPI1 as host, 8 bits, standard buffer, through PPS on any remappable pin. Pins are numbered as in `Pinio` on this part, port * 16 + bit
+' (RB0 = 16, RC0 = 32, RD0 = 48); only the pins of ports B, C and D can be routed (RA0..RA4 have no RPn), and each must be a pin the part has (Table 8-6 p.116: RPn = pin number + 16). SCK and SDO are the PPS outputs SCK1 = 6 and SDO1 = 5
+' [Table 8-7 p.117] in RPORx; SDI is the input SDI1R = RPINR20[7:0] = RPn [Register 8-28 p.129]. SDO can be 255 for a receive-only host (DISSDO). The chip select is not part of the module. The remapping registers are unlocked after a Reset (RPCON.IOLOCK = 0).
+' Clock: SCK = Fp / (2 * (SPIxBRG + 1)) with Fp = FOSC / 2 [Equation 16-1 p.308], so FOSC / (4 * (BRG + 1)), BRG 0..8191 (13 bits, SPI1BRGL); SpiInit rounds so the clock is at or below `hz`. The SCK high and low times must be at least 15 ns
+' [SP10, Table 31-25 p.466], so above 33 MHz (FOSC over 133 MHz) BRG = 0 is not used. Modes (CPOL, CPHA) as above: CKP (bit 6) is the idle level of SCK and CKE (bit 8) = 1 transmits on the active to idle transition [Register 16-1 p.296], SMP = 0.
+' The module is set up in the order of DS70005136B 3.4.1: SPIEN off, baud rate, MSTEN and the mode, then SPIEN. A byte is exchanged by writing SPI1BUFL, which starts the clock; SPIRBF (SPI1STATL bit 0) is set when the received byte can be read [Register 16-4 p.301].
+' The wait for it is bounded (SpiStatus 1 after a timeout). It owns SPI1: SPI2 and the I2C pins are untouched. The silicon errata (DS80000910C) list nothing for the SPI.
+#if _has(PLLFBD)
+Dim ready As Boolean
+Dim lastStatus As Byte
+Dim RxFull As SPI1STATL.0
+Dim rIdx As Byte
+Dim rShift As Byte
+Dim rCode As Byte
+
+' The first RPn a pin number gives is pin + 16 (RB0 = RP32 ... RC13 = RP61, RD1 = RP65, RD8 = RP72, RD10 = RP74, RD13 = RP77).
+Function PinOk(ByVal pin As Byte) As Boolean
+    Result = pin >= 16 And Pinio.PinOk(pin)
+End Function
+
+' Puts the PPS output `code` (0 = none) on the pin: its RPORx field (RPOR0 at 0xD80, two pins a word, low byte for an even RPn; the pins of port D are RPOR15 and RPOR16).
+Sub SetOut(ByVal pin As Byte, ByVal code As Byte)
+    Dim rp As Byte
+    rp = pin + 16
+    If rp < 62 Then
+        rIdx = (rp - 32) >> 1
+        rShift = (rp And 1) << 3
+    Else
+        rIdx = 15
+        rShift = 0
+        If rp = 72 Or rp = 77 Then
+            rShift = 8
+        End If
+        If rp >= 74 Then
+            rIdx = 16
+        End If
+    End If
+    rCode = code
+    Asm
+        mov #SPI_RIDX, w3
+        mov.b [w3], w0
+        ze w0, w0
+        add w0, w0, w0
+        mov #0xD80, w1
+        add w0, w1, w1
+        mov #SPI_RSHIFT, w3
+        mov.b [w3], w2
+        ze w2, w2
+        mov #SPI_RCODE, w3
+        mov.b [w3], w3
+        ze w3, w3
+        sl w3, w2, w3
+        mov #0x3F, w0
+        sl w0, w2, w0
+        com w0, w0
+        mov [w1], w2
+        and w2, w0, w2
+        ior w2, w3, w2
+        mov w2, [w1]
+    End Asm
+End Sub
+
+' SPIxBRG of the lowest clock that is not above 33 MHz.
+#if _clock * 3 > 400
+Const MinBrg As Word = 1
+#else
+Const MinBrg As Word = 0
+#endif
+
+' Sets up SPI1 as a host at about `hz` (1..33000000) in mode 0..3 with SCK on `sck`, SDO on `sdo` (255 = none) and SDI on `sdi`. Returns 1, or 0 for a pin that is not allowed or the same pin twice, a mode above 3,
+' or a clock below FOSC / 32768.
+Public Function SpiInit(ByVal hz As LongWord, ByVal mode As Byte, ByVal sck As Byte, ByVal sdo As Byte, ByVal sdi As Byte) As Byte
+    Dim d As LongWord
+    Dim con As Word
+    Result = 0
+    If mode > 3 Or hz = 0 Or hz > 33000000 Then
+        Exit
+    End If
+    If Not PinOk(sck) Or Not PinOk(sdi) Or sck = sdi Then
+        Exit
+    End If
+    If sdo <> 255 Then
+        If Not PinOk(sdo) Or sdo = sck Or sdo = sdi Then
+            Exit
+        End If
+    End If
+    ' SPIxBRG = ceil(FOSC / (4 * hz)) - 1 = floor((FOSC - 1) / (4 * hz)).
+    d = LongWord(_Clock * 1000000 - 1) / (hz << 2)
+    If d < MinBrg Then
+        d = MinBrg
+    End If
+    If d > 8191 Then
+        Exit
+    End If
+    SPI1CON1L = 0
+    Pinio.PinOutput(sck)
+    Pinio.PinSet(sck, mode >= 2)
+    Pinio.PinInput(sdi)
+    If sdo <> 255 Then
+        Pinio.PinOutput(sdo)
+    End If
+    SPI1CON1H = 0
+    SPI1CON2L = 0
+    SPI1BRGL = Word(d)
+    SPI1STATL = 0
+    RPINR20 = (RPINR20 And $FF00) Or (sdi + 16)
+    SetOut(sck, 6)
+    con = $8020
+    If sdo <> 255 Then
+        SetOut(sdo, 5)
+    Else
+        con = con Or $1000
+    End If
+    If mode >= 2 Then
+        con = con Or $40
+    End If
+    If (mode And 1) = 0 Then
+        con = con Or $100
+    End If
+    SPI1CON1L = con
+    ready = True
+    lastStatus = 0
+    Result = 1
+End Function
+
+' Disables SPI1 and gives the two pins back to their port (no PPS output).
+Public Sub SpiOff(ByVal sck As Byte, ByVal sdo As Byte)
+    SPI1CON1L = 0
+    If PinOk(sck) Then
+        SetOut(sck, 0)
+    End If
+    If PinOk(sdo) Then
+        SetOut(sdo, 0)
+    End If
+    ready = False
+End Sub
+
+' 0 after the last transfer completed, 1 after a timeout, 4 when not initialised.
+Public Function SpiStatus() As Byte
+    Result = lastStatus
+End Function
+
+' Sends one byte and returns the byte received at the same time (0 on an error, see SpiStatus).
+Public Function SpiTransfer(ByVal b As Byte) As Byte
+    Dim n As Word
+    Result = 0
+    lastStatus = 4
+    If Not ready Then
+        Exit
+    End If
+    lastStatus = 1
+    SPI1BUFL = b
+    n = 0
+    While n < 60000
+        If RxFull = 1 Then
+            Result = Byte(SPI1BUFL)
+            lastStatus = 0
+            Break
+        End If
+        Inc(n)
+    Wend
+End Function
+
+' Sends one byte and ignores the byte received.
+Public Sub SpiWrite(ByVal b As Byte)
+    Dim r As Byte
+    r = SpiTransfer(b)
+End Sub
+
+' Receives one byte (sends 255 on SDO).
+Public Function SpiRead() As Byte
+    Result = SpiTransfer(255)
+End Function
+#elseif _has(SSP1CON1) And Not _has(SSP1CLKPPS)
 Dim ready As Boolean
 Dim lastStatus As Byte
 ' True when MSSP2 is in use.

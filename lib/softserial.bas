@@ -15,7 +15,15 @@ Include "pinio"
 ' Cycles of one bit that are not the wait (the pin write, the loop, the call) and cycles of one pass of the wait,
 ' measured with `scripts/softserial_timing.py` at 4800 to 38400 baud (PIC18: 39 and 7, PIC16: 69 and 9; the
 ' unoptimised `-O0` build: PIC18 37 and 11, PIC16 79 and 10).
-#if _core = "pic18"
+#if _has(PLLFBD)
+#if _opt = 1
+Private Const OverheadCyc = 80
+Private Const PassCyc = 7
+#else
+Private Const OverheadCyc = 83
+Private Const PassCyc = 7
+#endif
+#elseif _core = "pic18"
 #if _opt = 1
 Private Const OverheadCyc = 39
 Private Const PassCyc = 7
@@ -33,9 +41,21 @@ Private Const PassCyc = 10
 #endif
 #endif
 
+' dsPIC33CK64MC105 (the same measurement with the MPLAB X simulator's stopwatch, `tests/exec_dspic/lib_softserial*.bas`; the instruction clock is FOSC / 2): a pass of the wait costs 7 cycles in the transmit and in the
+' receive code, a transmitted bit 80 more (83 at -O0), a received bit 70 (73), a poll of the start-bit loop 52 (55) and the span from the poll that sees the start edge to the first sample 109 (119) plus its wait.
 ' Cycles of one poll of the start-bit loop, from the start edge to the first wait, and of the receive code per bit. Measured by the sweep `scripts/softserial_rx_sweep.py`. A millisecond is PollsMs polls;
 ' the first wait runs 1.5 bits less RxStartCyc, which is 1.5 * bitN plus FirstAdj passes.
-#if _core = "pic18"
+#if _has(PLLFBD)
+#if _opt = 1
+Private Const PollCyc = 52
+Private Const RxStartCyc = 109
+Private Const RxBitCyc = 70
+#else
+Private Const PollCyc = 55
+Private Const RxStartCyc = 119
+Private Const RxBitCyc = 73
+#endif
+#elseif _core = "pic18"
 #if _opt = 1
 Private Const PollCyc = 30
 Private Const RxStartCyc = 48
@@ -59,16 +79,30 @@ Private Const RxBitCyc = 75
 
 ' The receive wait of the unoptimised PIC16 build costs 12 cycles a pass, not the 10 of the transmit wait (the same
 ' `Hold`, called from a different routine), so that build computes the receive count from the cycles directly.
-#if _core <> "pic18" and _opt = 0
+#if _has(PLLFBD)
+Private Const RxPassCyc = 7
+#elseif _core <> "pic18" and _opt = 0
 Private Const RxPassCyc = 12
 #else
 Private Const RxPassCyc = PassCyc
 #endif
 
-Private Const PollsMs = Word(_Clock * 250 / PollCyc)
+' Instruction cycles per microsecond of `Clock` in MHz, times 1000: FOSC / 4 on the PIC18 and PIC16, FOSC / 2 on the dsPIC33.
+#if _has(PLLFBD)
+Private Const CycPerMs = 500
+#else
+Private Const CycPerMs = 250
+#endif
+#if _has(PLLFBD)
+' FirstAdj can be negative; the sum in SoftReadByte adds it as FirstAdj + 256 and subtracts 256 (Word arithmetic wraps).
+#endif
+Private Const PollsMs = Word(_Clock * CycPerMs / PollCyc)
 Private Const RxLess = (RxBitCyc - OverheadCyc + PassCyc / 2) / PassCyc
-#if _core <> "pic18" and _opt = 0
+#if _has(PLLFBD) Or (_core <> "pic18" and _opt = 0)
 Private Const FirstAdj = (RxBitCyc * 3 / 2 - RxStartCyc) / RxPassCyc
+#if _has(PLLFBD)
+Private Const FirstBias As Word = Word(FirstAdj + 256)
+#endif
 #else
 Private Const FirstAdj = (OverheadCyc * 3 / 2 - RxStartCyc) / PassCyc
 #endif
@@ -76,7 +110,9 @@ Private Const FirstAdj = (OverheadCyc * 3 / 2 - RxStartCyc) / PassCyc
 ' The global interrupt enable: bit 7 of INTCON (GIE, or GIE/GIEH with priorities), of INTCON0 on the PIC18-Q41
 ' [DS40002043F 15.13.1, DS40002343F 12.10.1, DS40002214G 11.13.1]. Clearing it holds every interrupt off, with
 ' priorities too.
-#if _has(INTCON0)
+#if _has(PLLFBD)
+Private Dim Gie As INTCON2.15
+#elseif _has(INTCON0)
 Private Dim Gie As INTCON0.7
 #else
 Private Dim Gie As INTCON.7
@@ -108,13 +144,13 @@ Public Function SoftInit(ByVal tx As Byte, ByVal rx As Byte, ByVal baud As LongW
     txPin = 255
     rxPin = 255
     Result = False
-    cyc = LongWord(_Clock) * 250000 / baud     ' instruction cycles in one bit (a baud of 0 gives all ones)
+    cyc = LongWord(_Clock) * (CycPerMs * 1000) / baud     ' instruction cycles in one bit (a baud of 0 gives all ones)
     n = Word(cyc)
     If Word(cyc >> 16) <> 0 Or n < OverheadCyc + PassCyc Then
         Exit
     End If
     bitN = (n - OverheadCyc + PassCyc / 2) / PassCyc
-#if _core <> "pic18" and _opt = 0
+#if _has(PLLFBD) Or (_core <> "pic18" and _opt = 0)
     rxN = (n - RxBitCyc + RxPassCyc / 2) / RxPassCyc
 #elseif _core <> "pic18"
     rxN = bitN - RxLess
@@ -236,6 +272,8 @@ Public Function SoftReadByte(ByVal ms As Word) As Integer
     End If
 #if _core = "pic18"
     Hold(bitN + bitN / 2 + FirstAdj)
+#elseif _has(PLLFBD)
+    Hold(rxN + rxN / 2 + FirstBias - 256)
 #else
     Hold(rxN + rxN / 2 + FirstAdj)
 #endif

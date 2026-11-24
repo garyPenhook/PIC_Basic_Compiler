@@ -30,6 +30,7 @@ if not a.keep:
 
 jobs, fails, skipped = [], 0, {}
 for src in a.files:
+    orig_src = src
     name = os.path.splitext(os.path.basename(src))[0]
     hexf = os.path.join(work, name + ".hex")
     if a.port:
@@ -71,17 +72,32 @@ for src in a.files:
             k, v = kv.split("=")
             expect[k] = int(v, 0)
     cy = re.search(r"^'\s*cycles:\s*(\d+)\s+(\d+)", text, re.M)
-    jobs.append((name, os.path.join(work, name + ".elf"), int(halt.group(1), 16), vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None))
+    st = re.search(r"^'\s*stim:\s*(\S+)", text, re.M)
+    stim = os.path.abspath(os.path.join(os.path.dirname(orig_src), st.group(1))) if st else None
+    jobs.append((name, os.path.join(work, name + ".elf"), int(halt.group(1), 16), vars_, expect, (int(cy.group(1)), int(cy.group(2))) if cy else None, stim))
 
 script = ["device dsPIC33CK64MC105", "hwtool sim"]
-for name, elf, halt, vars_, expect, cyc in jobs:
+for name, elf, halt, vars_, expect, cyc, stim in jobs:
     # A breakpoint on the halt loop (`bra __halt`) is not hit in the simulator, so the program runs a while and is stopped; it has
     # finished when it sits on the halt loop.
-    script += [f"program {elf}", "run", f"wait {a.wait}", "halt", "print PC"]
+    # `cycles:` stops on the halt loop with a breakpoint, so the stopwatch is the run time of the program; `stim:` attaches an SCL file (after the program is loaded).
+    script += [f"program {elf}"]
+    if stim:
+        script += [f"stim {stim}"]
+    if cyc:
+        script += [f"break *0x{halt:X}"]
+    script += ["run", f"wait {a.wait}"]
+    if cyc:
+        script += ["stopwatch"]
+    script += ["halt", "print PC"]
     for k in expect:
         if k in vars_:
             addr, size = vars_[k]
             script.append(f"x /{size}xb 0x{addr:X}")
+    if cyc:
+        script += ["delete"]
+    if stim:
+        script += ["stim"]
     script += ["echo END_" + name]
 script.append("quit")
 sp = os.path.join(work, "run.mdb")
@@ -92,12 +108,12 @@ if a.keep:
     print("work dir:", work)
 
 pos = 0
-for name, elf, halt, vars_, expect, cyc in jobs:
+for name, elf, halt, vars_, expect, cyc, stim in jobs:
     end = out.find("END_" + name, pos)
     seg = out[pos:end if end >= 0 else len(out)]
     pos = end + 1 if end >= 0 else pos
     pc = re.search(r"^PC=(\d+)", seg, re.M)
-    cycles = []
+    cycles = re.findall(r"cycle count = (\d+)", seg)
     blocks = re.findall(r"^x /\d+xb 0x[0-9A-Fa-f]+\n((?:[0-9a-f]{2}\s+)+)", seg, re.M)
     bad, bi = [], 0
     for k, want in expect.items():
@@ -118,6 +134,8 @@ for name, elf, halt, vars_, expect, cyc in jobs:
                 bad.append("...")
     if not pc or abs(int(pc.group(1)) - halt) > 4:
         bad.append(f"did not reach __halt (PC {pc.group(1) if pc else '?'}, __halt at {halt})")
+    if cyc and not cycles:
+        bad.append("no stopwatch reading")
     if cyc and cycles and not cyc[0] <= int(cycles[0]) <= cyc[1]:
         bad.append(f"cycles {cycles[0]} outside {cyc[0]}..{cyc[1]}")
     if bad:

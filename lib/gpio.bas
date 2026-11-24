@@ -36,6 +36,30 @@ Public Sub GpioAllDigital()
 #endif
 End Sub
 
+' dsPIC33CK64MC105 (DS70005399D section 8.3; chosen with `_has(CNPUA)`): the ports are 16 bits wide, so the masks of GpioPullUps and GpioOpenDrain are Words (a Byte argument widens) and port D, which has four pins (RD1, RD8, RD10, RD13),
+' has its own pair GpioPullUpsD and GpioOpenDriveD. The pull-up is CNPUx [Register 8-6 p.105] and the open-drain output ODCx [Register 8-5 p.104]; a mask bit of a pin the port lacks is not implemented and is ignored. Pull-ups only work
+' on a pin that is a digital input (GpioAllDigital); the pull-down CNPDx is not offered.
+#if _has(CNPUA)
+Public Sub GpioPullUps(ByVal maskA As Word, ByVal maskB As Word, ByVal maskC As Word)
+    CNPUA = maskA
+    CNPUB = maskB
+    CNPUC = maskC
+End Sub
+
+Public Sub GpioPullUpsD(ByVal maskD As Word)
+    CNPUD = maskD
+End Sub
+
+Public Sub GpioOpenDrain(ByVal maskA As Word, ByVal maskB As Word, ByVal maskC As Word)
+    ODCA = maskA
+    ODCB = maskB
+    ODCC = maskC
+End Sub
+
+Public Sub GpioOpenDriveD(ByVal maskD As Word)
+    ODCD = maskD
+End Sub
+#else
 ' Weak pull-ups: a 1 bit enables the pull-up of that pin [Q10 p.251, 16F171xx 16.14.5].
 Public Sub GpioPullUps(ByVal maskA As Byte, ByVal maskB As Byte, ByVal maskC As Byte)
 #if _has(WPUA)
@@ -64,3 +88,4 @@ Public Sub GpioOpenDrain(ByVal maskA As Byte, ByVal maskB As Byte, ByVal maskC A
     ODCONC = maskC
 #endif
 End Sub
+#endif

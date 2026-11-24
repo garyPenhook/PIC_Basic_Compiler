@@ -11,6 +11,356 @@ Module Pinio
 ' interrupt handler and the main program on the same port.
 
 ' One more than the highest pin number a part can have: 24 (ports A to C), 32 (with port D), 40 (with port E) or 48 (with port F).
+' dsPIC33CK64MC105 (DS70005399D chapter 8; chosen with `#if _has(PLLFBD)`): the ports are 16 bits wide, so the pins are numbered port * 16 + bit: RA0..RA15 = 0..15, RB0..RB15 = 16..31, RC0..RC15 = 32..47,
+' RD0..RD15 = 48..63 (not the 8 pins a port of the other parts). The 48-pin part has RA0..RA4, RB0..RB15, RC0..RC13 and RD1, RD8, RD10, RD13 [Table 5 p.8, Table 8-1 p.100]; PinOk is False for the others and every
+' routine ignores them. The registers are TRISx, LATx, PORTx and ANSELx (a pin without an ANSELx bit has none to clear) [Registers 8-1 to 8-4 p.102 to 104]. The whole-port routines work on eight pins:
+' `base` is 0, 8, 16, ... 56 (bits 7..0 or 15..8 of the port). The open-drain emulation is as on the other parts: LATx cleared once, TRISx switched. The ODCx open-drain register is not used (see `Gpio`).
+#if _has(PLLFBD)
+Public Const PinCount = 64
+
+' The pins each port has, one bit each: RA0..RA4; RB0..RB15; RC0..RC13; RD1, RD8, RD10, RD13.
+Const PinMask(4) As Word = ($001F, $FFFF, $3FFF, $2502)
+
+' The bit of the pin in its port.
+Function BitMask(ByVal pin As Byte) As Word
+    Result = 1
+    Result = Result << (pin And 15)
+End Function
+
+Public Function PinOk(ByVal pin As Byte) As Boolean
+    Result = False
+    If pin < 64 Then
+        Result = (PinMask(pin >> 4) And BitMask(pin)) <> 0
+    End If
+End Function
+
+' LATx of port `port` (0 = A .. 3 = D): the bits in `mask` take the bits of `val`.
+Sub LatPut(ByVal port As Byte, ByVal mask As Word, ByVal val As Word)
+    Dim n As Word
+    n = mask Xor $FFFF
+    val = val And mask
+    Select port
+    Case 0
+        LATA = (LATA And n) Or val
+    Case 1
+        LATB = (LATB And n) Or val
+    Case 2
+        LATC = (LATC And n) Or val
+    Else
+        LATD = (LATD And n) Or val
+    EndSelect
+End Sub
+
+' TRISx likewise (1 = input).
+Sub TrisPut(ByVal port As Byte, ByVal mask As Word, ByVal val As Word)
+    Dim n As Word
+    n = mask Xor $FFFF
+    val = val And mask
+    Select port
+    Case 0
+        TRISA = (TRISA And n) Or val
+    Case 1
+        TRISB = (TRISB And n) Or val
+    Case 2
+        TRISC = (TRISC And n) Or val
+    Else
+        TRISD = (TRISD And n) Or val
+    EndSelect
+End Sub
+
+' Clears the ANSELx bits in `mask`: those pins become digital.
+Sub AnselClr(ByVal port As Byte, ByVal mask As Word)
+    Dim n As Word
+    n = mask Xor $FFFF
+    Select port
+    Case 0
+        ANSELA = ANSELA And n
+    Case 1
+        ANSELB = ANSELB And n
+    Case 2
+        ANSELC = ANSELC And n
+    Else
+        ANSELD = ANSELD And n
+    EndSelect
+End Sub
+
+' PORTx of the port.
+Function PortGet(ByVal port As Byte) As Word
+    Select port
+    Case 0
+        Result = PORTA
+    Case 1
+        Result = PORTB
+    Case 2
+        Result = PORTC
+    Else
+        Result = PORTD
+    EndSelect
+End Function
+
+Public Sub PinSet(ByVal pin As Byte, ByVal level As Boolean)
+    Dim m As Word
+    If PinOk(pin) Then
+        m = BitMask(pin)
+        If level Then
+            LatPut(pin >> 4, m, m)
+        Else
+            LatPut(pin >> 4, m, 0)
+        End If
+    End If
+End Sub
+
+Public Function PinGet(ByVal pin As Byte) As Boolean
+    Result = False
+    If PinOk(pin) Then
+        Result = (PortGet(pin >> 4) And BitMask(pin)) <> 0
+    End If
+End Function
+
+' Pin as a digital output.
+Public Sub PinOutput(ByVal pin As Byte)
+    If PinOk(pin) Then
+        AnselClr(pin >> 4, BitMask(pin))
+        TrisPut(pin >> 4, BitMask(pin), 0)
+    End If
+End Sub
+
+' Pin as a digital input.
+Public Sub PinInput(ByVal pin As Byte)
+    If PinOk(pin) Then
+        AnselClr(pin >> 4, BitMask(pin))
+        TrisPut(pin >> 4, BitMask(pin), $FFFF)
+    End If
+End Sub
+
+' Open-drain line: PinDriveLow pulls the pin low (LATx bit cleared, pin made an output); PinRelease lets it float (input).
+Public Sub PinDriveLow(ByVal pin As Byte)
+    PinSet(pin, False)
+    PinOutput(pin)
+End Sub
+
+Public Sub PinRelease(ByVal pin As Byte)
+    PinInput(pin)
+End Sub
+
+' Bound pins, for a loop that drives or reads two pins many times: BindData / BindClk find the port and the bit mask once (use only a pin PinOk accepted),
+' DataPut / ClkPut / DataRead then only pick the port and set or clear the bit.
+Dim dPort As Byte
+Dim dMask As Word
+Dim dInv As Word
+Dim cPort As Byte
+Dim cMask As Word
+Dim cInv As Word
+
+Public Sub BindData(ByVal pin As Byte)
+    dPort = pin >> 4
+    dMask = BitMask(pin)
+    dInv = dMask Xor $FFFF
+End Sub
+
+Public Sub BindClk(ByVal pin As Byte)
+    cPort = pin >> 4
+    cMask = BitMask(pin)
+    cInv = cMask Xor $FFFF
+End Sub
+
+Public Sub DataPut(ByVal level As Boolean)
+    Select dPort
+    Case 0
+        If level Then
+            LATA = LATA Or dMask
+        Else
+            LATA = LATA And dInv
+        End If
+    Case 1
+        If level Then
+            LATB = LATB Or dMask
+        Else
+            LATB = LATB And dInv
+        End If
+    Case 2
+        If level Then
+            LATC = LATC Or dMask
+        Else
+            LATC = LATC And dInv
+        End If
+    Else
+        If level Then
+            LATD = LATD Or dMask
+        Else
+            LATD = LATD And dInv
+        End If
+    EndSelect
+End Sub
+
+Public Sub ClkPut(ByVal level As Boolean)
+    Select cPort
+    Case 0
+        If level Then
+            LATA = LATA Or cMask
+        Else
+            LATA = LATA And cInv
+        End If
+    Case 1
+        If level Then
+            LATB = LATB Or cMask
+        Else
+            LATB = LATB And cInv
+        End If
+    Case 2
+        If level Then
+            LATC = LATC Or cMask
+        Else
+            LATC = LATC And cInv
+        End If
+    Else
+        If level Then
+            LATD = LATD Or cMask
+        Else
+            LATD = LATD And cInv
+        End If
+    EndSelect
+End Sub
+
+Public Function DataRead() As Boolean
+    Select dPort
+    Case 0
+        Result = (PORTA And dMask) <> 0
+    Case 1
+        Result = (PORTB And dMask) <> 0
+    Case 2
+        Result = (PORTC And dMask) <> 0
+    Else
+        Result = (PORTD And dMask) <> 0
+    EndSelect
+End Function
+
+' Open-drain pin: LATx must be 0 (PinSet(pin, False) once) and the pin digital (PinInput once); BindOd finds the port and the mask, OdLow makes the pin an output (the line is pulled low), OdRelease an input.
+Dim oPort As Byte
+Dim oMask As Word
+Dim oInv As Word
+
+Public Sub BindOd(ByVal pin As Byte)
+    oPort = pin >> 4
+    oMask = BitMask(pin)
+    oInv = oMask Xor $FFFF
+End Sub
+
+Public Sub OdLow()
+    Select oPort
+    Case 0
+        TRISA = TRISA And oInv
+    Case 1
+        TRISB = TRISB And oInv
+    Case 2
+        TRISC = TRISC And oInv
+    Else
+        TRISD = TRISD And oInv
+    EndSelect
+End Sub
+
+Public Sub OdRelease()
+    Select oPort
+    Case 0
+        TRISA = TRISA Or oMask
+    Case 1
+        TRISB = TRISB Or oMask
+    Case 2
+        TRISC = TRISC Or oMask
+    Else
+        TRISD = TRISD Or oMask
+    EndSelect
+End Sub
+
+Public Function OdRead() As Boolean
+    Select oPort
+    Case 0
+        Result = (PORTA And oMask) <> 0
+    Case 1
+        Result = (PORTB And oMask) <> 0
+    Case 2
+        Result = (PORTC And oMask) <> 0
+    Else
+        Result = (PORTD And oMask) <> 0
+    EndSelect
+End Function
+
+' ---- Whole-port byte access, for parallel buses (`glcd`) ----
+' `base` is the first pin of eight: 0, 8, 16 ... 56 (any other value is ignored and reads as 0).
+Function BaseOk(ByVal base As Byte) As Boolean
+    Result = (base And 7) = 0 And base < 64
+End Function
+
+' The mask of the eight pins (or the upper four, `high`) of `base` in the 16-bit port.
+Function BaseMask(ByVal base As Byte, ByVal upper As Boolean) As Word
+    Result = 255
+    If upper Then
+        Result = 240
+    End If
+    Result = Result << (base And 8)
+End Function
+
+Public Sub PortDigital(ByVal base As Byte)
+    If BaseOk(base) Then
+        AnselClr(base >> 4, BaseMask(base, False))
+    End If
+End Sub
+
+Public Sub PortDigitalHigh(ByVal base As Byte)
+    If BaseOk(base) Then
+        AnselClr(base >> 4, BaseMask(base, True))
+    End If
+End Sub
+
+Public Sub PortWrite(ByVal base As Byte, ByVal v As Byte)
+    Dim w As Word
+    If BaseOk(base) Then
+        w = v
+        LatPut(base >> 4, BaseMask(base, False), w << (base And 8))
+    End If
+End Sub
+
+Public Sub PortWriteHigh(ByVal base As Byte, ByVal v As Byte)
+    Dim w As Word
+    If BaseOk(base) Then
+        w = v
+        LatPut(base >> 4, BaseMask(base, True), w << (base And 8))
+    End If
+End Sub
+
+Public Function PortRead(ByVal base As Byte) As Byte
+    Dim w As Word
+    Result = 0
+    If BaseOk(base) Then
+        w = PortGet(base >> 4)
+        Result = Byte(w >> (base And 8))
+    End If
+End Function
+
+Public Function PortReadHigh(ByVal base As Byte) As Byte
+    Result = PortRead(base) And 240
+End Function
+
+Public Sub PortDirection(ByVal base As Byte, ByVal isInput As Boolean)
+    If BaseOk(base) Then
+        If isInput Then
+            TrisPut(base >> 4, BaseMask(base, False), $FFFF)
+        Else
+            TrisPut(base >> 4, BaseMask(base, False), 0)
+        End If
+    End If
+End Sub
+
+Public Sub PortDirectionHigh(ByVal base As Byte, ByVal isInput As Boolean)
+    If BaseOk(base) Then
+        If isInput Then
+            TrisPut(base >> 4, BaseMask(base, True), $FFFF)
+        Else
+            TrisPut(base >> 4, BaseMask(base, True), 0)
+        End If
+    End If
+End Sub
+#else
 #if _has(LATF)
 Public Const PinCount = 48
 #elseif _has(ANSELE)
@@ -924,3 +1274,4 @@ Public Sub PortDigitalHigh(ByVal base As Byte)
 #endif
     End If
 End Sub
+#endif
