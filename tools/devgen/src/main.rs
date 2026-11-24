@@ -561,7 +561,8 @@ mod tests {
 
     #[test]
     fn unknown_architecture_is_refused() {
-        assert!(family_facts("33xxxx").is_err());
+        assert!(family_facts("24xxxx").is_err());
+        assert_eq!(family_facts("33xxxx").unwrap().family, "dspic33");
         assert_eq!(family_facts("18xxxx").unwrap().family, "pic18");
         assert_eq!(family_facts("16Exxx").unwrap().vectors, (0, 4, 4));
     }
