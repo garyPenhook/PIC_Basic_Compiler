@@ -60,7 +60,12 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   Flags: `TRMT` (`U1STA` bit 7), `OERR` (`U1STA` bit 1), `UTXBF` (`U1STAH` bit 4), `URXBE` (`U1STAH` bit 1) [Registers 15-3, 15-4].
   Checked in the simulator: the register values after `SerialInit` and that the send and flush loops finish
   (`tests/exec_dspic/lib_serial.bas`); no bit was seen on a pin. RB6 is `PGC3` and RB7 `TDO`.
-* Not done: `intosc`, `system`, `timer`, `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+* `timer` (Timer1 only), chosen with `#if _has(T1CON.TCKPS)`; the other timers of the part are inside the SCCP modules, so there is no Timer0 or Timer2 here.
+  `T1CON` = `TON` (15) | `TECS<1:0>` (9-8) | `TCKPS<1:0>` (5-4) | `TSYNC` (2) | `TCS` (1); prescaler 1:1, 1:8, 1:64, 1:256; `TCS` = 0 is Fp = FOSC/2;
+  `TECS` 00 T1CK pin, 01 Fp, 10 FOSC, 11 FRC [Register 19-1 p.330-331, Figure 19-1 p.329]. `PR1` is FFFFh after a Reset. Flag `IFS0.T1IF` (bit 1), enable `IEC0.T1IE` (bit 1);
+  T1CK is routed with `RPINR2.T1CKR`. Checked in the simulator: `Timer1StartPeriod` register values and three period flags, `Timer1StartSource` register value, and that
+  `Timer1Read` counts (`tests/exec_dspic/lib_timer.bas`). Not offered: the gate, asynchronous counter mode, Sleep operation, a pin-number `FreqCount`.
+* Not done: `intosc`, `system`, `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
 
 ## Not yet generated
 

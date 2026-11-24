@@ -50,6 +50,87 @@ Include "pinio"
 ' prescaler 1, 4, 16 for 0, 1, 2 (3 is 1:16 as well) [Register 13-1 p.171]; TMR2IF / TMR1IF are PIR1 bits 1 and 0.
 ' The handler type of the TimerNOnExpire hooks.
 Public Type TTimerEvent = Event()
+#if _has(T1CON.TCKPS)
+' dsPIC33CK64MC105 (DS70005399D chapter 19; chosen with `#if _has(T1CON.TCKPS)`): the part has Timer1 only (no Timer0 or Timer2 here: the other timers are inside the
+' SCCP modules), so only the Timer1 routines exist. Timer1 is a 16-bit timer with a period register: TMR1 counts 0..PR1 and restarts, and the flag is IFS0.T1IF [Figure 19-1]; its
+' enable is IEC0.T1IE. T1CON = TON (15) | TECS<1:0> (9-8) | TCKPS<1:0> (5-4) | TSYNC (2) | TCS (1) [Register 19-1 p.330-331]. The prescaler is 1:1, 1:8, 1:64 and 1:256 for
+' prescale 0..3 (not the 1:1 to 1:8 of the PICs). The clock is Fp = FOSC/2 (TCS = 0), so Timer1Start overflows every 65536 * prescaler instruction cycles; Timer1StartPeriod
+' takes a period register value, so one period is (period + 1) * prescaler cycles. PR1 is FFFFh after a Reset. The flag is not cleared by hardware: call Timer1Ack in your
+' own `Interrupt T1()` (or use Timer1OnExpire and Timer1Service). The gate, the asynchronous counter mode and the Sleep operation are not offered.
+' Timer1 clock sources for Timer1StartSource, the TECS field [Register 19-1]. T1ClkPin counts rising edges on T1CK, which the program routes with
+' RPINR2 (T1CKR) after making the pin a digital input; the external sources are synchronised to the system clock (TSYNC = 1).
+Public Const T1ClkPin = 0
+Public Const T1ClkFp = 1
+Public Const T1ClkFosc = 2
+Public Const T1ClkFrc = 3
+Dim Tmr1If As IFS0.T1IF
+Dim Tmr1Ie As IEC0.T1IE
+
+' Periodic timer on Fp: TMR1 counts 0..period and restarts, one flag per (period + 1) * prescaler instruction cycles.
+Public Sub Timer1StartPeriod(ByVal prescale As Byte, ByVal period As Word)
+    T1CON = 0
+    PR1 = period
+    TMR1 = 0
+    Tmr1If = 0
+    T1CON = (prescale And 3) * 16 + 32768
+End Sub
+
+' Free-running 16-bit timer on Fp, read with Timer1Read: it overflows every 65536 * prescaler instruction cycles.
+Public Sub Timer1Start(ByVal prescale As Byte)
+    Timer1StartPeriod(prescale, 65535)
+End Sub
+
+' Timer1 from any clock in T1Clk*, free-running (PR1 = FFFFh).
+Public Sub Timer1StartSource(ByVal clk As Byte, ByVal prescale As Byte)
+    T1CON = 0
+    PR1 = 65535
+    TMR1 = 0
+    Tmr1If = 0
+    T1CON = (clk And 3) * 256 + (prescale And 3) * 16 + 32774
+End Sub
+
+Public Sub Timer1Stop()
+    T1CON = 0
+End Sub
+
+Public Function Timer1Read() As Word
+    Result = TMR1
+End Function
+
+' True once per period; clears the flag when it reports it.
+Public Function Timer1Expired() As Boolean
+    Result = False
+    If Tmr1If = 1 Then
+        Tmr1If = 0
+        Result = True
+    End If
+End Function
+
+Public Sub Timer1Ack()
+    Tmr1If = 0
+End Sub
+
+' Leaves the flag alone: the start routines clear it, and the hardware may set it again at any moment. To drop a
+' period that ended while the interrupt was off, call Timer1Ack first.
+Public Sub Timer1EnableInterrupt()
+    Tmr1Ie = 1
+End Sub
+
+Public Sub Timer1DisableInterrupt()
+    Tmr1Ie = 0
+End Sub
+
+' Event hook: assign a handler to Timer1OnExpire, start the timer, and call Timer1Service regularly (from the
+' main loop, or from your own Interrupt inside Save(0, Timer1Service)). Each period acknowledges the flag and
+' calls the handler once. An unassigned Timer1OnExpire does nothing.
+Public Dim Timer1OnExpire As TTimerEvent
+Public Sub Timer1Service()
+    If Tmr1If = 1 Then
+        Tmr1If = 0
+        Timer1OnExpire()
+    End If
+End Sub
+#else
 #if _has(T0CON.T08BIT)
 ' Timer1 clock sources: TMR1CS in bits 1-0, the T1SOSCEN bit in bit 2 [Table 12-2 p.158]. T1ClkPin counts rising edges on T1CKI (RC0);
 ' T1ClkSosc runs from a 32.768 kHz crystal on SOSCI/SOSCO (give it its start-up time before relying on the count, 12.4 p.159).
@@ -858,3 +939,4 @@ Public Sub Timer2Service()
         Timer2OnExpire()
     End If
 End Sub
+#endif
