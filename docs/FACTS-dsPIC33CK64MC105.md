@@ -76,7 +76,10 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   [DS70000157G]. `Snooze` and `Sleep(seconds)` use the Sleep-mode watchdog, whose period is 2^`SLPDIV` ms and is fixed by `Config SWDTPS` [DS70005250C Table 3-1 p.13, DS Register 28-19 p.432].
   Checked in the simulator: the cause after power-on (1, with POR and BOR set), the cleared flags, the wake codes, `SysClockHz` = 100 MHz after `intosc` and `SysClockOk` (`tests/exec_dspic/lib_system.bas`).
   **Not run in the simulator:** the timed sleeps; MDB does not wake the part from a watchdog Sleep (the program stays in `pwrsav`), so `lib_system_sleep.bas` only assembles and links them.
-* Not done: `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+* `serial2` (UART2), chosen with `#if _has(U2MODE)`, same set-up and flags as `serial`. TX on RB5 (RP37), RX on RB4 (RP36): pins of the 28-pin part [DS Table 2 p.4] clear of the RB6/RB7 pair of UART1;
+  RB5 has no analog function and `ANSELB` bit 4 is cleared for RX. `RPOR2[13:8]` = 3 routes U2TX [Tables 8-6 p.116, 8-7 p.117] and `RPINR19[7:0]` = 36 selects RP36 for U2RX [Register 8-27 p.129].
+  RB4 is `PGC2` and RB5 `PGD3`. Checked in the simulator: the register values after `Serial2Init` and that the send and flush loops finish (`tests/exec_dspic/lib_serial2.bas`); no bit was seen on a pin.
+* Not done: `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
 
 ## Not yet generated
 

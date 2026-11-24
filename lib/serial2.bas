@@ -33,13 +33,26 @@ Module Serial2
 ' p.6-7]. Both TRIS bits are set, SPEN takes the TX pin [16.1.1.7 p.262]. TX2IF and RC2IF are PIR3 bits 4 and 5. Errata as for module
 ' Serial (BRGH = BRG16 = 1 is always used).
 '
+' dsPIC33CK64MC105 (DS70005399D, chapter 15; chosen with `_has(U2MODE)`, before the RCON test because the dsPIC has an RCON too): UART2 with U2MODE/U2MODEH/U2STA/U2STAH/U2BRG/U2TXREG/U2RXREG,
+' set up and flagged exactly as UART1 in module `Serial`. TX on RB5 (RP37) and RX on RB4 (RP36), pins of the 28-pin part [Table 2 p.4] that are clear of the RB6/RB7 pair of module Serial; RB5 has no analog
+' function and ANSELB bit 4 is cleared for RX. RPOR2.RP37R = 3 routes U2TX [Tables 8-6 p.116, 8-7 p.117] and RPINR19.U2RXR = 36 selects RP36 for U2RX [Register 8-27 p.129, Table 8-4 p.111]; the remapping registers are
+' unlocked after a Reset (RPCON.IOLOCK = 0 [Register 8-13 p.122]). RB4 is PGC2 and RB5 PGD3: keep that programming channel unused. Baud: BRGH = 1, baud = Fp / (4 * (BRG + 1)), Fp = FOSC / 2 [DS70005288C Equation 4-2 p.24].
+'
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP2BRGH:SP2BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
-#if Not _has(U2CON0) And Not _has(TX2STA)
+#if Not _has(U2CON0) And Not _has(TX2STA) And Not _has(U2MODE)
 #error "serial2 needs a second EUSART: the PIC16F13145 family, the PIC16F183xx parts, the PIC16F152xx parts and the PIC16F153xx parts except the PIC16(L)F15313/23 have one (DS40002519D Table 1 p.1; DS40001799F Family Types table p.3; DS40002195E Table 1 p.1; DS40001897C Table 1 p.3); use module Serial"
 #endif
-#if _has(RCON)
+#if _has(U2MODE)
+Dim TxFull As U2STAH.4
+Dim RxEmpty As U2STAH.1
+Dim TxShiftEmpty As U2STA.7
+Dim OverrunErr As U2STA.1
+Dim TxPin As TRISB.5
+Dim RxPin As TRISB.4
+Dim RxAnalog As ANSELB.4
+#elseif _has(RCON)
 Dim TxIf As PIR3.4
 Dim RxIf As PIR3.5
 Dim OverrunErr As RCSTA2.1
@@ -114,8 +127,16 @@ Public Const FoscHz = LongWord(_Clock * 1000000)
 
 Public Sub Serial2Init(ByVal baud As LongWord)
     Dim n As LongWord
+#if _has(U2MODE)
+    n = (FoscHz + baud * 4) / (baud * 8) - 1
+#else
     n = (FoscHz + baud * 2) / (baud * 4) - 1
-#if _has(RCON)
+#endif
+#if _has(U2MODE)
+    RxAnalog = 0
+    RxPin = 1
+    TxPin = 0
+#elseif _has(RCON)
 #if _has(LATD)
     TxAnalog = 0
     RxAnalog = 0
@@ -132,7 +153,14 @@ Public Sub Serial2Init(ByVal baud As LongWord)
     RxPin = 1
     TxPin = 0
 #endif
-#if _has(RCON)
+#if _has(U2MODE)
+    ' U2BRG and U2MODEH are written only while UARTEN = 0 [DS70005288C section 4.0]; the values are those of Serial (BRGH = 1, 8-bit asynchronous, RUNOVF), then UARTEN.
+    RPOR2 = (RPOR2 And $C0FF) Or $0300
+    RPINR19 = (RPINR19 And $FF00) Or 36
+    U2BRG = Word(n)
+    U2MODEH = 128
+    U2MODE = $80B0
+#elseif _has(RCON)
 #elseif _has(U2CON0)
     TxAnalog = 0
     RC2PPS = 19
@@ -190,10 +218,14 @@ End Sub
 
 ' Sends one byte, waiting for the transmit register to be free.
 Public Sub Serial2WriteByte(ByVal b As Byte)
-#if _has(U2CON0)
+#if _has(U2CON0) Or _has(U2MODE)
     While TxFull = 1
     Wend
+#if _has(U2MODE)
+    U2TXREG = b
+#else
     U2TXB = b
+#endif
 #elseif _has(ADCON0.CHS) And _has(T2HLT) And Not _has(ADCON1.PREF) And (_device = 16F15356 Or _device = 16F15375 Or _device = 16F15376 Or _device = 16F15385 Or _device = 16F15386 Or _device = 16LF15356 Or _device = 16LF15375 Or _device = 16LF15376 Or _device = 16LF15385 Or _device = 16LF15386)
     ' Erratum 5.1 (DS80000725F, silicon A1 and A2; the same EUSART as EUSART1): write only when the shift register is empty (TRMT, TX2STA bit 1).
     While TX2STA.1 = 0
@@ -258,7 +290,7 @@ End Sub
 
 ' True when a received byte is waiting.
 Public Function Serial2Available() As Boolean
-#if _has(U2CON0)
+#if _has(U2CON0) Or _has(U2MODE)
     Result = RxEmpty = 0
 #else
     Result = RxIf = 1
@@ -267,13 +299,17 @@ End Function
 
 ' Waits for a byte. An overrun stops the receiver until CREN is cycled, so it is cleared here.
 Public Function Serial2Read() As Byte
-#if _has(U2CON0)
+#if _has(U2CON0) Or _has(U2MODE)
     While RxEmpty = 1
         If OverrunErr = 1 Then
             OverrunErr = 0
         End If
     Wend
+#if _has(U2MODE)
+    Result = Byte(U2RXREG)
+#else
     Result = U2RXB
+#endif
 #else
     While RxIf = 0
         If OverrunErr = 1 Then
@@ -298,9 +334,13 @@ Private Function Wait2(ByVal ms As Word) As Boolean
     Dim t As Byte
     t = 0
     While True
-#if _has(U2CON0)
+#if _has(U2CON0) Or _has(U2MODE)
         If RxEmpty = 0 Then
+#if _has(U2MODE)
+            RxByte = Byte(U2RXREG)
+#else
             RxByte = U2RXB
+#endif
             Result = True
             Exit
         End If
@@ -411,7 +451,10 @@ End Function
 
 ' Waits until the last byte has left the shift register (TRMT, TX2STA bit 1).
 Public Sub Serial2Flush()
-#if _has(U2CON0)
+#if _has(U2MODE)
+    While TxShiftEmpty = 0
+    Wend
+#elseif _has(U2CON0)
     While TxBufEmpty = 0 Or TxShiftEmpty = 0
     Wend
 #else
