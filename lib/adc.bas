@@ -79,7 +79,208 @@ Module Adc
 ' be unstable at low temperature on those revisions (no work-around). Item 8: GO/DONE can stay set; Convert gives up after a bounded wait,
 ' clears GO and starts again (twice at most), and returns 0 if it still did not finish. The DS80000512J and DS80000514J parts list no ADC
 ' item.
-#if _has(ADCON2.ACQT)
+' dsPIC33CK64MC105 (DS70005399D chapter 12, DS70005213H; chosen with `#if _has(ADCON1L)`): the 12-bit multiple-SAR ADC with one shared core. Nothing is shared with the other parts:
+' a conversion is started by the individual channel software trigger, CNVRTCH with the channel in CNVCHSEL (ADCON3L) [Register 12-5 p.219, DS70005213H 5.9.5 p.50], which needs no ADTRIGx set-up, and the result is
+' in ADCBUFn with the data-ready flag ANnRDY in ADSTATL/H [Registers 12-20, 12-21 p.229]; reading ADCBUFn clears the flag [DS70005213H 5.13.1 p.57], so AdcRead reads it once before the trigger. The channel numbers
+' are the AN numbers, not pin numbers (port B has 16 bits, so no pin numbering fits): AN0 RA0, AN1 and AN7 RB2 (one pin), AN2 RB7, AN3 RA3, AN4 RA4, AN5 RB0, AN6 RB1, AN8 RB3, AN9 RA2, AN10 RB8, AN11 RB9,
+' AN12 RC0, AN13 RC1, AN14 RC2, AN15 RC3 [Table 5 p.8; the 28-pin parts stop at AN11, Table 12-1 p.211], AdcChTemp = AN16 (the temperature diode, about -1.5 mV/C) and AdcChBandGap = AN17 (the 1.2 V band gap, 1.14 to
+' 1.26 V) [Figure 12-1 p.212, 12.2 p.214, AD66 p.473]; AdcPin makes the pin of an AN number an analog input (TRISx and ANSELx). The result is 12 bits, unsigned, right-justified (ADCON1H resets to FORM = 0, SHRRES = 11
+' [Register 12-2 p.216]); AdcMax = 4095. The reference is AVDD and AVSS only (REFSEL = 000, the only value [Register 12-5]), so there is no AdcRefFvr.
+' Clock: ADCON3H CLKSEL = 00 is Fp = FOSC / 2 and CLKDIV = 0 [Register 12-6 p.220]; SHRADCS = 1 divides it by 2 [Register 12-3 p.217], so TADCORE = 4 / FOSC and FADCORE = FOSC / 4 is at most 50 MHz, inside AD11 (70 MHz) and
+' AD50 (TAD >= 14.28 ns) [Tables 31-30, 31-31 p.473 to 474]. Sampling: SHRSAMC = n - 2 for n TADCORE [Register 12-4 p.218], n the smallest count that gives 2 us, which covers a 10 kohm source (9 * (10 kohm + RIC 1 kohm)
+' * CHOLD 18 pF = 1.8 us, Equation 5-2 p.45 of DS70005213H; AD61, AD62). A higher source impedance needs a longer time: write ADCON2H after AdcInit with the ADC off. Start-up [DS70005213H 5.7 p.49]: WARMTIME
+' (ADCON5H) is at least 10 us in TCORESRC = Fp periods, ADON, SHRPWR, wait for SHRRDY, then SHREN. The part has no calibration registers (no ADCALx in the pack). The silicon errata (DS80000910C) list nothing for the ADC.
+' Config bits of the ADC must not change while ADON = 1 [Register 12-1 note 1], so AdcInit turns the module off first.
+#if _has(ADCON1L)
+Public Const AdcChTemp = 16
+Public Const AdcChBandGap = 17
+Public Const AdcMax = 4095
+
+' Port and bit of each AN number 0..15: the bit mask in the low ten bits, the port (0 = A, 1 = B, 2 = C) in bits 14 and 15.
+Const AnPin(16) As Word = ($0001, $4004, $4080, $0008, $0010, $4001, $4002, $4004, $4008, $0004, $4100, $4200, $8001, $8002, $8004, $8008)
+
+' Polls of ANnRDY before AdcRead gives up (a conversion takes under 250 instruction cycles at any clock).
+Const AdcWait As Word = 4000
+
+' SHRSAMC: the smallest n >= 2 of TADCORE (4 / FOSC each) that covers 2 us, minus 2.
+Const AdcSamples As LongWord = Max(2, (LongWord(_Clock * 1000) + 1999) / 2000)
+Const AdcSamc As Word = Word(AdcSamples - 2)
+
+' WARMTIME: the smallest 2^k periods of Fp (= FOSC / 2) that cover 10 us, k = 4 to 11 giving the codes 4 to 11 (5 * Clock periods).
+#if _clock * 10 <= 32
+Const AdcWarm As Word = $0400
+#elseif _clock * 10 <= 64
+Const AdcWarm As Word = $0500
+#elseif _clock * 10 <= 128
+Const AdcWarm As Word = $0600
+#elseif _clock * 10 <= 256
+Const AdcWarm As Word = $0700
+#elseif _clock * 10 <= 512
+Const AdcWarm As Word = $0800
+#elseif _clock * 10 <= 1024
+Const AdcWarm As Word = $0900
+#elseif _clock * 10 <= 2048
+Const AdcWarm As Word = $0A00
+#else
+Const AdcWarm As Word = $0B00
+#endif
+
+Dim lastCh As Byte
+Dim adinUp As Boolean
+
+' Turns the ADC on: 12 bits, integer, AVDD / AVSS, 2 us sampling, shared core running. Waits (bounded) for SHRRDY.
+Public Sub AdcInit()
+    Dim n As Word
+    ADCON3H = 0
+    ADCON5L = 0
+    ADCON1L = 0
+    ADCON1H = $60
+    ADCON2L = 1
+    ADCON2H = AdcSamc
+    ADCON3L = 0
+    ADCON5H = AdcWarm
+    ADCON1L = $8000
+    ADCON5L = $80
+    n = 0
+    While ADCON5L.15 = 0 And n < 60000
+        Inc(n)
+    Wend
+    ADCON3H = $80
+    lastCh = 255
+End Sub
+
+' Makes the pin of AN0..AN15 an analog input (TRISx = 1, ANSELx = 1). AN16 and AN17 are internal and need no pin.
+Public Sub AdcPin(ByVal an As Byte)
+    Dim v As Word
+    Dim m As Word
+    If an < 16 Then
+        v = AnPin(an)
+        m = v And $3FF
+        If v < $4000 Then
+            TRISA = TRISA Or m
+            ANSELA = ANSELA Or m
+        ElseIf v < $8000 Then
+            TRISB = TRISB Or m
+            ANSELB = ANSELB Or m
+        Else
+            TRISC = TRISC Or m
+            ANSELC = ANSELC Or m
+        End If
+    End If
+End Sub
+
+' Reference = AVDD and AVSS, the only choice on this part; nothing to do (here so a program also builds for the other parts).
+Public Sub AdcRefVdd()
+End Sub
+
+' ADCBUFn of AN number n (0..17); the registers have no index.
+Private Function Buf(ByVal an As Byte) As Word
+    Select an
+    Case 0
+        Result = ADCBUF0
+    Case 1
+        Result = ADCBUF1
+    Case 2
+        Result = ADCBUF2
+    Case 3
+        Result = ADCBUF3
+    Case 4
+        Result = ADCBUF4
+    Case 5
+        Result = ADCBUF5
+    Case 6
+        Result = ADCBUF6
+    Case 7
+        Result = ADCBUF7
+    Case 8
+        Result = ADCBUF8
+    Case 9
+        Result = ADCBUF9
+    Case 10
+        Result = ADCBUF10
+    Case 11
+        Result = ADCBUF11
+    Case 12
+        Result = ADCBUF12
+    Case 13
+        Result = ADCBUF13
+    Case 14
+        Result = ADCBUF14
+    Case 15
+        Result = ADCBUF15
+    Case 16
+        Result = ADCBUF16
+    Else
+        Result = ADCBUF17
+    EndSelect
+End Function
+
+' One conversion of AN number `an` (0..17), 0..4095; 0 for any other number or when no result came.
+Public Function AdcRead(ByVal an As Byte) As Word
+    Dim m As Word
+    Dim n As Word
+    Result = 0
+    If an > 17 Then
+        Exit
+    End If
+    Result = Buf(an)
+    ADCON3L = $0100 Or an
+    m = 1 << (an And 15)
+    n = 0
+    If an < 16 Then
+        While (ADSTATL And m) = 0 And n < AdcWait
+            Inc(n)
+        Wend
+        If (ADSTATL And m) = 0 Then
+            Result = 0
+            Exit
+        End If
+    Else
+        While (ADSTATH And m) = 0 And n < AdcWait
+            Inc(n)
+        Wend
+        If (ADSTATH And m) = 0 Then
+            Result = 0
+            Exit
+        End If
+    End If
+    Result = Buf(an)
+End Function
+
+' Mean of `count` (1..255) conversions, rounded down; 0 for a count of 0.
+Public Function AdcReadAvg(ByVal an As Byte, ByVal count As Byte) As Word
+    Dim sum As LongWord
+    Dim i As Byte
+    sum = 0
+    i = 0
+    While i < count
+        sum = sum + AdcRead(an)
+        Inc(i)
+    Wend
+    Result = 0
+    If count > 0 Then
+        Result = Word(sum / count)
+    End If
+End Function
+
+' Converts a result to millivolts for a reference of `vrefMv` millivolts: raw * vref / AdcMax.
+Public Function AdcMillivolts(ByVal raw As Word, ByVal vrefMv As Word) As Word
+    Result = Word(LongWord(raw) * vrefMv / AdcMax)
+End Function
+
+' ADin: the one-call read. The first call runs AdcInit; a call for another channel than the last one makes its pin an analog input first (AdcPin).
+Public Function ADin(ByVal an As Byte) As Word
+    If Not adinUp Then
+        AdcInit()
+        adinUp = True
+    End If
+    If an <> lastCh Then
+        AdcPin(an)
+        lastCh = an
+    End If
+    Result = AdcRead(an)
+End Function
+#elseif _has(ADCON2.ACQT)
 Public Const AdcChCtmu = 61
 Public Const AdcChDac = 62
 Public Const AdcChFvr = 63

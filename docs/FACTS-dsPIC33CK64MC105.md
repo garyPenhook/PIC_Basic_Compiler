@@ -79,7 +79,15 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
 * `serial2` (UART2), chosen with `#if _has(U2MODE)`, same set-up and flags as `serial`. TX on RB5 (RP37), RX on RB4 (RP36): pins of the 28-pin part [DS Table 2 p.4] clear of the RB6/RB7 pair of UART1;
   RB5 has no analog function and `ANSELB` bit 4 is cleared for RX. `RPOR2[13:8]` = 3 routes U2TX [Tables 8-6 p.116, 8-7 p.117] and `RPINR19[7:0]` = 36 selects RP36 for U2RX [Register 8-27 p.129].
   RB4 is `PGC2` and RB5 `PGD3`. Checked in the simulator: the register values after `Serial2Init` and that the send and flush loops finish (`tests/exec_dspic/lib_serial2.bas`); no bit was seen on a pin.
-* Not done: `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+* `adc`, chosen with `#if _has(ADCON1L)`: one shared 12-bit SAR core [DS 12.1 p.211]. Channels are AN numbers (AN0 RA0, AN1/AN7 RB2, AN2 RB7, AN3 RA3, AN4 RA4, AN5 RB0, AN6 RB1, AN8 RB3, AN9 RA2,
+  AN10 RB8, AN11 RB9, AN12 to AN15 RC0 to RC3 on the 48-pin part [Table 5 p.8]; AN16 is the temperature diode and AN17 the 1.2 V band gap [Figure 12-1 p.212]). A conversion is the individual channel software
+  trigger (`ADCON3L.CNVRTCH` with `CNVCHSEL`, no `ADTRIGx` set-up) [DS70005213H 5.9.5 p.50]; the result is in `ADCBUFn` and `ANnRDY` in `ADSTATL`/`ADSTATH` clears when `ADCBUFn` is read [DS70005213H 5.13.1 p.57].
+  Start-up: `WARMTIME` of at least 10 us in Fp periods, `ADON`, `SHRPWR`, wait for `SHRRDY`, `SHREN` [DS70005213H 5.7 p.49]; the pack has no `ADCALx` registers, so there is no calibration. Clock Fp/2 (`CLKSEL` 00,
+  `SHRADCS` 1): at most 50 MHz against AD11 70 MHz and AD50 14.28 ns [Tables 31-30, 31-31 p.473 to 474]. Sampling 2 us (`SHRSAMC` = count - 2 [Register 12-4 p.218]). The reference is AVDD/AVSS only
+  (`REFSEL` 000 [Register 12-5 p.219]), so there is no FVR reference. Checked in the simulator: the register values after `AdcInit`, `SHRRDY`, `AdcPin`, and that `AdcRead`, `AdcReadAvg`, `AdcMillivolts` and `ADin`
+  run to the end (`tests/exec_dspic/lib_adc.bas`). **Not run:** an actual conversion; MDB does not model the ADC (`ANnRDY` never sets, so `AdcRead` returns 0 after its time-out). Not offered: differential inputs
+  (48-pin `ANN0` only), signed or fractional results, scan, triggers from other modules, comparators and the oversampling filters.
+* Not done: `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
 
 ## Not yet generated
 
