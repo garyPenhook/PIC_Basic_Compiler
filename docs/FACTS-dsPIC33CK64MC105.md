@@ -51,7 +51,18 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   upper bits 1. Names and settings come from the pack (`Config FWDTEN = ON_SW`). `FWDTEN = ON` (the default) is a
   watchdog that is always on: a program that does not clear it resets itself; `ON_SW` leaves it to `WDTCON`.
 
+## Library modules
+
+* `serial` (UART1): chosen with `#if _has(U1MODE)`, ahead of the `RCON` test (this part has an `RCON`). TX on RB6 (RP38), RX on RB7
+  (RP39), both on the 28-pin part [DS Table 2 p.4]; `RPOR3[5:0]` = 1 routes U1TX [Tables 8-6, 8-7 p.116 to 117] and `RPINR18[7:0]` = 39
+  selects RP39 for U1RX [Register 8-26 p.128, Table 8-4 p.111]. The remapping registers are unlocked after a Reset (`RPCON.IOLOCK` = 0
+  [Register 8-13 p.122]). Legacy baud generation, `BRGH` = 1: baud = Fp / (4 (BRG + 1)) with Fp = FOSC / 2 [DS70005288C Equation 4-2 p.24].
+  Flags: `TRMT` (`U1STA` bit 7), `OERR` (`U1STA` bit 1), `UTXBF` (`U1STAH` bit 4), `URXBE` (`U1STAH` bit 1) [Registers 15-3, 15-4].
+  Checked in the simulator: the register values after `SerialInit` and that the send and flush loops finish
+  (`tests/exec_dspic/lib_serial.bas`); no bit was seen on a pin. RB6 is `PGC3` and RB7 `TDO`.
+* Not done: `intosc`, `system`, `timer`, `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+
 ## Not yet generated
 
 `Float` and the Float library, recursive routines, calling C, interrupt priorities other than the default, and the
-library modules (`docs/LIBRARY.md`, "Device support") are not done for this core.
+library modules listed above are not done for this core.

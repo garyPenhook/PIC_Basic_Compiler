@@ -27,6 +27,12 @@ Module Serial
 ' PORT[5:3] | PIN[2:0], RC5 = 010 101 = 21 [21.8.1]. The UART has a transmit and a receive buffer, so the
 ' flags used are the buffer status bits of U1FIFO (TXBF, RXBE) and the shift register flag TXMTIF of U1ERRIR,
 ' not the interrupt flags. Chosen with `#if _has(U1CON0)`.
+' dsPIC33CK64MC105 (DS70005399D, chapter 15; chosen with `#if _has(U1MODE)`, before the RCON test because the dsPIC has an RCON too): UART1 with
+' U1MODE/U1MODEH/U1STA/U1STAH/U1BRG/U1TXREG/U1RXREG. TX on RB6 (RP38) and RX on RB7 (RP39), pins of the 28-pin part [Table 2 p.4]; TX goes out
+' through RPOR3.RP38R = 1 (U1TX) [Table 8-6 p.116, Table 8-7 p.117] and RPINR18.U1RXR = 39 (RP39) selects RX [Register 8-26 p.128, Table 8-4 p.111]; the
+' remapping registers are unlocked after a Reset (RPCON.IOLOCK = 0) [Register 8-13 p.122]. Baud rate in the legacy mode (BCLKMOD = 0, BCLKSEL = FOSC/2) with
+' BRGH = 1: baud = Fp / (4 * (BRG + 1)) [DS70005288C Equation 4-2 p.24], Fp = FOSC / 2. The status flags are TRMT (U1STA bit 7), OERR (U1STA bit 1), UTXBF
+' (U1STAH bit 4) and URXBE (U1STAH bit 1) [Registers 15-3, 15-4 p.276 to 279]. RB7 is also TDO and RB6 PGC3: keep JTAG and that programming channel unused.
 ' PIC18(L)F2x/4xK22 (DS40001412H chapter 16; chosen with `#if _has(RCON)`): EUSART1 with the registers TXSTA1, RCSTA1, BAUDCON1,
 ' SPBRGH1:SPBRG1, TXREG1, RCREG1 and no PPS: TX1 is RC6 and RX1 RC7 on every part [Tables 2, 3 p.6-7]. Both TRIS bits are set and SPEN
 ' makes TX an output [16.1.1.1 p.261, 16.1.1.7 p.262]; ANSELC bits 6 and 7 are cleared (RC6 is AN18, RC7 AN19). TX1IF and RC1IF are PIR1
@@ -36,7 +42,15 @@ Module Serial
 ' Baud rate: BRG16 = 1 and BRGH = 1 give baud = FOSC / (4 * (n + 1)) [Table 29-1, TXxSTA BRGH];
 ' n is SP1BRGH:SP1BRGL. The result is rounded to the nearest n. `Clock` must be FOSC in MHz.
 ' An internal oscillator drifts with voltage and temperature [29.1.3], which shifts the baud rate.
-#if _has(RCON)
+#if _has(U1MODE)
+Dim TxFull As U1STAH.4
+Dim RxEmpty As U1STAH.1
+Dim TxShiftEmpty As U1STA.7
+Dim OverrunErr As U1STA.1
+Dim TxPin As TRISB.6
+Dim RxPin As TRISB.7
+Dim RxAnalog As ANSELB.7
+#elseif _has(RCON)
 Dim TxIf As PIR1.4
 Dim RxIf As PIR1.5
 Dim TxPin As TRISC.6
@@ -150,11 +164,23 @@ Public Const FoscHz = LongWord(_Clock * 1000000)
 
 Public Sub SerialInit(ByVal baud As LongWord)
     Dim n As LongWord
+#if _has(U1MODE)
+    n = (FoscHz + baud * 4) / (baud * 8) - 1
+#else
     n = (FoscHz + baud * 2) / (baud * 4) - 1
+#endif
     RxAnalog = 0
     RxPin = 1
     TxPin = 0
-#if _has(RCON)
+#if _has(U1MODE)
+    ' UxBRG and UxMODEH are written only while UARTEN = 0 [DS70005288C section 4.0]. BRGH = 1, UTXEN, URXEN, MOD = 8-bit
+    ' asynchronous [Register 15-1]; RUNOVF keeps the receiver running after an overflow [Register 15-2]; then UARTEN.
+    RPOR3 = (RPOR3 And $FFC0) Or 1
+    RPINR18 = (RPINR18 And $FF00) Or 39
+    U1BRG = Word(n)
+    U1MODEH = 128
+    U1MODE = $80B0
+#elseif _has(RCON)
     TxAnalog = 0
     TxPin = 1
     SPBRG1 = Byte(n)
@@ -235,10 +261,14 @@ End Sub
 
 ' Sends one byte, waiting for the transmit register to be free.
 Public Sub SerialWriteByte(ByVal b As Byte)
-#if _has(U1CON0)
+#if _has(U1CON0) Or _has(U1MODE)
     While TxFull = 1
     Wend
+#if _has(U1MODE)
+    U1TXREG = b
+#else
     U1TXB = b
+#endif
 #elseif _has(ADCON1.PREF)
     ' Erratum 1.3.1: write only when the shift register is empty (TRMT, TX1STA bit 1).
     While TX1STA.1 = 0
@@ -313,7 +343,7 @@ End Sub
 
 ' True when a received byte is waiting.
 Public Function SerialAvailable() As Boolean
-#if _has(U1CON0)
+#if _has(U1CON0) Or _has(U1MODE)
     Result = RxEmpty = 0
 #else
     Result = RxIf = 1
@@ -322,14 +352,18 @@ End Function
 
 ' Waits for a byte. An overrun stops the receiver until CREN is cycled, so it is cleared here.
 Public Function SerialRead() As Byte
-#if _has(U1CON0)
+#if _has(U1CON0) Or _has(U1MODE)
     ' A full receive FIFO sets RXFOIF; the shifter keeps running (RUNOVF), so the flag is just cleared [34.2.2.7].
     While RxEmpty = 1
         If OverrunErr = 1 Then
             OverrunErr = 0
         End If
     Wend
+#if _has(U1MODE)
+    Result = Byte(U1RXREG)
+#else
     Result = U1RXB
+#endif
 #else
     While RxIf = 0
         If OverrunErr = 1 Then
@@ -354,9 +388,13 @@ Private Function Wait2(ByVal ms As Word) As Boolean
     Dim t As Byte
     t = 0
     While True
-#if _has(U1CON0)
+#if _has(U1CON0) Or _has(U1MODE)
         If RxEmpty = 0 Then
+#if _has(U1MODE)
+            RxByte = Byte(U1RXREG)
+#else
             RxByte = U1RXB
+#endif
             Result = True
             Exit
         End If
@@ -472,12 +510,16 @@ End Function
 Public Type TRxEvent = Event(ByVal c As Byte)
 Public Dim SerialOnRx As TRxEvent
 Public Sub SerialRxService()
-#if _has(U1CON0)
+#if _has(U1CON0) Or _has(U1MODE)
     If OverrunErr = 1 Then
         OverrunErr = 0
     End If
     If RxEmpty = 0 Then
+#if _has(U1MODE)
+        SerialOnRx(Byte(U1RXREG))
+#else
         SerialOnRx(U1RXB)
+#endif
     End If
 #else
     If OverrunErr = 1 Then
@@ -493,7 +535,10 @@ End Sub
 ' Waits until the last byte has left the shift register (TRMT, TX1STA bit 1; Q41: transmit buffer empty, TXBE, and
 ' shift register empty, TXMTIF, which is set at the end of the Stop bits [34.20.4, 34.20.7]).
 Public Sub SerialFlush()
-#if _has(U1CON0)
+#if _has(U1MODE)
+    While TxShiftEmpty = 0
+    Wend
+#elseif _has(U1CON0)
     While TxBufEmpty = 0 Or TxShiftEmpty = 0
     Wend
 #else
