@@ -190,25 +190,23 @@ Private Sub WaitLock()
     Wend
 End Sub
 
-' COSC, the current source (OSCCON bits 14 to 12): the back end has no multi-bit fields yet, so the registers are masked by hand.
+' COSC, the current source (OSCCON bits 14 to 12).
 Private Function Cosc() As Byte
-    Result = (OSCCON >> 12) And 7
+    Result = OSCCON.COSC
 End Function
 
 ' Runs the oscillator on `post` = N2 * 16 + N3 with feedback divider `m` (the PLL, from FRC) or, for m = 0, FRCDIV = `post` (FRC divided). True when the switch finished
 ' (COSC is FRCPLL with LOCK, or FRCDIVN).
 Private Function Apply(ByVal m As Byte, ByVal post As Byte) As Boolean
-    Dim w As Word
     If m = 0 Then
-        w = post
-        CLKDIV = (CLKDIV And 63743) Or (w << 8)
+        CLKDIV.FRCDIV = post
         Switch(7)
         Result = Cosc() = 7
     Else
         If Cosc() = 1 Or Cosc() = 3 Then
             Switch(0)
         End If
-        CLKDIV = (CLKDIV And 65520) Or 1
+        CLKDIV.PLLPRE = 1
         PLLFBD = m
         PLLDIV = post
         Switch(1)

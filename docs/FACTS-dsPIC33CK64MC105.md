@@ -70,7 +70,7 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   FRCDIVN at 8 down to 0.03125 MHz. The switch writes OSCCON[15:8] (NOSC) and then OSCCON[7:0] (OSWEN) each after its unlock pair, 0x78 0x9A and 0x46 0x57 back to back [DS 9.9 p.157];
   `Config FCKSM = CSECMD` is needed (the erased value 1x disables clock switching [Register 28-5 p.416]). A PLL is left through plain FRC before its dividers change [DS 9.1 p.152].
   Checked in the simulator: the registers and COSC/LOCK after start-up at 100 MHz, SetClock(200) and SetClock(8), and the refusal of an unknown speed (`tests/exec_dspic/lib_intosc.bas`);
-  the clock was not measured on a pin. The multi-bit fields (`COSC`, `FRCDIV`) are masked by hand because the back end has no multi-bit field access yet.
+  the clock was not measured on a pin. `COSC`, `FRCDIV` and `PLLPRE` are written as register fields.
 * `system`, chosen with `#if _has(PLLFBD)`: the Reset flags are the active-high bits of `RCON` [DS Register 6-1 p.79]; a watchdog time-out in Sleep or Idle wakes the part and sets `WDTO` without a Reset
   [DS70005250C 6.1.1 p.15], so cause 4 needs `SLEEP` and `IDLE` clear. `SysClockHz` computes FOSC from `OSCCON.COSC`, `CLKDIV` and `PLLFBD`/`PLLDIV` (FRC taken as 8 MHz). Sleep is `pwrsav #0`
   [DS70000157G]. `Snooze` and `Sleep(seconds)` use the Sleep-mode watchdog, whose period is 2^`SLPDIV` ms and is fixed by `Config SWDTPS` [DS70005250C Table 3-1 p.13, DS Register 28-19 p.432].
@@ -110,7 +110,40 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
 * Simulator limits, found while testing: MDB has no ADC conversion (message W0237), no SPI, no PWM and no UART transfer model; it does model the NVM controller, the I/O pins (with an SCL stimulus file, `tests/exec_dspic/*.scl`) and cycle counts.
 * Not done: `eeprom` (the part has none, the module stops with `#error`), `clc` and `dma` (the part has CLC and DMA blocks, but the modules are written for the PIC18 ones and stop with `#error`).
 
-## Not yet generated
+## Language features that were open (0.1.293 to 0.1.296)
 
-`Float` and the Float library, recursive routines, calling C, interrupt priorities other than the default, and the
-three library modules named above (`eeprom`, `clc`, `dma`) are not done for this core.
+* **`Float`**: `lib/floatlib.bas` wraps the XC-DSC soft-float routines (`___addsf3`, `___mulsf3`, `___divsf3`, `___floatsisf` ...). The first operand
+  is in `W1:W0`, the second in `W3:W2`, the result in `W1:W0` [XC-DSC C Compiler User Guide 14.7.1, 14.7.2]; the wrappers flush denormals and make every
+  NaN `0x7FC00000`, so the results are the same as on the other cores. Two faults were found by running the PIC18 `Float` programs on this part
+  (`scripts/exec-test33.py --port`): the library's `___divsf3` (and the other routines that report an error) set `errno` to EDOM on a NaN operand, and the linker
+  put `_errno` at `0x1000`, on the first variable of the program, so the program now defines `_errno` itself (a variable of its own, so the archive member is
+  not linked); and `FScale` (a constant power of two, `x / 2^127`) returned a zero where `2^-127` is a denormal but `x * 2^-127` is not, so it multiplies
+  twice (`2^-126`, then `2^(k+126)`). As on the other cores, Float arithmetic directly in a handler is `E-ISR-CALL` (do it in a routine
+  and call that inside `Save(...) ... Restore`).
+* **Recursion**: `Reentrant` routines save the caller's frame on the stack around a recursive call (`G::call`). Checked: factorial, Fibonacci, Ackermann,
+  Hanoi, mutual recursion through `Declare`, a `Float`, `LongWord` and `ByRef` array in the cycle (`tests/exec_dspic/reentrant*.bas`, `forward.bas`).
+  The stack is the one the generated start-up sets (to the end of RAM) or, with C, the linker's.
+* **Multi-bit register fields**: a named field of one byte of a register (`OSCCON.COSC`, `CLKDIV.FRCDIV`, `IPC0.T1IP`, `T1CON.TCKPS`) reads and writes as a structure's
+  `Bits(n)`: a read-modify-write of that byte (the second byte of a 16-bit register for a field above bit 7). A field wider than a byte or across the
+  boundary of two (`PLLFBD.PLLFBDIV`, `SPI1BRGL`) is still `E-BACKEND`; the register itself is used. When the program has an interrupt handler the write
+  runs with `INTCON2.GIE` (bit 15, the second byte's bit 7) off and put back only if it was on.
+* **Interrupt priorities**: `Interrupt T1(ipLow)`, `Interrupt INT0(6)`: the argument is the priority 1 to 7 of that source (`ipLow` is 2 and `ipHigh` is 6 here, 1 and 2 on the
+  PIC18). The start-up code writes it to the source's `IPCx` field (`T1IP`, `INT0IP` ...; `E-ISR-PRIO` when the handler's name has no such field). A handler without
+  a priority keeps the reset value 4. A higher priority interrupts a handler of a lower one, and the interrupt latency and the handler's own context
+  save (`W0..W7`, `SR`, `RCOUNT`, `W8`..`W9` with strings) already allow it. Each source has its own vector, so any number of handlers can be enabled
+  at once; `Enable` and `Disable` still set and clear `INTCON2.GIE`. Checked in the simulator (`tests/exec_dspic/isr_priority*.bas`): the register values, a
+  high handler running inside a low one and finishing first, and the same two handlers with the priorities swapped not nesting.
+* **Calling C** (`CFile`, `Extern`, `Export`): no stub. The generated thunk of an `Extern` routine puts the arguments where XC-DSC wants them (`W0..W7` in order, the
+  first free and suitably aligned register for each, a 32-bit value in an even pair; an argument that finds none goes on the stack, the last one pushed first, the
+  low word of each lowest, and the caller takes them off again [User Guide 14.7.1]), calls `_name` and takes the result from `W0` or `W1:W0`. `W8` to `W14` are
+  C's to preserve and the generated code keeps `W8` and `W9` for its own string work, so an `Export` thunk (which is the C symbol `_Name`) saves them when the
+  program uses them. A pointer is the 16-bit data address of a `ByRef` object; a structure is laid out like the C one (fields aligned to their size, as the generator does for
+  every variable). No 24-bit values (`E-EXTERN`). With C linked the build uses the C start-up code (`xc-dsc-gcc`, no `-nostartfiles`): it sets the stack
+  and `SPLIM`, initialises the C data and calls `_main`, which is the generated program. The variables are in a section the linker keeps at their addresses
+  (`.section .basilvars,bss,address(0x1000)`), so the C data and the stack are placed after them; the program's own RAM-use figure does not count them. A program
+  without C keeps `-nostartfiles` and its own start-up. C code is compiled with `-Os`. Recursion through an `Export` is `E-RECURSION` as on the PIC18
+  (an exported routine cannot be `Reentrant`). A handler may call C inside `Save` (the C function is entered by `rcall` and keeps its own frame on the stack, so
+  a handler and the main line can both be in it only if the function is reentrant, as in any C program).
+  Checked in the simulator: `tests/exec_dspic/c_basic`, `c_args`, `c_export`, `c_abi` (register holes, stack arguments, a float, four longs, a handler calling C).
+
+The library modules `eeprom` (the part has none), `clc` and `dma` are still not done for this core.

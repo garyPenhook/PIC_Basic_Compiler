@@ -190,6 +190,16 @@ are not all visible. Frames are static, so there is no recursion through C.
 
 Not supported: structure or array arguments by value, `Export` array parameters. A by-reference array of structures (`struct T *`) is supported (0.1.84).
 
+**dsPIC33 (0.1.296).** No stub: the XC-DSC C compiler's convention is fixed (MPLAB XC-DSC C Compiler User Guide 14.7), so an `Extern` thunk
+(an ordinary routine with an `Asm` body, `lower.rs::extern_thunk_dspic`) puts each argument in the first free register of `W0..W7` that suits it
+(a 32-bit value in an even pair; a later argument may take a register an earlier one skipped), pushes what finds no register (the last argument
+first, the low word of each lowest), calls `_<name>`, removes the pushed words (`sub #n,W15`) and stores `W0` or `W1:W0` in its `Result`. `W8`..`W14` are
+the callee's. An `Export` thunk is the C symbol `_<Name>` (`.global`): it stores the registers and the stack arguments (the first stack argument is just
+below the return address, 4 bytes under `W15`) into the routine's parameters, saves `W8:W9` when the program uses them, calls the routine and returns the result in
+`W0` or `W1:W0`. The `@ldz`, `@lds`, `@st` and `@push` lines of the thunks are expanded by `codegen33::pseudo`. The generated program is `_main`, called by the XC-DSC
+start-up code (`crt0`: stack and `SPLIM` from the linker, `__data_init` for the C data); its variables are the section `.basilvars` at the start of RAM
+(`address()`), the C data and the stack are placed after them. Without a `CFile`, `Extern` or `Export` nothing changes: `-nostartfiles`, the program's own `__reset`.
+
 ## 8. Enhanced mid-range core (PIC16F17126/46, implemented 0.1.50, library and `Float` in 0.1.51, assembly `Float` in 0.1.52)
 
 The calling convention of section 3 is unchanged: static frames that overlay when two routines are never live together, arguments

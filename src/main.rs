@@ -374,7 +374,8 @@ fn main() -> ExitCode {
     let hex = out_hex.unwrap_or_else(|| file.with_extension("hex"));
     // xc8-cc names the object of the C code after the output file, so the assembly must not share its stem.
     let stem = hex.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
-    let asm_path = if !program.c_link() { hex.with_extension("S") } else { hex.with_file_name(format!("{stem}_basil.S")) };
+    let dspic_part = analysis.device.as_ref().is_some_and(|d| d.device.family == "dspic33");
+    let asm_path = if !program.c_link() || dspic_part { hex.with_extension("S") } else { hex.with_file_name(format!("{stem}_basil.S")) };
     let map_path = hex.with_extension("map");
     // A build into a folder that does not exist yet (`-o output/x.hex`) makes the folder; a check never does.
     if let Some(parent) = hex.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -423,7 +424,14 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
-        match basil::driver::run_xc_dsc(&gcc, dev, &asm_path, &dfp, &hex, &map_path) {
+        let cfiles: Vec<PathBuf> = program.cfiles.iter().map(|f| start.join(f)).collect();
+        for f in &cfiles {
+            if !f.is_file() {
+                eprintln!("basil: C file {} not found (CFile names are relative to the program's folder)", f.display());
+                return ExitCode::from(1);
+            }
+        }
+        match basil::driver::run_xc_dsc(&gcc, dev, &asm_path, &cfiles, program.c_link(), &dfp, &hex, &map_path) {
             Ok(run) => {
                 for line in run.output.lines().filter(|l| !run.ok || l.contains("error") || l.contains("arning")) {
                     eprintln!("xc-dsc: {line}");

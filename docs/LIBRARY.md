@@ -218,7 +218,7 @@ not vector on `SWIF` (the interrupt tests use `TMR0IF`, which a program can set)
 
 The first 16-bit part: its own code generator, a 16-bit data space (8 KB RAM), no data EEPROM, `Fcy` = FOSC / 2. Each module chooses its dsPIC branch by a register no other supported part has (`U1MODE`, `U2MODE`, `PLLFBD`,
 `T1CON.TCKPS`, `ADCON1L`, `NVMKEY`), tested before the `RCON` test because this part has an `RCON` too. The other families' code is unchanged (their builds are byte-identical). The tests are in `tests/exec_dspic`
-(`scripts/exec-test33.py`, MPLAB X simulator); they check register values and set-up, not waveforms, and nothing was run on a real part. The part is **in progress**, not yet listed as supported in `MANUAL.md` (no `Float`, calling C or recursion).
+(`scripts/exec-test33.py`, MPLAB X simulator); they check register values and set-up, not waveforms, and nothing was run on a real part. The part is **in progress**, not yet listed as supported in `MANUAL.md` (its compiler gaps are closed: `Float`, recursion, calling C, interrupt priorities and multi-bit register fields; `eeprom`, `clc` and `dma` are not ported and nothing has run on a real part).
 
 | Module | dsPIC33CK64MC105 |
 |---|---|
@@ -237,7 +237,7 @@ The first 16-bit part: its own code generator, a 16-bit data space (8 KB RAM), n
 | `onewire` | done (needs `Clock` >= 32; `SwCyc` measured) |
 | `aht30`, `oled`, `rtcc`, `rtccspi`, `epaper` | done through `i2c` and `spi` (build; not run) |
 | `delay`, `strings`, `bits`, `format`, `fmath`, `glcd`, `lcd`, `irremote`, `buttons`, `shift`, `pulse`, `x10` | build (through `pinio`, no register of their own; not run) |
-| `floatlib` | builds, but the dsPIC back end has no `Float` yet |
+| `floatlib` | done (wraps the XC-DSC soft-float routines; the results equal the other cores': denormals read as zero, every NaN is `0x7FC00000`) |
 | `eeprom` | `#error` (no data EEPROM; use `flashwrite`) |
 | `clc`, `dma` | `#error` (the part has CLC and DMA blocks, but these modules are for the PIC18 ones) |
 

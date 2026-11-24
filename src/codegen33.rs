@@ -15,7 +15,8 @@
 //! instructions reach 13 address bits (the first 8 Kbytes); anything above goes through `W4`.
 //!
 //! Code. Calls are `rcall` and branches `bra` (16-bit word displacement, which covers the part's program memory).
-//! Not yet generated (reported as `E-BACKEND`): interrupts, `Float`, strings, constant tables, calls to C and recursion.
+//! `Float` is the Float library over the XC-DSC soft-float routines, recursion saves the caller's frame around the call, calls to
+//! C pass the arguments the way XC-DSC does (`Extern`, `Export`; with C linked the C start-up runs first and calls `_main`).
 
 use crate::codegen::{Generated, Layout, Obj, Output, Target};
 use crate::diag::Span;
@@ -644,12 +645,29 @@ impl<'p> G<'p> {
                 }
             }
             BinKind::And | BinKind::Or | BinKind::Xor => {
-                self.operands(a, b);
                 let op = match k {
                     BinKind::And => "and",
                     BinKind::Or => "ior",
                     _ => "xor",
                 };
+                // A small constant is a literal operand (8 bits for a byte, 10 for a word): no register to load it into.
+                if let Some(c) = b.as_const() {
+                    let c = c & crate::ir::mask(e.w);
+                    let (lo, hi) = (c & 0xFFFF, c >> 16);
+                    let lit_ok = |v: u32| if s == 1 { v < 256 } else { v < 1024 };
+                    if s <= 2 && lit_ok(lo) {
+                        self.ev(a);
+                        self.i(format!("{op}{bw} #{lo},W0"));
+                        return self.norm(e);
+                    }
+                    if s == 4 && lit_ok(lo) && hi < 1024 {
+                        self.ev(a);
+                        self.i(format!("{op} #{lo},W0"));
+                        self.i(format!("{op} #{hi},W1"));
+                        return self.norm(e);
+                    }
+                }
+                self.operands(a, b);
                 self.i(format!("{op}{bw} W0,W2,W0"));
                 if s == 4 {
                     self.i(format!("{op} W1,W3,W1"));
@@ -1010,10 +1028,6 @@ impl<'p> G<'p> {
             self.i(format!("rcall {name}"));
             return Vec::new();
         }
-        if self.p.funcs[f].ext {
-            self.err("calling C is not supported on the dsPIC33 yet");
-            return Vec::new();
-        }
         let recursive = self.cur < self.p.funcs.len() && self.isr_end.is_none() && self.reach[f].contains(&self.cur);
         let mut restore = Vec::new();
         if recursive {
@@ -1340,12 +1354,108 @@ impl<'p> G<'p> {
             }
             St::Asm(lines) => {
                 for l in lines {
-                    self.out.push(format!("        {}", l.trim()));
+                    if l.trim_start().starts_with('@') {
+                        self.pseudo(l.trim());
+                    } else {
+                        self.out.push(format!("        {}", l.trim()));
+                    }
                 }
             }
             St::DelayUs(e) => self.delay(e, false),
             St::DelayMs(e) => self.delay(e, true),
             St::Halt => self.bra("", "__halt"),
+        }
+    }
+
+    /// The `@` lines of the thunks that join Basic to C (`lower.rs`, `Extern` and `Export`), which need to know where a variable
+    /// is: `@ldz VAR,n,r` and `@lds VAR,n,r` load its `n` bytes (1, 2 or 4) into `Wr` (and `Wr+1`), a byte zero- or sign-extended;
+    /// `@st VAR,n,r` stores them from there; `@push VAR,n` pushes them on the stack as words, the low one first (through `W0`
+    /// and `W1`); `@savew8` and `@restorew8` keep `W8` and `W9`, which C expects back, when the program uses them (see
+    /// `generate_with`). Every `@ld` leaves the other registers alone, and `@st` keeps all but the one it stores from.
+    fn pseudo(&mut self, l: &str) {
+        let (op, rest) = l[1..].split_once(' ').unwrap_or((&l[1..], ""));
+        match op {
+            "savew8" => return self.out.push("@@SAVEW8@@".into()),
+            "restorew8" => return self.out.push("@@RESTOREW8@@".into()),
+            _ => {}
+        }
+        let a: Vec<&str> = rest.split(',').map(str::trim).collect();
+        let var = a.first().and_then(|n| self.p.vars.iter().position(|v| v.asm == *n));
+        let num = |i: usize| a.get(i).and_then(|x| x.parse::<u32>().ok());
+        let (Some(v), Some(n)) = (var, num(1)) else {
+            return self.err(format!("internal: the thunk line `{l}` names no variable"));
+        };
+        let at = self.addr[v];
+        let near = |k: u32| at + k < NEAR;
+        let w = |r: u32| reg(r as u8);
+        match op {
+            "ldz" | "lds" => {
+                let r = num(2).unwrap_or(0);
+                match n {
+                    1 => {
+                        if r == 0 && near(0) {
+                            self.i(format!("mov.b 0x{at:X},WREG"));
+                        } else {
+                            self.i(format!("mov #0x{at:X},{}", w(r)));
+                            self.i(format!("mov.b [{0}],{0}", w(r)));
+                        }
+                        self.i(format!("{} {1},{1}", if op == "lds" { "se" } else { "ze" }, w(r)));
+                    }
+                    _ => {
+                        for k in 0..n / 2 {
+                            let t = w(r + k);
+                            if near(2 * k) {
+                                self.i(format!("mov 0x{:X},{t}", at + 2 * k));
+                            } else {
+                                self.i(format!("mov #0x{:X},{t}", at + 2 * k));
+                                self.i(format!("mov [{t}],{t}"));
+                            }
+                        }
+                    }
+                }
+            }
+            "st" => {
+                let r = num(2).unwrap_or(0);
+                if n == 1 && r == 0 && near(0) {
+                    return self.i(format!("mov.b WREG,0x{at:X}"));
+                }
+                if n > 1 && near(n - 2) {
+                    for k in 0..n / 2 {
+                        self.i(format!("mov {},0x{:X}", w(r + k), at + 2 * k));
+                    }
+                    return;
+                }
+                // Through an address register that is not the one stored from; its value is put back.
+                let t = (0..8).find(|t| *t < r || *t > r + n.div_ceil(4)).unwrap_or(7);
+                self.i(format!("push {}", w(t)));
+                self.i(format!("mov #0x{at:X},{}", w(t)));
+                if n == 1 {
+                    self.i(format!("mov.b {},[{}]", w(r), w(t)));
+                } else {
+                    for k in 0..n / 2 {
+                        self.i(format!("mov {},[{}{}]", w(r + k), w(t), if k + 1 < n / 2 { "++" } else { "" }));
+                    }
+                }
+                self.i(format!("pop {}", w(t)));
+            }
+            "push" => {
+                match n {
+                    1 => {
+                        self.rd(Acc::Direct(at), 1, 0);
+                        self.i("ze W0,W0");
+                        self.i("push W0");
+                    }
+                    2 => {
+                        self.rd(Acc::Direct(at), 2, 0);
+                        self.i("push W0");
+                    }
+                    _ => {
+                        self.rd(Acc::Direct(at), 4, 0);
+                        self.i("push.d W0");
+                    }
+                }
+            }
+            _ => self.err(format!("internal: the thunk line `{l}` is not known")),
         }
     }
 
@@ -1738,22 +1848,9 @@ pub fn generate(p: &Program, tgt: &Target) -> Generated {
 fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool) {
     let mem = tgt.dspic.as_ref().expect("the dsPIC33 generator needs the dsPIC33 memory description");
     let nf = p.funcs.len();
-    let fail = |errors: Vec<(Span, String)>| {
-        (
-            Generated {
-                out: Output { text: String::new(), words: 0, labels: HashMap::default(), func_words: vec![] },
-                stack_levels: 0,
-                objs: vec![],
-                layout: Layout::default(),
-                errors,
-                debug: Default::default(),
-            },
-            false,
-        )
-    };
-    if p.c_link() {
-        return fail(vec![(Span::default(), "calling C (CFile, Extern, Export) is not supported on the dsPIC33 yet".into())]);
-    }
+    // With C linked the C start-up code runs first (stack, SPLIM, data and the constructors) and calls `_main`, which is this
+    // program; the variables sit in a section the linker keeps at their addresses, so the C data goes around them.
+    let c = p.c_link() || !p.cfiles.is_empty();
 
     // Data layout: variables in order from the start of RAM; anything of two bytes or more on an even address.
     let mut addr = Vec::new();
@@ -1775,6 +1872,24 @@ fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool
         objs.push(Obj { name: "__tblp".into(), bytes: 2, weight: 0, force_access: false, zero: true, owner: None });
         a
     });
+    // The C library routines the Float library calls set `errno` (a NaN operand gives EDOM). Its own copy would be placed by the
+    // linker at the start of RAM, on top of the first variable, so the program defines the symbol itself and the member is not linked.
+    let uses_libc = {
+        let mut lines = Vec::new();
+        for f in &p.funcs {
+            crate::opt::collect_asm(&f.body, &mut lines);
+        }
+        crate::opt::collect_asm(&p.main.body, &mut lines);
+        lines.iter().any(|l| l.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')).any(|t| t.starts_with("___")))
+    };
+    let errno = (uses_libc && !c).then(|| {
+        at = (at + 1) & !1;
+        let a = at;
+        at += 2;
+        addr.push(a);
+        objs.push(Obj { name: "_errno".into(), bytes: 2, weight: 0, force_access: false, zero: true, owner: None });
+        a
+    });
     let stack_base = at;
     // Which routines each routine can reach: a call from a routine to one that reaches it again is a recursive call.
     let direct: Vec<BTreeSet<FuncId>> = p
@@ -1791,6 +1906,17 @@ fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool
                         c.insert(g);
                     }
                 }
+            }
+            c
+        })
+        .collect();
+    // C can call every exported routine, so a routine that calls C reaches them all (a cycle through C is a recursion).
+    let direct: Vec<BTreeSet<FuncId>> = direct
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut c)| {
+            if p.funcs[i].ext {
+                c.extend(p.exports.iter().map(|e| e.thunk));
             }
             c
         })
@@ -1834,13 +1960,18 @@ fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool
     // Start-up: stack, stack limit, zeroed RAM, initial values; then the program body.
     g.out.push(format!("; basil output for {}", p.device));
     g.out.push("        .text".into());
-    g.out.push("        .global __reset".into());
-    g.out.push("__reset:".into());
-    g.i(format!("mov #0x{stack_base:X},W15"));
-    g.i(format!("mov #0x{:X},W0", mem.ram.1 - 2));
-    match tgt.sfr.get("SPLIM") {
-        Some(a) => g.i(format!("mov W0,0x{a:X}")),
-        None => g.errors.push((Span::default(), "the device description has no SPLIM".into())),
+    if c {
+        g.out.push("        .global _main".into());
+        g.out.push("_main:".into());
+    } else {
+        g.out.push("        .global __reset".into());
+        g.out.push("__reset:".into());
+        g.i(format!("mov #0x{stack_base:X},W15"));
+        g.i(format!("mov #0x{:X},W0", mem.ram.1 - 2));
+        match tgt.sfr.get("SPLIM") {
+            Some(a) => g.i(format!("mov W0,0x{a:X}")),
+            None => g.errors.push((Span::default(), "the device description has no SPLIM".into())),
+        }
     }
     if at > mem.ram.0 {
         let words = (at - mem.ram.0).div_ceil(2);
@@ -1875,6 +2006,9 @@ fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool
         }
         g.cur = fi;
         g.span = f.span;
+        if p.exports.iter().any(|e| e.thunk == fi) {
+            g.out.push(format!("        .global {}", f.asm));
+        }
         g.out.push(format!("{}:", f.asm));
         g.block(&f.body);
         g.i("return");
@@ -1946,10 +2080,29 @@ fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool
     if let Some(t) = g.tblp {
         g.out.insert(1, format!("        .equ __tblp, 0x{t:X}"));
     }
+    if let Some(e) = errno {
+        g.out.insert(1, format!("        .global _errno\n        .equ _errno, 0x{e:X}"));
+    }
+
+    // The exported routines keep W8 and W9 for C when the program uses them anywhere.
+    let w8 = g.uses_w8;
+    g.out = std::mem::take(&mut g.out)
+        .into_iter()
+        .filter_map(|l| match l.as_str() {
+            "@@SAVEW8@@" => w8.then(|| "        push.d W8".to_string()),
+            "@@RESTOREW8@@" => w8.then(|| "        pop.d W8".to_string()),
+            _ => Some(l),
+        })
+        .collect();
 
     // Variables as constants, the stack, and the configuration words.
     let mut text = String::new();
     let mut head: Vec<String> = Vec::new();
+    if c {
+        // The linker keeps this section where the variables are: C data and the stack are placed after it.
+        head.push(format!("        .section .basilvars,bss,address(0x{:X})", mem.ram.0));
+        head.push(format!("        .space {}", (at - mem.ram.0).max(2)));
+    }
     for (i, v) in p.vars.iter().enumerate() {
         head.push(format!("        .equ {}, 0x{:X}    ; {} ({} bytes)", v.asm, addr[i], v.name, v.bytes));
     }
@@ -1971,11 +2124,14 @@ fn generate_with(p: &Program, tgt: &Target, want_tblp: bool) -> (Generated, bool
     if errors.is_empty() && words > mem.prog_words {
         errors.push((Span::default(), format!("the program needs {} words of program memory but the device has {}", words, mem.prog_words)));
     }
-    if errors.is_empty() && stack_base + 32 > mem.ram.1 {
+    if errors.is_empty() && !c && stack_base + 32 > mem.ram.1 {
         errors.push((Span::default(), format!("out of data RAM: the variables need {} bytes", stack_base - mem.ram.0)));
     }
     let mut size: Vec<u32> = p.vars.iter().map(|v| v.bytes).collect();
     if tblp.is_some() {
+        size.push(2);
+    }
+    if errno.is_some() {
         size.push(2);
     }
     let need = g.need_tblp;

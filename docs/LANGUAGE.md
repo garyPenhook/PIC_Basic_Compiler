@@ -353,6 +353,9 @@ Enable(Name)      Disable(Name)      ' commit the handler to a vector / set or c
   description and the M1 fact base (`docs/FACTS-18F27Q10.md` §4).
 * The mapping to a vector is committed by `Enable`; enabling two handlers of the same priority is
   an error. (SF)
+* **dsPIC33:** each source has its own vector and a priority 1 to 7. `Interrupt T1(5)` takes any constant from 1 to 7 (`ipLow` is 2 and
+  `ipHigh` is 6 there) and the start-up code writes it to the source's `IPCx` field; without one the source keeps the reset priority 4. Any
+  number of handlers can be enabled together, and one of a higher priority interrupts one of a lower (D61).
 * **Context saving**. The hardware fast register stack (`STATUS`, `WREG`, `BSR`) is used for one
   handler; when two priorities exist the high-priority handler uses it and the low-priority
   handler saves/restores in software, because a high-priority interrupt overwrites the shadow

@@ -677,7 +677,12 @@ impl<'a> Lowerer<'a> {
     fn lower_interrupt(&mut self, i: &'a InterruptDecl, ui: usize) {
         let Some(&sym) = self.a.decl_syms.get(&i.name.span) else { return };
         let SymKind::Interrupt { priority } = &self.a.symbols[sym].kind else { return };
-        let level = level_of(priority);
+        let dspic = self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33");
+        // The dsPIC33 has one vector per source, so the priority is not a level: it goes to the source's IPCx field at start-up.
+        let level = if dspic { Level::Single } else { level_of(priority) };
+        if dspic && let Some(p) = *priority {
+            self.set_isr_priority(&i.name, p as u32);
+        }
         let id = self.funcs.len();
         self.funcs.push(None);
         let asm = self.unique(format!("{}_{}", unit_prefix(self.proj, ui), sanitize(&i.name.name)));
@@ -701,6 +706,25 @@ impl<'a> Lowerer<'a> {
         self.cur_asm = saved.1;
         self.labels = saved.2;
         self.cur_result = saved.3;
+    }
+
+    /// Start-up code that writes `prio` to the priority field (`<source>IP` of an `IPCx` register) of the dsPIC33 interrupt source `name`.
+    fn set_isr_priority(&mut self, name: &Ident, prio: u32) {
+        let field = format!("{}IP", name.name);
+        let found = self.a.device.as_ref().and_then(|dv| {
+            dv.sfr
+                .iter()
+                .filter(|s| s.name.len() > 3 && s.name[..3].eq_ignore_ascii_case("IPC"))
+                .find_map(|s| s.fields.iter().find(|f| f.name.eq_ignore_ascii_case(&field)).map(|f| (s.addr, s.name.clone(), f.pos, f.width)))
+        });
+        let Some((addr, reg, pos, width)) = found else {
+            self.err("E-ISR-PRIO", name.span, format!("`{}` has no priority field `{field}` in an IPC register: name the handler after the interrupt source", name.name));
+            return;
+        };
+        let place = Place { base: Base::Abs { addr, name: reg }, off: u32::from(pos / 8), bit: None, idx: None, dbit: None, ty: Ty::BitField { shift: pos % 8, width } };
+        if let Some(st) = self.field_write(&place, pos % 8, width, Ex::konst(prio, 8, false), name.span) {
+            Self::push(&mut self.startup, st, name.span);
+        }
     }
 
     /// Runs `f` with an empty `pre` and puts what it leaves there in front of what it wrote.
@@ -1235,6 +1259,9 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let mut sig = ExportSig { name: name.clone(), func: rid, thunk: self.funcs.len(), entry: String::new(), params: Vec::new(), ret: None };
+        if self.is_dspic() {
+            return self.export_thunk_dspic(r, rid, result, &params, sig);
+        }
         let (mut before, mut after) = (Vec::new(), Vec::new());
         let mut at = 0;
         for (i, &p) in params.iter().enumerate() {
@@ -1280,6 +1307,9 @@ impl<'a> Lowerer<'a> {
         let mut lines = Vec::new();
         let mut at = 0;
         let mut esig = ExternSig { name: c.clone(), params: Vec::new(), ret: None };
+        if self.is_dspic() {
+            return self.extern_thunk_dspic(r, params, result, esig);
+        }
         for (i, &p) in params.iter().enumerate() {
             let k = self.carg(p, r.params[i].mode == ParamMode::ByRefConst);
             esig.params.push(k.clone());
@@ -1308,6 +1338,163 @@ impl<'a> Lowerer<'a> {
             Some(_) => {}
         }
         lines
+    }
+
+    fn is_dspic(&self) -> bool {
+        self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33")
+    }
+
+    /// Where the XC-DSC C compiler passes each argument (MPLAB XC-DSC C Compiler User Guide 14.7.1): in the first free `W0` to
+    /// `W7` that is suitably aligned, a 32-bit value in an even pair; an argument that finds no room goes on the stack (`None`).
+    /// A later argument can still take a register that an earlier one skipped.
+    fn dspic_abi(args: &[CArg]) -> Vec<Option<u8>> {
+        let mut used = [false; 8];
+        args.iter()
+            .map(|k| {
+                let words = if k.bytes() > 2 { 2 } else { 1 };
+                let at = (0..=8 - words).find(|&n| n % words == 0 && (0..words).all(|j| !used[n + j]))?;
+                (0..words).for_each(|j| used[at + j] = true);
+                Some(at as u8)
+            })
+            .collect()
+    }
+
+    /// A parameter or result C cannot take on the dsPIC33: none is 3 bytes wide.
+    fn dspic_carg(&mut self, v: VarId, konst: bool, span: Span) -> Option<CArg> {
+        let k = self.carg(v, konst);
+        if k.bytes() == 3 {
+            self.diags.error("E-EXTERN", span, "a 24-bit value cannot cross to C on the dsPIC33 (use a 16 or 32-bit integer)");
+            self.failed = true;
+            return None;
+        }
+        Some(k)
+    }
+
+    /// The body of an `Extern` routine on the dsPIC33: the arguments go into the registers (or onto the stack) the way the C
+    /// compiler wants them, the C function is called by name, and the result comes back in `W0` or `W1:W0`. `@`-lines are
+    /// expanded by the code generator (`codegen33::pseudo`), which knows where each variable is.
+    fn extern_thunk_dspic(&mut self, r: &Routine, params: &[VarId], result: Option<VarId>, mut esig: ExternSig) -> Vec<String> {
+        let c = r.name.name.clone();
+        let span = r.name.span;
+        let mut cargs = Vec::new();
+        for (i, &p) in params.iter().enumerate() {
+            let Some(k) = self.dspic_carg(p, r.params[i].mode == ParamMode::ByRefConst, span) else { return Vec::new() };
+            cargs.push(k);
+        }
+        let ret = match result {
+            Some(rv) => match self.dspic_carg(rv, false, span) {
+                Some(k) => Some(k),
+                None => return Vec::new(),
+            },
+            None => None,
+        };
+        let locs = Self::dspic_abi(&cargs);
+        let mut lines = Vec::new();
+        // Stack arguments first (the last one first, the low word of each lowest), while every register is free.
+        let mut pushed = 0;
+        for i in (0..params.len()).rev() {
+            if locs[i].is_none() {
+                let n = cargs[i].bytes();
+                lines.push(format!("@push {},{n}", self.vars[params[i]].asm));
+                pushed += if n > 2 { 4 } else { 2 };
+            }
+        }
+        for (i, &p) in params.iter().enumerate() {
+            if let Some(reg) = locs[i] {
+                let (n, signed) = match &cargs[i] {
+                    CArg::Int(n, s) => (*n, *s),
+                    k => (k.bytes(), false),
+                };
+                lines.push(format!("@{} {},{n},{reg}", if signed && n == 1 { "lds" } else { "ldz" }, self.vars[p].asm));
+            }
+        }
+        lines.push(format!("call _{c}"));
+        if pushed > 0 {
+            lines.push(format!("sub #{pushed},W15"));
+        }
+        if let (Some(rv), Some(k)) = (result, &ret) {
+            lines.push(format!("@st {},{},0", self.vars[rv].asm, k.bytes()));
+        }
+        esig.params = cargs;
+        esig.ret = ret;
+        match self.externs.iter().find(|e| e.name == esig.name) {
+            None => self.externs.push(esig),
+            Some(e) if e.params != esig.params || e.ret != esig.ret => {
+                self.diags.error("E-EXTERN", span, format!("`{c}` is declared Extern twice with different parameter or result types, but C has one function of that name"));
+                self.failed = true;
+            }
+            Some(_) => {}
+        }
+        lines
+    }
+
+    /// An `Export` on the dsPIC33: the routine C calls is a thunk named like the Basic routine (C symbol `_Name`). It takes the
+    /// arguments from `W0..W7` and the stack, calls the routine and returns the result in `W0` or `W1:W0`. It keeps `W8` and `W9`
+    /// (callee saved in C) when the program uses them.
+    fn export_thunk_dspic(&mut self, r: &Routine, rid: FuncId, result: Option<VarId>, params: &[VarId], mut sig: ExportSig) {
+        let name = r.name.name.clone();
+        let span = r.name.span;
+        let mut cargs = Vec::new();
+        for (i, &p) in params.iter().enumerate() {
+            let Some(k) = self.dspic_carg(p, r.params[i].mode == ParamMode::ByRefConst, span) else { return };
+            cargs.push(k);
+        }
+        let ret = match result {
+            Some(rv) => match self.dspic_carg(rv, false, span) {
+                Some(k) => Some(k),
+                None => return,
+            },
+            None => None,
+        };
+        let locs = Self::dspic_abi(&cargs);
+        let mut before = Vec::new();
+        // Registers in ascending order, then the stack (the first stack argument is the nearest to the return address, 4 bytes below `W15`).
+        for (i, &p) in params.iter().enumerate() {
+            if let Some(reg) = locs[i] {
+                before.push(format!("@st {},{},{reg}", self.vars[p].asm, cargs[i].bytes()));
+            }
+        }
+        let mut below = 4;
+        for (i, &p) in params.iter().enumerate() {
+            if locs[i].is_none() {
+                let n = cargs[i].bytes();
+                let words = if n > 2 { 2 } else { 1 };
+                below += 2 * words;
+                before.push(format!("mov [W15-{below}],W0"));
+                if words == 2 {
+                    before.push(format!("mov [W15-{}],W1", below - 2));
+                }
+                before.push(format!("@st {},{n},0", self.vars[p].asm));
+            }
+        }
+        let mut after = Vec::new();
+        if let (Some(rv), Some(k)) = (result, &ret) {
+            after.push(format!("@ldz {},{},0", self.vars[rv].asm, k.bytes()));
+        }
+        // `Name` is the symbol C links against; the program must not have used the name for something else.
+        let asm = format!("_{name}");
+        if !self.asm_names.insert(asm.clone()) {
+            self.diags.error("E-EXPORT", span, format!("the C name `_{name}` of this Export is already used by the program"));
+            self.failed = true;
+            return;
+        }
+        self.asm_names.insert(format!("{asm}__TMP"));
+        let mut body = Vec::new();
+        if !before.is_empty() {
+            body.push(S { st: St::Asm(before), span });
+        }
+        body.push(S { st: St::Asm(vec!["@savew8".into()]), span });
+        body.push(S { st: St::Call(rid, Vec::new()), span });
+        if !after.is_empty() {
+            body.push(S { st: St::Asm(after), span });
+        }
+        body.push(S { st: St::Asm(vec!["@restorew8".into()]), span });
+        body.push(S { st: St::Return, span });
+        sig.entry = asm.trim_start_matches('_').to_string();
+        sig.params = cargs;
+        sig.ret = ret;
+        self.funcs.push(Some(Func { asm, name: format!("{name} (from C)"), params: Vec::new(), result: None, body, span, reg: false, ext: false, no_inline: false }));
+        self.exports.push(sig);
     }
 
     /// Statements that zero the routine's locals and `Result` on entry. Frames are overlaid, so
@@ -1541,8 +1728,15 @@ impl<'a> Lowerer<'a> {
                         && let Some(f) = s.fields.iter().chain(s.legacy.iter()).find(|f| f.name.eq_ignore_ascii_case(&key))
                     {
                         if f.width != 1 {
-                            self.unsupported(n.span, &format!("the multi-bit field `{}`", n.name));
-                            return None;
+                            // A field inside one byte of the register is read and written like a structure's `Bits(n)`.
+                            if f.width > 8 || u32::from(f.pos % 8) + u32::from(f.width) > 8 {
+                                self.unsupported(n.span, &format!("the field `{}`, which is wider than a byte or crosses a byte boundary of its register (use the register itself)", n.name));
+                                return None;
+                            }
+                            place.off += u32::from(f.pos / 8);
+                            place.ty = Ty::BitField { shift: f.pos % 8, width: f.width };
+                            i += 1;
+                            continue;
                         }
                         place.bit = Some(f.pos);
                         place.ty = Ty::Bit;
@@ -2377,7 +2571,14 @@ impl<'a> Lowerer<'a> {
     fn bit_store(&mut self, p: &Place, v: Option<Ex>, span: Span, out: &mut Vec<S>) {
         let has_isr = self.a.symbols.iter().any(|s| matches!(s.kind, SymKind::Interrupt { .. }));
         // The global enable is bit 7 of `INTCON` (Q10) or of `INTCON0` (vectored interrupt controller).
-        let intcon = if has_isr { self.reg_place("INTCON", span).or_else(|| self.reg_place("INTCON0", span)) } else { None };
+        // On the dsPIC33 it is bit 15 of `INTCON2`: bit 7 of its second byte.
+        let intcon = if has_isr {
+            self.reg_place("INTCON", span)
+                .or_else(|| self.reg_place("INTCON0", span))
+                .or_else(|| self.reg_place("INTCON2", span).map(|p| Place { off: 1, ty: BYTE, ..p }))
+        } else {
+            None
+        };
         // A `Bits(8)` field is a whole byte: one store, nothing to protect.
         let intcon = if matches!(p.ty, Ty::BitField { width: 8, .. }) { None } else { intcon };
         let Some(intcon) = intcon else {

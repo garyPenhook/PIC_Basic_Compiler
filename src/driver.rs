@@ -198,7 +198,10 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Pat
 
 /// Assembles and links the dsPIC33 output with `xc-dsc-gcc` (no start-up code or libraries: the generated start-up is the
 /// reset code) and converts the result to Intel hex.
-pub fn run_xc_dsc(gcc: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Path, map: &Path) -> Result<AsmRun, String> {
+///
+/// With `cfiles` the program is linked with C: the C start-up code and libraries are used (it sets the stack, initialises the C data
+/// and calls `_main`, the generated program), and the C sources are compiled and linked in with `-Os`.
+pub fn run_xc_dsc(gcc: &Path, dev: &Device, asm: &Path, cfiles: &[PathBuf], c_link: bool, dfp: &Path, hex: &Path, map: &Path) -> Result<AsmRun, String> {
     let cpu = dev.device.name.strip_prefix("DSPIC").unwrap_or(&dev.device.name).to_string();
     let gld = ["dsPIC33C", "dsPIC33E", "dsPIC33F", "PIC24E", "PIC24F", "PIC24H"]
         .iter()
@@ -206,20 +209,20 @@ pub fn run_xc_dsc(gcc: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Path, 
         .find(|p| p.is_file())
         .ok_or_else(|| format!("no linker script p{cpu}.gld in {}", dfp.display()))?;
     let elf = hex.with_extension("elf");
-    let out = Command::new(gcc)
-        .arg(format!("-mcpu={cpu}"))
-        .arg(format!("-mdfp={}", dfp.display()))
-        .arg("-nostartfiles")
-        .arg("-nodefaultlibs")
-        .arg(format!("-Wl,-T,{},-Map={},--no-check-sections", gld.display(), map.display()))
-        .arg("-o")
-        .arg(&elf)
-        .arg(asm)
+    let mut cmd = Command::new(gcc);
+    cmd.arg(format!("-mcpu={cpu}")).arg(format!("-mdfp={}", dfp.display()));
+    let c_mode = !cfiles.is_empty() || c_link;
+    if !c_mode {
+        cmd.arg("-nostartfiles").arg("-nodefaultlibs");
+    } else {
+        cmd.arg("-Os");
+    }
+    cmd.arg(format!("-Wl,-T,{},-Map={},--no-check-sections", gld.display(), map.display())).arg("-o").arg(&elf).arg(asm).args(cfiles);
+    if !c_mode {
         // The soft-float routines the Float library calls (only the archive members that are named are linked in).
-        .arg("-lc99-pic30-elf")
-        .arg("-lgcc")
-        .output()
-        .map_err(|e| format!("cannot run {}: {e}", gcc.display()))?;
+        cmd.arg("-lc99-pic30-elf").arg("-lgcc");
+    }
+    let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", gcc.display()))?;
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
     if !out.status.success() {

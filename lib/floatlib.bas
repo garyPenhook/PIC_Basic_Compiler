@@ -183,10 +183,25 @@ Public Function FScale(ByVal a As LongWord, ByVal k As ShortInt) As LongWord
     Asm
         se W2, W2
         add #127, W2
+        bra n, FLK_NEG
+        cp0 W2
+        bra z, FLK_NEG
+        ; the float with exponent W2 and an empty fraction is 2^k
+        sl W2, #7, W3
+        clr W2
+        rcall ___mulsf3
+        bra FLK_END
+    FLK_NEG:
+        ; k <= -127: 2^k alone is a denormal but a times it can be normal, so scale by 2^-126 and then by 2^(k+126)
+        add #126, W2
         bra n, FLK_LOW
         cp0 W2
         bra z, FLK_LOW
-        ; the float with exponent W2 and an empty fraction is 2^k
+        push W2
+        mov #0x0080, W3
+        clr W2
+        rcall ___mulsf3
+        pop W2
         sl W2, #7, W3
         clr W2
         rcall ___mulsf3

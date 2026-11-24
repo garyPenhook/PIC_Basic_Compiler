@@ -906,8 +906,10 @@ impl<'p, 'd> Sema<'p, 'd> {
             this.a.symbols[id].unit = usize::MAX;
             this.predef.insert(name.to_ascii_lowercase(), id);
         };
-        add(self, "ipLow", BYTE, CVal::Int(1));
-        add(self, "ipHigh", BYTE, CVal::Int(2));
+        // The PIC18 has two interrupt levels; the dsPIC33 has seven priorities, and `ipLow` and `ipHigh` are 2 and 6 there.
+        let seven = self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33");
+        add(self, "ipLow", BYTE, CVal::Int(if seven { 2 } else { 1 }));
+        add(self, "ipHigh", BYTE, CVal::Int(if seven { 6 } else { 2 }));
         if let Some(d) = &self.a.device {
             let n = d.device.name.clone();
             let (flash, eeprom, ram) = (d.memory.program.size, d.memory.eeprom.size, d.memory.data.usable_gpr);
@@ -1816,9 +1818,15 @@ impl<'p, 'd> Sema<'p, 'd> {
     }
 
     fn interrupt_decl(&mut self, i: &'p InterruptDecl, vis: Vis) {
+        let seven = self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33");
         let prio = match &i.priority {
             None => None,
             Some(e) => match self.const_int(e) {
+                Some(v @ 1..=7) if seven => Some(v as i64),
+                Some(_) if seven => {
+                    self.diags.error("E-ISR-PRIO", e.span, "priority must be 1 to 7 (ipLow is 2, ipHigh is 6; a handler without one keeps the reset priority 4)");
+                    return;
+                }
                 Some(v @ (1 | 2)) => Some(v as i64),
                 Some(_) => {
                     self.diags.error("E-ISR-PRIO", e.span, "priority must be ipLow (1) or ipHigh (2)");
@@ -1829,6 +1837,7 @@ impl<'p, 'd> Sema<'p, 'd> {
         };
         for &o in &self.interrupts.clone() {
             if let SymKind::Interrupt { priority } = &self.a.symbols[o].kind
+                && !seven
                 && priority.is_some() != prio.is_some()
             {
                 self.diags.error("E-ISR-PRIO", i.name.span, "when there are several interrupt handlers, every one needs a priority");
@@ -2070,6 +2079,10 @@ impl<'p, 'd> Sema<'p, 'd> {
             return;
         };
         self.a.enables.insert(n.span, id);
+        // Each source of the dsPIC33 has its own vector and priority: any number of handlers can be enabled together.
+        if self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33") {
+            return;
+        }
         if !enabling {
             if self.enabled.get(&priority) == Some(&id) {
                 self.enabled.remove(&priority);
@@ -2946,7 +2959,14 @@ impl<'p, 'd> Sema<'p, 'd> {
                 (Cur::Reg(r), Part::Member(n)) => {
                     let key = n.key();
                     match r.fields.iter().find(|f| f.0.eq_ignore_ascii_case(&key)) {
-                        Some((_, _, w)) => Cur::Val(EI::place(if *w == 1 { Ty::Bit } else { Self::reg_value_ty(*w) }, Place::Var)),
+                        Some((_, _, w)) => {
+                            let mut ei = EI::place(if *w == 1 { Ty::Bit } else { Self::reg_value_ty(*w) }, Place::Var);
+                            // A field of 2 to 8 bits rejects a constant that does not fit, as a structure's `Bits(n)` does.
+                            if (2..=8).contains(w) {
+                                ei.bits = *w;
+                            }
+                            Cur::Val(ei)
+                        }
                         None if !is_modifier_name(&key) => {
                             let mut names: Vec<(String, Option<Span>)> = r.fields.iter().map(|f| (f.0.clone(), None)).collect();
                             names.extend(modifier_names(r.ty.width().map_or(8, u32::from)).into_iter().map(|m| (m, None)));
