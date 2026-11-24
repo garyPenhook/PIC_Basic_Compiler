@@ -94,9 +94,23 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   so a pair is programmed once between erases: `FlashWriteWord` only into a wholly erased pair, `FlashWritePair` for both words, `FlashUpdateWord` rewrites the page from a 2048-byte RAM image when the pair is in use.
   `TBLPAG` is put back to 0. The errata (DS80000910C) list nothing for the flash. Checked in the simulator (MDB models the NVM controller): erase, word write, refusal of the partner write, pair write, update by page
   rewrite with the neighbours kept, `TBLPAG` = 0 (`tests/exec_dspic/lib_flashwrite.bas`). **Not checked:** the timing (20 us, 20 ms), write protection, and a power loss in the middle of an erase.
-* Not done: `eeprom` (the part has none), `spi`, `i2c`, `pwm`, `dma`.
+* `pinio` and `gpio`, chosen with `#if _has(PLLFBD)`: the ports are 16 bits wide, so the pins are numbered port * 16 + bit (RA0 = 0, RB0 = 16, RC0 = 32, RD0 = 48; `PinCount` = 64) and not 8 to a port as on the other parts. The 48-pin part has RA0..RA4, RB0..RB15,
+  RC0..RC13 and RD1, RD8, RD10, RD13 [Table 5 p.8, Table 8-1 p.100]; `PinOk` is False for the others. `TRISx`, `LATx`, `PORTx` and `ANSELx` [Registers 8-1 to 8-4 p.102 to 104]; the bound pins find the port and the mask once. `GpioPullUps` and
+  `GpioOpenDrain` take Word masks for ports A to C (`CNPUx` [Register 8-6 p.105], `ODCx` [Register 8-5 p.104]) and port D has `GpioPullUpsD` and `GpioOpenDriveD`. Checked in the simulator (`tests/exec_dspic/lib_pinio.bas`).
+* `softserial`: the instruction clock is FOSC / 2, so a bit is `Clock` * 500000 / baud cycles (250000 on the other cores). Measured with the simulator's stopwatch (a wait pass 7 cycles, a transmitted bit 80 more, 83 at -O0; a received bit 70 (73); a poll of the start-bit loop
+  52 (55); the poll that sees the start edge to the first sample 109 (119)); the sample instants and bit spacing at 2400, 4800 and 9600 baud are within 1 % (0.3 % at -O0) of ideal. The global interrupt enable is `INTCON2.GIE` (bit 15). `tests/exec_dspic/lib_softserial.bas`.
+* `i2c`: the software host of the PIC18-Q41 over any two digital pins (SCL and SDA open drain through `TRISx`, the latch bit 0); the hardware I2C1 and I2C2 modules are not used. Checked in the simulator with a stimulus file that pulls the lines high: start, a byte with every bit
+  read back as sent, no acknowledge (3) from an empty bus, stop, and a bus stuck low (`tests/exec_dspic/lib_i2c.bas`, `lib_i2c_busy.bas`).
+* `spi`: SPI1 as host through PPS on any pin of ports B to D, 8 bits, standard buffer. SCK = RPOR code 6, SDO = 5 [Table 8-7 p.117], SDI = `RPINR20[7:0]` [Register 8-28 p.129]; the clock is Fp / (2 (`SPI1BRGL` + 1)) = FOSC / (4 (BRG + 1)), 13 bits [DS70005136B Equation 3-1 p.35],
+  at most 33 MHz (SP10 15 ns [Table 31-25 p.466]). Set-up order as in DS70005136B 3.4.1 p.24. Checked in the simulator: the register values and the pin checks. **A transfer was not run:** MPLAB X's simulator has no SPI model (`SPI1BUFL` reads back what was written, `SPIRBF` never sets).
+* `pwm`: the four PWM generators in independent edge mode on the pins `PWM1H/L` (RB14/RB15), `PWM2H/L` (RB12/RB13), `PWM3H/L` (RB10/RB11) and `PWM4H` (RD1 or any remappable pin, RPOR code 34); f = F(PGx_clk) / (`PGxPER` + 1), `PGxDC` = (`PGxPER` + 1) * duty, at least 33 clocks
+  a period and 8 clocks a pulse [DS70005320E 4.1.2 p.56, Table 4-2 p.60]. The master clock is FOSC; MP10 (450 to 500 MHz PWM input frequency [Table 31-24 p.464]) is the high-resolution clock and does not cover it. Checked in the simulator: the register values; **no waveform** (no PWM model).
+* `onewire`: the dsPIC branch needs `Clock` >= 32 MHz (16 MIPS); `SwCyc` = 31 measured with the stopwatch at the `TRISB` writes of the open-drain routines (a write 1 slot at 100 MHz held the line low 181 cycles, 150 of them the delay; a slot 75 us). The cycle window of
+  `tests/exec_dspic/lib_onewire.bas` (pulled-up line, no device) holds reset and slot timing to 5 %. A device answering was not simulated.
+* Simulator limits, found while testing: MDB has no ADC conversion (message W0237), no SPI, no PWM and no UART transfer model; it does model the NVM controller, the I/O pins (with an SCL stimulus file, `tests/exec_dspic/*.scl`) and cycle counts.
+* Not done: `eeprom` (the part has none, the module stops with `#error`), `clc` and `dma` (the part has CLC and DMA blocks, but the modules are written for the PIC18 ones and stop with `#error`).
 
 ## Not yet generated
 
 `Float` and the Float library, recursive routines, calling C, interrupt priorities other than the default, and the
-library modules listed above are not done for this core.
+three library modules named above (`eeprom`, `clc`, `dma`) are not done for this core.

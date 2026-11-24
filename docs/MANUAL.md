@@ -76,7 +76,7 @@ Related documents: `docs/LANGUAGE.md` (formal language rules), `docs/GRAMMAR.md`
 | PIC16F18056 (28-pin), PIC16F18076 (40/44-pin) | PIC16 enhanced mid-range (`pic16e`) | 16K words (28 KB) | 2,048 bytes; 256 bytes of data flash (EEPROM) | **Supported (0.1.152).** Device files `devices/16F18056.toml`, `16F18076.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002325C, errata DS80001014D, facts in `docs/FACTS-16F1805x.md`). Fixed clock (no clock switching; `intosc` only sets `OSCFRQ`), 10-bit ADCC, two MSSP and two EUSART, CCP1/2 and PWM3/4/5. Library: every module is ported except `dma`, which stops with `#error`; `spi` and `i2c` take pins of ports B and C, `pwm` offers CCP1, CCP2, PWM3 and PWM4 (channels 1..4); the pin-number modules (`pinio` and those built on it) reach ports D and E of the PIC16F18076 as pins 24..39. Four of the portable test programs are held back in the simulator (see `docs/FACTS-16F1805x.md`). Nothing has run on a real part. |
 | PIC16F13113 / 13114 / 13115 (8-pin), PIC16F13123 / 13124 / 13125 (14-pin), PIC16F13143 / 13144 / 13145 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 2K / 4K / 8K words | 256 / 512 / 1,024 bytes; no data EEPROM | **Supported (0.1.76; erratum 1.3.1 work around in 0.1.77).** Device files `devices/16F13113.toml` … `16F13145.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002519D, errata DS80001115F, facts in `docs/FACTS-16F1314x.md`). The code generator is the PIC16F171xx one. The portable programs that fit the RAM and flash, `tests/exec_p16` and `tests/exec_p13` pass in the simulator on the PIC16F13145; every part builds `tests/exec_p13_parts/small.bas`. Modules: `serial2` and `eeprom` stop with `#error` (one EUSART, no data EEPROM), `dma` stops with `#error`; `pwm` offers CCP1, CCP2, PWM1 and PWM2 (channels 1..4); the 8-pin part has port A only. Nothing has run on a real part. Erratum 1.3.1 (revisions A2, A3, instruction fetch above 16 MHz) is worked around with a NOP at 0000h and at the handler start when `Clock` is above 16; `#option FetchNop = false` removes them for revision A4; an `Asm` `sleep` needs two `nop`s after it |
 | PIC16F13214 / 13215 (8-pin), PIC16F13224 / 13225 (14-pin), PIC16F13244 / 13245 (20-pin) | PIC16 enhanced mid-range (`pic16e`) | 4K / 8K words | 512 / 1,024 bytes; 256 bytes data EEPROM | **Supported (0.1.176).** Device files `devices/16F13214.toml` … `16F13245.toml` (pack `PIC16F1xxxx_DFP 1.32.471`, data sheet DS40002686B, errata DS80001213B, facts in `docs/FACTS-16F132xx.md`). The code generator is the PIC16F171xx one; the part has two EUSART, one MSSP, two 16-bit PWM modules, a 10-bit ADCC (TAD from 0.5 us), the data EEPROM, a secondary oscillator, Timer3/4 and the CLB. Library: every module is ported except `dma` (no DMA), which stops with `#error`; `serial2` uses RA2/RA1 on the 8-pin parts; `pwm`, `spi` and `i2c` refuse pins the part does not have; `timer` adds the codes of this family. The portable programs that fit the RAM and flash, `tests/exec_p16` and `tests/exec_p132` pass in the simulator on the PIC16F13245; every part builds `tests/exec_p132_parts/small.bas` and `tests/exec_p132/pins8`, `pins14` and `pins20` check the pins of each size. Nothing has run on a real part. Erratum 1.1.1 (CCP compare toggle mode does not work, no work around) concerns only a program that uses that mode. No fetch erratum, so no NOPs at the vectors. |
-| dsPIC33CK64MC105 (48-pin; the family's 28- and 36-pin parts have no device file) | dsPIC33 (16-bit, 24-bit instructions, `W0`..`W15`), `Fcy` = FOSC / 2 | 22,400 instructions (44,800 program address bytes); the device configuration (128 instructions) follows them | 8,192 bytes; no data EEPROM | **In progress: not yet "Supported" (0.1.290).** Device file `devices/DSPIC33CK64MC105.toml` (pack `dsPIC33CK-MC_DFP 1.11.412`, data sheet DS70005399D, errata DS80000910C, facts in `docs/FACTS-dsPIC33CK64MC105.md`). Integer, Boolean, Char, array, structure and string code, `Interrupt` (`Interrupt T1() … End Interrupt`; the names are the `IFSx` flag names without `IF`), `Config` by the pack's names (`Config FWDTEN = ON_SW`) and `DelayMs/DelayUs` compile and run in the MPLAB X simulator (`python3 scripts/exec-test33.py tests/exec_dspic/*.bas`, 11 programs). **Not yet on this core:** `Float` and the Float library, recursive routines, calling C, interrupt priorities other than the default. Library modules ported: `intosc` (FRC, FRC with PLL 16 to 200 MHz, FRC divided), `system`, `timer` (Timer1 only), `serial` (UART1, TX RB6, RX RB7), `serial2` (UART2, TX RB5, RX RB4), `adc` (12 bits, AN0..AN15, temperature and band gap) and `flashwrite` (page of 1,024 words). `eeprom`, `clc`, `dma` and `onewire` stop with `#error`. **Not ported:** `spi`, `i2c`, `pwm` and `softserial`, and so `aht30`, `oled`, `rtcc`, `rtccspi` and `epaper`, which use them, fail to build with an undeclared-register error; `gpio`, `pinio` and the modules built on them build but have not been reviewed for this part (its port B has 16 pins, so the pin numbers 8..23 of `pinio` do not match `RB0`..). Everything is checked in the simulator only: no bit was seen on a pin and nothing ran on a real part. The 28- and 36-pin parts of the family (PIC33CK32/64MC102, MC103) are not described. |
+| dsPIC33CK64MC105 (48-pin; the family's 28- and 36-pin parts have no device file) | dsPIC33 (16-bit, 24-bit instructions, `W0`..`W15`), `Fcy` = FOSC / 2 | 22,400 instructions (44,800 program address bytes); the device configuration (128 instructions) follows them | 8,192 bytes; no data EEPROM | **In progress: not yet "Supported" (0.1.290).** Device file `devices/DSPIC33CK64MC105.toml` (pack `dsPIC33CK-MC_DFP 1.11.412`, data sheet DS70005399D, errata DS80000910C, facts in `docs/FACTS-dsPIC33CK64MC105.md`). Integer, Boolean, Char, array, structure and string code, `Interrupt` (`Interrupt T1() … End Interrupt`; the names are the `IFSx` flag names without `IF`), `Config` by the pack's names (`Config FWDTEN = ON_SW`) and `DelayMs/DelayUs` compile and run in the MPLAB X simulator (`python3 scripts/exec-test33.py tests/exec_dspic/*.bas`, 18 programs). **Not yet on this core:** `Float` and the Float library, recursive routines, calling C, interrupt priorities other than the default. Library modules ported: `intosc` (FRC, FRC with PLL 16 to 200 MHz, FRC divided), `system`, `timer` (Timer1 only), `serial` (UART1, TX RB6, RX RB7), `serial2` (UART2, TX RB5, RX RB4), `adc` (12 bits, AN0..AN15, temperature and band gap) and `flashwrite` (page of 1,024 words), and `gpio` and `pinio` (pins numbered **port * 16 + bit**, because the ports are 16 bits wide: RA0 = 0, RB0 = 16, RC0 = 32, RD0 = 48), `softserial`, `i2c` (software host on any two pins), `spi` (SPI1 through PPS), `pwm` (four PWM generators) and `onewire` (`Clock` 32 or more), with `aht30`, `oled`, `rtcc`, `rtccspi` and `epaper` on top of `i2c` and `spi`; the other modules (`lcd`, `glcd`, `pulse`, `shift` ...) build through `pinio`. `eeprom` (the part has none), `clc` and `dma` (written for the PIC18 blocks) stop with `#error`. The simulator has no ADC conversion, SPI, PWM or UART transfer model, so for those modules only the set-up was checked. Everything is checked in the simulator only: no bit was seen on a pin and nothing ran on a real part. The 28- and 36-pin parts of the family (PIC33CK32/64MC102, MC103) are not described. |
 
 `Device = 18F27Q10` (or `PIC18F27Q10`), the PIC18-Q41 parts (`Device = 18F16Q41`, `18F04Q41` …), the PIC18(L)F2x/4xK22 parts (`Device = 18F25K22`, `18LF46K22` …), the PIC16F17126/17146, the PIC16F13113 … 13145, the PIC16F13214 … 13245, the PIC16F18313 … 18346 (also `16LF18313` … `16LF18346`), the PIC16F15213 … 15244, the PIC16F15313 … 15386 (also `16LF15313` … `16LF15386`) and the PIC16F18056 / 18076 are the values that compile today; `Device = dsPIC33CK64MC105` also compiles, but only partly supported (see its row). A device is added only
 after it has its own description file and passes its own tests, and **adding one means more than the
@@ -7918,6 +7918,8 @@ st = RtccspiEventFlags(lo, hi, True)
 
 ## i2c  (`Include "i2c"`, I2C host)
 
+**dsPIC33CK64MC105:** the software host of the PIC18-Q41 over any two digital pins (pin numbers as in `pinio`: port * 16 + bit, so RB8 = 24 and RB9 = 25); the part's I2C1 and I2C2 modules are not used. The lines are open drain through `TRISx`, so the bus needs external pull-ups. The real clock is lower than `hz`, much lower at a slow `Clock` (the half period is a delay plus the time of the routines).
+
 I2C host (master) on MSSP1; on the PIC18-Q41 a software host by default (see below). On the PIC18F27Q10 SCL and SDA go to any pin of ports B and C (8..23); the reset selection is SCL = RC3
 (19) and SDA = RC4 (20); the PIC18(L)F2x/4xK22 has no PPS, so SCL = RC3 and SDA = RC4 only. The pins the other parts can route are in `docs/LIBRARY.md` (*i2c*). The module is the only host on the bus (no multi-master): a collision is an
 error. The bus needs external pull-ups. `Clock` must be FOSC in MHz. Every step is done by the hardware
@@ -8230,6 +8232,8 @@ s = I2cWriteRegs($6F, 0, 1)          ' write the seconds back
 **Notes** Not reentrant: the next `I2cReadRegs` or `I2cWriteRegs` overwrites or reuses the array.
 
 ## onewire  (`Include "onewire"`, 1-Wire master on any one pin)
+
+**dsPIC33CK64MC105:** needs `Clock` of 32 MHz or more (16 MIPS), otherwise the pin switch is too long a part of the 3 us read pulse (compile error). Pin numbers as in `pinio` (port * 16 + bit).
 
 A 1-Wire master at standard speed for the temperature sensors, serial numbers and switches of that bus (DS18B20, DS2401,
 DS2413 and the like). Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). The line is open drain: the pin is pulled low as an output
@@ -9091,6 +9095,8 @@ w = ShiftIn16(8, 9, False, 12)    ' a 12-bit ADC reading
 
 ## softserial  (`Include "softserial"`, asynchronous serial on any two pins, 8N1)
 
+**dsPIC33CK64MC105:** pin numbers as in `pinio` (port * 16 + bit). The instruction clock is FOSC / 2, and `SoftInit` refuses a bit shorter than 87 instruction cycles (80 of overhead and one pass of the wait, 7), that is above FOSC / 174 baud (about 184 kbaud at `Clock` = 32); receiving finds the start edge to within one poll of 52 cycles, so it wants a longer bit. The bit timing was measured at 2400 to 9600 baud and is within 1 % of ideal.
+
 Serial on pins the EUSART cannot reach, on a part with one EUSART or none to spare, or on a line that idles low
 (RS-232 levels through a driver chip). Pins are numbered as in `pinio` (0..23, up to 47 on parts with ports D to F). Bit
 times are counted in instruction cycles from `Clock`; no timer. A byte that arrives while the program is elsewhere is
@@ -9286,6 +9292,8 @@ SoftHoldIrq(False)                ' the timer interrupt must not wait a whole by
 
 ## spi  (`Include "spi"`, SPI host)
 
+**dsPIC33CK64MC105:** SPI1 as host, 8 bits, on any pin of ports B, C and D through PPS (pin numbers as in `pinio`: RB0 = 16, RC0 = 32; RA0..RA4 cannot be routed). The clock is FOSC / (4 (BRG + 1)) with BRG 0 to 8191, at most FOSC / 4 and at most 33 MHz (`SpiInit` takes `hz` up to 33000000). `SpiOff` gives the pins back to their port. The simulator has no SPI model, so a transfer was not run.
+
 SPI host (master) on MSSP1 (SPI1 on the PIC18-Q41). On the PIC18F27Q10 SCK, SDO and SDI go to pins of ports B and C
 (8..23; the other parts: `docs/LIBRARY.md`, *spi*). The PIC18(L)F2x/4xK22 has no PPS: the pins choose the MSSP, MSSP1 on
 SCK = RC3, SDI = RC4, SDO = RC5 or MSSP2 on SCK = RB1, SDI = RB2, SDO = RB3 (RD0, RD1, RD4 on the 40/44-pin parts); SDO can be 255 for a
@@ -9435,6 +9443,8 @@ High(p) : DelayNop() : Low(p)
 
 ## gpio  (`Include "gpio"`)
 
+**dsPIC33CK64MC105:** `GpioPullUps(maskA, maskB, maskC)` and `GpioOpenDrain(maskA, maskB, maskC)` take 16-bit masks (`CNPUx`, `ODCx`), and port D, which has four pins, has `GpioPullUpsD(mask)` and `GpioOpenDriveD(mask)`. A pull-up works on a pin that is a digital input (`GpioAllDigital` first); `CNPDx` pull-downs are not offered.
+
 Port-level helpers for ports A, B and C. Single pins need no library: `Input`, `Output`, `High`,
 `Low`, `Toggle` are language commands and `Dim led As PORTB.0` names a pin.
 
@@ -9563,6 +9573,8 @@ ok = SetClockDiv(16, 2)           ' 16 MHz / 4 = 4 MHz
 ```
 
 ## pinio  (`Include "pinio"`, pin access by number)
+
+**dsPIC33CK64MC105:** the ports are 16 bits wide, so the pins are numbered **port * 16 + bit**: RA0..RA15 = 0..15, RB0..RB15 = 16..31, RC0..RC15 = 32..47, RD0..RD15 = 48..63 (`PinCount` = 64). The 48-pin part has RA0..RA4, RB0..RB15, RC0..RC13 and RD1, RD8, RD10, RD13; `PinOk` is False for the others. The whole-port routines take `base` = 0, 8, 16 ... 56 (eight pins).
 
 Run-time access to a pin by its number (`RA0` = 0, `RB0` = 8, `RC0` = 16, and on the parts with more ports `RD0` = 24,
 `RE0` = 32, `RF0` = 40), for code that picks its pins at run time. The bit-banged modules (`pulse`, `buttons`, `shift`,
@@ -10229,6 +10241,8 @@ Loop
 ## Category: Timers and PWM
 
 ## pwm  (`Include "pwm"`, PWM outputs on one timebase)
+
+**dsPIC33CK64MC105:** channels 1 to 4 are the PWM generators PG1 to PG4 in independent edge mode, self-triggered. The pins are fixed: channel 1 PWM1H = RB14 (pin 30) or PWM1L = RB15 (31); channel 2 RB12 (28) or RB13 (29); channel 3 RB10 (26) or RB11 (27); channel 4 PWM4H on RD1 (49) or, through PPS, any pin of ports B to D (PWM4L is not offered). All channels share one frequency, `PwmInit(hz)` from about FOSC / 1048560 (the generator clock is divided by up to 16 for the low frequencies) to FOSC / 33; `PwmSteps` is the period in clocks, a duty of `PwmSteps` is 100 %, and a pulse of 1 to 7 steps (or an inactive time of 1 to 7) is below the generator's minimum of 8 clocks. A new duty takes effect at the start of the next cycle. `PwmInvert` restarts a running channel. The master clock is FOSC; the data sheet's table of the PWM input frequency (450 to 500 MHz) is for the high-resolution clock and does not cover it, and the simulator has no PWM model, so no waveform was seen.
 
 On the PIC18F27Q10, four outputs on Timer2: channel 1 = CCP1, 2 = CCP2, 3 = PWM3, 4 = PWM4. All channels share
 one period (the frequency); each has its own duty cycle. The channels of the other parts:

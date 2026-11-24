@@ -3,7 +3,7 @@ members = [".", "crates/devdesc", "tools/devgen"]
 
 [package]
 name = "basil"
-version = "0.1.291"
+version = "0.1.292"
 edition = "2024"
 
 [dependencies]

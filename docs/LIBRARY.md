@@ -218,7 +218,7 @@ not vector on `SWIF` (the interrupt tests use `TMR0IF`, which a program can set)
 
 The first 16-bit part: its own code generator, a 16-bit data space (8 KB RAM), no data EEPROM, `Fcy` = FOSC / 2. Each module chooses its dsPIC branch by a register no other supported part has (`U1MODE`, `U2MODE`, `PLLFBD`,
 `T1CON.TCKPS`, `ADCON1L`, `NVMKEY`), tested before the `RCON` test because this part has an `RCON` too. The other families' code is unchanged (their builds are byte-identical). The tests are in `tests/exec_dspic`
-(`scripts/exec-test33.py`, MPLAB X simulator); they check register values and set-up, not waveforms, and nothing was run on a real part. The part is **in progress**, not yet listed as supported in `MANUAL.md`.
+(`scripts/exec-test33.py`, MPLAB X simulator); they check register values and set-up, not waveforms, and nothing was run on a real part. The part is **in progress**, not yet listed as supported in `MANUAL.md` (no `Float`, calling C or recursion).
 
 | Module | dsPIC33CK64MC105 |
 |---|---|
@@ -229,10 +229,17 @@ The first 16-bit part: its own code generator, a 16-bit data space (8 KB RAM), n
 | `serial2` | done (UART2 on RB5 (TX) and RB4 (RX) through PPS) |
 | `adc` | done (shared 12-bit core, software one-shot trigger; channel = AN number 0..15, `AdcChTemp` = AN16, `AdcChBandGap` = AN17; AVDD/AVSS reference only; a conversion is not modelled by the simulator) |
 | `flashwrite` | done (page of 1024 words, `FlashLastSector` = 20; double-word programming with the ECC rule: `FlashWriteWord` into an erased pair, `FlashWritePair`, `FlashUpdateWord` through a 2 KB RAM image) |
-| `delay`, `strings`, `bits`, `format`, `fmath`, `floatlib`, `glcd`, `lcd`, `irremote`, `buttons`, `shift`, `pulse`, `x10` | build; **not reviewed** for this part (`floatlib` needs the `Float` support the dsPIC back end does not have yet) |
-| `gpio`, `pinio` | build; **not ported**: the pin numbers assume 8 pins a port, and port B has 16 |
-| `eeprom`, `clc`, `dma`, `onewire` | `#error`: `eeprom` (the part has no data EEPROM, use `flashwrite`); `clc` (four CLCs, but the module is the PIC18F27Q10's), `dma` (a DMA controller, but the module is the PIC18-Q41's) and `onewire` (its message talks of a PIC16 clock) are not ported |
-| `spi`, `i2c`, `pwm`, `softserial`, `aht30`, `oled`, `rtcc`, `rtccspi`, `epaper` | **not ported**: they fail with an undeclared register (`SSP1CON1`, `PIR3`, `PIR4`, `INTCON`); they should stop with `#error` instead |
+| `gpio`, `pinio` | done (pins numbered **port * 16 + bit**: RA0 = 0, RB0 = 16, RC0 = 32, RD0 = 48, `PinCount` = 64; `PinOk` knows the pins of the 48-pin part; `GpioPullUps`/`GpioOpenDrain` take Word masks, port D has `GpioPullUpsD`/`GpioOpenDriveD`) |
+| `softserial` | done (measured bit timing at -O1 and -O0; the instruction clock is FOSC / 2) |
+| `i2c` | done (the software host of the PIC18-Q41 on any two digital pins; the I2C1/I2C2 modules are not used) |
+| `spi` | done (SPI1 as host through PPS on any pin of ports B to D, 8 bits; up to 33 MHz; a transfer is not run in the simulator, which has no SPI model) |
+| `pwm` | done (channels 1..4 = PG1..PG4 in independent edge mode on PWM1H/L, PWM2H/L, PWM3H/L and PWM4H (RD1 or any remappable pin); the waveform is not run in the simulator, which has no PWM model) |
+| `onewire` | done (needs `Clock` >= 32; `SwCyc` measured) |
+| `aht30`, `oled`, `rtcc`, `rtccspi`, `epaper` | done through `i2c` and `spi` (build; not run) |
+| `delay`, `strings`, `bits`, `format`, `fmath`, `glcd`, `lcd`, `irremote`, `buttons`, `shift`, `pulse`, `x10` | build (through `pinio`, no register of their own; not run) |
+| `floatlib` | builds, but the dsPIC back end has no `Float` yet |
+| `eeprom` | `#error` (no data EEPROM; use `flashwrite`) |
+| `clc`, `dma` | `#error` (the part has CLC and DMA blocks, but these modules are for the PIC18 ones) |
 
 How to port a module (the pattern used so far):
 
