@@ -390,7 +390,8 @@ fn main() -> ExitCode {
     // The readable form of the assembly, next to it: BASIC statements, addresses, BASIC variable names.
     let lst_path = hex.with_extension("lst");
     let texts: std::collections::HashMap<String, &str> = project.sources.names().zip(project.sources.texts()).map(|(n, t)| (std::fs::canonicalize(n).map(|p| p.display().to_string()).unwrap_or_else(|_| n.to_string()), t)).collect();
-    let lst = basil::listing::listing(&generated.out.text, &|f, n| texts.get(f).and_then(|t| t.lines().nth((n as usize).checked_sub(1)?)).map(str::to_string));
+    let dspic = analysis.device.as_ref().is_some_and(|d| d.device.family == "dspic33");
+    let lst = if dspic { generated.out.text.clone() } else { basil::listing::listing(&generated.out.text, &|f, n| texts.get(f).and_then(|t| t.lines().nth((n as usize).checked_sub(1)?)).map(str::to_string)) };
     if let Err(e) = std::fs::write(&lst_path, lst) {
         eprintln!("basil: cannot write {}: {e}", lst_path.display());
     }
@@ -399,6 +400,47 @@ fn main() -> ExitCode {
     }
     if asm_only {
         eprintln!("basil: wrote {} ({} words)", asm_path.display(), generated.out.words);
+        return ExitCode::SUCCESS;
+    }
+    if dspic {
+        let dev = analysis.device.as_ref().unwrap();
+        let gcc = match toolchain::resolve_xc_dsc(None) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("basil: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        let dfp = match toolchain::resolve_dspic_dfp(dfp_arg.as_deref(), &pack_dirs, &dev.device.pack, &dev.device.pack_version) {
+            Ok(d) => {
+                if !d.exact {
+                    eprintln!("basil: warning: device pack {} {} is not installed; using {} ({})", dev.device.pack, dev.device.pack_version, d.version, d.dir.display());
+                }
+                d.dir
+            }
+            Err(e) => {
+                eprintln!("basil: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        match basil::driver::run_xc_dsc(&gcc, dev, &asm_path, &dfp, &hex, &map_path) {
+            Ok(run) => {
+                for line in run.output.lines().filter(|l| !run.ok || l.contains("error") || l.contains("arning")) {
+                    eprintln!("xc-dsc: {line}");
+                }
+                if !run.ok {
+                    eprintln!("basil: the assembler or linker failed; see {}", asm_path.display());
+                    return ExitCode::from(1);
+                }
+            }
+            Err(e) => {
+                eprintln!("basil: {e}");
+                return ExitCode::from(1);
+            }
+        }
+        eprintln!("basil: {} -> {} ({} words)", file.display(), hex.display(), generated.out.words);
+        let color = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none();
+        eprint!("{}", usage_summary(dev, &generated, color));
         return ExitCode::SUCCESS;
     }
     let pic_as = match toolchain::resolve_pic_as(pic_as.as_deref()) {

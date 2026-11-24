@@ -251,10 +251,11 @@ impl Device {
         // Parts with two interrupt priorities have reset < high < low; the enhanced mid-range
         // core has a single interrupt vector, recorded as high == low.
         let single_vector = self.device.family == "pic16e";
+        let ivt = self.device.family == "dspic33";
         let low_bad = if single_vector {
             self.vectors.interrupt_low != self.vectors.interrupt_high
         } else {
-            self.vectors.interrupt_low <= self.vectors.interrupt_high
+            !ivt && self.vectors.interrupt_low <= self.vectors.interrupt_high
         };
         if self.vectors.interrupt_high <= self.vectors.reset || low_bad {
             errs.push(if single_vector {
@@ -331,10 +332,15 @@ impl Device {
             if j.members.len() != usize::from(j.bytes) || j.members.len() < 2 {
                 errs.push(format!("joined register {} has {} members but declares {} bytes", j.name, j.members.len(), j.bytes));
             }
-            for (i, member) in j.members.iter().enumerate() {
+            // Members follow one another by their own size: bytes on the 8-bit parts, words on the dsPIC.
+            let mut at = j.addr;
+            for member in j.members.iter() {
                 match self.find_sfr(member) {
-                    Some(s) if s.addr == j.addr + i as u32 => {}
-                    Some(s) => errs.push(format!("joined {} member {} is at {:#x}, expected {:#x}", j.name, member, s.addr, j.addr + i as u32)),
+                    Some(s) if s.addr == at => at += u32::from(s.width).div_ceil(8).max(1),
+                    Some(s) => {
+                        errs.push(format!("joined {} member {} is at {:#x}, expected {:#x}", j.name, member, s.addr, at));
+                        at = s.addr + u32::from(s.width).div_ceil(8).max(1);
+                    }
                     None => errs.push(format!("joined {} member {} is not an SFR", j.name, member)),
                 }
             }

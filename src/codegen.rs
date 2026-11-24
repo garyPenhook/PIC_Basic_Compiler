@@ -51,6 +51,19 @@ pub struct Target {
     pub debug_files: Vec<String>,
     /// Set for the enhanced mid-range core (PIC16F1xxxx): banked 80-byte RAM blocks, 14-bit program words.
     pub pic16: Option<Pic16Mem>,
+    /// Set for the dsPIC33 core: data RAM and program memory of the part.
+    pub dspic: Option<DspicMem>,
+}
+
+/// Memory facts of a dsPIC33 part that its code generator needs.
+#[derive(Clone, Debug)]
+pub struct DspicMem {
+    /// General-purpose RAM `[start, end)` in data addresses.
+    pub ram: (u32, u32),
+    /// Program memory in instruction words (the part's program size is in address units, two per instruction).
+    pub prog_words: u32,
+    /// Interrupt sources that have a vector, named as in the linker script (`T1` is `__T1Interrupt`), from the `IFSx` flags.
+    pub vectors: Vec<String>,
 }
 
 /// Memory facts of an enhanced mid-range part that the PIC16 code generator needs.
@@ -602,7 +615,7 @@ fn ex_calls(e: &Ex, out: &mut BTreeSet<FuncId>) {
     }
 }
 
-fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
+pub(crate) fn stmt_calls(ss: &[S], out: &mut BTreeSet<FuncId>) {
     for s in ss {
         match &s.st {
             St::Assign(p, e) => {
@@ -7078,6 +7091,9 @@ pub(crate) fn inline_single_calls(mut items: Vec<Item>, mut ranges: Vec<(String,
 /// data layout is fixed, so it would keep its RAM byte (and its start-up zeroing); when that happens the stores
 /// are removed from the IR and the program is generated again without it.
 pub fn generate(p: &Program, tgt: &Target) -> Generated {
+    if tgt.dspic.is_some() {
+        return crate::codegen33::generate(p, tgt);
+    }
     if tgt.pic16.is_some() {
         return crate::codegen16::generate(p, tgt);
     }

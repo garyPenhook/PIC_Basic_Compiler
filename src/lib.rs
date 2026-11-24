@@ -5,6 +5,7 @@ pub mod ast;
 pub mod cycles;
 pub mod codegen;
 pub mod codegen16;
+pub mod codegen33;
 pub mod diag;
 pub mod dwarf;
 pub mod driver;

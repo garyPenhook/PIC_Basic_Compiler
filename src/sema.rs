@@ -886,8 +886,8 @@ impl<'p, 'd> Sema<'p, 'd> {
                     Ok(d) => {
                         if !d.device.name.eq_ignore_ascii_case(&name) {
                             self.diags.error("E-DEVICE", span, format!("{} describes {}, not {name}", p.display(), d.device.name));
-                        } else if d.device.family != "pic18" && d.device.family != "pic16e" {
-                            self.diags.error("E-DEVICE", span, format!("{} is described, but Basil has no code generator for the {} family yet (only pic18 and pic16e)", d.device.name, d.device.family));
+                        } else if d.device.family != "pic18" && d.device.family != "pic16e" && d.device.family != "dspic33" {
+                            self.diags.error("E-DEVICE", span, format!("{} is described, but Basil has no code generator for the {} family yet (only pic18, pic16e and dspic33)", d.device.name, d.device.family));
                         } else {
                             self.a.device = Some(d);
                         }
@@ -1583,6 +1583,10 @@ impl<'p, 'd> Sema<'p, 'd> {
                 ty = Ty::Array(Box::new(ty), n as u32);
             }
             if !alias {
+                // The dsPIC33 reads a word at an even address only, so a field of two bytes or more starts on one.
+                if self.word_aligned() && self.ty_align(&ty) == 2 {
+                    size = (size + 1) & !1;
+                }
                 size += self.size_of(&ty);
                 bf_byte = None;
             }
@@ -1594,7 +1598,26 @@ impl<'p, 'd> Sema<'p, 'd> {
         if fields.is_empty() && sd.fields.is_empty() {
             self.diags.error("E-STRUCT", sd.name.span, format!("structure `{}` has no fields", sd.name.name));
         }
+        if self.word_aligned() {
+            // So that every element of an array of structures starts on an even address too.
+            size = (size + 1) & !1;
+        }
         self.declare(&sd.name, vis, SymKind::Struct { fields, size });
+    }
+
+    /// Whether objects of two bytes or more must sit on even addresses (the dsPIC33).
+    fn word_aligned(&self) -> bool {
+        self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33")
+    }
+
+    /// 2 for a type that holds a word or larger value (it must start on an even address), else 1.
+    fn ty_align(&self, ty: &Ty) -> u32 {
+        match ty {
+            Ty::Int(w, _) if *w >= 16 => 2,
+            Ty::Float | Ty::Struct(_) => 2,
+            Ty::Array(e, _) => self.ty_align(e),
+            _ => 1,
+        }
     }
 
     /// The parameters of an event type or handler: plain `ByVal` integers, Booleans and Chars.

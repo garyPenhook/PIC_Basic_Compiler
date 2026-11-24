@@ -60,6 +60,17 @@ pub fn target_of(dev: &Device) -> Target {
         keep_vars: false,
         debug_files: Vec::new(),
         pic16,
+        dspic: (dev.device.family == "dspic33").then(|| crate::codegen::DspicMem {
+            ram: dev.memory.data.gpr.iter().filter(|g| !g.system).fold((u32::MAX, 0), |a, g| (a.0.min(g.start), a.1.max(g.end))),
+            prog_words: dev.memory.program.size / 2,
+            vectors: dev
+                .sfr
+                .iter()
+                .filter(|r| r.name.len() == 4 && r.name.starts_with("IFS") && r.name.as_bytes()[3].is_ascii_digit())
+                .flat_map(|r| r.fields.iter())
+                .filter_map(|f| f.name.strip_suffix("IF").map(str::to_string))
+                .collect(),
+        }),
     }
 }
 
@@ -185,6 +196,47 @@ pub fn run_pic_as(pic_as: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Pat
     Ok(AsmRun { ok: out.status.success(), output: text })
 }
 
+/// Assembles and links the dsPIC33 output with `xc-dsc-gcc` (no start-up code or libraries: the generated start-up is the
+/// reset code) and converts the result to Intel hex.
+pub fn run_xc_dsc(gcc: &Path, dev: &Device, asm: &Path, dfp: &Path, hex: &Path, map: &Path) -> Result<AsmRun, String> {
+    let cpu = dev.device.name.strip_prefix("DSPIC").unwrap_or(&dev.device.name).to_string();
+    let gld = ["dsPIC33C", "dsPIC33E", "dsPIC33F", "PIC24E", "PIC24F", "PIC24H"]
+        .iter()
+        .map(|d| dfp.join("support").join(d).join("gld").join(format!("p{cpu}.gld")))
+        .find(|p| p.is_file())
+        .ok_or_else(|| format!("no linker script p{cpu}.gld in {}", dfp.display()))?;
+    let elf = hex.with_extension("elf");
+    let out = Command::new(gcc)
+        .arg(format!("-mcpu={cpu}"))
+        .arg(format!("-mdfp={}", dfp.display()))
+        .arg("-nostartfiles")
+        .arg("-nodefaultlibs")
+        .arg(format!("-Wl,-T,{},-Map={},--no-check-sections", gld.display(), map.display()))
+        .arg("-o")
+        .arg(&elf)
+        .arg(asm)
+        // The soft-float routines the Float library calls (only the archive members that are named are linked in).
+        .arg("-lc99-pic30-elf")
+        .arg("-lgcc")
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", gcc.display()))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        return Ok(AsmRun { ok: false, output: text });
+    }
+    let bin2hex = gcc.with_file_name(format!("xc-dsc-bin2hex{}", std::env::consts::EXE_SUFFIX));
+    let conv = Command::new(&bin2hex)
+        .arg("-a")
+        .arg(format!("-mdfp={}", dfp.display()))
+        .arg(&elf)
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", bin2hex.display()))?;
+    text.push_str(&String::from_utf8_lossy(&conv.stdout));
+    text.push_str(&String::from_utf8_lossy(&conv.stderr));
+    Ok(AsmRun { ok: conv.status.success() && hex.is_file(), output: text })
+}
+
 /// Occupied physical RAM bytes (variables, temporaries and scratch), counting overlays once.
 /// PIC16 arrays skip SFR/common-memory holes when they cross bank boundaries.
 pub fn ram_used(dev: &Device, g: &Generated) -> u32 {
@@ -209,7 +261,9 @@ fn usage_line(label: &str, used: u32, size: u32, unit: &str, color: bool) -> Str
 /// The flash and RAM use against what the chosen device has, printed after every successful build.
 pub fn usage_summary(dev: &Device, g: &Generated, color: bool) -> String {
     // The enhanced mid-range description counts program memory in 14-bit words, the PIC18 ones in bytes.
-    let (flash_used, flash_size, unit) = if dev.device.family == "pic16e" { (g.out.words, dev.memory.program.size, "words") } else { (g.out.words * 2, dev.memory.program.size, "bytes") };
+    let (flash_used, flash_size, unit) = if dev.device.family == "dspic33" {
+        (g.out.words, dev.memory.program.size / 2, "words")
+    } else if dev.device.family == "pic16e" { (g.out.words, dev.memory.program.size, "words") } else { (g.out.words * 2, dev.memory.program.size, "bytes") };
     let mut s = format!("{}:\n", dev.device.name);
     s.push_str(&usage_line("Flash", flash_used, flash_size, unit, color));
     s.push_str(&usage_line("RAM", ram_used(dev, g), dev.memory.data.usable_gpr, "bytes", color));

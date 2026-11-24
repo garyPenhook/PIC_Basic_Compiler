@@ -18,7 +18,248 @@ Module FloatLib
 Const NaNBits As LongWord = $7FC00000
 Const SignBit As LongWord = $80000000
 
-#if _has(PRODL)
+#if _core = "dspic33"
+' dsPIC33: the operations are the soft-float routines of the XC-DSC C library (IEEE-754 binary32, the same format as the
+' Float of the other cores). The first operand is in W1:W0 and the second in W3:W2 (the register call of `Func::reg`),
+' the result comes back in W1:W0 (W0 for a byte), which is also how those routines take their arguments and return.
+' Round to nearest even, infinities and NaN as in IEEE. The routines below make the results the same as the other cores': a
+' denormal operand is read as a zero of its sign, a denormal result is a signed zero, and every NaN is $7FC00000.
+
+' Denormal operands of a register call are zeros of their sign: the first operand in W1:W0 ...
+Private Sub FldA()
+    Asm
+        mov #0x7F80, W4
+        and W1, W4, W5
+        bra nz, FLD_A
+        clr W0
+        mov #0x8000, W5
+        and W1, W5, W1
+    FLD_A:
+    End Asm
+End Sub
+
+' ... and the second in W3:W2.
+Private Sub FldB()
+    Asm
+        mov #0x7F80, W4
+        and W3, W4, W5
+        bra nz, FLD_B
+        clr W2
+        mov #0x8000, W5
+        and W3, W5, W3
+    FLD_B:
+    End Asm
+End Sub
+
+' The result in W1:W0: any NaN becomes $7FC00000 and a denormal a signed zero.
+Private Sub FldOut()
+    Asm
+        mov #0x7FFF, W4
+        and W1, W4, W5
+        mov #0x7F80, W4
+        cp W5, W4
+        bra gtu, FLD_N
+        bra nz, FLD_X
+        cp0 W0
+        bra z, FLD_X
+    FLD_N:
+        mov #0x7FC0, W1
+        clr W0
+        bra FLD_E
+    FLD_X:
+        and W1, W4, W5
+        bra nz, FLD_E
+        clr W0
+        mov #0x8000, W4
+        and W1, W4, W1
+    FLD_E:
+    End Asm
+End Sub
+
+Public Function FAdd(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    FldA()
+    FldB()
+    Asm
+        rcall ___addsf3
+    End Asm
+    FldOut()
+End Function
+
+Public Function FMul(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    FldA()
+    FldB()
+    Asm
+        rcall ___mulsf3
+    End Asm
+    FldOut()
+End Function
+
+Public Function FDiv(ByVal a As LongWord, ByVal b As LongWord) As LongWord
+    FldA()
+    FldB()
+    Asm
+        rcall ___divsf3
+    End Asm
+    FldOut()
+End Function
+
+' The comparison itself: a in W1:W0 and b in W3:W2, both with denormals already flushed. Leaves -1, 0, 1 or 2 (NaN) in W0.
+Private Sub CmpCore()
+    Asm
+        ; a NaN has all exponent bits set and a nonzero fraction (the library's unordered test does not see them)
+        mov #0x7FFF, W4
+        and W1, W4, W5
+        mov #0x7F80, W4
+        cp W5, W4
+        bra gtu, FLC_NAN0
+        bra nz, FLC_B
+        cp0 W0
+        bra nz, FLC_NAN0
+    FLC_B:
+        mov #0x7FFF, W4
+        and W3, W4, W5
+        mov #0x7F80, W4
+        cp W5, W4
+        bra gtu, FLC_NAN0
+        bra nz, FLC_OK
+        cp0 W2
+        bra nz, FLC_NAN0
+    FLC_OK:
+        push.d W0
+        push.d W2
+        rcall ___ltsf2
+        btsc W0, #15
+        bra FLC_LT
+        pop.d W2
+        pop.d W0
+        push.d W0
+        push.d W2
+        rcall ___gtsf2
+        cp0 W0
+        bra gt, FLC_GT
+        pop.d W2
+        pop.d W0
+        clr W0
+        bra FLC_END
+    FLC_LT:
+        pop.d W2
+        pop.d W0
+        mov #0xFF, W0
+        bra FLC_END
+    FLC_GT:
+        pop.d W2
+        pop.d W0
+        mov #1, W0
+        bra FLC_END
+    FLC_NAN0:
+        mov #2, W0
+    FLC_END:
+    End Asm
+End Sub
+
+' -1, 0 or 1 for a < b, a = b, a > b (a denormal is a zero); 2 when either is NaN.
+Private Function Cmp(ByVal a As LongWord, ByVal b As LongWord) As ShortInt
+    ' The operands arrive in registers: an Asm block tells the optimiser the parameters are read.
+    Asm
+    End Asm
+    FldA()
+    FldB()
+    CmpCore()
+End Function
+
+' The sign of a, as Cmp(a, 0) gives it.
+Private Function FSign(ByVal a As LongWord) As ShortInt
+    Asm
+        clr W2
+        clr W3
+    End Asm
+    FldA()
+    CmpCore()
+End Function
+
+' a times two to the power k (k in W2, signed).
+Public Function FScale(ByVal a As LongWord, ByVal k As ShortInt) As LongWord
+    FldA()
+    Asm
+        se W2, W2
+        add #127, W2
+        bra n, FLK_LOW
+        cp0 W2
+        bra z, FLK_LOW
+        ; the float with exponent W2 and an empty fraction is 2^k
+        sl W2, #7, W3
+        clr W2
+        rcall ___mulsf3
+        bra FLK_END
+    FLK_LOW:
+        ; below the smallest normal: a signed zero
+        mov #0x8000, W2
+        and W1, W2, W1
+        clr W0
+    FLK_END:
+    End Asm
+    FldOut()
+End Function
+
+Public Function FFromLong(ByVal v As LongInt) As LongWord
+    Asm
+        goto ___floatsisf
+    End Asm
+End Function
+
+Public Function FFromULong(ByVal v As LongWord) As LongWord
+    Asm
+        goto ___floatunsisf
+    End Asm
+End Function
+
+Public Function FFromByte(ByVal v As Byte) As LongWord
+    Asm
+        ze W0, W0
+        clr W1
+        goto ___floatunsisf
+    End Asm
+End Function
+
+Public Function FFromWord(ByVal v As Word) As LongWord
+    Asm
+        clr W1
+        goto ___floatunsisf
+    End Asm
+End Function
+
+' Truncates toward zero; out of range saturates to the LongInt limits, NaN gives 0.
+Public Function FToLong(ByVal a As LongWord) As LongInt
+    Asm
+        mov #0x7FFF, W3
+        and W1, W3, W3
+        mov #0x7F80, W2
+        cp W3, W2
+        bra gtu, FLT_NAN
+        bra nz, FLT_RNG
+        cp0 W0
+        bra nz, FLT_NAN
+    FLT_RNG:
+        mov #0x4F00, W2
+        cp W3, W2
+        bra geu, FLT_BIG
+        goto ___fixsfsi
+    FLT_NAN:
+        clr W0
+        clr W1
+        return
+    FLT_BIG:
+        btsc W1, #15
+        bra FLT_MIN
+        mov #0xFFFF, W0
+        mov #0x7FFF, W1
+        return
+    FLT_MIN:
+        clr W0
+        mov #0x8000, W1
+    End Asm
+End Function
+#elseif _has(PRODL)
 ' Builds the result: sign in __D0 (bit 7 only), biased exponent of the leading one in __C1:__C0
 ' (signed), mantissa in __A3..__A0 with the leading one at bit 31 (a 24-bit mantissa in __A3..__A1
 ' and the bits below it in __A0). Rounds to nearest even on __A0 and leaves the float in __A3..__A0.

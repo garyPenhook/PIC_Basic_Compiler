@@ -4023,7 +4023,7 @@ mod local_storage_tests {
         let tgt = crate::codegen::Target { ram: vec![(0x100, 0x400)], access: (0, 0x60),
             access_sfr: (0xf60, 0x1000), sfr: Default::default(), hw_context: false, ipen: None,
             prog_bytes: 0, data_top: 0x1000, hw_stack: 31, opt: true, keep_vars: false,
-            debug_files: vec![], pic16: None };
+            debug_files: vec![], pic16: None, dspic: None };
         for (addr, name) in [(0x20, "RAM"), (0xfef, "INDF0")] {
             let mut p = fixture();
             let mut pl = place(0);
@@ -4037,7 +4037,7 @@ mod local_storage_tests {
         let tgt = crate::codegen::Target { ram: vec![(0x20, 0x70)], access: (0x70, 0x80),
             access_sfr: (0, 0), sfr: [("PCLATH_SHAD".into(), 0x1fe7)].into_iter().collect(), hw_context: false, ipen: None,
             prog_bytes: 0, data_top: 0x2000, hw_stack: 16, opt: true, keep_vars: false,
-            debug_files: vec![], pic16: Some(crate::codegen::Pic16Mem { gpr: vec![(0x20, 0x70)], common: (0x70, 0x80), prog_words: 16384 }) };
+            debug_files: vec![], pic16: Some(crate::codegen::Pic16Mem { gpr: vec![(0x20, 0x70)], common: (0x70, 0x80), prog_words: 16384 }), dspic: None };
         assert!(preserves_page_zero(&fixture(), &tgt));
         for addr in [0, 1, 2, 10, 0x18a, 0x1fe7] {
             let mut p = fixture();

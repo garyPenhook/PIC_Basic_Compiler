@@ -264,6 +264,61 @@ pub fn resolve_pic_as(cli: Option<&Path>) -> Result<PathBuf, String> {
     })
 }
 
+/// Where MPLAB XC-DSC installs (one folder per version below each).
+pub fn xc_dsc_roots() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let pf = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        vec![pf.join("Microchip").join("xc-dsc")]
+    } else if cfg!(target_os = "macos") {
+        vec![PathBuf::from("/Applications/microchip/xc-dsc")]
+    } else {
+        vec![PathBuf::from("/opt/microchip/xc-dsc")]
+    }
+}
+
+/// The `xc-dsc-gcc` driver, which assembles and links the dsPIC33 output: `--xc-dsc`, `BASIL_XCDSC`, the settings file,
+/// `PATH`, then the newest MPLAB XC-DSC install.
+pub fn resolve_xc_dsc(cli: Option<&Path>) -> Result<PathBuf, String> {
+    let name = exe("xc-dsc-gcc");
+    let explicit = cli.map(Path::to_path_buf).or_else(|| env_var("BASIL_XCDSC").filter(|v| !v.is_empty()).map(PathBuf::from)).or_else(|| config_value("xc-dsc"));
+    if let Some(p) = explicit {
+        return if p.is_file() { Ok(p) } else { Err(format!("xc-dsc-gcc = {} (no such file)", p.display())) };
+    }
+    for d in path_dirs() {
+        let p = d.join(&name);
+        if p.is_file() {
+            return Ok(p);
+        }
+    }
+    for root in xc_dsc_roots() {
+        if let Some((_, dir)) = versions_in(&root, |d| d.join("bin").join(&name).is_file()).into_iter().next() {
+            return Ok(dir.join("bin").join(&name));
+        }
+    }
+    Err("xc-dsc-gcc not found. A dsPIC33 program needs the MPLAB XC-DSC compiler: install it, set BASIL_XCDSC to the xc-dsc-gcc file, or put `xc-dsc = PATH` in the settings file.".to_string())
+}
+
+/// The pack's `xc16` folder (linker scripts, device files) for a dsPIC33 part: the exact version, else the newest installed.
+pub fn resolve_dspic_dfp(cli: Option<&Path>, extra_roots: &[PathBuf], pack: &str, version: &str) -> Result<Dfp, String> {
+    let explicit = cli.map(Path::to_path_buf).or_else(|| env_var("BASIL_DFP").filter(|v| !v.is_empty()).map(PathBuf::from)).or_else(|| config_value("dfp"));
+    if let Some(p) = explicit {
+        return if p.is_dir() { Ok(Dfp { dir: p, version: version.to_string(), exact: true }) } else { Err(format!("--dfp = {} (no such folder)", p.display())) };
+    }
+    let roots = pack_roots(extra_roots);
+    for root in &roots {
+        let p = root.join(pack).join(version).join("xc16");
+        if p.is_dir() {
+            return Ok(Dfp { dir: p, version: version.to_string(), exact: true });
+        }
+    }
+    for root in &roots {
+        if let Some((v, dir)) = versions_in(&root.join(pack), |d| d.join("xc16").is_dir()).into_iter().next() {
+            return Ok(Dfp { dir: dir.join("xc16"), version: v, exact: false });
+        }
+    }
+    Err(format!("device pack {pack} {version} not found (looked for <pack folder>/{pack}/{version}/xc16 in {}). Install it with MPLAB X (Tools > Packs), or pass --dfp DIR (the pack's xc16 folder).", roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ")))
+}
+
 /// xc8-cc for this machine, or the message to print when there is none.
 pub fn resolve_xc8_cc(pic_as: &Path, cli: Option<&Path>) -> Result<PathBuf, String> {
     let explicit = cli.map(|p| p.as_os_str().to_owned()).or_else(|| env_var("BASIL_XC8CC")).or_else(|| config_value("xc8-cc").map(PathBuf::into_os_string));

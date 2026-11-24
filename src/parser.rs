@@ -591,7 +591,8 @@ impl<'a> Parser<'a> {
             return self.expected("a device name such as 18F27Q10");
         }
         let up = text.to_ascii_uppercase();
-        Ok(if up.starts_with("PIC") { up } else { format!("PIC{up}") })
+        // dsPIC33 parts keep their own prefix: `dsPIC33CK64MC105` and `33CK64MC105` both name DSPIC33CK64MC105.
+        Ok(if up.starts_with("PIC") || up.starts_with("DSPIC") { up } else if up.starts_with("33") { format!("DSPIC{up}") } else { format!("PIC{up}") })
     }
 
     // ---- declarations --------------------------------------------------------------------

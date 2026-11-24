@@ -488,6 +488,16 @@ fn lower_with(proj: &Project, a: &Analysis, diags: &mut Diagnostics, plan: Float
     })
 }
 
+/// 2 for a type that holds a word or larger value (it must start on an even address on the dsPIC33), else 1.
+fn ty_align(ty: &Ty) -> u32 {
+    match ty {
+        Ty::Int(w, _) if *w >= 16 => 2,
+        Ty::Float | Ty::Struct(_) => 2,
+        Ty::Array(e, _) => ty_align(e),
+        _ => 1,
+    }
+}
+
 /// The vector a handler with this priority (`ipLow` = 1, `ipHigh` = 2) serves.
 fn level_of(priority: &Option<i64>) -> Level {
     match priority {
@@ -559,6 +569,10 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             if !f.alias {
+                // The same alignment the structure's size was computed with (sema `struct_decl`).
+                if self.a.device.as_ref().is_some_and(|d| d.device.family == "dspic33") && ty_align(&f.ty) == 2 {
+                    off = (off + 1) & !1;
+                }
                 lay.push(FieldLay { name: key, off, bit: None, ty: f.ty.clone() });
                 off += self.size_of(&f.ty);
                 continue;
@@ -1379,11 +1393,13 @@ impl<'a> Lowerer<'a> {
     fn reg_place(&mut self, name: &str, span: Span) -> Option<Place> {
         let dev = self.a.device.as_ref()?;
         if let Some(s) = dev.find_sfr(name) {
-            if s.width > 8 {
+            // The dsPIC33's registers are 16 bits wide.
+            let wide = dev.device.family == "dspic33" && s.width == 16;
+            if s.width > 8 && !wide {
                 self.unsupported(span, &format!("the {}-bit register `{}`", s.width, s.name));
                 return None;
             }
-            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, idx: None, dbit: None, ty: BYTE });
+            return Some(Place { base: Base::Abs { addr: s.addr, name: s.name.clone() }, off: 0, bit: None, idx: None, dbit: None, ty: if wide { WORD } else { BYTE } });
         }
         if let Some(j) = dev.joined.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
             let ty = match j.bytes {

@@ -95,6 +95,14 @@ fn family_facts(arch: &str) -> Res<FamilyFacts> {
             vectors: (0x00, 0x04, 0x04),
             vectors_source: "PIC16F17126/46 data sheet DS40002343F p.36 and Fig. 9-1 p.37; PIC16F13145 family data sheet DS40002519D p.34; PIC16F13214/15/24/25/44/45 data sheet DS40002686B p.41-42 (Reset vector 0000h, interrupt vector 0004h, stack levels 0-15); PIC16F18313/18323 data sheet DS40001799F Fig. 4-1 p.22, PIC16F18324/44 DS40001800E p.26, PIC16F18325/45 DS40001795K p.28, PIC16F18326/46 DS40001839E p.28; PIC16F15213/14/23/24/43/44 data sheet DS40002195E Fig. 9-1 p.33; PIC16F18056/76 data sheet DS40002325C Sec. 9.1 p.35; PIC16F15313/23 data sheet DS40001897C Fig. 4-1 p.28, PIC16F15324/44 DS40001889E p.32, PIC16F15325/45 DS40001865F p.32, PIC16F15354/55 DS40001853E Fig. 4-1 and 4-2 p.25, PIC16F15356/75/76/85/86 DS40001866E Fig. 4-1 and 4-2 p.49 (Reset vector 0000h, interrupt vector 0004h)",
         }),
+        // dsPIC33: program addresses count bytes of a 24-bit-instruction space (two per instruction); the reset GOTO is at 0 and the
+        // interrupt vector table starts at 4. The compiler uses the first vector (the default interrupt) as `interrupt_high` and the
+        // table end as `interrupt_low` only to keep the order; the real vectors come from the dsPIC description.
+        "33xxxx" => Ok(FamilyFacts {
+            family: "dspic33",
+            vectors: (0x00, 0x04, 0x06),
+            vectors_source: "dsPIC33CK64MC105 data sheet DS70005399D 4.1.2 p.37 (addresses 0x000000-0x000200 are reserved for the hard-coded vectors; the application programs a GOTO at 0x000000 whose target is at 0x000002) and Figure 4-2 p.36 (user program memory ends at 0x00AEFE, device configuration 0x00AF00-0x00AFFE)",
+        }),
         other => Err(format!("architecture '{other}' has no family table in devgen yet; add and verify one before generating")),
     }
 }
@@ -180,7 +188,7 @@ fn generate(pic: &Path, out: &Path) -> Res<()> {
 fn no_access_bank(found: Option<Range>, family: &str, what: &str) -> Res<Range> {
     match (found, family) {
         (Some(r), _) => Ok(r),
-        (None, "pic16e") => Ok(Range { start: 0, end: 0 }),
+        (None, "pic16e" | "dspic33") => Ok(Range { start: 0, end: 0 }),
         (None, _) => Err(format!("pack has no access {what} region")),
     }
 }
@@ -209,14 +217,19 @@ fn region(root: roxmltree::Node, tag: &'static str, what: &str) -> Res<Region> {
 }
 
 fn memory(root: roxmltree::Node, family: &str) -> Res<Memory> {
-    let program = region(root, "CodeSector", "program memory")?;
+    let mut program = region(root, "CodeSector", "program memory")?;
+    if family == "dspic33" {
+        // The reset and vector sectors precede the code sector (0x000000-0x000200) and belong to program memory.
+        program = Region { start: 0, size: program.start + program.size };
+    }
     // The PIC16F13145 family has no data EEPROM (DS40002519D Table 1, p.1): the region is empty.
     let eeprom = match region(root, "EEDataSector", "data EEPROM") {
-        Err(_) if family == "pic16e" && descendants(root, "EEDataSector").next().is_none() => Region { start: 0, size: 0 },
+        Err(_) if (family == "pic16e" || family == "dspic33") && descendants(root, "EEDataSector").next().is_none() => Region { start: 0, size: 0 },
         r => r?,
     };
-    let user_id = region(root, "UserIDSector", "user IDs")?;
-    let config = region(root, "ConfigFuseSector", "configuration words")?;
+    let dspic = family == "dspic33";
+    let user_id = region(root, if dspic { "UserOTPSector" } else { "UserIDSector" }, "user IDs")?;
+    let config = region(root, if dspic { "WORMHoleSector" } else { "ConfigFuseSector" }, "configuration words")?;
     let did = descendants(root, "DeviceIDSector").next().ok_or("pack has no device ID")?;
     let (db, de) = (req_num(did, "beginaddr")?, req_num(did, "endaddr")?);
     let device_id = DeviceId { start: db, size: de - db, value: attr(did, "value").map(num).transpose()?.unwrap_or(0) };
