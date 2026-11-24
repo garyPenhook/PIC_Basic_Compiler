@@ -218,7 +218,7 @@ pub fn usage_summary(dev: &Device, g: &Generated, color: bool) -> String {
 
 pub fn report(dev: &Device, p: &Program, g: &Generated) -> String {
     let mut s = String::new();
-    s.push_str(&format!("Program: {} words ({} bytes); cycles are static: each instruction once, a call adds the callee, a loop is listed as one pass; not a run time\n", g.out.words, g.out.words * 2));
+    s.push_str(&format!("Program: {} words ({} bytes); cycles are static: each instruction once, a call adds the callee, a counter loop with a constant count counts every pass, any other loop one pass; not a run time\n", g.out.words, g.out.words * 2));
     // Static cycles per routine (see `cycles::analyse`): every instruction once, so a loop counts as one pass; a call adds the callee.
     let pic16 = dev.device.family == "pic16e";
     let cy = crate::cycles::Core::of_device(&dev.device.name).map(|c| crate::cycles::analyse(c, &g.out.text, &|t| if pic16 { crate::asm::words_of16(t) } else { crate::asm::words_of(t) }));
@@ -232,6 +232,9 @@ pub fn report(dev: &Device, p: &Program, g: &Generated) -> String {
             if r.calls > 0 {
                 parts.push(format!("{} with calls", range(inc.straight, inc.taken)));
             }
+            if inc.loops_once > 0 {
+                parts.push(format!("{} loop{} counted once", inc.loops_once, if inc.loops_once == 1 { "" } else { "s" }));
+            }
             if inc.recursive {
                 parts.push("recursive".to_string());
             }
@@ -242,7 +245,10 @@ pub fn report(dev: &Device, p: &Program, g: &Generated) -> String {
         });
         s.push_str(&format!("  {:6} words  {n}{}\n", w, note.unwrap_or_default()));
         for l in rc.map(|r| r.loops.as_slice()).unwrap_or_default() {
-            s.push_str(&format!("                 loop {}: {} cycles a pass\n", l.label, range(l.pass.straight, l.pass.taken)));
+            match l.passes {
+                Some(n) => s.push_str(&format!("                 loop {}: {n} passes, {} cycles in all\n", l.label, range(l.total.straight, l.total.taken))),
+                None => s.push_str(&format!("                 loop {}: {} cycles a pass, count unknown\n", l.label, range(l.pass.straight, l.pass.taken))),
+            }
         }
     }
     let nv = p.vars.len();

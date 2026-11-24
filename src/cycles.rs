@@ -158,7 +158,8 @@ fn instruction(line: &str) -> Option<&str> {
     Some(t)
 }
 
-/// Cycles with the routines it calls added in (once per call instruction, not per run time call).
+/// Cycles with the routines it calls added in. A call adds the callee once per `call` instruction, times the passes of
+/// every counted loop around it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cycles {
     pub straight: u32,
@@ -167,32 +168,44 @@ pub struct Cycles {
     pub unknown: u32,
     /// The routine can call itself, directly or through others; the call that closes the cycle counts for nothing.
     pub recursive: bool,
+    /// Loops whose trip count is not known, each counted as one pass.
+    pub loops_once: u32,
 }
 
 impl Cycles {
-    fn add(&mut self, o: Cycles) {
-        self.straight = self.straight.saturating_add(o.straight);
-        self.taken = self.taken.saturating_add(o.taken);
+    /// `o` run `m` times: the cycles scale, the flags do not.
+    fn add_times(&mut self, o: Cycles, m: u32) {
+        self.straight = self.straight.saturating_add(o.straight.saturating_mul(m));
+        self.taken = self.taken.saturating_add(o.taken.saturating_mul(m));
         self.unknown += o.unknown;
         self.recursive |= o.recursive;
+        self.loops_once += o.loops_once;
     }
 }
 
-/// One loop: a branch back to a label already passed in the same routine. The cost is one pass from that label to the
-/// branch (the trip count is a run-time figure), with the routines called inside it added.
+/// One loop: a branch back to a label already passed in the same routine. `pass` is one pass from that label to the
+/// branch with the routines called inside it added. When the loop is a counter loop whose count is a constant set just
+/// before it (`movlw N / movwf R / L: decfsz R, f / bra L`, or `clrf R` for 256: what a delay is made of), `passes` is
+/// that count and `total` is every pass; otherwise the trip count is a run-time figure, `passes` is `None` and `total`
+/// equals `pass`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LoopCycles {
     pub label: String,
     pub pass: Cycles,
+    pub passes: Option<u32>,
+    pub total: Cycles,
 }
 
-/// The cycles of one routine: its own instructions, those with its calls added, and its loops.
+/// The cycles of one routine: its own instructions, those with its calls added, and its loops. A counted loop
+/// counts all its passes in both; any other loop counts one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoutineCycles {
     pub name: String,
     pub own: Static,
     /// Call instructions in the routine.
     pub calls: u32,
+    /// Loops in the routine whose trip count is not known (each counted once in `own`).
+    pub loops_once: u32,
     pub with_calls: Cycles,
     pub loops: Vec<LoopCycles>,
 }
@@ -201,22 +214,48 @@ struct RawLoop {
     label: String,
     straight: u32,
     taken: u32,
-    calls: Vec<String>,
+    /// Calls in the body, with the passes of the loops inside this one already applied.
+    calls: Vec<(String, u32)>,
+    passes: Option<u32>,
+    total_straight: u32,
+    total_taken: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Seen {
+    straight: u32,
+    taken: u32,
+    calls: usize,
+    /// Index of the first instruction after the label.
+    ins: usize,
 }
 
 #[derive(Default)]
 struct Raw {
     name: String,
     own: Static,
-    calls: Vec<String>,
+    calls: Vec<(String, u32)>,
     loops: Vec<RawLoop>,
+    loops_once: u32,
     /// Running totals and call count at each label seen so far in this routine.
-    seen: std::collections::HashMap<String, (u32, u32, usize)>,
+    seen: std::collections::HashMap<String, Seen>,
+    /// The instructions of the routine, in order.
+    text: Vec<String>,
+    /// Totals before the previous instruction, and its cost.
+    prev: Option<(u32, u32, Cost)>,
 }
 
-/// The target of a branch or call: its first operand (`call F`, `bra _L3`, `goto X`), `None` for an instruction without one.
+/// The first operand of an instruction (`call F`, `bra _L3`, `decfsz R, f`), empty when there is none.
 fn operand(ins: &str) -> &str {
     ins.split_whitespace().nth(1).map_or("", |o| o.trim_end_matches(','))
+}
+
+fn operands(ins: &str) -> Vec<&str> {
+    ins.split_whitespace().skip(1).flat_map(|o| o.split(',')).filter(|o| !o.is_empty()).collect()
+}
+
+fn mnemonic(ins: &str) -> String {
+    ins.split_whitespace().next().unwrap_or("").to_ascii_lowercase()
 }
 
 fn is_branch(mn: &str) -> bool {
@@ -227,10 +266,56 @@ fn is_call(mn: &str) -> bool {
     matches!(mn, "call" | "rcall" | "fcall" | "callw")
 }
 
+fn number(t: &str) -> Option<u32> {
+    let t = t.trim();
+    match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(h) => u32::from_str_radix(h, 16).ok(),
+        None => t.parse().ok(),
+    }
+}
+
+/// The constant pass count of a counter loop that starts at instruction `start` and whose last instruction before the
+/// back branch is `text.last()`: `decfsz R, f` with `R` set to a constant by the instruction(s) just before `start`,
+/// and nothing in the body that touches `R` or calls out. 0 and `clrf` are 256.
+fn counted(text: &[String], start: usize, calls_in_body: bool) -> Option<(u32, usize)> {
+    let dec = text.last()?;
+    if mnemonic(dec) != "decfsz" || calls_in_body {
+        return None;
+    }
+    let ops = operands(dec);
+    let reg = *ops.first()?;
+    if !matches!(ops.get(1).copied(), Some("f") | Some("1")) || start == 0 || start >= text.len() {
+        return None;
+    }
+    // Everything in the body but the `decfsz` itself leaves `R` alone.
+    let dec_at = text.len() - 1;
+    if text[start..dec_at].iter().any(|t| operands(t).iter().any(|o| o.eq_ignore_ascii_case(reg))) {
+        return None;
+    }
+    let init = &text[start - 1];
+    let n = match mnemonic(init).as_str() {
+        "clrf" if operands(init).first().is_some_and(|o| o.eq_ignore_ascii_case(reg)) => 256,
+        "movwf" if operands(init).first().is_some_and(|o| o.eq_ignore_ascii_case(reg)) && start >= 2 => {
+            let lw = &text[start - 2];
+            if mnemonic(lw) != "movlw" {
+                return None;
+            }
+            match number(operand(lw))? {
+                0 => 256,
+                n if n <= 255 => n,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some((n, dec_at))
+}
+
 /// Static cycles per routine for the code in `asm` (the text of the `.S` file). A routine runs from one label that is
-/// not local (`_L...`) to the next. Every instruction counts once, so a loop is one pass; a `call` adds the whole of the
-/// routine it calls (once per call instruction); each loop is listed with the cost of one pass. `words` is the size of
-/// an instruction in words (what a skip passes over).
+/// not local (`_L...`) to the next. Every instruction counts once, except the passes of a counter loop with a constant
+/// count (see `LoopCycles`), which all count; a `call` adds the whole of the routine it calls (once per call
+/// instruction, times the passes of the counted loops around it); every loop is listed. `words` is the size of an
+/// instruction in words (what a skip passes over).
 pub fn analyse(core: Core, asm: &str, words: &dyn Fn(&str) -> u32) -> Vec<RoutineCycles> {
     let mut raws: Vec<Raw> = Vec::new();
     let mut in_code = false;
@@ -247,7 +332,8 @@ pub fn analyse(core: Core, asm: &str, words: &dyn Fn(&str) -> u32) -> Vec<Routin
             if !label.starts_with("_L") {
                 raws.push(Raw { name: label.to_string(), ..Raw::default() });
             } else if let Some(r) = raws.last_mut() {
-                r.seen.insert(label.to_string(), (r.own.straight, r.own.taken, r.calls.len()));
+                let seen = Seen { straight: r.own.straight, taken: r.own.taken, calls: r.calls.len(), ins: r.text.len() };
+                r.seen.insert(label.to_string(), seen);
             }
             continue;
         }
@@ -257,23 +343,53 @@ pub fn analyse(core: Core, asm: &str, words: &dyn Fn(&str) -> u32) -> Vec<Routin
         }
         let next = lines[i + 1..].iter().find_map(|l| instruction(l)).map_or(1, words);
         let r = raws.last_mut().unwrap();
-        let mn = ins.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+        let mn = mnemonic(ins);
         let Some(k) = cost(core, ins, next) else {
             r.own.unknown += 1;
+            r.text.push(ins.to_string());
+            r.prev = None;
             continue;
         };
         if is_call(&mn) {
-            r.calls.push(operand(ins).to_string());
+            r.calls.push((operand(ins).to_string(), 1));
         }
+        r.text.push(ins.to_string());
+        let before = (r.own.straight, r.own.taken);
+        let mut delta: Option<(i64, i64)> = None;
         if is_branch(&mn)
-            && let Some(&(f, tk, c)) = r.seen.get(operand(ins))
+            && let Some(&lab) = r.seen.get(operand(ins))
         {
-            let lp = RawLoop { label: operand(ins).to_string(), straight: r.own.straight + k.taken - f, taken: r.own.taken + k.taken - tk, calls: r.calls[c..].to_vec() };
+            let single_f = r.own.straight + k.taken - lab.straight;
+            let single_t = r.own.taken + k.taken - lab.taken;
+            let mut lp = RawLoop { label: operand(ins).to_string(), straight: single_f, taken: single_t, calls: r.calls[lab.calls..].to_vec(), passes: None, total_straight: single_f, total_taken: single_t };
+            // The branch is the last instruction pushed; the `decfsz` before it is the one before that.
+            let body = &r.text[..r.text.len() - 1];
+            let has_call = r.calls.len() > lab.calls;
+            if let (Some((n, _)), Some((pf, pt, dk))) = (counted(body, lab.ins, has_call), r.prev) {
+                let (bf, bt) = (pf - lab.straight, pt - lab.taken);
+                let pass = |b: u32| u64::from(n - 1) * u64::from(b + dk.fall + k.taken) + u64::from(b + dk.taken);
+                let (tf, tt) = (pass(bf).min(u64::from(u32::MAX)) as u32, pass(bt).min(u64::from(u32::MAX)) as u32);
+                lp.passes = Some(n);
+                lp.total_straight = tf;
+                lp.total_taken = tt;
+                // The totals so far hold this loop once, branch included after this instruction is added.
+                delta = Some((i64::from(lab.straight) + i64::from(tf) - i64::from(before.0 + k.fall), i64::from(lab.taken) + i64::from(tt) - i64::from(before.1 + k.fall)));
+                for c in &mut r.calls[lab.calls..] {
+                    c.1 = c.1.saturating_mul(n);
+                }
+            } else {
+                r.loops_once += 1;
+            }
             r.loops.push(lp);
         }
         r.own.ins += 1;
         r.own.straight += k.fall;
         r.own.taken += k.taken;
+        if let Some((df, dt)) = delta {
+            r.own.straight = (i64::from(r.own.straight) + df).clamp(0, i64::from(u32::MAX)) as u32;
+            r.own.taken = (i64::from(r.own.taken) + dt).clamp(0, i64::from(u32::MAX)) as u32;
+        }
+        r.prev = Some((before.0, before.1, k));
     }
     let index: std::collections::HashMap<&str, usize> = {
         let mut m = std::collections::HashMap::new();
@@ -293,16 +409,24 @@ pub fn analyse(core: Core, asm: &str, words: &dyn Fn(&str) -> u32) -> Vec<Routin
             name: r.name.clone(),
             own: r.own,
             calls: r.calls.len() as u32,
+            loops_once: r.loops_once,
             with_calls: memo[i],
             loops: r
                 .loops
                 .iter()
                 .map(|l| {
-                    let mut c = Cycles { straight: l.straight, taken: l.taken, ..Cycles::default() };
-                    for n in &l.calls {
-                        c.add(callee_cost(n, &raws, &index, &mut state, &mut memo));
+                    let mut pass = Cycles { straight: l.straight, taken: l.taken, ..Cycles::default() };
+                    let mut total = Cycles { straight: l.total_straight, taken: l.total_taken, ..Cycles::default() };
+                    for (n, m) in &l.calls {
+                        let c = callee_cost(n, &raws, &index, &mut state, &mut memo);
+                        pass.add_times(c, *m);
+                        total.add_times(c, m.saturating_mul(l.passes.unwrap_or(1)));
                     }
-                    LoopCycles { label: l.label.clone(), pass: c }
+                    if l.passes.is_none() {
+                        pass.loops_once += 1;
+                        total.loops_once += 1;
+                    }
+                    LoopCycles { label: l.label.clone(), pass, passes: l.passes, total }
                 })
                 .collect(),
         })
@@ -323,9 +447,10 @@ fn inclusive(i: usize, raws: &[Raw], index: &std::collections::HashMap<&str, usi
     }
     state[i] = 1;
     let r = &raws[i];
-    let mut c = Cycles { straight: r.own.straight, taken: r.own.taken, unknown: r.own.unknown, recursive: false };
-    for n in &r.calls {
-        c.add(callee_cost(n, raws, index, state, memo));
+    let mut c = Cycles { straight: r.own.straight, taken: r.own.taken, unknown: r.own.unknown, recursive: false, loops_once: r.loops_once };
+    for (n, m) in &r.calls {
+        let callee = callee_cost(n, raws, index, state, memo);
+        c.add_times(callee, *m);
     }
     state[i] = 2;
     memo[i] = c;
@@ -429,7 +554,7 @@ mod tests {
         let r = analyse(Core::Pic18, asm, &crate::asm::words_of);
         assert_eq!(r[0].loops.len(), 1);
         // decfsz 1 (2 when it skips the one-word bra) + bra 2.
-        assert_eq!(r[0].loops[0].pass, Cycles { straight: 3, taken: 4, unknown: 0, recursive: false });
+        assert_eq!(r[0].loops[0].pass, Cycles { straight: 3, taken: 4, loops_once: 1, ..Cycles::default() });
         // A forward branch is no loop.
         let fwd = "PSECT code,class=CODE\nR:\n    bra _L2\n_L2:\n    return\n";
         assert!(analyse(Core::Pic18, fwd, &crate::asm::words_of)[0].loops.is_empty());
@@ -446,6 +571,48 @@ mod tests {
         assert_eq!(r[0].calls, 2);
         // The loop: call B 2 + B 3 + bra 2.
         assert_eq!(r[0].loops[0].pass.straight, 7);
+    }
+
+    #[test]
+    fn a_counter_loop_with_a_constant_count_counts_every_pass() {
+        // movlw 1 + movwf 1, then 3 passes of decfsz 1 + bra 2 with the last decfsz skipping the bra (2): 2*3 + 2 = 8.
+        let asm = "PSECT code,class=CODE\nR:\n    movlw 3\n    movwf D0, c\n_L1:\n    decfsz D0, f, c\n    bra _L1\n    return\n";
+        let r = analyse(Core::Pic18, asm, &crate::asm::words_of);
+        assert_eq!(r[0].loops[0].passes, Some(3));
+        assert_eq!(r[0].loops[0].total.straight, 8);
+        assert_eq!(r[0].own.straight, 2 + 8 + 2);
+        assert_eq!(r[0].loops_once, 0);
+        // clrf is 256 passes: 255 * 3 + 2.
+        let clr = "PSECT code,class=CODE\nR:\n    clrf D0, c\n_L1:\n    decfsz D0, f, c\n    bra _L1\n    return\n";
+        let r = analyse(Core::Pic18, clr, &crate::asm::words_of);
+        assert_eq!(r[0].loops[0].passes, Some(256));
+        assert_eq!(r[0].loops[0].total.straight, 255 * 3 + 2);
+    }
+
+    #[test]
+    fn nested_counter_loops_and_a_loop_that_touches_its_counter() {
+        // Outer 2 passes of (inner 3 passes: 8 cycles, then decfsz 1 + bra 2), the last outer decfsz skipping: inner set-up 2.
+        let asm = "PSECT code,class=CODE\nR:\n    movlw 2\n    movwf D0, c\n_L1:\n    movlw 3\n    movwf D1, c\n_L2:\n    decfsz D1, f, c\n    bra _L2\n    decfsz D0, f, c\n    bra _L1\n    return\n";
+        let r = analyse(Core::Pic18, asm, &crate::asm::words_of);
+        // Each outer body: 2 + 8 = 10; pass 1: 10 + 1 + 2 = 13; pass 2: 10 + 2 = 12.
+        assert_eq!(r[0].loops[1].passes, Some(2));
+        assert_eq!(r[0].loops[1].total.straight, 25);
+        // A body that reads the counter is not a constant-count loop.
+        let touched = "PSECT code,class=CODE\nR:\n    movlw 3\n    movwf D0, c\n_L1:\n    movf D0, w, c\n    decfsz D0, f, c\n    bra _L1\n    return\n";
+        let r = analyse(Core::Pic18, touched, &crate::asm::words_of);
+        assert_eq!(r[0].loops[0].passes, None);
+        assert_eq!(r[0].loops_once, 1);
+        // A call in the body is not either (the callee may use the register); a forward `decfsz` set-up is missing here too.
+        let called = "PSECT code,class=CODE\nR:\n    movlw 3\n    movwf D0, c\n_L1:\n    call F\n    decfsz D0, f, c\n    bra _L1\n    return\nF:\n    return\n";
+        assert_eq!(analyse(Core::Pic18, called, &crate::asm::words_of)[0].loops[0].passes, None);
+    }
+
+    #[test]
+    fn a_call_in_a_loop_with_no_known_count_is_added_once() {
+        let asm = "PSECT code,class=CODE\nR:\n_L1:\n    call F\n    bra _L1\nF:\n    return\n";
+        let r = analyse(Core::Pic18, asm, &crate::asm::words_of);
+        assert_eq!(r[0].with_calls.straight, 2 + 2 + 2);
+        assert_eq!(r[0].with_calls.loops_once, 1);
     }
 
     #[test]
