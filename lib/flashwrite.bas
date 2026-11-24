@@ -73,7 +73,200 @@ Module Flashwrite
 ' (DS80000498K, DS80000512J, DS80000514J) list nothing for the program memory; the instruction after WR needs no NOP. TBLPTR and TABLAT
 ' are saved by the compiler's interrupt handlers (ABI.md), so the reads need no interrupt lock; erase and write turn interrupts off from
 ' before TBLPTR is loaded to the end of the operation.
-#if _has(EEADR)
+' dsPIC33CK64MC105 (DS70005399D chapter 5, DS70000609F; chosen with `#if _has(NVMKEY)`): run-time self-programming through TBLRDL/TBLWTL/TBLWTH and NVMCON. A word here is the low 16 bits of one 24-bit instruction;
+' the high byte this module writes is FFh, so an erased instruction (FFFFFFh) reads FFFFh and a written value v is stored as FF:v. Word addresses are instruction numbers 0..22399 (program address 2n [Figure 4-2 p.36]).
+' A sector is the erase page of 1024 instructions, 2048 addressable bytes [5.0 p.63, 5.2 p.64], so sector s starts at word 1024 s. Only 21 pages lie in user memory: the 22nd (words 21504 to 22527) holds the
+' device configuration at 0xAF00 [Figure 4-2], so FlashLastSector is 20 and every routine refuses anything above it. An erase destroys code that lives in the sector: the compiler fills flash from word 0 upward, so check
+' the code size (basil --report) before using a sector, and keep a program that needs a larger code area from using this module.
+' Programming is the double word, two adjacent instructions on an even word address (NVMOP = 0001, NVMCON = 4001h) [Register 5-1 p.66 to 67]; the two write latches are at 0xFA0000 and 0xFA0002 [Figure 4-1 p.35], loaded with
+' TBLWTL and TBLWTH with TBLPAG = 0xFA. The ECC is a 7-bit parity over each pair of instructions (48 data bits) and cannot be disabled; a double-bit error is a hard trap [5.4 p.71], and a pair must be programmed
+' once between erases [DS70000609F 4.5 note 2: not more than twice, and the parity cannot go from 0 back to 1]. So FlashWriteWord writes only into a pair that is wholly erased (it programs the other word as FFFFh, which
+' changes nothing), FlashWritePair writes both words at once, and FlashUpdateWord rewrites the page when the pair is already in use. A page erase is NVMOP = 0011 (NVMCON = 4003h) with the page address in NVMADRL
+' and NVMADRH. Every operation is NVMKEY = 55h then AAh, then WR (NVMCON bit 15), then two NOPs, with interrupts off [5.2 p.64, DS70000609F 4.4, 4.5]; the CPU stalls until the cycle ends (a page erase takes up to 20 ms,
+' a double-word write 20 us [Table 31-17 p.458]) and the flag WR clears itself. WRERR (bit 13) reports a bad sequence. TBLPAG is 0xFA only inside the operation and is put back to 0, the value the compiler's constant
+' table reads assume [FACTS]; interrupts are off meanwhile. The code is not reentrant: do not call it from a handler and from the main program. The part is rated for 10,000 erase/write cycles [D130]; FlashUpdateWord does nothing
+' when the word already holds the value. A code-protected or write-inhibited part makes the operations fail, which the read-back reports. The silicon errata (DS80000910C) list nothing for the flash. FlashUpdateWord keeps the
+' sector in a 2048-byte RAM image.
+#if _has(NVMKEY)
+Dim IntEn As INTCON2.15
+Dim NvmWr As NVMCON.15
+Dim NvmErr As NVMCON.13
+
+' Words in a sector (the erase page), and the number of the last sector (the one after it holds the configuration).
+Public Const FlashSectorWords = 1024
+Public Const FlashLastSector As Word = _FlashBytes / 2048 - 1
+Const FlashWords As Word = (FlashLastSector + 1) * 1024
+
+' The word address of the first word of sector s.
+Public Function FlashSectorAddr(ByVal sector As Word) As Word
+    Result = sector << 10
+End Function
+
+' Program address of the word to read, the two words to write.
+Dim fwAddr As Word
+Dim fwVal As Word
+Dim fwW1 As Word
+
+' The word at word address addr (65535 = FFFFh when erased).
+Public Function FlashReadWord(ByVal addr As Word) As Word
+    fwAddr = addr << 1
+    Asm
+        mov #FLASHWRITE_FWADDR, w3
+        mov [w3], w1
+        tblrdl [w1], w0
+        mov #FLASHWRITE_FWVAL, w3
+        mov w0, [w3]
+    End Asm
+    Result = fwVal
+End Function
+
+' The unlock sequence and WR for the NVMCON operation set up by the caller, then the wait for the end of the cycle. Interrupts are off.
+Sub Unlock()
+    Asm
+        mov #0x55, w0
+        mov w0, 0x8D6
+        mov #0xAA, w0
+        mov w0, 0x8D6
+        bset 0x8D0, #15
+        nop
+        nop
+    End Asm
+    While NvmWr = 1
+    Wend
+End Sub
+
+' True when the 1024 words of sector `sector` all read FFFFh.
+Function Blank(ByVal sector As Word) As Boolean
+    Dim i As Word
+    Dim a As Word
+    a = sector << 10
+    Result = True
+    For i = 0 To 1023
+        If FlashReadWord(a + i) <> 65535 Then
+            Result = False
+            Exit
+        End If
+    Next
+End Function
+
+' Erases the sector (every word becomes FFFFh), up to 20 ms. Returns 1 on success, 0 for a sector past FlashLastSector or when the sector does not read back erased.
+Public Function FlashEraseSector(ByVal sector As Word) As Byte
+    Dim ie As Boolean
+    Result = 0
+    If sector <= FlashLastSector Then
+        ie = IntEn = 1
+        IntEn = 0
+        NVMCON = $4003
+        NVMADRL = sector << 11
+        NVMADRH = 0
+        Unlock()
+        If ie Then
+            IntEn = 1
+        End If
+        If Blank(sector) Then
+            Result = 1
+        End If
+    End If
+End Function
+
+' Programs the double word at the even word address `addr` with w0 and w1 (the high byte of each instruction is FFh), the pair being erased: about 20 us. No check of the pair, the range or the result.
+Sub ProgPair(ByVal addr As Word, ByVal w0 As Word, ByVal w1 As Word)
+    Dim ie As Boolean
+    ie = IntEn = 1
+    IntEn = 0
+    fwAddr = addr << 1
+    fwVal = w0
+    fwW1 = w1
+    NVMCON = $4001
+    NVMADRL = fwAddr
+    NVMADRH = 0
+    Asm
+        mov #0xFA, w0
+        mov w0, 0x54
+        mov #FLASHWRITE_FWVAL, w3
+        mov [w3], w1
+        mov #FLASHWRITE_FWW1, w3
+        mov [w3], w2
+        mov #0xFF, w3
+        clr w0
+        tblwtl w1, [w0]
+        tblwth w3, [w0]
+        mov #2, w0
+        tblwtl w2, [w0]
+        tblwth w3, [w0]
+    End Asm
+    Unlock()
+    Asm
+        clr w0
+        mov w0, 0x54
+    End Asm
+    If ie Then
+        IntEn = 1
+    End If
+End Sub
+
+' Programs the two words at the even word address `addr` (value0 there, value1 at addr + 1) in one operation, about 20 us. Both must be erased (FFFFh) and in a sector up to FlashLastSector. Returns 1 when
+' both read back as written, 0 when not (the address is odd or out of range, a word was not erased, or the part is write-protected).
+Public Function FlashWritePair(ByVal addr As Word, ByVal value0 As Word, ByVal value1 As Word) As Byte
+    Result = 0
+    If (addr And 1) = 0 And addr < FlashWords Then
+        If FlashReadWord(addr) = 65535 And FlashReadWord(addr + 1) = 65535 Then
+            If value0 <> 65535 Or value1 <> 65535 Then
+                ProgPair(addr, value0, value1)
+            End If
+            If FlashReadWord(addr) = value0 And FlashReadWord(addr + 1) = value1 Then
+                Result = 1
+            End If
+        End If
+    End If
+End Function
+
+' Programs one word of a pair that is still wholly erased, the other word of the pair staying FFFFh, about 20 us. The partner word cannot be written afterwards (the pair has been programmed once, see above):
+' use FlashWritePair for both words, or FlashUpdateWord. Returns 1 when the word reads back as value, 0 when not (the pair was not erased, the address is out of range, or write protection).
+Public Function FlashWriteWord(ByVal addr As Word, ByVal value As Word) As Byte
+    If (addr And 1) = 0 Then
+        Result = FlashWritePair(addr, value, 65535)
+    Else
+        Result = FlashWritePair(addr - 1, 65535, value)
+    End If
+End Function
+
+' Replaces one word and keeps the other 1023 of its sector, up to 25 ms. Does nothing when the word already holds value, and uses the word write when its pair is erased. Otherwise the sector goes to a RAM image,
+' is erased and is programmed again, pair by pair (the pairs that are wholly FFFFh are skipped). Returns 1 when the word reads back as value, 0 on failure; after a failure in the middle the sector may be erased, so a program
+' that needs its data should write it again.
+Public Function FlashUpdateWord(ByVal addr As Word, ByVal value As Word) As Byte
+    Dim img(1024) As Word
+    Dim base As Word
+    Dim i As Word
+    Result = 0
+    If addr >= FlashWords Then
+        Exit
+    End If
+    If FlashReadWord(addr) = value Then
+        Result = 1
+    ElseIf FlashReadWord(addr And 65534) = 65535 And FlashReadWord(addr Or 1) = 65535 Then
+        Result = FlashWriteWord(addr, value)
+    Else
+        base = addr And 64512
+        For i = 0 To 1023
+            img(i) = FlashReadWord(base + i)
+        Next
+        img(addr And 1023) = value
+        If FlashEraseSector(addr >> 10) = 1 Then
+            i = 0
+            While i < 1024
+                If img(i) <> 65535 Or img(i + 1) <> 65535 Then
+                    ProgPair(base + i, img(i), img(i + 1))
+                End If
+                i = i + 2
+            Wend
+            If FlashReadWord(addr) = value Then
+                Result = 1
+            End If
+        End If
+    End If
+End Function
+#elseif _has(EEADR)
 Dim IntEn As INTCON.7
 Dim NvmWr As EECON1.1
 

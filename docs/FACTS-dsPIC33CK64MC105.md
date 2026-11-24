@@ -87,7 +87,14 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   (`REFSEL` 000 [Register 12-5 p.219]), so there is no FVR reference. Checked in the simulator: the register values after `AdcInit`, `SHRRDY`, `AdcPin`, and that `AdcRead`, `AdcReadAvg`, `AdcMillivolts` and `ADin`
   run to the end (`tests/exec_dspic/lib_adc.bas`). **Not run:** an actual conversion; MDB does not model the ADC (`ANnRDY` never sets, so `AdcRead` returns 0 after its time-out). Not offered: differential inputs
   (48-pin `ANN0` only), signed or fractional results, scan, triggers from other modules, comparators and the oversampling filters.
-* Not done: `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+* `flashwrite`, chosen with `#if _has(NVMKEY)`: a word is the low 16 bits of an instruction (the module writes FFh in the high byte, so erased reads FFFFh); word addresses are instruction numbers (program address 2n).
+  A sector is the erase page of 1024 instructions [DS 5.2 p.64]; page 21 holds the configuration at 0xAF00 [Figure 4-2 p.36], so `FlashLastSector` is 20 and nothing above it is touched. Programming is the
+  double word (`NVMCON` = 4001h, latches at 0xFA0000 and 0xFA0002 through `TBLPAG` = 0xFA) and a page erase is `NVMCON` = 4003h with `NVMADRL`/`NVMADRH` = the page address; each is `NVMKEY` 55h, AAh, `WR`, two NOPs
+  with interrupts off [Register 5-1 p.66 to 67, Figure 4-1 p.35, DS70000609F 4.4, 4.5]. The ECC covers each pair of instructions (7 parity bits, cannot be disabled, a double-bit error is a hard trap [DS 5.4 p.71]),
+  so a pair is programmed once between erases: `FlashWriteWord` only into a wholly erased pair, `FlashWritePair` for both words, `FlashUpdateWord` rewrites the page from a 2048-byte RAM image when the pair is in use.
+  `TBLPAG` is put back to 0. The errata (DS80000910C) list nothing for the flash. Checked in the simulator (MDB models the NVM controller): erase, word write, refusal of the partner write, pair write, update by page
+  rewrite with the neighbours kept, `TBLPAG` = 0 (`tests/exec_dspic/lib_flashwrite.bas`). **Not checked:** the timing (20 us, 20 ms), write protection, and a power loss in the middle of an erase.
+* Not done: `eeprom` (the part has none), `spi`, `i2c`, `pwm`, `dma`.
 
 ## Not yet generated
 
