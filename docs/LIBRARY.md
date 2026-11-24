@@ -214,6 +214,26 @@ register values and set-up, not waveforms (no part of the PIC18-Q41 transfer cod
 does not shift the UART transmit buffer out (so `lib_serial` sends one byte and does not flush), and it does
 not vector on `SWIF` (the interrupt tests use `TMR0IF`, which a program can set).
 
+### dsPIC33CK64MC105 (DS70005399D, errata DS80000910C; facts in `FACTS-dsPIC33CK64MC105.md`)
+
+The first 16-bit part: its own code generator, a 16-bit data space (8 KB RAM), no data EEPROM, `Fcy` = FOSC / 2. Each module chooses its dsPIC branch by a register no other supported part has (`U1MODE`, `U2MODE`, `PLLFBD`,
+`T1CON.TCKPS`, `ADCON1L`, `NVMKEY`), tested before the `RCON` test because this part has an `RCON` too. The other families' code is unchanged (their builds are byte-identical). The tests are in `tests/exec_dspic`
+(`scripts/exec-test33.py`, MPLAB X simulator); they check register values and set-up, not waveforms, and nothing was run on a real part. The part is **in progress**, not yet listed as supported in `MANUAL.md`.
+
+| Module | dsPIC33CK64MC105 |
+|---|---|
+| `intosc` | done (FRC with the PLL at 200, 160, 150, 120, 100, 80, 64, 60, 50, 40, 32, 25, 20 and 16 MHz, FRC divided 8 .. 0.03125 MHz; OSCCON unlock switch; needs `Config FCKSM = CSECMD`) |
+| `system` | done (`RCON` reset flags, `SysClockHz` from OSCCON/PLL, `pwrsav` Sleep, Sleep-mode watchdog Snooze; the timed sleeps were not run in the simulator) |
+| `timer` | done (Timer1 only: prescale 1:1, 1:8, 1:64, 1:256, period register, `T1IF`/`T1IE`) |
+| `serial` | done (UART1 on RB6 (TX) and RB7 (RX) through PPS, `BRGH` = 1) |
+| `serial2` | done (UART2 on RB5 (TX) and RB4 (RX) through PPS) |
+| `adc` | done (shared 12-bit core, software one-shot trigger; channel = AN number 0..15, `AdcChTemp` = AN16, `AdcChBandGap` = AN17; AVDD/AVSS reference only; a conversion is not modelled by the simulator) |
+| `flashwrite` | done (page of 1024 words, `FlashLastSector` = 20; double-word programming with the ECC rule: `FlashWriteWord` into an erased pair, `FlashWritePair`, `FlashUpdateWord` through a 2 KB RAM image) |
+| `delay`, `strings`, `bits`, `format`, `fmath`, `floatlib`, `glcd`, `lcd`, `irremote`, `buttons`, `shift`, `pulse`, `x10` | build; **not reviewed** for this part (`floatlib` needs the `Float` support the dsPIC back end does not have yet) |
+| `gpio`, `pinio` | build; **not ported**: the pin numbers assume 8 pins a port, and port B has 16 |
+| `eeprom`, `clc`, `dma`, `onewire` | `#error`: `eeprom` (the part has no data EEPROM, use `flashwrite`); `clc` (four CLCs, but the module is the PIC18F27Q10's), `dma` (a DMA controller, but the module is the PIC18-Q41's) and `onewire` (its message talks of a PIC16 clock) are not ported |
+| `spi`, `i2c`, `pwm`, `softserial`, `aht30`, `oled`, `rtcc`, `rtccspi`, `epaper` | **not ported**: they fail with an undeclared register (`SSP1CON1`, `PIR3`, `PIR4`, `INTCON`); they should stop with `#error` instead |
+
 How to port a module (the pattern used so far):
 
 1. List the registers and bit fields the module names and compare them with the new part's device

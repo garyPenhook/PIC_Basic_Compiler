@@ -18,7 +18,7 @@ cp "$here/manual.css" "$tmp/"
 cp -r "$docs/images" "$tmp/"
 (cd "$tmp" && pandoc m.md -f gfm -t html5 -s --toc --toc-depth=3 \
   --metadata title="Basil Manual" \
-  --metadata subtitle="PIC18 and PIC16 · basil ${version}" \
+  --metadata subtitle="PIC18, PIC16 and dsPIC33 · basil ${version}" \
   --metadata date="$(date +%F)" -c manual.css -o m.html)
 weasyprint "$tmp/m.html" "$docs/Basil_Manual.pdf"
 echo "wrote docs/Basil_Manual.pdf"
