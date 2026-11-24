@@ -65,7 +65,13 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   `TECS` 00 T1CK pin, 01 Fp, 10 FOSC, 11 FRC [Register 19-1 p.330-331, Figure 19-1 p.329]. `PR1` is FFFFh after a Reset. Flag `IFS0.T1IF` (bit 1), enable `IEC0.T1IE` (bit 1);
   T1CK is routed with `RPINR2.T1CKR`. Checked in the simulator: `Timer1StartPeriod` register values and three period flags, `Timer1StartSource` register value, and that
   `Timer1Read` counts (`tests/exec_dspic/lib_timer.bas`). Not offered: the gate, asynchronous counter mode, Sleep operation, a pin-number `FreqCount`.
-* Not done: `intosc`, `system`, `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
+* `intosc`, chosen with `#if _has(PLLFBD)`: `Clock` is FOSC (Fcy = FOSC/2 [DS 9.2 p.154]). Speeds: FRCPLL at 200, 160, 150, 120, 100, 80, 64, 60, 50, 40, 32, 25, 20 and 16 MHz
+  (FVCO = 8 MHz * M, FOSC = FVCO / (2 * N2 * N3), N1 = 1; M 64 to 150 keeps FVCO inside 400 to 1600 MHz [DS 9.1 p.151, Equations 9-1 and 9-2 p.152, Registers 9-2, 9-3, 9-5 p.160 to 164]) and
+  FRCDIVN at 8 down to 0.03125 MHz. The switch writes OSCCON[15:8] (NOSC) and then OSCCON[7:0] (OSWEN) each after its unlock pair, 0x78 0x9A and 0x46 0x57 back to back [DS 9.9 p.157];
+  `Config FCKSM = CSECMD` is needed (the erased value 1x disables clock switching [Register 28-5 p.416]). A PLL is left through plain FRC before its dividers change [DS 9.1 p.152].
+  Checked in the simulator: the registers and COSC/LOCK after start-up at 100 MHz, SetClock(200) and SetClock(8), and the refusal of an unknown speed (`tests/exec_dspic/lib_intosc.bas`);
+  the clock was not measured on a pin. The multi-bit fields (`COSC`, `FRCDIV`) are masked by hand because the back end has no multi-bit field access yet.
+* Not done: `system`, `serial2`, `adc`, `eeprom` (the part has none), `flashwrite`, `spi`, `i2c`, `pwm`, `dma`.
 
 ## Not yet generated
 

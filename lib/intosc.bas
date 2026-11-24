@@ -60,7 +60,183 @@ Module IntOsc
 ' stable) and, for a PLL speed, OSCCON2.PLLRDY [Registers 2-1, 2-2]. The tuning bits OSCTUNE.TUN are kept. With another FOSC a PLL speed
 ' is refused: SetClock returns False and the start-up code runs the internal block without the PLL (`System.SysClockOk()` is False). SetClockDiv(mhz, shift) is
 ' SetClock(mhz >> shift) there (16 >> 5 = 0.5 MHz is not reachable that way, use Clock).
-#if _has(OSCCON.IRCF)
+' dsPIC33CK64MC105 (DS70005399D chapter 9; chosen with `#if _has(PLLFBD)`): `Clock` is FOSC and the instruction clock is FOSC/2 [9.2 p.154]. The part starts on the 8 MHz FRC (FNOSC = FRCDIVN with FRCDIV = 1:1, or FRC). The module runs it
+' either divided (FRCDIVN, FRC / 1, 2, 4, 8, 16, 32, 64 or 256 [CLKDIV p.160]) or through the PLL from FRC (FRCPLL): FVCO = 8 MHz * M / N1 with N1 = 1 (PLLPRE), FPLLO = FVCO / (N2 * N3) (POST1DIV, POST2DIV) and FOSC = FPLLO / 2
+' [Equations 9-1, 9-2 p.152, Example 9-2 p.153]. The PLL limits are FPLLI 8 to 64 MHz, FPFD at least 8 MHz and FVCO 400 to 1600 MHz [9.1 p.151]; M is 16 to 200 [Register 9-3 p.162] and N2 >= N3 [Register 9-5 p.164]. Clock values accepted:
+'   200 (M 100, N2 2), 160 (80, 2), 150 (150, 4), 120 (120, 4), 100 (100, 4), 80 (80, 4), 64 (64, 4), 60 (120, 4 x 2), 50 (100, 4 x 2), 40 (80, 4 x 2), 32 (64, 4 x 2),
+'   25 (100, 4 x 4), 20 (80, 4 x 4), 16 (64, 4 x 4) MHz    FRCPLL (N3 is 1 unless shown)
+'   8, 4, 2, 1, 0.5, 0.25, 0.125, 0.03125 MHz               FRCDIVN, FRCDIV = 0, 1, 2, 3, 4, 5, 6, 7
+' `Config FCKSM = CSECMD` is required: with the default (clock switching disabled [Register 28-5 p.416]) the switch is ignored and `Clock` does not match the hardware (SetClock returns False). The switch is a write of OSCCON[15:8]
+' and then OSCCON[7:0] (OSWEN) each after its unlock pair (0x78, 0x9A and 0x46, 0x57, back to back) [9.9 p.157]; the module masks interrupts (INTCON2.GIE) around the pairs and then waits, bounded, for OSWEN to clear and, for the PLL, LOCK.
+' The PLL dividers may not change while the PLL runs and a PLL source cannot be switched to another PLL source directly [9.1 p.152]: when the part runs on a PLL the module goes through the plain FRC first.
+' Start-up expects FNOSC = FRC or FRCDIVN (the default). SetClock(mhz) takes the whole-MHz speeds above (not 0.5 and below). Like the PIC modules, the timing of DelayMs, DelayUs and the libraries comes from the compile-time `Clock`.
+#if _has(PLLFBD)
+#if _clock = 200
+Const ClockM As Byte = 100
+Const ClockPost As Byte = 33
+#elseif _clock = 160
+Const ClockM As Byte = 80
+Const ClockPost As Byte = 33
+#elseif _clock = 150
+Const ClockM As Byte = 150
+Const ClockPost As Byte = 65
+#elseif _clock = 120
+Const ClockM As Byte = 120
+Const ClockPost As Byte = 65
+#elseif _clock = 100
+Const ClockM As Byte = 100
+Const ClockPost As Byte = 65
+#elseif _clock = 80
+Const ClockM As Byte = 80
+Const ClockPost As Byte = 65
+#elseif _clock = 64
+Const ClockM As Byte = 64
+Const ClockPost As Byte = 65
+#elseif _clock = 60
+Const ClockM As Byte = 120
+Const ClockPost As Byte = 66
+#elseif _clock = 50
+Const ClockM As Byte = 100
+Const ClockPost As Byte = 66
+#elseif _clock = 40
+Const ClockM As Byte = 80
+Const ClockPost As Byte = 66
+#elseif _clock = 32
+Const ClockM As Byte = 64
+Const ClockPost As Byte = 66
+#elseif _clock = 25
+Const ClockM As Byte = 100
+Const ClockPost As Byte = 68
+#elseif _clock = 20
+Const ClockM As Byte = 80
+Const ClockPost As Byte = 68
+#elseif _clock = 16
+Const ClockM As Byte = 64
+Const ClockPost As Byte = 68
+#elseif _clock = 8
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 0
+#elseif _clock = 4
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 1
+#elseif _clock = 2
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 2
+#elseif _clock = 1
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 3
+#elseif _clock = 0.5
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 4
+#elseif _clock = 0.25
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 5
+#elseif _clock = 0.125
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 6
+#elseif _clock = 0.03125
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 7
+#else
+#error "Clock is not an oscillator speed of the dsPIC33CK64MC105 modules: use 200, 160, 150, 120, 100, 80, 64, 60, 50, 40, 32, 25, 20, 16 (PLL) or 8, 4, 2, 1, 0.5, 0.25, 0.125, 0.03125 (FRC divided)"
+Const ClockM As Byte = 0
+Const ClockPost As Byte = 0
+#endif
+
+' The new NOSC value for the Asm block of Switch.
+Dim noscNew As Byte
+
+' Switches the oscillator to NOSC = `nosc` (0 FRC, 1 FRCPLL, 7 FRCDIVN) and waits, bounded (59904 polls), for OSWEN to clear. The unlock pairs are
+' back to back, so interrupts are masked meanwhile; the bit is put back as it was. W0 to W3 are scratch between statements.
+Private Sub Switch(ByVal nosc As Byte)
+    Dim n As Word
+    Dim g As Boolean
+    g = INTCON2.GIE = 1
+    INTCON2.GIE = 0
+    noscNew = nosc
+    Asm
+        mov #0x78, w0
+        mov #0x9A, w1
+        mov #0xF85, w2
+        mov #INTOSC_NOSCNEW, w3
+        mov.b [w3], w3
+        mov.b w0, [w2]
+        mov.b w1, [w2]
+        mov.b w3, [w2]
+        mov #0x46, w0
+        mov #0x57, w1
+        mov #0xF84, w2
+        mov.b [w2], w3
+        bset w3, #0
+        mov.b w0, [w2]
+        mov.b w1, [w2]
+        mov.b w3, [w2]
+    End Asm
+    If g Then
+        INTCON2.GIE = 1
+    End If
+    n = 0
+    While OSCCON.OSWEN = 1 And n.Byte1 < 234
+        Inc(n)
+    Wend
+End Sub
+
+' Waits, bounded, for the PLL to lock.
+Private Sub WaitLock()
+    Dim n As Word
+    n = 0
+    While OSCCON.LOCK = 0 And n.Byte1 < 234
+        Inc(n)
+    Wend
+End Sub
+
+' COSC, the current source (OSCCON bits 14 to 12): the back end has no multi-bit fields yet, so the registers are masked by hand.
+Private Function Cosc() As Byte
+    Result = (OSCCON >> 12) And 7
+End Function
+
+' Runs the oscillator on `post` = N2 * 16 + N3 with feedback divider `m` (the PLL, from FRC) or, for m = 0, FRCDIV = `post` (FRC divided). True when the switch finished
+' (COSC is FRCPLL with LOCK, or FRCDIVN).
+Private Function Apply(ByVal m As Byte, ByVal post As Byte) As Boolean
+    Dim w As Word
+    If m = 0 Then
+        w = post
+        CLKDIV = (CLKDIV And 63743) Or (w << 8)
+        Switch(7)
+        Result = Cosc() = 7
+    Else
+        If Cosc() = 1 Or Cosc() = 3 Then
+            Switch(0)
+        End If
+        CLKDIV = (CLKDIV And 65520) Or 1
+        PLLFBD = m
+        PLLDIV = post
+        Switch(1)
+        WaitLock()
+        Result = Cosc() = 1 And OSCCON.LOCK = 1
+    End If
+End Function
+
+' The speeds in MHz of the PLL entries and, in step, M and N2 * 16 + N3; then the FRC divided ones (M = 0, FRCDIV).
+Const MhzTab(18) As Byte = (200, 160, 150, 120, 100, 80, 64, 60, 50, 40, 32, 25, 20, 16, 8, 4, 2, 1)
+Const MTab(18) As Byte = (100, 80, 150, 120, 100, 80, 64, 120, 100, 80, 64, 100, 80, 64, 0, 0, 0, 0)
+Const PostTab(18) As Byte = (33, 33, 65, 65, 65, 65, 65, 66, 66, 66, 66, 68, 68, 68, 0, 1, 2, 3)
+
+' Runs the part at `mhz` MHz, one of the whole-MHz speeds of the header. False, and nothing changed, for any other value; False too when the switch did not finish (see the header).
+Public Function SetClock(ByVal mhz As Byte) As Boolean
+    Dim i As Byte
+    Result = False
+    For i = 0 To 17
+        If MhzTab(i) = mhz Then
+            Result = Apply(MTab(i), PostTab(i))
+            Exit
+        End If
+    Next
+End Function
+
+' Start-up: the same steps with the constants of `Clock`.
+Apply(ClockM, ClockPost)
+#elseif _has(OSCCON.IRCF)
 #if _clock = 64
 Const ClockIrcf As Byte = 7
 Const ClockPll As Boolean = True
