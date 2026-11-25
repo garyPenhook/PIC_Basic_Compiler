@@ -125,7 +125,7 @@ Facts marked *(simulator)* were checked in MDB (MPLAB X 6.35) with the generated
   The stack is the one the generated start-up sets (to the end of RAM) or, with C, the linker's.
 * **Multi-bit register fields**: a named field of one byte of a register (`OSCCON.COSC`, `CLKDIV.FRCDIV`, `IPC0.T1IP`, `T1CON.TCKPS`) reads and writes as a structure's
   `Bits(n)`: a read-modify-write of that byte (the second byte of a 16-bit register for a field above bit 7). A field wider than a byte or across the
-  boundary of two (`PLLFBD.PLLFBDIV`, `SPI1BRGL`) is still `E-BACKEND`; the register itself is used. When the program has an interrupt handler the write
+  boundary of two (`PLLFBD.PLLFBDIV`, `SPI1BRGL`, `REFOTRIMH.ROTRIM`) is a field of the register's 16-bit word: it reads as a `Word` and a write is a read-modify-write of the word (`tests/exec_dspic/bitfield_word.bas`). When the program has an interrupt handler the write
   runs with `INTCON2.GIE` (bit 15, the second byte's bit 7) off and put back only if it was on.
 * **Interrupt priorities**: `Interrupt T1(ipLow)`, `Interrupt INT0(6)`: the argument is the priority 1 to 7 of that source (`ipLow` is 2 and `ipHigh` is 6 here, 1 and 2 on the
   PIC18). The start-up code writes it to the source's `IPCx` field (`T1IP`, `INT0IP` ...; `E-ISR-PRIO` when the handler's name has no such field). A handler without

@@ -851,8 +851,8 @@ End If
 * **Register fields.** A named field of a device register that is several bits wide and lies in one byte of it works the same way
   (`T2CON.CKPS = 3`, `n = OSCCON.COSC`, `CLKDIV.FRCDIV = 5`, `IPC0.T1IP = 6`, `Inc(T1CON.TCKPS)`), with the same read-modify-write
   of that byte (a constant that does not fit is `E-CONST-RANGE`; if other bits of the byte are flags the hardware sets or that clear when written, the
-  write can lose them: write the register in one go instead). A field wider than a byte, or one that crosses from one byte to the next (the 12-bit `PLLFBD.PLLFBDIV`), is `E-BACKEND`:
-  use the register.
+  write can lose them: write the register in one go instead). On the dsPIC33 a field wider than a byte, or one that crosses from one byte to the next (the 12-bit `PLLFBD.PLLFBDIV`, the 9-bit `REFOTRIMH.ROTRIM` at bits 7 to 15), is a field of the register's 16-bit word:
+  it reads as a `Word`, and a write is a read-modify-write of the whole word. A field that crosses a word boundary is `E-BACKEND`: use the register.
 
 ## Float
 

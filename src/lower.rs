@@ -33,6 +33,16 @@ fn nat(t: &Ty) -> Option<(u8, bool)> {
     }
 }
 
+/// The container of a `BitField`: a byte, or the aligned word of a register when the field is wider
+/// than a byte or crosses from one byte to the next (only the 16-bit registers of the dsPIC33 have those).
+fn bf_bits(shift: u8, width: u8) -> u8 {
+    if shift + width > 8 { 16 } else { 8 }
+}
+
+fn bf_ty(shift: u8, width: u8) -> Ty {
+    if bf_bits(shift, width) == 16 { WORD } else { BYTE }
+}
+
 /// The bits a constant stores as in an object of type `ty` (a Float is its binary32 pattern).
 fn cval_for(c: &CVal, ty: &Ty) -> u32 {
     match (ty, c) {
@@ -1687,13 +1697,15 @@ impl<'a> Lowerer<'a> {
                         self.unsupported(*sp, &format!("bit {n} of a {width}-bit field"));
                         return None;
                     }
-                    place.bit = Some(shift + *n as u8);
+                    let abs = shift + *n as u8;
+                    place.off += u32::from(abs / 8);
+                    place.bit = Some(abs % 8);
                     place.ty = Ty::Bit;
                     i += 1;
                     continue;
                 }
-                // Any other modifier (`.Byte0`, `.AsWord` ...) works on the byte that holds the field.
-                place.ty = BYTE;
+                // Any other modifier (`.Byte0`, `.AsWord` ...) works on the byte or word that holds the field.
+                place.ty = bf_ty(shift, width);
             }
             match &parts[i] {
                 Part::BitIndex(n, _) => {
@@ -1729,12 +1741,17 @@ impl<'a> Lowerer<'a> {
                     {
                         if f.width != 1 {
                             // A field inside one byte of the register is read and written like a structure's `Bits(n)`.
-                            if f.width > 8 || u32::from(f.pos % 8) + u32::from(f.width) > 8 {
-                                self.unsupported(n.span, &format!("the field `{}`, which is wider than a byte or crosses a byte boundary of its register (use the register itself)", n.name));
+                            if u32::from(f.pos % 8) + u32::from(f.width) <= 8 {
+                                place.off += u32::from(f.pos / 8);
+                                place.ty = Ty::BitField { shift: f.pos % 8, width: f.width };
+                            } else if u32::from(f.pos % 16) + u32::from(f.width) <= 16 {
+                                // Wider than a byte or across two bytes: the field of the register's 16-bit word.
+                                place.off += u32::from(f.pos / 16) * 2;
+                                place.ty = Ty::BitField { shift: f.pos % 16, width: f.width };
+                            } else {
+                                self.unsupported(n.span, &format!("the field `{}`, which crosses a word boundary of its register (use the register itself)", n.name));
                                 return None;
                             }
-                            place.off += u32::from(f.pos / 8);
-                            place.ty = Ty::BitField { shift: f.pos % 8, width: f.width };
                             i += 1;
                             continue;
                         }
@@ -2471,15 +2488,16 @@ impl<'a> Lowerer<'a> {
             self.unsupported(span, "a call inside the index of a bit-field");
             return None;
         }
-        let byte = Place { bit: None, dbit: None, ty: BYTE, ..p.clone() };
-        let mut x = Ex::new(ExK::Load(byte), 8, false);
-        let bin = |k: BinKind, l: Ex, r: Ex| Ex::new(ExK::Bin(k, Box::new(l), Box::new(r)), 8, false);
+        let cw = bf_bits(shift, width);
+        let byte = Place { bit: None, dbit: None, ty: bf_ty(shift, width), ..p.clone() };
+        let mut x = Ex::new(ExK::Load(byte), cw, false);
+        let bin = |k: BinKind, l: Ex, r: Ex| Ex::new(ExK::Bin(k, Box::new(l), Box::new(r)), cw, false);
         if shift > 0 {
             x = bin(BinKind::Shr, x, Ex::konst(shift as u32, 8, false));
         }
-        // A field that ends at bit 7 has nothing above it to mask off after the shift.
-        if mask && shift + width < 8 {
-            x = bin(BinKind::And, x, Ex::konst((1u32 << width) - 1, 8, false));
+        // A field that ends at the top bit has nothing above it to mask off after the shift.
+        if mask && shift + width < cw {
+            x = bin(BinKind::And, x, Ex::konst((1u32 << width) - 1, cw, false));
         }
         Some(x)
     }
@@ -2491,25 +2509,26 @@ impl<'a> Lowerer<'a> {
             self.unsupported(span, "a call inside the index of a bit-field");
             return None;
         }
-        let byte = Place { bit: None, dbit: None, ty: BYTE, ..p.clone() };
-        if width == 8 {
+        let cw = bf_bits(shift, width);
+        let byte = Place { bit: None, dbit: None, ty: bf_ty(shift, width), ..p.clone() };
+        if width == cw {
             return Some(St::Assign(byte, v));
         }
-        let bin = |k: BinKind, l: Ex, r: Ex| Ex::new(ExK::Bin(k, Box::new(l), Box::new(r)), 8, false);
+        let bin = |k: BinKind, l: Ex, r: Ex| Ex::new(ExK::Bin(k, Box::new(l), Box::new(r)), cw, false);
         let mask = (1u32 << width) - 1;
-        let keep = !(mask << shift) & 0xFF;
-        let load = Ex::new(ExK::Load(byte.clone()), 8, false);
+        let keep = !(mask << shift) & ((1u32 << cw) - 1);
+        let load = Ex::new(ExK::Load(byte.clone()), cw, false);
         let new = match v.as_const() {
-            Some(c) => bin(BinKind::Or, bin(BinKind::And, load, Ex::konst(keep, 8, false)), Ex::konst((c & mask) << shift, 8, false)),
+            Some(c) => bin(BinKind::Or, bin(BinKind::And, load, Ex::konst(keep, cw, false)), Ex::konst((c & mask) << shift, cw, false)),
             None => {
                 let mut x = v;
-                if shift + width < 8 {
-                    x = bin(BinKind::And, x, Ex::konst(mask, 8, false));
+                if shift + width < cw {
+                    x = bin(BinKind::And, x, Ex::konst(mask, cw, false));
                 }
                 if shift > 0 {
                     x = bin(BinKind::Shl, x, Ex::konst(shift as u32, 8, false));
                 }
-                bin(BinKind::Or, bin(BinKind::And, load, Ex::konst(keep, 8, false)), x)
+                bin(BinKind::Or, bin(BinKind::And, load, Ex::konst(keep, cw, false)), x)
             }
         };
         Some(St::Assign(byte, new))
@@ -2580,15 +2599,21 @@ impl<'a> Lowerer<'a> {
             None
         };
         // A `Bits(8)` field is a whole byte: one store, nothing to protect.
-        let intcon = if matches!(p.ty, Ty::BitField { width: 8, .. }) { None } else { intcon };
+        let whole = matches!(p.ty, Ty::BitField { shift, width } if width == bf_bits(shift, width));
+        let intcon = if whole { None } else { intcon };
+        let fty = match p.ty {
+            Ty::BitField { shift, width } => bf_ty(shift, width),
+            _ => BYTE,
+        };
+        let fw = nat(&fty).map_or(8, |t| t.0);
         let Some(intcon) = intcon else {
             // The byte is read inside the new value, so a call in the value runs first and its result
             // is held: the call may itself change another field of the byte.
             let v = match v {
                 Some(x) if x.has_call() => {
-                    let t = self.hidden_var(BYTE);
+                    let t = self.hidden_var(fty.clone());
                     Self::push(out, St::Assign(t.clone(), x), span);
-                    Some(Ex::new(ExK::Load(t), 8, false))
+                    Some(Ex::new(ExK::Load(t), fw, false))
                 }
                 other => other,
             };
@@ -2599,9 +2624,9 @@ impl<'a> Lowerer<'a> {
         };
         let v = match v {
             Some(x) if !matches!(x.k, ExK::Const(_) | ExK::Load(_)) || x.has_call() => {
-                let t = self.hidden_var(BYTE);
+                let t = self.hidden_var(fty.clone());
                 Self::push(out, St::Assign(t.clone(), x), span);
-                Some(Ex::new(ExK::Load(t), 8, false))
+                Some(Ex::new(ExK::Load(t), fw, false))
             }
             other => other,
         };
@@ -3378,9 +3403,9 @@ impl<'a> Lowerer<'a> {
                     self.copy_assign(p, value, span, out);
                     return;
                 }
-                if matches!(p.ty, Ty::BitField { .. }) {
+                if let Ty::BitField { shift, width } = p.ty {
                     // A constant that does not fit the field was refused by the semantic pass.
-                    let Some(v) = self.value_for(value, &BYTE) else { return };
+                    let Some(v) = self.value_for(value, &bf_ty(shift, width)) else { return };
                     self.bit_store(&p, Some(v), span, out);
                     return;
                 }
@@ -3560,12 +3585,13 @@ impl<'a> Lowerer<'a> {
                 let Some(p) = arg_place(self) else { return };
                 if let Ty::BitField { shift, width } = p.ty {
                     // Read, add and store back; the store drops what carries out of the field.
+                    let cw = bf_bits(shift, width);
                     let amt = match args.get(1) {
                         Some(a) => match self.expr(a) {
-                            Some(x) => conv(x, 8, false),
+                            Some(x) => conv(x, cw, false),
                             None => return,
                         },
-                        None => Ex::konst(1, 8, false),
+                        None => Ex::konst(1, cw, false),
                     };
                     if amt.has_call() {
                         self.unsupported(span, "a call inside the amount of Inc/Dec");
@@ -3574,7 +3600,7 @@ impl<'a> Lowerer<'a> {
                     // Unmasked: bits above the field only affect bits above it in a sum, and the store masks.
                     let Some(cur) = self.field_read(&p, shift, width, false, span) else { return };
                     let kind = if name == "inc" { BinKind::Add } else { BinKind::Sub };
-                    let sum = Ex::new(ExK::Bin(kind, Box::new(cur), Box::new(amt)), 8, false);
+                    let sum = Ex::new(ExK::Bin(kind, Box::new(cur), Box::new(amt)), cw, false);
                     self.bit_store(&p, Some(sum), span, out);
                     return;
                 }
@@ -3634,8 +3660,8 @@ impl<'a> Lowerer<'a> {
             }
             "clear" => {
                 let Some(p) = arg_place(self) else { return };
-                if matches!(p.ty, Ty::BitField { .. }) {
-                    self.bit_store(&p, Some(Ex::konst(0, 8, false)), span, out);
+                if let Ty::BitField { shift, width } = p.ty {
+                    self.bit_store(&p, Some(Ex::konst(0, bf_bits(shift, width), false)), span, out);
                     return;
                 }
                 if p.is_bit() && p.indirect() {
